@@ -114,6 +114,18 @@ BUILTIN_CAPSULE_SKILLS: Dict[str, Dict[str, object]] = {
             "Diagnose CCCC daemon/web startup, actor runtime launch, MCP injection, "
             "bind/LAN reachability, and shutdown residue issues."
         ),
+        "use_when": (
+            "CCCC daemon or Web fails to start, bind, or stay reachable.",
+            "Actor runtime launch, MCP injection, or shutdown cleanup looks broken.",
+        ),
+        "avoid_when": (
+            "The task is normal product work, not runtime diagnosis.",
+        ),
+        "gotchas": (
+            "Separate configured Web binding from the live listener before changing settings or restarting anything.",
+            "Treat process residue and stale pid files as evidence to verify, not proof that the current runtime is healthy.",
+        ),
+        "evidence_kind": "debug snapshot plus terminal/log proof for the failing layer",
         "capsule_text": (
             "You are the runtime-bootstrap skill for CCCC runtime diagnosis.\n\n"
             "Use this skill when the task is about daemon or web startup failure, port bind or LAN "

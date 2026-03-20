@@ -4,6 +4,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -129,6 +130,68 @@ class TestWebContextRoutesCache(unittest.TestCase):
                         self.assertEqual(stale_resp.json()["result"]["meta"]["version"], "stale")
 
                     self.assertEqual(context_get_calls, 2)
+        finally:
+            cleanup()
+
+    def test_project_md_put_invalidates_server_inflight(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            os.environ.pop("CCCC_WEB_MODE", None)
+            group_id = self._create_group()
+            context_get_calls = 0
+            call_lock = threading.Lock()
+            first_read_release = threading.Event()
+
+            from cccc.kernel.group import attach_scope_to_group, load_group
+            from cccc.kernel.registry import load_registry
+            from cccc.kernel.scope import detect_scope
+
+            with tempfile.TemporaryDirectory() as scope_root:
+                reg = load_registry()
+                group = load_group(group_id)
+                assert group is not None
+                attach_scope_to_group(reg, group, detect_scope(Path(scope_root)))
+
+                def fake_call_daemon(req: dict):
+                    nonlocal context_get_calls
+                    op = str(req.get("op") or "")
+                    if op == "context_get":
+                        with call_lock:
+                            context_get_calls += 1
+                            current = context_get_calls
+                        if current == 1:
+                            first_read_release.wait(timeout=2)
+                            return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "stale"}}}
+                        return {"ok": True, "result": {"coordination": {"tasks": []}, "meta": {"version": "fresh"}}}
+                    if op == "context_sync":
+                        return {"ok": True, "result": {"version": "fresh"}}
+                    return {"ok": True, "result": {}}
+
+                with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+                    with self._client() as client:
+                        path = f"/api/v1/groups/{group_id}/context"
+
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            stale_future = executor.submit(client.get, path)
+                            time.sleep(0.05)
+
+                            put_resp = client.put(
+                                f"/api/v1/groups/{group_id}/project_md",
+                                json={"content": "# Fresh PROJECT"},
+                            )
+                            self.assertEqual(put_resp.status_code, 200)
+                            self.assertEqual(put_resp.json()["result"]["content"], "# Fresh PROJECT")
+
+                            fresh_resp = client.get(path)
+                            self.assertEqual(fresh_resp.status_code, 200)
+                            self.assertEqual(fresh_resp.json()["result"]["meta"]["version"], "fresh")
+
+                            first_read_release.set()
+                            stale_resp = stale_future.result(timeout=3)
+                            self.assertEqual(stale_resp.status_code, 200)
+                            self.assertEqual(stale_resp.json()["result"]["meta"]["version"], "stale")
+
+                        self.assertEqual(context_get_calls, 2)
         finally:
             cleanup()
 

@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { useTranslation } from "react-i18next";
-import { addCoordinationNote, apiJson, contextSync, updateCoordinationBrief, updateCoordinationTask } from "../services/api";
+import { addCoordinationNote, apiJson, contextSync, deleteCoordinationTask, updateCoordinationBrief, updateCoordinationTask } from "../services/api";
 import type {
   AgentState,
   CoordinationBrief,
@@ -19,6 +19,14 @@ import type {
 } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
+import {
+  TaskWorkflowScaffoldId,
+  evaluateTaskWorkflow,
+  getTaskDisplaySummary,
+  getTaskDoneTransitionBlockers,
+  getTaskWorkflowScaffold,
+  recommendTaskWorkflowScaffold,
+} from "../utils/taskWorkflow";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { ModalFrame } from "./modals/ModalFrame";
@@ -72,6 +80,8 @@ interface BoardColumns {
 
 type BoardStatus = keyof BoardColumns;
 type ContextTranslator = (key: string, defaultValue: string, options?: Record<string, unknown>) => string;
+type TaskDeleteBlockReason = "" | "self_history" | "subtree_history";
+type TaskDeleteInfo = { allowed: boolean; total: number; reason: TaskDeleteBlockReason };
 
 const WAITING_ON_OPTIONS: Array<{ value: TaskWaitingOn; label: string }> = [
   { value: "none", label: "None" },
@@ -90,8 +100,70 @@ function taskOutcome(task: Task | null | undefined): string {
   return String(task.outcome || "");
 }
 
+function taskDisplaySummary(task: Task | null | undefined): string {
+  if (!task) return "";
+  return getTaskDisplaySummary({
+    parent_id: task.parent_id,
+    outcome: task.outcome,
+    notes: task.notes,
+  });
+}
+
 function taskStatus(task: Task | null | undefined): string {
   return String(task?.status || "planned").toLowerCase();
+}
+
+function taskArchivedFrom(task: Task | null | undefined): string {
+  return String(task?.archived_from || "").trim().toLowerCase();
+}
+
+function taskIsUnexecuted(task: Task | null | undefined): boolean {
+  if (!task) return false;
+  const status = taskStatus(task);
+  const archivedFrom = taskArchivedFrom(task);
+  return status === "planned" || (status === "archived" && (!archivedFrom || archivedFrom === "planned"));
+}
+
+function getTaskDeleteInfo(task: Task | null | undefined, allTasks: Task[]): TaskDeleteInfo {
+  if (!task) return { allowed: false, total: 0, reason: "" };
+  const byParent = new Map<string, Task[]>();
+  for (const candidate of allTasks) {
+    const parentId = String(candidate.parent_id || "").trim();
+    if (!parentId) continue;
+    const current = byParent.get(parentId) || [];
+    current.push(candidate);
+    byParent.set(parentId, current);
+  }
+  for (const children of byParent.values()) {
+    children.sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+  }
+
+  const seen = new Set<string>();
+  const stack: Task[] = [task];
+  const subtree: Task[] = [];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    const currentId = String(current.id || "").trim();
+    if (!currentId || seen.has(currentId)) continue;
+    seen.add(currentId);
+    subtree.push(current);
+    const children = byParent.get(currentId) || [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
+  }
+
+  for (const candidate of subtree) {
+    if (!taskIsUnexecuted(candidate)) {
+      return {
+        allowed: false,
+        total: subtree.length,
+        reason: candidate.id === task.id ? "self_history" : "subtree_history",
+      };
+    }
+  }
+  return { allowed: true, total: subtree.length, reason: "" };
 }
 
 function listToText(items: string[] | null | undefined): string {
@@ -611,11 +683,13 @@ export function ContextModal({
   const [assigneeFilter, setAssigneeFilter] = useState<string>("__all__");
   const [taskQuery, setTaskQuery] = useState("");
   const [dragTaskId, setDragTaskId] = useState("");
+  const [archivedExpanded, setArchivedExpanded] = useState(false);
   const [editingBrief, setEditingBrief] = useState(false);
   const [briefDraft, setBriefDraft] = useState<BriefDraft>(briefToDraft(null));
   const [taskEditorMode, setTaskEditorMode] = useState<"none" | "create" | "edit">("none");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
+  const [taskScaffoldId, setTaskScaffoldId] = useState<TaskWorkflowScaffoldId>("root");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [viewBusy, setViewBusy] = useState(false);
@@ -653,6 +727,18 @@ export function ContextModal({
   }, [allBoardTasks]);
 
   const selectedTask = selectedTaskId ? taskMap.get(selectedTaskId) || null : null;
+  const taskWorkflowCoverage = useMemo(
+    () => evaluateTaskWorkflow({
+      parentId: taskDraft?.parentId,
+      status: taskDraft?.status,
+      assignee: taskDraft?.assignee,
+      outcome: taskDraft?.outcome,
+      notes: taskDraft?.notes,
+      checklist: taskDraft?.checklist,
+    }),
+    [taskDraft]
+  );
+  const selectedTaskScaffold = useMemo(() => getTaskWorkflowScaffold(taskScaffoldId), [taskScaffoldId]);
 
   const tasksSummary = useMemo(() => {
     const fallback = {
@@ -725,6 +811,7 @@ export function ContextModal({
     if (taskEditorMode === "create") return taskDraftDirty(taskDraft);
     return !!selectedTask && !taskDraftMatches(selectedTask, taskDraft);
   }, [selectedTask, taskDraft, taskEditorMode]);
+  const selectedTaskDeleteInfo = useMemo(() => getTaskDeleteInfo(selectedTask, tasks), [selectedTask, tasks]);
 
   const taskEditorVisible = taskEditorMode !== "none" && !!taskDraft;
 
@@ -755,10 +842,12 @@ export function ContextModal({
     setTaskFilter("all");
     setAssigneeFilter("__all__");
     setTaskQuery("");
+    setArchivedExpanded(false);
     setDragTaskId("");
     setTaskEditorMode("none");
     setSelectedTaskId("");
     setTaskDraft(null);
+    setTaskScaffoldId("root");
     setSyncError("");
     setEditingBrief(false);
     setProjectMd(null);
@@ -818,7 +907,7 @@ export function ContextModal({
         const haystack = [
           task.id,
           taskTitle(task),
-          taskOutcome(task),
+          taskDisplaySummary(task),
           assignee,
           String(task.priority || ""),
           String(task.handoff_to || ""),
@@ -840,10 +929,22 @@ export function ContextModal({
     [board, taskMatches]
   );
 
-  const filteredTaskTotal = useMemo(
-    () => filteredBoard.planned.length + filteredBoard.active.length + filteredBoard.done.length + filteredBoard.archived.length,
-    [filteredBoard]
+  const hasTaskFilters = taskFilter !== "all" || assigneeFilter !== "__all__" || taskQuery.trim().length > 0;
+  const hiddenArchivedMatches = archivedExpanded ? 0 : filteredBoard.archived.length;
+  const visibleTaskTotal = useMemo(
+    () => filteredBoard.planned.length + filteredBoard.active.length + filteredBoard.done.length + (archivedExpanded ? filteredBoard.archived.length : 0),
+    [archivedExpanded, filteredBoard]
   );
+  const hasVisibleTasks = visibleTaskTotal > 0;
+  const archivedToggleCount = hasTaskFilters ? filteredBoard.archived.length : Number(tasksSummary.archived || 0);
+  const hasArchivedTasks = archivedExpanded || archivedToggleCount > 0 || Number(tasksSummary.archived || 0) > 0;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (selectedTask && taskStatus(selectedTask) === "archived") {
+      setArchivedExpanded(true);
+    }
+  }, [isOpen, selectedTask]);
 
 
   useEffect(() => {
@@ -860,7 +961,9 @@ export function ContextModal({
       return;
     }
     if (!taskDraft) {
-      setTaskDraft(taskToDraft(selectedTask));
+      const nextDraft = taskToDraft(selectedTask);
+      setTaskDraft(nextDraft);
+      setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
     }
   }, [selectedTaskId, selectedTask, taskDraft, taskEditorMode]);
 
@@ -880,6 +983,7 @@ export function ContextModal({
     "glass-btn text-[var(--color-text-secondary)]"
   );
   const buttonPrimaryClass = "rounded-lg bg-blue-600 px-3 py-2 text-sm text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50";
+  const buttonDangerClass = "rounded-lg border border-rose-500/35 bg-rose-500/12 px-3 py-2 text-sm text-rose-700 transition-colors hover:bg-rose-500/18 dark:text-rose-300 disabled:cursor-not-allowed disabled:opacity-50";
   const switchTrackClass = (active: boolean) => classNames(
     "relative inline-flex h-6 w-11 shrink-0 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50",
     active
@@ -900,9 +1004,56 @@ export function ContextModal({
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } })
   );
 
+  const formatDoneTransitionGuardMessage = useCallback(
+    (missing: string[]) => tr(
+      "context.taskDoneGuard",
+      "Complete closeout before marking this task done: {{items}}.",
+      { items: missing.join(", ") }
+    ),
+    [tr]
+  );
+  const selectedTaskDeleteHint = useMemo(() => {
+    if (!selectedTask || selectedTaskDeleteInfo.allowed || !selectedTaskDeleteInfo.reason) return "";
+    if (selectedTaskDeleteInfo.reason === "subtree_history") {
+      return tr("context.deleteTaskBlockedSubtree", "This task has child tasks with execution history, so delete is blocked.");
+    }
+    return tr("context.deleteTaskBlockedSelf", "Only tasks that never moved past planned can be deleted.");
+  }, [selectedTask, selectedTaskDeleteInfo, tr]);
+
+  function openTaskEditorForTask(task: Task, options?: { draft?: TaskDraft; error?: string }): boolean {
+    const sameTask = selectedTaskId === task.id && taskEditorMode === "edit";
+    if (!sameTask && !confirmDiscardTaskChanges()) return false;
+    const nextDraft = options?.draft ?? taskToDraft(task);
+    setSelectedTaskId(task.id);
+    setTaskDraft(nextDraft);
+    setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
+    setTaskEditorMode("edit");
+    setSyncError(options?.error || "");
+    setActiveView("coordination");
+    return true;
+  }
+
   const moveTaskToStatus = async (task: Task, nextStatus: BoardStatus) => {
     if (!groupId) return;
     if (taskStatus(task) === nextStatus) return;
+    if (nextStatus === "done") {
+      const guardSource = selectedTaskId === task.id && taskEditorMode === "edit" && taskDraft
+        ? taskDraft
+        : taskToDraft(task);
+      const blockers = getTaskDoneTransitionBlockers({
+        parentId: guardSource.parentId,
+        assignee: guardSource.assignee,
+        outcome: guardSource.outcome,
+        notes: guardSource.notes,
+      });
+      if (blockers.length > 0) {
+        openTaskEditorForTask(task, {
+          draft: { ...guardSource, status: "done" },
+          error: formatDoneTransitionGuardMessage(blockers),
+        });
+        return;
+      }
+    }
     setSyncBusy(true);
     setSyncError("");
     try {
@@ -950,6 +1101,13 @@ export function ContextModal({
   const TaskGhostCard = ({ task }: { task: Task }) => {
     const status = taskStatus(task);
     const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+    const workflow = evaluateTaskWorkflow({
+      parent_id: task.parent_id,
+      status: task.status,
+      assignee: task.assignee,
+      outcome: task.outcome,
+      notes: task.notes,
+    });
     return (
       <div className={classNames(
         "w-[320px] rounded-2xl border p-3 shadow-2xl",
@@ -962,10 +1120,12 @@ export function ContextModal({
           </div>
           <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status))}>{status}</span>
         </div>
-        {taskOutcome(task) ? <div className={classNames("mt-2 line-clamp-3 text-xs", subtleTextClass)}>{taskOutcome(task)}</div> : null}
+        {taskDisplaySummary(task) ? <div className={classNames("mt-2 line-clamp-3 text-xs", subtleTextClass)}>{taskDisplaySummary(task)}</div> : null}
         <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
           {task.assignee ? <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.assignee}</span> : null}
           {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
+          {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs contract")}</span> : null}
+          {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}
         </div>
       </div>
     );
@@ -976,6 +1136,13 @@ export function ContextModal({
     const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
     const waiting = String(task.waiting_on || "none").trim();
     const handoff = String(task.handoff_to || "").trim();
+    const workflow = evaluateTaskWorkflow({
+      parent_id: task.parent_id,
+      status: task.status,
+      assignee: task.assignee,
+      outcome: task.outcome,
+      notes: task.notes,
+    });
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
       id: `task:${task.id}`,
       disabled: syncBusy,
@@ -1026,8 +1193,8 @@ export function ContextModal({
             </div>
           </div>
 
-          {taskOutcome(task) ? (
-            <div className={classNames("mt-2 block w-full text-left line-clamp-3 text-xs", subtleTextClass)}>{taskOutcome(task)}</div>
+          {taskDisplaySummary(task) ? (
+            <div className={classNames("mt-2 block w-full text-left line-clamp-3 text-xs", subtleTextClass)}>{taskDisplaySummary(task)}</div>
           ) : null}
 
           <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
@@ -1040,6 +1207,8 @@ export function ContextModal({
             {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
             {waiting && waiting !== "none" ? <span className={classNames("rounded-full px-2 py-0.5", "bg-violet-500/15 text-violet-600 dark:text-violet-400")}>{waitingLabel(waiting)}</span> : null}
             {handoff ? <span className={classNames("rounded-full px-2 py-0.5", "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400")}>{tr("context.handoffTo", "Handoff →")} {handoff}</span> : null}
+            {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs contract")}</span> : null}
+            {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}
           </div>
 
           <div className="mt-3 flex items-center gap-2 border-t pt-3" onClick={(event) => event.stopPropagation()}>
@@ -1051,7 +1220,15 @@ export function ContextModal({
     );
   };
 
-  const ColumnDropZone = ({ columnKey, label, items }: { columnKey: BoardStatus; label: string; items: Task[] }) => {
+  const ColumnDropZone = ({
+    columnKey,
+    label,
+    items,
+  }: {
+    columnKey: BoardStatus;
+    label: string;
+    items: Task[];
+  }) => {
     const { setNodeRef, isOver } = useDroppable({ id: `column:${columnKey}`, data: { type: "column", status: columnKey } });
     return (
       <section ref={setNodeRef} className={classNames(
@@ -1088,8 +1265,10 @@ export function ContextModal({
   const selectTask = useCallback((task: Task) => {
     if (selectedTaskId === task.id && taskEditorMode === "edit") return;
     if (!confirmDiscardTaskChanges()) return;
+    const nextDraft = taskToDraft(task);
     setSelectedTaskId(task.id);
-    setTaskDraft(taskToDraft(task));
+    setTaskDraft(nextDraft);
+    setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
     setTaskEditorMode("edit");
     setSyncError("");
     setActiveView("coordination");
@@ -1214,6 +1393,18 @@ export function ContextModal({
       setSyncError(tr("context.taskTitleRequired", "Task title is required."));
       return;
     }
+    if (String(taskDraft.status || "").trim().toLowerCase() === "done") {
+      const blockers = getTaskDoneTransitionBlockers({
+        parentId: taskDraft.parentId,
+        assignee: taskDraft.assignee,
+        outcome: taskDraft.outcome,
+        notes: taskDraft.notes,
+      });
+      if (blockers.length > 0) {
+        setSyncError(formatDoneTransitionGuardMessage(blockers));
+        return;
+      }
+    }
 
     setSyncBusy(true);
     setSyncError("");
@@ -1269,14 +1460,55 @@ export function ContextModal({
     }
   };
 
+  const handleDeleteTask = async (task: Task) => {
+    if (!groupId) return;
+    const deleteInfo = getTaskDeleteInfo(task, tasks);
+    if (!deleteInfo.allowed) return;
+    if (!confirmDiscardTaskChanges()) return;
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        deleteInfo.total > 1
+          ? tr("context.deleteTaskCascadeConfirm", "Delete task \"{{title}}\" and its {{count}} unexecuted tasks?", {
+              title: taskTitle(task) || task.id,
+              count: deleteInfo.total,
+            })
+          : tr("context.deleteTaskConfirm", "Delete task \"{{title}}\" permanently?", {
+              title: taskTitle(task) || task.id,
+            })
+      );
+      if (!confirmed) return;
+    }
+
+    setSyncBusy(true);
+    setSyncError("");
+    try {
+      const resp = await deleteCoordinationTask(groupId, task.id);
+      if (!resp.ok) {
+        setSyncError(resp.error?.message || tr("context.failedToDeleteTask", "Failed to delete task"));
+        return;
+      }
+      await onRefreshContext();
+      if (selectedTaskId === task.id) {
+        setTaskEditorMode("none");
+        setSelectedTaskId("");
+        setTaskDraft(null);
+      }
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
   const handleResetTask = () => {
     if (taskEditorMode === "create") {
       setTaskDraft(emptyTaskDraft("planned"));
+      setTaskScaffoldId("root");
       setSyncError("");
       return;
     }
     if (!selectedTask) return;
-    setTaskDraft(taskToDraft(selectedTask));
+    const nextDraft = taskToDraft(selectedTask);
+    setTaskDraft(nextDraft);
+    setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
     setSyncError("");
   };
 
@@ -1285,6 +1517,7 @@ export function ContextModal({
     setTaskEditorMode("create");
     setSelectedTaskId("");
     setTaskDraft(emptyTaskDraft(status));
+    setTaskScaffoldId("root");
     setSyncError("");
     setActiveView("coordination");
   };
@@ -1449,23 +1682,71 @@ export function ContextModal({
     }
   };
 
+  const handleApplyTaskScaffold = useCallback(() => {
+    if (!taskDraft) return;
+    const scaffold = selectedTaskScaffold;
+    const currentWorkflowText = [taskDraft.outcome, taskDraft.notes, taskDraft.checklist]
+      .map((item) => String(item || "").trim())
+      .join("\n")
+      .trim();
+    const nextWorkflowText = [scaffold.notes, scaffold.checklist].join("\n").trim();
+    if (currentWorkflowText && currentWorkflowText !== nextWorkflowText && typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        tr(
+          "context.taskScaffoldConfirm",
+          "Apply this scaffold and replace the current outcome, notes, and checklist?"
+        )
+      );
+      if (!confirmed) return;
+    }
+    setTaskDraft((prev) => (prev ? {
+      ...prev,
+      outcome: "",
+      notes: scaffold.notes,
+      checklist: scaffold.checklist,
+    } : prev));
+    setSyncError("");
+  }, [selectedTaskScaffold, taskDraft, tr]);
+
   const renderTaskEditorPanel = () => {
     if (!taskEditorVisible || !taskDraft) {
-      return (
-        <section className={classNames(surfaceClass, "hidden xl:flex xl:min-h-[520px] xl:flex-col xl:justify-center xl:p-6") }>
-          <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.taskEditorEmptyTitle", "Select a task")}</div>
-          <div className={classNames("mt-2 text-sm", subtleTextClass)}>{tr("context.taskEditorEmptyHint", "Pick a card to edit, or create a new task from the button above.")}</div>
-        </section>
-      );
+      return null;
     }
 
     const isCreate = taskEditorMode === "create";
+    const workflowToneClass = (ok: boolean) => classNames(
+      "rounded-full px-2 py-0.5 text-[11px] font-medium",
+      ok
+        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+        : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+    );
+    const workflowSummary = taskWorkflowCoverage.needsCloseout
+      ? tr(
+        "context.taskWorkflowNeedsCloseout",
+        "Closeout is still missing {{items}}.",
+        { items: taskWorkflowCoverage.missingCloseout.join(", ") }
+      )
+      : taskWorkflowCoverage.needsContract
+        ? tr(
+          "context.taskWorkflowNeedsContract",
+          "This task contract is still missing {{items}}.",
+          { items: taskWorkflowCoverage.missingSetup.join(", ") }
+        )
+        : taskWorkflowCoverage.isOptimization
+          ? tr(
+            "context.taskWorkflowOptimizationReady",
+            "This optimization task has a usable baseline / metric contract."
+          )
+          : taskWorkflowCoverage.isRoot
+            ? tr("context.taskWorkflowRootReady", "This root task has a usable goal / evidence contract.")
+            : tr("context.taskWorkflowLeanReady", "Keep subtasks lean unless more workflow structure adds clarity.");
+
     return (
-      <section className={classNames(surfaceClass, "p-4 xl:sticky xl:top-0 xl:max-h-[calc(94vh-8rem)] xl:overflow-y-auto")}>
+      <section className={classNames(surfaceClass, "p-4")}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{isCreate ? tr("context.newTask", "New task") : tr("context.taskDetails", "Task editor")}</div>
-            <div className={classNames("mt-1 text-xs", mutedTextClass)}>{isCreate ? tr("context.newTaskHint", "Create a new shared task. Keep it lean; fill advanced fields only when they help coordination.") : (selectedTask?.id || "")}</div>
+            <div className={classNames("mt-1 text-xs", mutedTextClass)}>{isCreate ? tr("context.newTaskHint", "Create a new shared task. Keep it lean, then apply a scaffold only when the workflow needs sharper control.") : (selectedTask?.id || "")}</div>
           </div>
           <div className="flex items-center gap-2">
             {hasTaskUnsaved ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.unsaved", "Unsaved")}</span> : null}
@@ -1477,9 +1758,78 @@ export function ContextModal({
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className={classNames("text-xs", mutedTextClass)}>
-              {isCreate ? tr("context.editorInlineHint", "Editing stays inside the Tasks workspace so you can keep the board in view.") : (selectedTask?.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(selectedTask.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet"))}
+              {isCreate ? tr("context.editorInlineHint", "Editing opens in a side panel so the board stays readable.") : (selectedTask?.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(selectedTask.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet"))}
             </div>
             <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(taskDraft.status))}>{taskDraft.status}</span>
+          </div>
+
+          <div className={classNames("rounded-xl border px-3 py-3", "glass-panel")}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.taskWorkflow", "Workflow scaffold")}</div>
+                <div className={classNames("mt-1 text-xs", mutedTextClass)}>{selectedTaskScaffold.description}</div>
+              </div>
+              <div className="grid gap-2 sm:w-[15rem]">
+                <select value={taskScaffoldId} onChange={(event) => setTaskScaffoldId(event.target.value as TaskWorkflowScaffoldId)} className={inputClass}>
+                  {[
+                    ["lean", tr("context.taskScaffoldLean", "Lean task")],
+                    ["root", tr("context.taskScaffoldRoot", "Root task")],
+                    ["planner", tr("context.taskScaffoldPlanner", "Planner")],
+                    ["reviewer", tr("context.taskScaffoldReviewer", "Reviewer")],
+                    ["debugger", tr("context.taskScaffoldDebugger", "Debugger")],
+                    ["release", tr("context.taskScaffoldRelease", "Release")],
+                    ["optimization", tr("context.taskScaffoldOptimization", "Optimization")],
+                  ].map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+                <button type="button" onClick={handleApplyTaskScaffold} disabled={syncBusy} className={buttonSecondaryClass}>
+                  {tr("context.applyScaffold", "Apply scaffold")}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", "glass-panel text-[var(--color-text-secondary)]")}>
+                {taskWorkflowCoverage.isRoot ? tr("context.rootTask", "Root task") : tr("context.subtask", "Subtask")}
+              </span>
+              {taskWorkflowCoverage.isRoot || taskWorkflowCoverage.isOptimization ? (
+                <>
+                  <span className={workflowToneClass(taskWorkflowCoverage.hasGoal)}>{tr("context.goal", "Goal")}</span>
+                  <span className={workflowToneClass(taskWorkflowCoverage.hasSuccessCriteria)}>{tr("context.successCriteria", "Success criteria")}</span>
+                  <span className={workflowToneClass(taskWorkflowCoverage.hasRequiredEvidence)}>{tr("context.requiredEvidence", "Required evidence")}</span>
+                </>
+              ) : null}
+              {taskWorkflowCoverage.isRoot ? (
+                <span className={workflowToneClass(taskWorkflowCoverage.hasOwner)}>{tr("context.owner", "Owner")}</span>
+              ) : null}
+              {taskWorkflowCoverage.isOptimization ? (
+                <>
+                  <span className={workflowToneClass(taskWorkflowCoverage.hasBaseline)}>{tr("context.baseline", "Baseline")}</span>
+                  <span className={workflowToneClass(taskWorkflowCoverage.hasPrimaryMetric)}>{tr("context.primaryMetric", "Primary metric")}</span>
+                  <span className={workflowToneClass(taskWorkflowCoverage.hasVerifierBoundary)}>{tr("context.verifierBoundary", "Verifier boundary")}</span>
+                </>
+              ) : null}
+              {String(taskDraft.status || "").toLowerCase() === "done" ? (
+                <>
+                  <span className={workflowToneClass(taskWorkflowCoverage.hasOutcomeSummary)}>{tr("context.outcomeSummary", "Outcome summary")}</span>
+                  <span className={workflowToneClass(taskWorkflowCoverage.hasCloseoutVerdict)}>{tr("context.closeoutVerdict", "Closeout verdict")}</span>
+                  <span className={workflowToneClass(taskWorkflowCoverage.hasVerificationSummary)}>{tr("context.verificationSummary", "Verification summary")}</span>
+                  {taskWorkflowCoverage.isOptimization ? (
+                    <span className={workflowToneClass(taskWorkflowCoverage.hasAttemptDecision)}>{tr("context.attemptDecision", "Attempt decision")}</span>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+
+            <div className={classNames(
+              "mt-3 rounded-lg border px-3 py-2 text-xs",
+              taskWorkflowCoverage.needsContract || taskWorkflowCoverage.needsCloseout
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                : "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+            )}>
+              {workflowSummary}
+            </div>
           </div>
 
           <label className="block text-sm">
@@ -1488,7 +1838,10 @@ export function ContextModal({
           </label>
 
           <label className="block text-sm">
-            <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.outcome", "Outcome")}</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.outcome", "Outcome")}</span>
+              <span className={classNames("mb-1 block text-[11px]", mutedTextClass)}>{tr("context.outcomeHint", "Use this as the concise result summary, especially at closeout.")}</span>
+            </div>
             <textarea value={taskDraft.outcome} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, outcome: event.target.value } : prev)} className={textareaClass} />
           </label>
 
@@ -1512,6 +1865,21 @@ export function ContextModal({
             <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.priority", "Priority")}</span>
             <input value={taskDraft.priority} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, priority: event.target.value } : prev)} className={inputClass} />
           </label>
+
+          <div className="grid gap-3">
+            <label className="block text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.notes", "Notes")}</span>
+                <span className={classNames("mb-1 block text-[11px]", mutedTextClass)}>{tr("context.notesHint", "Keep the task contract, evidence requirements, and closeout structure here.")}</span>
+              </div>
+              <textarea value={taskDraft.notes} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, notes: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[220px]")} />
+            </label>
+
+            <label className="block text-sm">
+              <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.checklist", "Checklist")}</span>
+              <textarea value={taskDraft.checklist} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, checklist: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[140px]")} placeholder={tr("context.checklistPlaceholder", "Use [ ], [~], [x] prefixes if useful.")} />
+            </label>
+          </div>
 
           <details className={classNames("rounded-xl border px-3 py-3", "glass-card") }>
             <summary className={classNames("cursor-pointer text-sm font-medium", "text-[var(--color-text-primary)]")}>{tr("context.advancedTaskFields", "Advanced details")}</summary>
@@ -1539,22 +1907,12 @@ export function ContextModal({
                   </select>
                 </label>
               </div>
-
-              <label className="block text-sm">
-                <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.notes", "Notes")}</span>
-                <textarea value={taskDraft.notes} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, notes: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[100px]")} />
-              </label>
-
-              <label className="block text-sm">
-                <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.checklist", "Checklist")}</span>
-                <textarea value={taskDraft.checklist} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, checklist: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[120px]")} placeholder={tr("context.checklistPlaceholder", "Use [ ], [~], [x] prefixes if useful.")} />
-              </label>
             </div>
           </details>
 
           {isCreate ? (
             <div className={classNames("rounded-xl border px-3 py-3 text-xs", "glass-card text-[var(--color-text-muted)]")}>
-              {tr("context.newTaskHint", "Create a new shared task. Keep it lean; fill advanced fields only when they help coordination.")}
+              {tr("context.newTaskHint", "Create a new shared task. Keep it lean, then apply a scaffold only when the workflow needs sharper control.")}
             </div>
           ) : selectedTask ? (
             <div className={classNames("grid gap-2 rounded-xl border px-3 py-3 text-xs sm:grid-cols-2", "glass-card text-[var(--color-text-muted)]")}>
@@ -1566,8 +1924,22 @@ export function ContextModal({
           ) : null}
 
           <div className="flex items-center gap-2">
+            {!isCreate && selectedTask ? (
+              <button
+                type="button"
+                onClick={() => void handleDeleteTask(selectedTask)}
+                disabled={syncBusy || !selectedTaskDeleteInfo.allowed}
+                className={buttonDangerClass}
+                title={selectedTaskDeleteHint || undefined}
+              >
+                {tr("context.deleteTask", "Delete")}
+              </button>
+            ) : null}
             <button type="button" onClick={() => void handleSaveTask()} disabled={syncBusy} className={buttonPrimaryClass}>{syncBusy ? tr("context.saving", "Saving…") : (isCreate ? tr("context.createTask", "Create task") : tr("context.saveTask", "Save task"))}</button>
           </div>
+          {!isCreate && selectedTaskDeleteHint ? (
+            <div className={classNames("text-xs", mutedTextClass)}>{selectedTaskDeleteHint}</div>
+          ) : null}
         </div>
       </section>
     );
@@ -1888,32 +2260,60 @@ export function ContextModal({
                     {label} · {count}
                   </button>
                 ))}
-                <span className={classNames("text-xs", mutedTextClass)}>{tr("context.filteredTasks", "{{count}} visible", { count: filteredTaskTotal })}</span>
+                {hasArchivedTasks ? (
+                  <div className="flex items-center gap-2 sm:ml-auto">
+                    <span className={classNames("text-sm font-medium", "text-[var(--color-text-primary)]")}>
+                      {tr("context.showArchived", "Show archived")}
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={archivedExpanded}
+                      aria-label={tr("context.showArchived", "Show archived")}
+                      onClick={() => setArchivedExpanded((current) => !current)}
+                      className={switchTrackClass(archivedExpanded)}
+                    >
+                      <span className={switchThumbClass(archivedExpanded)} />
+                    </button>
+                  </div>
+                ) : null}
                 {syncBusy ? <span className={classNames("text-xs italic", mutedTextClass)}>{tr("context.applyingChanges", "Applying changes…")}</span> : null}
               </div>
             </div>
 
-            {filteredTaskTotal === 0 ? (
+            {!hasVisibleTasks && hiddenArchivedMatches === 0 ? (
               <div className={classNames("rounded-xl border border-dashed px-4 py-6 text-sm", "glass-card text-[var(--color-text-muted)]")}>
                 {tr("context.noMatchingTasks", "No tasks match the current filters")}
               </div>
             ) : null}
 
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,420px)]">
-              <div className="min-w-0">
-                <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setDragTaskId("")}>
-                  <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
-                    <ColumnDropZone columnKey="planned" label={tr("context.planned", "Planned")} items={filteredBoard.planned} />
-                    <ColumnDropZone columnKey="active" label={tr("context.active", "Active")} items={filteredBoard.active} />
-                    <ColumnDropZone columnKey="done" label={tr("context.done", "Done")} items={filteredBoard.done} />
-                    <ColumnDropZone columnKey="archived" label={tr("context.archived", "Archived")} items={filteredBoard.archived} />
-                  </div>
-                  <DragOverlay>{dragTaskId && taskMap.get(dragTaskId) ? <TaskGhostCard task={taskMap.get(dragTaskId)!} /> : null}</DragOverlay>
-                </DndContext>
+            {!hasVisibleTasks && hiddenArchivedMatches > 0 ? (
+              <div className={classNames("rounded-xl border border-dashed px-4 py-5 text-sm", "glass-card text-[var(--color-text-muted)]")}>
+                <div>{tr("context.archivedHiddenMatchesDetail", "{{count}} archived tasks match the current filters. Show archived to review them.", { count: hiddenArchivedMatches })}</div>
+                <div className="mt-3">
+                  <button type="button" onClick={() => setArchivedExpanded(true)} className={buttonSecondaryClass}>
+                    {tr("context.showArchived", "Show archived")}
+                  </button>
+                </div>
               </div>
-              <div className="min-w-0">
-                {renderTaskEditorPanel()}
-              </div>
+            ) : null}
+
+            <div className="min-w-0">
+              <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setDragTaskId("")}>
+                <div className={classNames("grid gap-3 md:grid-cols-2", archivedExpanded ? "xl:grid-cols-4" : "xl:grid-cols-3")}>
+                  <ColumnDropZone columnKey="planned" label={tr("context.planned", "Planned")} items={filteredBoard.planned} />
+                  <ColumnDropZone columnKey="active" label={tr("context.active", "Active")} items={filteredBoard.active} />
+                  <ColumnDropZone columnKey="done" label={tr("context.done", "Done")} items={filteredBoard.done} />
+                  {archivedExpanded ? (
+                    <ColumnDropZone
+                      columnKey="archived"
+                      label={tr("context.archived", "Archived")}
+                      items={filteredBoard.archived}
+                    />
+                  ) : null}
+                </div>
+                <DragOverlay>{dragTaskId && taskMap.get(dragTaskId) ? <TaskGhostCard task={taskMap.get(dragTaskId)!} /> : null}</DragOverlay>
+              </DndContext>
             </div>
           </div>
         </section>
@@ -1952,6 +2352,30 @@ export function ContextModal({
           </div>
         </div>
       </ModalFrame>
+
+      {taskEditorVisible && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[65] animate-fade-in"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="context-task-drawer-title"
+            >
+              <div className="absolute inset-0 glass-overlay" onPointerDown={closeTaskEditor} />
+              <div className="absolute inset-y-0 right-0 flex w-full justify-end">
+                <div className="h-full w-full sm:w-[min(860px,calc(100vw-1.5rem))]">
+                  <div className="h-full overflow-y-auto border-l border-[var(--glass-border-subtle)] shadow-2xl glass-modal">
+                    <div className="sr-only" id="context-task-drawer-title">
+                      {taskEditorMode === "create" ? tr("context.newTask", "New task") : tr("context.taskDetails", "Task editor")}
+                    </div>
+                    {renderTaskEditorPanel()}
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
 
       {projectExpanded && typeof document !== "undefined"
         ? createPortal(

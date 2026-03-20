@@ -264,6 +264,7 @@ def _build_builtin_search_records() -> List[Dict[str, Any]]:
                 "enable_supported": True,
                 "tool_count": len(tuple(pack.get("tool_names") or ())),
                 "tool_names": [str(x).strip() for x in tuple(pack.get("tool_names") or ()) if str(x).strip()],
+                **_capability_recommendation_payload(pack),
             }
         )
     for cap_id in all_builtin_skill_ids():
@@ -282,6 +283,7 @@ def _build_builtin_search_records() -> List[Dict[str, Any]]:
                 "qualification_status": "qualified",
                 "sync_state": "fresh",
                 "enable_supported": True,
+                **_capability_recommendation_payload(skill),
             }
         )
     return out
@@ -324,6 +326,44 @@ def _skill_capsule_preview(value: Any, *, max_lines: int = 4, max_chars: int = 4
     return merged[: max_chars - 3].rstrip() + "..."
 
 
+def _recommendation_lines(value: Any) -> List[str]:
+    rows = value if isinstance(value, (list, tuple)) else []
+    out: List[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        text = " ".join(str(row or "").split()).strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
+def _capability_recommendation_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    for field in ("use_when", "avoid_when", "gotchas"):
+        rows = _recommendation_lines(raw.get(field))
+        if rows:
+            payload[field] = rows
+    evidence_kind = " ".join(str(raw.get("evidence_kind") or "").split()).strip()
+    if evidence_kind:
+        payload["evidence_kind"] = evidence_kind
+    return payload
+
+
+def _capability_recommendation_search_text(item: Dict[str, Any]) -> str:
+    chunks: List[str] = []
+    for field in ("use_when", "avoid_when", "gotchas"):
+        chunks.extend(_recommendation_lines(item.get(field)))
+    evidence_kind = " ".join(str(item.get("evidence_kind") or "").split()).strip()
+    if evidence_kind:
+        chunks.append(evidence_kind)
+    return " ".join(chunks)
+
+
 def _search_matches(query: str, item: Dict[str, Any]) -> bool:
     q = str(query or "").strip().lower()
     if not q:
@@ -333,6 +373,7 @@ def _search_matches(query: str, item: Dict[str, Any]) -> bool:
         str(item.get("name") or ""),
         str(item.get("description_short") or ""),
         " ".join(str(x) for x in (item.get("tags") or [])),
+        _capability_recommendation_search_text(item),
     ]
     haystack = " ".join(fields).lower()
     if q in haystack:
@@ -352,6 +393,7 @@ def _score_item_tokens(item: Dict[str, Any], tokens: List[str]) -> int:
         str(item.get("description_short") or ""),
         " ".join(str(x) for x in (item.get("tags") or [])),
         " ".join(str(x) for x in (item.get("tool_names") or [])),
+        _capability_recommendation_search_text(item),
     ]
     haystack = " ".join(fields).lower()
     if not haystack:
@@ -599,6 +641,7 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
                 "blocked_global": bool(blocked),
                 "autoload_candidate": bool(enable_supported and (not blocked) and (_policy_level_visible(policy_level) or bool(recent_payload))),
                 "policy_visible": bool(_policy_level_visible(policy_level)),
+                **_capability_recommendation_payload(rec),
             }
             if blocked_reason:
                 item["blocked_reason"] = blocked_reason
@@ -1017,6 +1060,7 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
                 "install_mode": str(rec.get("install_mode") or ""),
                 "policy_level": str(rec.get("policy_level") or ""),
                 "tags": list(rec.get("tags") or []),
+                **_capability_recommendation_payload(rec),
             }
             if cached_install_state:
                 item["cached_install_state"] = cached_install_state

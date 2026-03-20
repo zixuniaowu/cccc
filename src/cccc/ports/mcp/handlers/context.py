@@ -223,6 +223,10 @@ def task_restore(*, group_id: str, task_id: str, by: Optional[str] = None) -> Di
     return context_sync(group_id=group_id, ops=[{"op": "task.restore", "task_id": task_id}], by=by)
 
 
+def task_delete(*, group_id: str, task_id: str, by: Optional[str] = None) -> Dict[str, Any]:
+    return context_sync(group_id=group_id, ops=[{"op": "task.delete", "task_id": task_id}], by=by)
+
+
 def agent_state_get(*, group_id: str, actor_id: Optional[str] = None, include_warm: bool = True) -> Dict[str, Any]:
     snapshot = context_get(group_id=group_id, include_archived=True)
     states = snapshot.get("agent_states") if isinstance(snapshot.get("agent_states"), list) else []
@@ -494,6 +498,7 @@ def _handle_context_namespace(
     task_update_fn: Callable[..., Dict[str, Any]],
     task_move_fn: Callable[..., Dict[str, Any]],
     task_restore_fn: Callable[..., Dict[str, Any]],
+    task_delete_fn: Callable[..., Dict[str, Any]],
     agent_state_get_fn: Callable[..., Dict[str, Any]],
     agent_state_update_fn: Callable[..., Dict[str, Any]],
     agent_state_clear_fn: Callable[..., Dict[str, Any]],
@@ -597,7 +602,9 @@ def _handle_context_namespace(
             )
         if action == "restore":
             return task_restore_fn(group_id=gid, task_id=str(arguments.get("task_id") or ""), by=by)
-        raise MCPError(code="invalid_request", message="cccc_task action must be list|create|update|move|restore")
+        if action == "delete":
+            return task_delete_fn(group_id=gid, task_id=str(arguments.get("task_id") or ""), by=by)
+        raise MCPError(code="invalid_request", message="cccc_task action must be list|create|update|move|restore|delete")
 
     if name == "cccc_agent_state":
         gid = resolve_group_id(arguments)

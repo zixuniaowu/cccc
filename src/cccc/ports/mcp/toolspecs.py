@@ -539,14 +539,14 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_task",
-        "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore. Use for multi-actor, long-horizon, or user-tracked work.",
+        "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore|delete. Use for multi-actor, long-horizon, or user-tracked work.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 **_COMMON_ACTOR,
                 "action": {
                     "type": "string",
-                    "enum": ["list", "create", "update", "move", "restore"],
+                    "enum": ["list", "create", "update", "move", "restore", "delete"],
                     "default": "list",
                 },
                 "task_id": {"type": "string"},

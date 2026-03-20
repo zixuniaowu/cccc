@@ -153,6 +153,10 @@ export type CapabilityOverviewItem = {
   kind?: string;
   name?: string;
   description_short?: string;
+  use_when?: string[];
+  avoid_when?: string[];
+  gotchas?: string[];
+  evidence_kind?: string;
   source_id?: string;
   source_uri?: string;
   source_tier?: string;
@@ -224,6 +228,10 @@ export type CapabilityImportRecord = {
   install_spec?: { command?: string; package?: string; url?: string };
   name?: string;
   description_short?: string;
+  use_when?: string[];
+  avoid_when?: string[];
+  gotchas?: string[];
+  evidence_kind?: string;
   source_id?: string;
   [key: string]: unknown;
 };

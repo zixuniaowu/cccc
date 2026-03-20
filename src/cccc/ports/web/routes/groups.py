@@ -429,6 +429,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             atomic_write_text(project_md_path, str(req.content or ""), encoding="utf-8")
             content = project_md_path.read_text(encoding="utf-8", errors="replace")
             try:
+                await _invalidate_context_read(group_id)
                 await ctx.daemon({
                     "op": "context_sync",
                     "args": {
@@ -714,7 +715,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         Supported ops:
         - coordination.brief.update / coordination.note.add
-        - task.create/update/move/restore
+        - task.create/update/move/restore/delete
         - agent_state.update/clear
         - meta.merge (advanced, restricted keys)
         """

@@ -501,6 +501,14 @@ class ContextStorage:
             encoding="utf-8",
         )
 
+    def delete_task(self, task_id: str) -> bool:
+        path = self._task_path(task_id)
+        self._tasks_raw.pop(path.name, None)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
     def list_tasks(self) -> List[Task]:
         tasks: List[Task] = []
         if self.tasks_dir.exists():

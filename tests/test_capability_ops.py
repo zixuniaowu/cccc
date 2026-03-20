@@ -3845,6 +3845,10 @@ class TestCapabilityOps(unittest.TestCase):
                         "source_id": "github_skills_curated",
                         "capsule_text": "Use triage checklist",
                         "requires_capabilities": ["pack:group-runtime"],
+                        "use_when": ["incident triage and debugging work"],
+                        "avoid_when": ["greenfield feature implementation"],
+                        "gotchas": ["capture concrete failing evidence before routing work"],
+                        "evidence_kind": "error log plus minimal repro note",
                     },
                 },
             )
@@ -3870,6 +3874,128 @@ class TestCapabilityOps(unittest.TestCase):
             _, catalog_doc = ops._load_catalog_doc()
             rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
             self.assertIn(capability_id, rows)
+            record = rows.get(capability_id) if isinstance(rows.get(capability_id), dict) else {}
+            self.assertEqual(record.get("use_when"), ["incident triage and debugging work"])
+            self.assertEqual(record.get("avoid_when"), ["greenfield feature implementation"])
+            self.assertEqual(record.get("gotchas"), ["capture concrete failing evidence before routing work"])
+            self.assertEqual(str(record.get("evidence_kind") or ""), "error log plus minimal repro note")
+        finally:
+            cleanup()
+
+    def test_capability_overview_search_matches_recommendation_fields(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            capability_id = "skill:github:demo:triage"
+
+            import_resp, _ = self._call(
+                "capability_import",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "record": {
+                        "capability_id": capability_id,
+                        "kind": "skill",
+                        "name": "Demo Triage",
+                        "description_short": "Imported skill capsule",
+                        "source_id": "github_skills_curated",
+                        "capsule_text": "Use triage checklist",
+                        "use_when": ["incident triage and debugging work"],
+                        "avoid_when": ["greenfield feature implementation"],
+                        "gotchas": ["capture concrete failing evidence before routing work"],
+                        "evidence_kind": "error log plus minimal repro note",
+                    },
+                },
+            )
+            self.assertTrue(import_resp.ok, getattr(import_resp, "error", None))
+
+            overview_resp, _ = self._call(
+                "capability_overview",
+                {
+                    "query": "minimal repro note",
+                    "limit": 50,
+                    "include_indexed": True,
+                },
+            )
+            self.assertTrue(overview_resp.ok, getattr(overview_resp, "error", None))
+            result = overview_resp.result if isinstance(overview_resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            row = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and str(item.get("capability_id") or "") == capability_id
+                ),
+                None,
+            )
+            self.assertIsNotNone(row)
+            item = row if isinstance(row, dict) else {}
+            self.assertEqual(item.get("use_when"), ["incident triage and debugging work"])
+            self.assertEqual(item.get("avoid_when"), ["greenfield feature implementation"])
+            self.assertEqual(item.get("gotchas"), ["capture concrete failing evidence before routing work"])
+            self.assertEqual(str(item.get("evidence_kind") or ""), "error log plus minimal repro note")
+        finally:
+            cleanup()
+
+    def test_capability_search_matches_recommendation_fields(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            capability_id = "skill:github:demo:triage"
+
+            import_resp, _ = self._call(
+                "capability_import",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "record": {
+                        "capability_id": capability_id,
+                        "kind": "skill",
+                        "name": "Demo Triage",
+                        "description_short": "Imported skill capsule",
+                        "source_id": "github_skills_curated",
+                        "capsule_text": "Use triage checklist",
+                        "use_when": ["incident triage and debugging work"],
+                        "gotchas": ["capture concrete failing evidence before routing work"],
+                        "evidence_kind": "error log plus minimal repro note",
+                    },
+                },
+            )
+            self.assertTrue(import_resp.ok, getattr(import_resp, "error", None))
+
+            search_resp, _ = self._call(
+                "capability_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "query": "failing evidence",
+                    "kind": "skill",
+                    "include_external": True,
+                    "limit": 20,
+                },
+            )
+            self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+            result = search_resp.result if isinstance(search_resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            row = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and str(item.get("capability_id") or "") == capability_id
+                ),
+                None,
+            )
+            self.assertIsNotNone(row)
+            item = row if isinstance(row, dict) else {}
+            self.assertEqual(item.get("gotchas"), ["capture concrete failing evidence before routing work"])
+            self.assertEqual(str(item.get("evidence_kind") or ""), "error log plus minimal repro note")
         finally:
             cleanup()
 

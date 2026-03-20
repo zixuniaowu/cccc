@@ -42,6 +42,10 @@ describe("rolePresets", () => {
     expect(debuggerPreset).toContain("Confirm the leading hypothesis");
     expect(debuggerPreset).toContain("regression test");
 
+    const coordinator = getRolePresetById("coordinator")?.content || "";
+    expect(coordinator).toContain("not governance authority");
+    expect(coordinator).toContain("Do not behave like a second foreman");
+
     const explorer = getRolePresetById("explorer")?.content || "";
     expect(explorer).toContain("existing code already solves it partially");
   });

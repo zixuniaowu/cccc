@@ -58,6 +58,8 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertNotIn("### Terminal Transcript", body)
         self.assertNotIn("### Automation Tools", body)
         self.assertNotIn("## Quick Card", body)
+        self.assertIn("Treat `done`, `idle`, and silence as evaluation signals, not closure truth.", body)
+        self.assertIn("Protect verifier boundaries unless changing the verifier is explicitly in scope.", body)
 
     def test_mcp_reminder_line_stays_single_purpose(self) -> None:
         from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE

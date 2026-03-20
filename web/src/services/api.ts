@@ -1319,6 +1319,11 @@ export async function updateCoordinationTask(groupId: string, task: Task) {
 }
 
 
+export async function deleteCoordinationTask(groupId: string, taskId: string) {
+  return contextSync(groupId, [{ op: "task.delete", task_id: String(taskId || "") }]);
+}
+
+
 export async function fetchSettings(groupId: string) {
   return apiJson<{ settings: GroupSettings }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/settings`
