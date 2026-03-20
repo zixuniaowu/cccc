@@ -6,6 +6,7 @@ export { IMBridgeTab } from "./IMBridgeTab";
 export { TranscriptTab } from "./TranscriptTab";
 export { GuidanceTab } from "./GuidanceTab";
 export { GroupSpaceTab } from "./GroupSpaceTab";
+export { BlueprintTab } from "./BlueprintTab";
 export { WebAccessTab } from "./WebAccessTab";
 export { InfoPopover } from "./InfoPopover";
 export { DeveloperTab } from "./DeveloperTab";

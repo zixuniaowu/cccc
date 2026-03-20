@@ -1,5 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { DirItem, DirSuggestion } from "../../types";
+import { TemplatePreviewDetails } from "../TemplatePreviewDetails";
+import type { TemplatePreviewDetailsProps } from "../TemplatePreviewDetails";
 import { useModalA11y } from "../../hooks/useModalA11y";
 
 export interface CreateGroupModalProps {
@@ -16,6 +18,11 @@ export interface CreateGroupModalProps {
   setCreateGroupPath: (path: string) => void;
   createGroupName: string;
   setCreateGroupName: (name: string) => void;
+  createGroupTemplateFile: File | null;
+  templatePreview: TemplatePreviewDetailsProps["template"] | null;
+  templateError: string;
+  templateBusy: boolean;
+  onSelectTemplate: (file: File | null) => void;
 
   dirBrowseError?: string;
   onFetchDirContents: (path: string) => void;
@@ -36,7 +43,12 @@ export function CreateGroupModal({
   setCreateGroupPath,
   createGroupName,
   setCreateGroupName,
+  createGroupTemplateFile,
+  templatePreview,
+  templateError,
+  templateBusy,
   dirBrowseError,
+  onSelectTemplate,
   onFetchDirContents,
   onCreateGroup,
   onClose,
@@ -171,15 +183,70 @@ export function CreateGroupModal({
               placeholder={t("createGroup.groupNamePlaceholder")}
             />
           </div>
+
+          <div>
+              <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                {t("createGroup.blueprintLabel")}
+              </label>
+            <div className="rounded-xl px-4 py-3 glass-panel">
+              <div className="flex items-center gap-3">
+                <input
+                  key={createGroupTemplateFile ? createGroupTemplateFile.name : "none"}
+                  type="file"
+                  accept=".yaml,.yml,.json"
+                  className="text-sm text-[var(--color-text-secondary)]"
+                  disabled={templateBusy || busy === "create"}
+                  onChange={(e) => {
+                    const f = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+                    onSelectTemplate(f);
+                  }}
+                />
+                {createGroupTemplateFile && (
+                  <button
+                    type="button"
+                    className="ml-auto px-3 py-2 rounded-lg text-sm min-h-[40px] transition-colors glass-btn text-[var(--color-text-secondary)]"
+                    disabled={templateBusy || busy === "create"}
+                    onClick={() => onSelectTemplate(null)}
+                  >
+                    {t("common:reset")}
+                  </button>
+                )}
+              </div>
+              {templateBusy && (
+                <div className="mt-2 text-xs text-[var(--color-text-muted)]">{t("createGroup.loadingBlueprint")}</div>
+              )}
+              {!templateBusy && templateError && (
+                <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{templateError}</div>
+              )}
+              {!templateBusy && createGroupTemplateFile && !!templatePreview && (
+                <div className="mt-3">
+                  <TemplatePreviewDetails
+                    template={templatePreview}
+                    detailsOpenByDefault={true}
+                    wrap={false}
+                  />
+                </div>
+              )}
+              <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                {t("createGroup.blueprintHint")}
+              </div>
+            </div>
+          </div>
         </div>
         <div className="px-6 py-4 border-t border-[var(--glass-border-subtle)]">
           <div className="flex gap-3">
             <button
               className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 text-sm font-semibold shadow-lg disabled:opacity-50 transition-all min-h-[44px]"
               onClick={onCreateGroup}
-              disabled={!createGroupPath.trim() || busy === "create"}
+              disabled={
+                !createGroupPath.trim() ||
+                busy === "create" ||
+                templateBusy ||
+                (!!createGroupTemplateFile && !templatePreview) ||
+                (!!createGroupTemplateFile && !!templateError)
+              }
             >
-              {busy === "create" ? t("createGroup.creating") : t("createGroup.createGroup")}
+              {busy === "create" ? t("createGroup.creating") : createGroupTemplateFile ? t("createGroup.createFromBlueprint") : t("createGroup.createGroup")}
             </button>
             <button
               className="px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] glass-btn text-[var(--color-text-secondary)]"

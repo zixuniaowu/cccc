@@ -188,42 +188,6 @@ describe("api bootstrap read cache", () => {
     expect(groupGets).toHaveLength(2);
   });
 
-  it("lets bypassRecent reuse an in-flight groups request", async () => {
-    const deferred = createDeferred<{
-      status: number;
-      ok: boolean;
-      text: () => Promise<string>;
-    }>();
-
-    fetchMock.mockImplementation((path: string, init?: RequestInit) => {
-      const method = String(init?.method || "GET").toUpperCase();
-      if (path === "/api/v1/groups" && method === "GET") {
-        return deferred.promise;
-      }
-      return Promise.reject(new Error(`unexpected request: ${method} ${path}`));
-    });
-
-    const api = await import("../../src/services/api");
-    const first = api.fetchGroups();
-    const second = api.fetchGroups({ bypassRecent: true });
-    deferred.resolve({
-      status: 200,
-      ok: true,
-      text: async () => JSON.stringify({ ok: true, result: { groups: [{ group_id: "g-demo" }] } }),
-    });
-
-    const [firstResp, secondResp] = await Promise.all([first, second]);
-    expect(firstResp.ok).toBe(true);
-    expect(secondResp.ok).toBe(true);
-
-    const groupGets = fetchMock.mock.calls.filter(
-      ([path, init]) =>
-        path === "/api/v1/groups" &&
-        String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
-    );
-    expect(groupGets).toHaveLength(1);
-  });
-
   it("does not let an invalidated stale groups read repopulate the recent cache", async () => {
     const staleRead = createDeferred<{
       status: number;

@@ -31,6 +31,7 @@ interface FormState {
   // Create Group
   createGroupPath: string;
   createGroupName: string;
+  createGroupTemplateFile: File | null;
   dirItems: DirItem[];
   dirSuggestions: DirSuggestion[];
   currentDir: string;
@@ -66,6 +67,7 @@ interface FormState {
   // Actions - Create Group
   setCreateGroupPath: (v: string) => void;
   setCreateGroupName: (v: string) => void;
+  setCreateGroupTemplateFile: (f: File | null) => void;
   setDirItems: (v: DirItem[]) => void;
   setDirSuggestions: (v: DirSuggestion[]) => void;
   setCurrentDir: (v: string) => void;
@@ -103,6 +105,7 @@ export const useFormStore = create<FormState>((set) => ({
   // Initial state - Create Group
   createGroupPath: "",
   createGroupName: "",
+  createGroupTemplateFile: null,
   dirItems: [],
   dirSuggestions: [],
   currentDir: "",
@@ -151,6 +154,7 @@ export const useFormStore = create<FormState>((set) => ({
   // Actions - Create Group
   setCreateGroupPath: (v) => set({ createGroupPath: v }),
   setCreateGroupName: (v) => set({ createGroupName: v }),
+  setCreateGroupTemplateFile: (f) => set({ createGroupTemplateFile: f }),
   setDirItems: (v) => set({ dirItems: v }),
   setDirSuggestions: (v) => set({ dirSuggestions: v }),
   setCurrentDir: (v) => set({ currentDir: v }),
@@ -160,6 +164,7 @@ export const useFormStore = create<FormState>((set) => ({
     set({
       createGroupPath: "",
       createGroupName: "",
+      createGroupTemplateFile: null,
       dirItems: [],
       showDirBrowser: false,
     }),

@@ -10,6 +10,7 @@
     "messaging": "メッセージルーティング",
     "im": "IMブリッジ",
     "transcript": "ターミナルログ",
+    "blueprint": "ブループリント",
     "actorProfiles": "Actor プロファイル",
     "myProfiles": "自分のプロファイル",
     "developer": "開発者",
@@ -624,6 +625,24 @@
     "unknownRole": "不明な役割",
     "legacyRoleNotesHint": "旧形式の Role Notes を検出し、構造化フィールドへマッピングしました。ここで保存すると最新の scoped help 形式へ正規化されます。",
     "noScopeWarning": "このグループにはまだ scope が紐づいていません。guidance override 自体は CCCC_HOME 配下に保存されるため機能しますが、repo 連携が必要な機能は scope を紐づけるまで利用できない場合があります。"
+  },
+  "blueprint": {
+    "openFromGroup": "グループからこのタブを開きます。",
+    "exportTitle": "エクスポート",
+    "exportDescription": "このグループのエージェント、設定、自動化ルール、およびガイダンスを 1 つのポータブルファイルとして保存します。",
+    "exportBlueprint": "ブループリントのエクスポート",
+    "downloaded": "ダウンロード済み",
+    "applied": "適用済み",
+    "importTitle": "インポート（置換）",
+    "importDescription": "エージェント、設定、自動化ルール/スニペット、およびグループガイダンス上書きを置き換えてブループリントを適用します。台帳履歴は変更されません。",
+    "blueprintFile": "ブループリントファイル",
+    "working": "処理中…",
+    "applyReplace": "適用（置き換え）",
+    "pickFileFirst": "最初にプレビューするファイルを選択してください",
+    "replaceConfirm": "このグループのエージェント、設定、自動化ルール、およびガイダンスを「{{filename}}」で置き換えますか？\n\nこれにより、エージェントの実行が停止され、CCCC_HOME でグループガイダンスの上書きが適用されます。\n- CCCC_PREAMBLE.md\n- CCCC_HELP.md",
+    "failedToPreview": "ブループリントのプレビューに失敗しました",
+    "failedToExport": "ブループリントのエクスポートに失敗しました",
+    "failedToImport": "ブループリントのインポートに失敗しました"
   },
   "developer": {
     "title": "開発者モード (グローバル)",

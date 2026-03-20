@@ -18,13 +18,9 @@ export function shouldRefreshGroupsAfterGlobalEventsOpen(_hasConnectedOnce: bool
   return true;
 }
 
-export function shouldInvalidateGroupsReadAfterGlobalEventsOpen(hasConnectedOnce: boolean): boolean {
-  return hasConnectedOnce;
-}
-
 interface UseGlobalEventsOptions {
   /** Callback to refresh groups when events are received */
-  refreshGroups: (opts?: { bypassRecent?: boolean }) => void;
+  refreshGroups: () => void;
 }
 
 /**
@@ -90,21 +86,14 @@ export function useGlobalEvents({ refreshGroups }: UseGlobalEventsOptions): void
       });
       es.onopen = () => {
         const shouldRefresh = shouldRefreshGroupsAfterGlobalEventsOpen(hasConnectedOnceRef.current);
-        const shouldInvalidate = shouldInvalidateGroupsReadAfterGlobalEventsOpen(hasConnectedOnceRef.current);
         errorCount = 0; // Reset on successful connection
         fallbackDelayMs = 10000;
         clearFallbackTimer();
         hasConnectedOnceRef.current = true;
-        // Global event streams start from EOF, so the first open still needs a
-        // catch-up refresh. We only avoid blowing away the warm recent-read on
-        // first open so the store can decide whether it can reuse in-flight
-        // work or must schedule one fresh follow-up read after bootstrap.
+        // Global event streams start from EOF, so both first connect and
+        // reconnect need a catch-up refresh to cover the open window.
         if (shouldRefresh) {
-          if (shouldInvalidate) {
-            invalidateAndRefreshGroups();
-          } else {
-            refreshGroupsRef.current({ bypassRecent: true });
-          }
+          invalidateAndRefreshGroups();
         }
       };
       es.onerror = () => {
