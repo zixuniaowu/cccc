@@ -22,8 +22,8 @@ interface UseChatTabOptions {
   /** Callback for when message is sent */
   onMessageSent?: () => void;
   /** Refs for composer interactions */
-  composerRef?: React.RefObject<HTMLTextAreaElement>;
-  fileInputRef?: React.RefObject<HTMLInputElement>;
+  composerRef?: React.RefObject<HTMLTextAreaElement | null>;
+  fileInputRef?: React.RefObject<HTMLInputElement | null>;
   /** Chat at bottom ref for scroll state */
   chatAtBottomRef?: React.MutableRefObject<boolean>;
   /** Scroll container ref for programmatic scrolling (e.g. after send) */

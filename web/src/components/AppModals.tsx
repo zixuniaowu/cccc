@@ -36,7 +36,7 @@ import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMess
 interface AppModalsProps {
   isDark: boolean;
   ccccHome: string;
-  composerRef: React.RefObject<HTMLTextAreaElement>;
+  composerRef: React.RefObject<HTMLTextAreaElement | null>;
   onStartReply: (ev: LedgerEvent) => void;
   onThemeToggle: () => void;
   onStartGroup: () => Promise<void>;

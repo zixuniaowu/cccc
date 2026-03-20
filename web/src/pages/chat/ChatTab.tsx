@@ -30,8 +30,8 @@ export interface ChatTabProps {
 
   // Refs (shared with App for external interactions)
   scrollRef: MutableRefObject<HTMLDivElement | null>;
-  composerRef: RefObject<HTMLTextAreaElement>;
-  fileInputRef: RefObject<HTMLInputElement>;
+  composerRef: RefObject<HTMLTextAreaElement | null>;
+  fileInputRef: RefObject<HTMLInputElement | null>;
 
   // Refs for scroll state (shared with App)
   chatAtBottomRef?: MutableRefObject<boolean>;

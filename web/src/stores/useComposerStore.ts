@@ -2,6 +2,21 @@
 import { create } from "zustand";
 import type { ReplyTarget } from "../types";
 
+export function getEffectiveComposerDestGroupId(
+  destGroupId: string,
+  activeGroupId: string,
+  selectedGroupId: string
+): string {
+  const selected = String(selectedGroupId || "").trim();
+  const active = String(activeGroupId || "").trim();
+  const dest = String(destGroupId || "").trim();
+
+  if (!selected) return dest;
+  // 切组首帧 composer 可能仍挂在旧组，先避免把旧目标组带到新组。
+  if (active !== selected) return selected;
+  return dest || selected;
+}
+
 interface GroupDraft {
   composerText: string;
   composerFiles: File[];

@@ -87,6 +87,79 @@ describe("api.fetchActors", () => {
   });
 });
 
+describe("blueprint api entrypoints", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    fetchMock.mockReset();
+    sessionStorageMock.clear();
+  });
+
+  afterEach(async () => {
+    const api = await import("../../src/services/api");
+    api.clearAuthToken();
+  });
+
+  it("keeps create-group blueprint import on the form endpoint", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { group_id: "g-new" } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const file = new File(["title: demo"], "group-template.yaml", { type: "text/yaml" });
+    const resp = await api.createGroupFromTemplate("/tmp/demo", "Demo", "", file);
+
+    expect(resp.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/from_template",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData),
+      }),
+    );
+  });
+
+  it("keeps settings blueprint preview/import endpoints wired", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { applied: true } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const file = new File(["title: demo"], "group-template.yaml", { type: "text/yaml" });
+
+    await api.exportGroupTemplate("g-demo");
+    await api.previewGroupTemplate("g-demo", file);
+    await api.importGroupTemplateReplace("g-demo", file);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/groups/g-demo/template/export",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "content-type": "application/json" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/groups/g-demo/template/preview_upload",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/groups/g-demo/template/import_replace",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData),
+      }),
+    );
+  });
+});
+
 describe("api bootstrap read cache", () => {
   beforeEach(() => {
     vi.resetModules();

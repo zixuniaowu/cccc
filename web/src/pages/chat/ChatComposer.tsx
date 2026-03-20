@@ -33,10 +33,10 @@ export interface ChatComposerProps {
   composerFiles: File[];
   onRemoveComposerFile: (index: number) => void;
   appendComposerFiles: (files: File[]) => void;
-  fileInputRef: RefObject<HTMLInputElement>;
+  fileInputRef: RefObject<HTMLInputElement | null>;
 
   // Text input
-  composerRef: RefObject<HTMLTextAreaElement>;
+  composerRef: RefObject<HTMLTextAreaElement | null>;
   composerText: string;
   setComposerText: Dispatch<SetStateAction<string>>;
   priority: "normal" | "attention";
@@ -569,7 +569,7 @@ export function ChatComposer({
       {/* Main Input Area - Perfectly Centered for Better Alignment */}
       <div className="flex gap-2 sm:gap-2.5 relative items-center">
         <input
-          ref={fileInputRef}
+          ref={fileInputRef as RefObject<HTMLInputElement>}
           type="file"
           multiple
           className="hidden"
@@ -597,7 +597,7 @@ export function ChatComposer({
         {/* Text Area Wrapper */}
         <div className="flex-1 relative min-w-0">
           <textarea
-            ref={composerRef}
+            ref={composerRef as RefObject<HTMLTextAreaElement>}
             className={classNames(
               "w-full rounded-xl sm:rounded-2xl border px-4 sm:px-5 pr-11 sm:pr-14 py-3 sm:py-3.5 text-base sm:text-sm resize-none min-h-[44px] sm:min-h-[48px] max-h-[160px] overflow-y-auto scrollbar-hide transition-all duration-300 ease-out",
               "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center shadow-sm",
