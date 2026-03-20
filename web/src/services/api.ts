@@ -36,6 +36,7 @@ import type {
   GroupTasksSummary,
   TaskBoardEntry,
   TaskChecklistItem,
+  ContextDetailLevel,
 } from "../types";
 import { actorProfileIdentityKey } from "../utils/actorProfiles";
 
@@ -52,7 +53,17 @@ export function onAuthRequired(handler: () => void): void {
   _authRequiredHandler = handler;
 }
 
+function clearAllReadRequestCaches(): void {
+  // Auth principal changed. Any shared/recent read keyed without principal
+  // must be discarded so the next read is forced onto the new identity.
+  globalReadEpoch += 1;
+  sharedReadRequests.clear();
+  recentReadResponses.clear();
+  recentReadGenerations.clear();
+}
+
 export function setAuthToken(token: string): void {
+  clearAllReadRequestCaches();
   cachedToken = token;
   try {
     sessionStorage.setItem("cccc_dev_token", token);
@@ -62,6 +73,7 @@ export function setAuthToken(token: string): void {
 }
 
 export function clearAuthToken(): void {
+  clearAllReadRequestCaches();
   cachedToken = "";
   try {
     sessionStorage.removeItem("cccc_dev_token");
@@ -145,6 +157,10 @@ export type ApiResponse<T> =
   | { ok: false; result?: unknown; error: { code: string; message: string; details?: unknown } };
 
 type SharedReadPromise = Promise<ApiResponse<unknown>>;
+type RecentReadEntry = {
+  response: ApiResponse<unknown>;
+  expiresAt: number;
+};
 
 // Helper to create a typed error response.
 function makeErrorResponse<T>(code: string, message: string): ApiResponse<T> {
@@ -152,6 +168,10 @@ function makeErrorResponse<T>(code: string, message: string): ApiResponse<T> {
 }
 
 const sharedReadRequests = new Map<string, SharedReadPromise>();
+const recentReadResponses = new Map<string, RecentReadEntry>();
+const recentReadGenerations = new Map<string, number>();
+const RECENT_BOOTSTRAP_READ_TTL_MS = 1000;
+let globalReadEpoch = 0;
 
 function reuseSharedReadRequest<T>(key: string, loader: () => Promise<ApiResponse<T>>): Promise<ApiResponse<T>> {
   const hit = sharedReadRequests.get(key);
@@ -166,33 +186,109 @@ function reuseSharedReadRequest<T>(key: string, loader: () => Promise<ApiRespons
   return task as Promise<ApiResponse<T>>;
 }
 
+function reuseRecentReadRequest<T>(
+  key: string,
+  ttlMs: number,
+  loader: () => Promise<ApiResponse<T>>
+): Promise<ApiResponse<T>> {
+  const cached = recentReadResponses.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.response as ApiResponse<T>);
+  }
+  const requestEpoch = globalReadEpoch;
+  const requestGeneration = recentReadGenerations.get(key) || 0;
+  return reuseSharedReadRequest(key, async () => {
+    const response = await loader();
+    const generationStillCurrent =
+      globalReadEpoch === requestEpoch && (recentReadGenerations.get(key) || 0) === requestGeneration;
+    if (response.ok && generationStillCurrent) {
+      recentReadResponses.set(key, {
+        response: response as ApiResponse<unknown>,
+        expiresAt: Date.now() + ttlMs,
+      });
+    } else {
+      recentReadResponses.delete(key);
+    }
+    return response;
+  });
+}
+
 function clearSharedReadRequest(key: string): void {
   sharedReadRequests.delete(key);
+}
+
+function clearRecentReadRequest(key: string): void {
+  recentReadGenerations.set(key, (recentReadGenerations.get(key) || 0) + 1);
+  recentReadResponses.delete(key);
+  clearSharedReadRequest(key);
 }
 
 function actorsReadOnlyRequestKey(groupId: string): string {
   return `actors:${String(groupId || "").trim()}:read-only`;
 }
 
+function groupsRequestKey(): string {
+  return "groups:list";
+}
+
 function groupPromptsRequestKey(groupId: string): string {
   return `group-prompts:${String(groupId || "").trim()}`;
 }
 
-function contextRequestKey(groupId: string): string {
-  return `context:${String(groupId || "").trim()}`;
+function pingRequestKey(includeHome: boolean): string {
+  return includeHome ? "ping:include-home" : "ping:default";
+}
+
+function webAccessSessionRequestKey(): string {
+  return "web-access-session";
+}
+
+function contextRequestKey(groupId: string, detail: ContextDetailLevel): string {
+  return `context:${String(groupId || "").trim()}:${detail}`;
+}
+
+function clearGroupsReadRequest(): void {
+  clearRecentReadRequest(groupsRequestKey());
+}
+
+export function invalidateGroupsRead(): void {
+  clearGroupsReadRequest();
+}
+
+function clearPingReadRequest(includeHome?: boolean): void {
+  if (typeof includeHome === "boolean") {
+    clearRecentReadRequest(pingRequestKey(includeHome));
+    return;
+  }
+  clearRecentReadRequest(pingRequestKey(false));
+  clearRecentReadRequest(pingRequestKey(true));
+}
+
+function clearWebAccessSessionReadRequest(): void {
+  clearRecentReadRequest(webAccessSessionRequestKey());
 }
 
 function clearActorsReadOnlyRequest(groupId: string): void {
   clearSharedReadRequest(actorsReadOnlyRequestKey(groupId));
 }
 
-function clearContextRequest(groupId: string): void {
-  clearSharedReadRequest(contextRequestKey(groupId));
+function clearContextRequest(groupId: string, detail?: ContextDetailLevel): void {
+  if (detail) {
+    clearSharedReadRequest(contextRequestKey(groupId, detail));
+    return;
+  }
+  clearSharedReadRequest(contextRequestKey(groupId, "summary"));
+  clearSharedReadRequest(contextRequestKey(groupId, "full"));
 }
 
 export function invalidateContextRead(groupId: string): void {
   clearContextRequest(groupId);
 }
+
+export type FetchContextOptions = {
+  fresh?: boolean;
+  detail?: ContextDetailLevel;
+};
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -481,14 +577,22 @@ export async function apiForm<T>(path: string, form: FormData, init?: RequestIni
 // ============ Groups ============
 
 export async function fetchGroups() {
-  return apiJson<{ groups: GroupMeta[] }>("/api/v1/groups");
+  return reuseRecentReadRequest(
+    groupsRequestKey(),
+    RECENT_BOOTSTRAP_READ_TTL_MS,
+    () => apiJson<{ groups: GroupMeta[] }>("/api/v1/groups")
+  );
 }
 
 export async function fetchPing(options?: { includeHome?: boolean }) {
   const includeHome = Boolean(options?.includeHome);
   const suffix = includeHome ? "?include_home=1" : "";
-  return apiJson<{ home?: string; daemon: unknown; version: string; web?: { mode?: string; read_only?: boolean } }>(
-    `/api/v1/ping${suffix}`
+  return reuseRecentReadRequest(
+    pingRequestKey(includeHome),
+    RECENT_BOOTSTRAP_READ_TTL_MS,
+    () => apiJson<{ home?: string; daemon: unknown; version: string; web?: { mode?: string; read_only?: boolean } }>(
+      `/api/v1/ping${suffix}`
+    )
   );
 }
 
@@ -497,6 +601,7 @@ export async function fetchGroup(groupId: string) {
 }
 
 export async function createGroup(title: string, topic: string = "") {
+  clearGroupsReadRequest();
   return apiJson<{ group_id: string }>("/api/v1/groups", {
     method: "POST",
     body: JSON.stringify({ title, topic, by: "user" }),
@@ -509,6 +614,7 @@ export async function createGroupFromTemplate(
   topic: string,
   file: File
 ) {
+  clearGroupsReadRequest();
   const form = new FormData();
   form.append("path", path);
   form.append("title", title);
@@ -525,6 +631,7 @@ export async function previewTemplate(file: File) {
 }
 
 export async function updateGroup(groupId: string, title: string, topic: string) {
+  clearGroupsReadRequest();
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}`, {
     method: "PUT",
     body: JSON.stringify({ title: title.trim(), topic: topic.trim(), by: "user" }),
@@ -532,6 +639,7 @@ export async function updateGroup(groupId: string, title: string, topic: string)
 }
 
 export async function deleteGroup(groupId: string) {
+  clearGroupsReadRequest();
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}?confirm=${encodeURIComponent(groupId)}&by=user`,
     { method: "DELETE" }
@@ -547,6 +655,7 @@ export async function attachScope(groupId: string, path: string) {
 
 export async function startGroup(groupId: string) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/start?by=user`, {
     method: "POST",
   });
@@ -554,6 +663,7 @@ export async function startGroup(groupId: string) {
 
 export async function stopGroup(groupId: string) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/stop?by=user`, {
     method: "POST",
   });
@@ -561,6 +671,7 @@ export async function stopGroup(groupId: string) {
 
 export async function setGroupState(groupId: string, state: "active" | "idle" | "paused") {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/state?state=${encodeURIComponent(state)}&by=user`,
     { method: "POST" }
@@ -758,6 +869,7 @@ export async function addActor(
   }
 ) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson<{ actor: Actor }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors`, {
     method: "POST",
     body: JSON.stringify({
@@ -797,6 +909,7 @@ export async function updateActor(
   }
 ) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   const body: Record<string, unknown> = { by: "user" };
   if (runtime !== undefined && runtime !== "") body.runtime = runtime;
   if (command !== undefined) body.command = command.trim();
@@ -818,6 +931,7 @@ export async function updateActor(
 
 export async function attachActorProfile(groupId: string, actorId: string, profileId: string, opts?: ProfileLookupOptions) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson<{ actor: Actor }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
     {
@@ -834,6 +948,7 @@ export async function attachActorProfile(groupId: string, actorId: string, profi
 
 export async function convertActorToCustom(groupId: string, actorId: string) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson<{ actor: Actor }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
     {
@@ -845,6 +960,7 @@ export async function convertActorToCustom(groupId: string, actorId: string) {
 
 export async function removeActor(groupId: string, actorId: string) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}?by=user`,
     { method: "DELETE" }
@@ -853,6 +969,7 @@ export async function removeActor(groupId: string, actorId: string) {
 
 export async function startActor(groupId: string, actorId: string) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/start`,
     { method: "POST" }
@@ -861,6 +978,7 @@ export async function startActor(groupId: string, actorId: string) {
 
 export async function stopActor(groupId: string, actorId: string) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/stop`,
     { method: "POST" }
@@ -869,6 +987,7 @@ export async function stopActor(groupId: string, actorId: string) {
 
 export async function restartActor(groupId: string, actorId: string) {
   clearActorsReadOnlyRequest(groupId);
+  clearGroupsReadRequest();
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/restart?by=user`,
     { method: "POST" }
@@ -1100,21 +1219,30 @@ export async function copyProfilePrivateEnvFromProfile(
 
 // ============ Context & Settings ============
 
-export async function fetchContext(groupId: string, opts?: { fresh?: boolean }) {
+export async function fetchContext(groupId: string, opts?: FetchContextOptions) {
   const gid = String(groupId || "").trim();
+  const detail: ContextDetailLevel = opts?.detail === "full" ? "full" : "summary";
+  const params = new URLSearchParams();
+  if (detail !== "summary") {
+    params.set("detail", detail);
+  }
   if (opts?.fresh) {
     clearContextRequest(gid);
-    return reuseSharedReadRequest(contextRequestKey(gid), async () => {
-      const sep = `/api/v1/groups/${encodeURIComponent(gid)}/context`.includes("?") ? "&" : "?";
+    params.set("fresh", "1");
+    params.set("_", String(Date.now()));
+    return reuseSharedReadRequest(contextRequestKey(gid, detail), async () => {
       const resp = await apiJson<unknown>(
-        `/api/v1/groups/${encodeURIComponent(gid)}/context${sep}fresh=1&_=${Date.now()}`
+        `/api/v1/groups/${encodeURIComponent(gid)}/context?${params.toString()}`
       );
       if (!resp.ok) return resp as ApiResponse<GroupContext>;
       return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
     });
   }
-  return reuseSharedReadRequest(contextRequestKey(gid), async () => {
-    const resp = await apiJson<unknown>(`/api/v1/groups/${encodeURIComponent(gid)}/context`);
+  return reuseSharedReadRequest(contextRequestKey(gid, detail), async () => {
+    const suffix = params.toString();
+    const resp = await apiJson<unknown>(
+      `/api/v1/groups/${encodeURIComponent(gid)}/context${suffix ? `?${suffix}` : ""}`
+    );
     if (!resp.ok) return resp as ApiResponse<GroupContext>;
     return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
   });
@@ -1696,10 +1824,15 @@ export async function fetchRemoteAccessState() {
 }
 
 export async function fetchWebAccessSession() {
-  return apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session");
+  return reuseRecentReadRequest(
+    webAccessSessionRequestKey(),
+    RECENT_BOOTSTRAP_READ_TTL_MS,
+    () => apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session")
+  );
 }
 
 export async function logoutWebAccess() {
+  clearWebAccessSessionReadRequest();
   return apiJson<{ signed_out: boolean }>("/api/v1/web_access/logout", {
     method: "POST",
   });
@@ -1714,6 +1847,8 @@ export async function updateRemoteAccessConfig(args: {
   webPort?: number;
   webPublicUrl?: string;
 }) {
+  clearPingReadRequest();
+  clearWebAccessSessionReadRequest();
   return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access", {
     method: "PUT",
     body: JSON.stringify({
@@ -1742,6 +1877,8 @@ export async function stopRemoteAccess() {
 }
 
 export async function applyRemoteAccess() {
+  clearPingReadRequest();
+  clearWebAccessSessionReadRequest();
   return apiJson<{ accepted: boolean; remote_access: RemoteAccessState; target_local_url?: string | null; target_remote_url?: string | null }>(
     "/api/v1/remote_access/apply?by=user",
     {
@@ -1767,6 +1904,7 @@ export async function fetchAccessTokens() {
 }
 
 export async function createAccessToken(userId: string, isAdmin: boolean, allowedGroups: string[], customToken?: string) {
+  clearWebAccessSessionReadRequest();
   const body: Record<string, unknown> = {
     user_id: userId,
     is_admin: isAdmin,
@@ -1780,6 +1918,7 @@ export async function createAccessToken(userId: string, isAdmin: boolean, allowe
 }
 
 export async function updateAccessToken(tokenId: string, updates: { allowed_groups?: string[]; is_admin?: boolean }) {
+  clearWebAccessSessionReadRequest();
   return apiJson<{ access_token: AccessTokenEntry }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, {
     method: "PATCH",
     body: JSON.stringify(updates),
@@ -1791,6 +1930,7 @@ export async function revealAccessToken(tokenId: string) {
 }
 
 export async function deleteAccessToken(tokenId: string) {
+  clearWebAccessSessionReadRequest();
   return apiJson<{ deleted: boolean; access_tokens_remain?: boolean; deleted_current_session?: boolean }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, {
     method: "DELETE",
   });

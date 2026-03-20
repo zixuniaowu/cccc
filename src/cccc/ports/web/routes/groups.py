@@ -57,21 +57,36 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     context_generation: Dict[str, int] = {}
     context_lock = asyncio.Lock()
 
+    def _context_cache_key(group_id: str, detail: str) -> str:
+        gid = str(group_id or "").strip()
+        mode = str(detail or "summary").strip().lower() or "summary"
+        return f"context:{gid}:{mode}"
+
     async def _invalidate_context_read(group_id: str) -> None:
         gid = str(group_id or "").strip()
         if not gid:
             return
-        key = f"context:{gid}"
         async with context_lock:
-            context_generation[key] = int(context_generation.get(key, 0)) + 1
-            context_inflight.pop(key, None)
+            prefix = f"context:{gid}:"
+            touched = False
+            for key in list(context_generation.keys()):
+                if key.startswith(prefix):
+                    context_generation[key] = int(context_generation.get(key, 0)) + 1
+                    touched = True
+            for key in list(context_inflight.keys()):
+                if key.startswith(prefix):
+                    context_inflight.pop(key, None)
+                    touched = True
+            if not touched:
+                context_generation[_context_cache_key(gid, "summary")] = 1
+                context_generation[_context_cache_key(gid, "full")] = 1
 
-    async def _deduped_context_get(group_id: str, fetcher) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
+    async def _deduped_context_get(group_id: str, detail: str, fetcher) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
         gid = str(group_id or "").strip()
         if not gid:
             return await fetcher()
 
-        key = f"context:{gid}"
+        key = _context_cache_key(gid, detail)
         if ctx.read_only:
             ttl = max(0.0, min(5.0, ctx.exhibit_cache_ttl_s))
             return await ctx.cached_json(key, ttl, fetcher)
@@ -265,17 +280,27 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
 
     @group_router.get("/context")
-    async def group_context(group_id: str, fresh: bool = False) -> Dict[str, Any]:
-        """Get full group context (coordination/agent_states/projections)."""
+    async def group_context(group_id: str, fresh: bool = False, detail: str = "summary") -> Dict[str, Any]:
+        """Get a group context view (summary by default, full when requested)."""
         gid = str(group_id or "").strip()
+        detail_mode = str(detail or "summary").strip().lower() or "summary"
+        if detail_mode not in {"summary", "full"}:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_detail",
+                    "message": "detail must be 'summary' or 'full'",
+                    "details": {"detail": detail_mode},
+                },
+            )
 
         async def _fetch() -> Dict[str, Any]:
-            return await ctx.daemon({"op": "context_get", "args": {"group_id": gid}})
+            return await ctx.daemon({"op": "context_get", "args": {"group_id": gid, "detail": detail_mode}})
 
         if fresh:
             await _invalidate_context_read(gid)
             return await _fetch()
-        return await _deduped_context_get(gid, _fetch)
+        return await _deduped_context_get(gid, detail_mode, _fetch)
 
     @group_router.get("/template/export")
     async def group_template_export(group_id: str) -> Dict[str, Any]:

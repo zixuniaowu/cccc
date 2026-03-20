@@ -30,6 +30,8 @@ interface UseChatTabOptions {
   scrollRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
 
+type ChatEmptyState = "ready" | "hydrating" | "business_empty";
+
 export function useChatTab({
   selectedGroupId,
   actors,
@@ -254,6 +256,42 @@ export function useChatTab({
     if (inChatWindow && chatWindow) return chatWindow.centerEventId;
     return undefined;
   }, [inChatWindow, chatWindow]);
+
+  const effectiveIsLoadingHistory = inChatWindow ? isChatWindowLoading : isLoadingHistory;
+  const effectiveHasMoreHistory = inChatWindow ? false : hasMoreHistory;
+
+  const hasHydratedGroupDoc = useMemo(() => {
+    if (!groupDoc || String(groupDoc.group_id || "") !== String(selectedGroupId || "")) return false;
+    // Shell docs only carry title/topic/state; fetched docs also carry scope fields.
+    return (
+      Object.prototype.hasOwnProperty.call(groupDoc, "scopes") ||
+      Object.prototype.hasOwnProperty.call(groupDoc, "active_scope_key")
+    );
+  }, [groupDoc, selectedGroupId]);
+
+  const hasSettledActorSnapshot = useMemo(() => {
+    if (!selectedGroupId) return false;
+    if (actors.length > 0) return true;
+    // context/settings are loaded only after the first actor snapshot settles.
+    return groupContext !== null || groupSettings !== null;
+  }, [selectedGroupId, actors.length, groupContext, groupSettings]);
+
+  const chatEmptyState = useMemo<ChatEmptyState>(() => {
+    if (chatMessages.length > 0) return "ready";
+    if (!selectedGroupId) return "business_empty";
+    if (effectiveIsLoadingHistory || effectiveHasMoreHistory) return "hydrating";
+    if (!hasHydratedGroupDoc) return "hydrating";
+    if (needsActors && !hasSettledActorSnapshot) return "hydrating";
+    return "business_empty";
+  }, [
+    chatMessages.length,
+    selectedGroupId,
+    effectiveIsLoadingHistory,
+    effectiveHasMoreHistory,
+    hasHydratedGroupDoc,
+    needsActors,
+    hasSettledActorSnapshot,
+  ]);
 
   const updateChatFilter = useCallback(
     (nextFilter: ReturnType<typeof getChatSession>["chatFilter"]) => {
@@ -659,9 +697,10 @@ export function useChatTab({
     chatInitialScrollAnchorOffsetPx,
     chatHighlightEventId,
     inChatWindow,
-    isLoadingHistory: inChatWindow ? isChatWindowLoading : isLoadingHistory,
-    hasMoreHistory: inChatWindow ? false : hasMoreHistory,
+    isLoadingHistory: effectiveIsLoadingHistory,
+    hasMoreHistory: effectiveHasMoreHistory,
     loadMoreHistory: inChatWindow ? undefined : loadCurrentGroupHistory,
+    chatEmptyState,
 
     // UI state
     busy,

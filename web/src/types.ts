@@ -347,6 +347,8 @@ export type ContextBoard = {
   archived?: TaskBoardEntry[];
 };
 
+export type ContextDetailLevel = "summary" | "full";
+
 export type GroupContext = {
   version?: string;
   coordination?: {

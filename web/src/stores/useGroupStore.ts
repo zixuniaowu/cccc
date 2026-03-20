@@ -79,7 +79,8 @@ interface GroupState {
 
   // Async actions
   refreshGroups: () => Promise<void>;
-  refreshActors: (groupId?: string) => Promise<void>;
+  refreshActors: (groupId?: string, opts?: { includeUnread?: boolean }) => Promise<void>;
+  scheduleActorUnreadRefresh: (groupId?: string, delayMs?: number) => void;
   loadGroup: (groupId: string) => Promise<void>;
   warmGroup: (groupId: string) => Promise<void>;
   loadMoreHistory: (groupId?: string) => Promise<void>;
@@ -134,6 +135,7 @@ const refreshActorsInFlight = new Set<string>();
 const refreshActorsQueued = new Set<string>();
 const warmGroupInFlight = new Set<string>();
 let loadGroupToken = 0;
+const deferredUnreadRefreshTimers = new Map<string, number>();
 
 type GroupViewSnapshot = {
   groupDoc: GroupDoc | null;
@@ -212,6 +214,46 @@ function saveGroupView(groupId: string, patch: Partial<Omit<GroupViewSnapshot, "
     groupSettings: patch.groupSettings !== undefined ? cloneGroupSettings(patch.groupSettings) : cloneGroupSettings(prev?.groupSettings),
     hasMoreHistory: patch.hasMoreHistory !== undefined ? !!patch.hasMoreHistory : !!prev?.hasMoreHistory,
     cachedAt: Date.now(),
+  });
+}
+
+function clearDeferredUnreadRefresh(groupId: string): void {
+  const gid = String(groupId || "").trim();
+  const timer = deferredUnreadRefreshTimers.get(gid);
+  if (timer !== undefined) {
+    globalThis.clearTimeout(timer);
+    deferredUnreadRefreshTimers.delete(gid);
+  }
+}
+
+function scheduleDeferredUnreadRefresh(groupId: string, task: () => void): void {
+  scheduleDeferredUnreadRefreshWithDelay(groupId, 0, task);
+}
+
+function scheduleDeferredUnreadRefreshWithDelay(groupId: string, delayMs: number, task: () => void): void {
+  const gid = String(groupId || "").trim();
+  if (!gid) return;
+  clearDeferredUnreadRefresh(gid);
+  const timer = globalThis.setTimeout(() => {
+    deferredUnreadRefreshTimers.delete(gid);
+    task();
+  }, Math.max(0, delayMs));
+  deferredUnreadRefreshTimers.set(gid, timer);
+}
+
+function mergeActorUnreadCounts(nextActors: Actor[], previousActors: Actor[]): Actor[] {
+  if (!nextActors.length || !previousActors.length) return nextActors;
+  const unreadByActorId = new Map(
+    previousActors
+      .filter((actor) => typeof actor?.unread_count === "number")
+      .map((actor) => [String(actor.id || ""), Number(actor.unread_count || 0)] as const)
+  );
+
+  return nextActors.map((actor) => {
+    if (typeof actor?.unread_count === "number") return actor;
+    const actorId = String(actor.id || "");
+    if (!actorId || !unreadByActorId.has(actorId)) return actor;
+    return { ...actor, unread_count: unreadByActorId.get(actorId) ?? 0 };
   });
 }
 
@@ -748,18 +790,25 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }
   },
 
-  refreshActors: async (groupId?: string) => {
+  refreshActors: async (groupId?: string, opts?: { includeUnread?: boolean }) => {
     const gid = String(groupId || get().selectedGroupId || "").trim();
     if (!gid) return;
+    const includeUnread = opts?.includeUnread !== false;
+    if (includeUnread) {
+      clearDeferredUnreadRefresh(gid);
+    }
     if (refreshActorsInFlight.has(gid)) {
       refreshActorsQueued.add(gid);
       return;
     }
     refreshActorsInFlight.add(gid);
     try {
-      const resp = await api.fetchActors(gid, true);
+      const resp = await api.fetchActors(gid, includeUnread);
       if (resp.ok) {
-        const nextActors = resp.result.actors || [];
+        const prevActors = get().selectedGroupId === gid ? get().actors : getCachedGroupView(gid)?.actors || [];
+        const nextActors = includeUnread
+          ? (resp.result.actors || [])
+          : mergeActorUnreadCounts(resp.result.actors || [], prevActors);
         saveGroupView(gid, { actors: nextActors });
         if (get().selectedGroupId === gid) {
           set({ actors: nextActors });
@@ -774,6 +823,16 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         void get().refreshActors(gid);
       }
     }
+  },
+
+  scheduleActorUnreadRefresh: (groupId?: string, delayMs = 0) => {
+    const gid = String(groupId || get().selectedGroupId || "").trim();
+    if (!gid) return;
+    scheduleDeferredUnreadRefreshWithDelay(gid, delayMs, () => {
+      if (String(get().selectedGroupId || "").trim() === gid) {
+        void get().refreshActors(gid);
+      }
+    });
   },
 
   loadGroup: async (groupId: string) => {
@@ -821,7 +880,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     const showPromise = api.fetchGroup(gid);
     const tailPromise = api.fetchLedgerTail(gid);
-    const actorsPromise = api.fetchActors(gid, true);
+    const actorsPromise = api.fetchActors(gid, false);
 
     void showPromise.then((show) => {
       if (show.ok) {
@@ -869,12 +928,21 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       commitViewPatch({ actors: actorsResp.result.actors || [] });
     }).catch((error) => {
       console.error(`Failed to load actors for group=${gid}:`, error);
+    }).finally(() => {
+      // Wait until the pure-read actor snapshot has settled before enqueueing
+      // the unread refresh, so the lighter first response cannot overwrite the
+      // newer unread-bearing result later.
+      scheduleDeferredUnreadRefresh(gid, () => {
+        if (isLatestSelection()) {
+          void get().refreshActors(gid);
+        }
+      });
     });
 
     // 首屏稳定后再补 context/settings，避免它们拖住切组体感。
     void Promise.allSettled([showPromise, tailPromise, actorsPromise]).then(() => {
       const contextEpoch = beginContextRequest(gid);
-      void api.fetchContext(gid).then((ctx) => {
+      void api.fetchContext(gid, { detail: "summary" }).then((ctx) => {
         if (!ctx.ok) return;
         if (!isLatestContextRequest(gid, contextEpoch)) return;
         commitViewPatch({ groupContext: ctx.result as GroupContext });
@@ -903,7 +971,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const [show, tail, actorsResp] = await Promise.all([
         api.fetchGroup(gid),
         api.fetchLedgerTail(gid),
-        api.fetchActors(gid, true),
+        api.fetchActors(gid, false),
       ]);
 
       const patch: Partial<Omit<GroupViewSnapshot, "cachedAt">> = {};

@@ -246,22 +246,24 @@ export function shouldIncrementUnread(
 /**
  * Event kinds that should trigger actor refresh.
  */
-const ACTOR_REFRESH_EVENTS = new Set([
-  "chat.read",
-  "system.notify",
+const ACTOR_READONLY_REFRESH_EVENTS = new Set([
   "system.notify_ack",
   "group.start",
   "group.stop",
   "group.set_state",
 ]);
 
-/**
- * Check if an event should trigger actor refresh.
- */
-export function shouldRefreshActors(ev: unknown): boolean {
-  if (ev === null || typeof ev !== "object") return false;
+const ACTOR_UNREAD_REFRESH_EVENTS = new Set([
+  "system.notify",
+]);
+
+export type ActorRefreshMode = "none" | "readonly" | "unread";
+
+export function getActorRefreshMode(ev: unknown): ActorRefreshMode {
+  if (ev === null || typeof ev !== "object") return "none";
   const kind = String((ev as BaseLedgerEvent).kind || "");
-  if (ACTOR_REFRESH_EVENTS.has(kind)) return true;
-  if (kind.startsWith("actor.")) return true;
-  return false;
+  if (ACTOR_UNREAD_REFRESH_EVENTS.has(kind)) return "unread";
+  if (ACTOR_READONLY_REFRESH_EVENTS.has(kind)) return "readonly";
+  if (kind.startsWith("actor.")) return "readonly";
+  return "none";
 }

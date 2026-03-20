@@ -426,6 +426,9 @@ export const MessageBubble = memo(function MessageBubble({
 
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
+    const relayChipClass = isUserMessage
+        ? "border-white/14 bg-white/8 text-blue-100 shadow-none hover:bg-white/12"
+        : "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]";
 
     return (
         <div
@@ -542,7 +545,10 @@ export const MessageBubble = memo(function MessageBubble({
                 </div>
 
                 {/* Bubble wrapper (allows badge to overflow) */}
-                <div className="relative max-w-[85vw] sm:max-w-full min-w-0">
+                <div
+                    className="relative max-w-[85vw] sm:max-w-full min-w-0"
+                    style={isAttention ? { minWidth: "min(8.5rem, 85vw)" } : undefined}
+                >
                     {isAttention && (
                         <span
                             className={classNames(
@@ -573,7 +579,7 @@ export const MessageBubble = memo(function MessageBubble({
                             type="button"
                             className={classNames(
                                 "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
-                                "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]",
+                                relayChipClass,
                                 onOpenSource ? "cursor-pointer" : "cursor-default"
                             )}
                             onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
@@ -594,7 +600,7 @@ export const MessageBubble = memo(function MessageBubble({
                             <div
                                 className={classNames(
                                     "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
-                                    "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
+                                    relayChipClass
                                 )}
                                 title={t('sentTo', { label: dstGroupId, to: dstToLabel })}
                             >

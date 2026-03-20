@@ -87,6 +87,259 @@ describe("api.fetchActors", () => {
   });
 });
 
+describe("api bootstrap read cache", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    fetchMock.mockReset();
+    sessionStorageMock.clear();
+  });
+
+  afterEach(async () => {
+    const api = await import("../../src/services/api");
+    api.clearAuthToken();
+  });
+
+  it("reuses a recent groups response inside the bootstrap window", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { groups: [{ group_id: "g-demo" }] } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const first = await api.fetchGroups();
+    const second = await api.fetchGroups();
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates the recent groups response before group writes", async () => {
+    fetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      const method = String(init?.method || "GET").toUpperCase();
+      if (path === "/api/v1/groups" && method === "GET") {
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, result: { groups: [{ group_id: `g-${fetchMock.mock.calls.length}` }] } }),
+        });
+      }
+      if (path === "/api/v1/groups" && method === "POST") {
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, result: { group_id: "g-new" } }),
+        });
+      }
+      return Promise.reject(new Error(`unexpected request: ${method} ${path}`));
+    });
+
+    const api = await import("../../src/services/api");
+    await api.fetchGroups();
+    await api.createGroup("New Group");
+    await api.fetchGroups();
+
+    const groupGets = fetchMock.mock.calls.filter(
+      ([path, init]) =>
+        path === "/api/v1/groups" &&
+        String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+    );
+    expect(groupGets).toHaveLength(2);
+  });
+
+  it("invalidates the recent groups response when auth token changes", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { groups: [{ group_id: "g-demo" }] } }),
+    });
+
+    const api = await import("../../src/services/api");
+    await api.fetchGroups();
+    api.setAuthToken("token-b");
+    await api.fetchGroups();
+
+    const groupGets = fetchMock.mock.calls.filter(
+      ([path, init]) =>
+        path === "/api/v1/groups" &&
+        String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+    );
+    expect(groupGets).toHaveLength(2);
+  });
+
+  it("allows event-driven callers to bypass the recent groups response", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { groups: [{ group_id: "g-demo" }] } }),
+    });
+
+    const api = await import("../../src/services/api");
+    await api.fetchGroups();
+    api.invalidateGroupsRead();
+    await api.fetchGroups();
+
+    const groupGets = fetchMock.mock.calls.filter(
+      ([path, init]) =>
+        path === "/api/v1/groups" &&
+        String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+    );
+    expect(groupGets).toHaveLength(2);
+  });
+
+  it("does not let an invalidated stale groups read repopulate the recent cache", async () => {
+    const staleRead = createDeferred<{
+      status: number;
+      ok: boolean;
+      text: () => Promise<string>;
+    }>();
+
+    fetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      const method = String(init?.method || "GET").toUpperCase();
+      if (path === "/api/v1/groups" && method === "GET") {
+        const callCount = fetchMock.mock.calls.filter(
+          ([calledPath, calledInit]) =>
+            calledPath === "/api/v1/groups" &&
+            String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+        ).length;
+        if (callCount === 1) {
+          return staleRead.promise;
+        }
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, result: { groups: [{ group_id: `g-${callCount}` }] } }),
+        });
+      }
+      return Promise.reject(new Error(`unexpected request: ${method} ${path}`));
+    });
+
+    const api = await import("../../src/services/api");
+    const stalePromise = api.fetchGroups();
+    await Promise.resolve();
+
+    api.invalidateGroupsRead();
+    staleRead.resolve({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { groups: [{ group_id: "g-stale" }] } }),
+    });
+    await stalePromise;
+
+    await api.fetchGroups();
+    await api.fetchGroups();
+
+    const groupGets = fetchMock.mock.calls.filter(
+      ([path, init]) =>
+        path === "/api/v1/groups" &&
+        String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+    );
+    expect(groupGets).toHaveLength(2);
+  });
+
+  it("reuses a recent ping response per query variant", async () => {
+    fetchMock.mockImplementation((path: string) => {
+      if (path === "/api/v1/ping") {
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, result: { version: "1.0.0" } }),
+        });
+      }
+      if (path === "/api/v1/ping?include_home=1") {
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, result: { version: "1.0.0", home: "/tmp/cccc" } }),
+        });
+      }
+      return Promise.reject(new Error(`unexpected request: GET ${path}`));
+    });
+
+    const api = await import("../../src/services/api");
+    await api.fetchPing();
+    await api.fetchPing();
+    await api.fetchPing({ includeHome: true });
+    await api.fetchPing({ includeHome: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates the recent web access session response before token writes", async () => {
+    fetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      const method = String(init?.method || "GET").toUpperCase();
+      if (path === "/api/v1/web_access/session" && method === "GET") {
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+              ok: true,
+              result: { web_access_session: { can_access_global_settings: fetchMock.mock.calls.length > 1 } },
+            }),
+        });
+      }
+      if (path === "/api/v1/access-tokens" && method === "POST") {
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+              ok: true,
+              result: {
+                access_token: {
+                  token_id: "tok-1",
+                  user_id: "user-1",
+                  is_admin: false,
+                  allowed_groups: [],
+                  created_at: "2026-03-19T00:00:00Z",
+                },
+              },
+            }),
+        });
+      }
+      return Promise.reject(new Error(`unexpected request: ${method} ${path}`));
+    });
+
+    const api = await import("../../src/services/api");
+    await api.fetchWebAccessSession();
+    await api.createAccessToken("user-1", false, []);
+    await api.fetchWebAccessSession();
+
+    const sessionGets = fetchMock.mock.calls.filter(
+      ([path, init]) =>
+        path === "/api/v1/web_access/session" &&
+        String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+    );
+    expect(sessionGets).toHaveLength(2);
+  });
+
+  it("invalidates the recent web access session response when auth token changes", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: { web_access_session: { can_access_global_settings: true } },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    await api.fetchWebAccessSession();
+    api.clearAuthToken();
+    await api.fetchWebAccessSession();
+
+    const sessionGets = fetchMock.mock.calls.filter(
+      ([path, init]) =>
+        path === "/api/v1/web_access/session" &&
+        String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+    );
+    expect(sessionGets).toHaveLength(2);
+  });
+});
+
 describe("api.fetchGroupPrompts invalidation", () => {
   beforeEach(() => {
     vi.resetModules();

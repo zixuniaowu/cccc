@@ -4,6 +4,7 @@ import { useGroupStore, useUIStore } from "../stores";
 import { useChatOutboxStore } from "../stores/chatOutboxStore";
 import { beginContextRequest, isLatestContextRequest } from "../stores/useGroupStore";
 import * as api from "../services/api";
+import type { FetchContextOptions } from "../services/api";
 import type { Actor, GroupContext } from "../types";
 import {
   isContextSyncEvent,
@@ -17,7 +18,7 @@ import {
   initializeAckStatus,
   initializeObligationStatus,
   shouldIncrementUnread,
-  shouldRefreshActors,
+  getActorRefreshMode,
   // Re-export for consumers
   getRecipientActorIdsForEvent,
   getAckRecipientIdsForEvent,
@@ -25,6 +26,8 @@ import {
 
 // Re-export for backward compatibility
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
+
+const MAX_RECONCILED_EVENTS = 800;
 
 interface UseSSEOptions {
   activeTabRef: React.MutableRefObject<string>;
@@ -45,13 +48,13 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const updateActorActivity = useGroupStore((s) => s.updateActorActivity);
   const setGroupContext = useGroupStore((s) => s.setGroupContext);
   const refreshActors = useGroupStore((s) => s.refreshActors);
+  const scheduleActorUnreadRefresh = useGroupStore((s) => s.scheduleActorUnreadRefresh);
 
   const incrementChatUnread = useUIStore((s) => s.incrementChatUnread);
   const setSSEStatus = useUIStore((s) => s.setSSEStatus);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const contextRefreshTimerRef = useRef<number | null>(null);
-  const actorRefreshTimerRef = useRef<number | null>(null);
   const selectedGroupIdRef = useRef<string>("");
   const reconnectDelayRef = useRef<number>(1000);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -61,13 +64,16 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     selectedGroupIdRef.current = selectedGroupId;
   }, [selectedGroupId]);
 
-  async function fetchContext(groupId: string, opts?: { fresh?: boolean }) {
+  async function fetchContext(groupId: string, opts?: FetchContextOptions) {
     if (opts?.fresh && contextRefreshTimerRef.current) {
       window.clearTimeout(contextRefreshTimerRef.current);
       contextRefreshTimerRef.current = null;
     }
     const contextEpoch = beginContextRequest(groupId);
-    const resp = await api.fetchContext(groupId, opts?.fresh ? { fresh: true } : undefined);
+    const resp = await api.fetchContext(groupId, {
+      fresh: opts?.fresh,
+      detail: opts?.detail ?? "summary",
+    });
     if (
       resp.ok &&
       resp.result &&
@@ -79,14 +85,47 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
   }
 
-  function scheduleActorRefresh(groupId: string, delayMs = 160) {
-    if (actorRefreshTimerRef.current) {
-      window.clearTimeout(actorRefreshTimerRef.current);
-    }
-    actorRefreshTimerRef.current = window.setTimeout(() => {
-      actorRefreshTimerRef.current = null;
-      void refreshActors(groupId);
-    }, delayMs);
+  async function reconcileLedgerTail(groupId: string) {
+    const resp = await api.fetchLedgerTail(groupId);
+    if (!resp.ok || selectedGroupIdRef.current !== groupId) return;
+
+    const store = useGroupStore.getState();
+    const bucket = store.chatByGroup[groupId];
+    const currentEvents = Array.isArray(bucket?.events) ? bucket.events : [];
+    const fetchedEvents = Array.isArray(resp.result.events) ? resp.result.events : [];
+    const fetchedById = new Map(
+      fetchedEvents
+        .filter((event) => !!event?.id)
+        .map((event) => [String(event.id), event] as const)
+    );
+    const currentIds = new Set(currentEvents.map((event) => String(event.id || "")).filter(Boolean));
+
+    const reconciled = currentEvents.map((event) => {
+      const eventId = String(event.id || "");
+      return eventId && fetchedById.has(eventId) ? fetchedById.get(eventId)! : event;
+    });
+    const missingEvents = fetchedEvents.filter((event) => {
+      const eventId = String(event.id || "");
+      return !eventId || !currentIds.has(eventId);
+    });
+    const nextEvents = [...reconciled, ...missingEvents];
+
+    store.setEvents(
+      nextEvents.length > MAX_RECONCILED_EVENTS
+        ? nextEvents.slice(nextEvents.length - MAX_RECONCILED_EVENTS)
+        : nextEvents,
+      groupId
+    );
+    store.setHasMoreHistory(!!resp.result.has_more, groupId);
+  }
+
+  async function resyncAfterReconnect(groupId: string) {
+    await Promise.allSettled([
+      reconcileLedgerTail(groupId),
+      refreshActors(groupId, { includeUnread: false }),
+      fetchContext(groupId, { fresh: true, detail: "summary" }),
+    ]);
+    scheduleActorUnreadRefresh(groupId, 800);
   }
 
   function connectStream(groupId: string) {
@@ -109,12 +148,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       setSSEStatus("connected");
       hasConnectedOnceRef.current = true;
 
-      // On reconnect, reload events to fill the gap from the disconnect window.
-      // The backend SSE stream seeks to EOF on new connections, so any events
-      // written during the disconnect period are missed. loadGroup re-fetches
-      // the latest events via HTTP to compensate.
+      // New SSE connections start at EOF, so every reconnect needs a
+      // lightweight catch-up to cover the disconnect window.
       if (isReconnect) {
-        void useGroupStore.getState().loadGroup(groupId);
+        void resyncAfterReconnect(groupId);
       }
     };
 
@@ -145,7 +182,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           if (contextRefreshTimerRef.current) window.clearTimeout(contextRefreshTimerRef.current);
           contextRefreshTimerRef.current = window.setTimeout(() => {
             contextRefreshTimerRef.current = null;
-            void fetchContext(groupId, { fresh: true });
+            void fetchContext(groupId, { fresh: true, detail: "summary" });
           }, 150);
           return;
         }
@@ -165,7 +202,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           if (data) {
             updateReadStatus(data.eventId, data.actorId, groupId);
           }
-          scheduleActorRefresh(groupId);
+          scheduleActorUnreadRefresh(groupId, 400);
           return;
         }
 
@@ -217,9 +254,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           incrementChatUnread(groupId);
         }
 
-        // Refresh actors when relevant events arrive
-        if (shouldRefreshActors(ev)) {
-          void refreshActors(groupId);
+        const actorRefreshMode = getActorRefreshMode(ev);
+        if (actorRefreshMode === "readonly") {
+          void refreshActors(groupId, { includeUnread: false });
+        } else if (actorRefreshMode === "unread") {
+          scheduleActorUnreadRefresh(groupId, 400);
         }
       } catch {
         /* ignore parse errors */
@@ -240,10 +279,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (contextRefreshTimerRef.current) {
       window.clearTimeout(contextRefreshTimerRef.current);
       contextRefreshTimerRef.current = null;
-    }
-    if (actorRefreshTimerRef.current) {
-      window.clearTimeout(actorRefreshTimerRef.current);
-      actorRefreshTimerRef.current = null;
     }
     reconnectDelayRef.current = 1000;
     hasConnectedOnceRef.current = false;

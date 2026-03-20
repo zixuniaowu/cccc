@@ -58,6 +58,8 @@ _CURATED_SPACE_SYNC_PREFIXES = (
 )
 
 logger = logging.getLogger(__name__)
+_CONTEXT_DETAIL_FULL = "full"
+_CONTEXT_DETAIL_SUMMARY = "summary"
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -176,6 +178,25 @@ def _task_to_dict(task: Task) -> Dict[str, Any]:
             if current_item is not None
             else None
         ),
+        "progress": task.progress,
+        "is_root": task.is_root,
+    }
+
+
+def _task_to_summary_dict(task: Task) -> Dict[str, Any]:
+    return {
+        "id": task.id,
+        "title": task.title,
+        "parent_id": task.parent_id,
+        "status": task.status.value if isinstance(task.status, TaskStatus) else str(task.status),
+        "archived_from": task.archived_from,
+        "assignee": task.assignee,
+        "priority": task.priority,
+        "blocked_by": list(task.blocked_by or []),
+        "waiting_on": task.waiting_on.value if isinstance(task.waiting_on, WaitingOn) else str(task.waiting_on),
+        "handoff_to": task.handoff_to,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
         "progress": task.progress,
         "is_root": task.is_root,
     }
@@ -553,6 +574,71 @@ def _save_automation_state(storage: ContextStorage, doc: Dict[str, Any]) -> None
     atomic_write_json(_automation_state_path(storage), doc)
 
 
+def _normalize_context_detail(value: Any, *, default: str = _CONTEXT_DETAIL_FULL) -> str:
+    detail = str(value or default).strip().lower() or default
+    if detail not in {_CONTEXT_DETAIL_FULL, _CONTEXT_DETAIL_SUMMARY}:
+        raise ValueError(f"Invalid context detail: {value}")
+    return detail
+
+
+def _coordination_brief_to_dict(brief: CoordinationBrief) -> Dict[str, Any]:
+    return {
+        "objective": brief.objective,
+        "current_focus": brief.current_focus,
+        "constraints": list(brief.constraints or []),
+        "project_brief": brief.project_brief,
+        "project_brief_stale": bool(brief.project_brief_stale),
+        "updated_by": brief.updated_by,
+        "updated_at": brief.updated_at,
+    }
+
+
+def _build_context_full_result(
+    *,
+    storage: ContextStorage,
+    context: Context,
+    tasks: List[Task],
+    ordered_agents: List[AgentState],
+    attention: Dict[str, List[Dict[str, Any]]],
+    board: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    return {
+        "version": storage.compute_version(),
+        "coordination": {
+            "brief": _coordination_brief_to_dict(context.coordination.brief),
+            "tasks": [_task_to_dict(task) for task in _sort_tasks(tasks)],
+            "recent_decisions": [_note_to_dict(note) for note in context.coordination.recent_decisions],
+            "recent_handoffs": [_note_to_dict(note) for note in context.coordination.recent_handoffs],
+        },
+        "agent_states": [_agent_state_to_dict(agent) for agent in ordered_agents],
+        "attention": attention,
+        "board": board,
+        "tasks_summary": _tasks_summary(tasks, attention=attention),
+        "meta": context.meta if isinstance(context.meta, dict) else {},
+    }
+
+
+def _build_context_summary_result(
+    *,
+    storage: ContextStorage,
+    context: Context,
+    tasks: List[Task],
+    ordered_agents: List[AgentState],
+    attention: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    return {
+        "version": storage.compute_version(),
+        "coordination": {
+            "brief": _coordination_brief_to_dict(context.coordination.brief),
+            "tasks": [_task_to_summary_dict(task) for task in _sort_tasks(tasks)],
+        },
+        "agent_states": [_agent_state_to_dict(agent) for agent in ordered_agents],
+        "attention": attention,
+        "tasks_summary": _tasks_summary(tasks, attention=attention),
+        "meta": context.meta if isinstance(context.meta, dict) else {},
+    }
+
+
 def _sync_agents_mind_context_runtime(storage: ContextStorage, agents_state: AgentsData) -> None:
     state = _load_automation_state(storage)
     actors = state.get("actors")
@@ -583,6 +669,10 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
+    try:
+        detail = _normalize_context_detail(args.get("detail"), default=_CONTEXT_DETAIL_FULL)
+    except ValueError as exc:
+        return _error("invalid_detail", str(exc), details={"detail": str(args.get("detail") or "")})
 
     storage = _get_storage(group_id)
     if storage is None:
@@ -593,30 +683,25 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     agents_state = _filter_agents_to_group(storage, storage.load_agents())
     ordered_agents = _sort_agents_for_group(storage, agents_state)
     attention = _attention_projection(tasks)
-    board = _board_projection(tasks)
+    if detail == _CONTEXT_DETAIL_SUMMARY:
+        result = _build_context_summary_result(
+            storage=storage,
+            context=context,
+            tasks=tasks,
+            ordered_agents=ordered_agents,
+            attention=attention,
+        )
+        return DaemonResponse(ok=True, result=result)
 
-    result = {
-        "version": storage.compute_version(),
-        "coordination": {
-            "brief": {
-                "objective": context.coordination.brief.objective,
-                "current_focus": context.coordination.brief.current_focus,
-                "constraints": list(context.coordination.brief.constraints or []),
-                "project_brief": context.coordination.brief.project_brief,
-                "project_brief_stale": bool(context.coordination.brief.project_brief_stale),
-                "updated_by": context.coordination.brief.updated_by,
-                "updated_at": context.coordination.brief.updated_at,
-            },
-            "tasks": [_task_to_dict(task) for task in _sort_tasks(tasks)],
-            "recent_decisions": [_note_to_dict(note) for note in context.coordination.recent_decisions],
-            "recent_handoffs": [_note_to_dict(note) for note in context.coordination.recent_handoffs],
-        },
-        "agent_states": [_agent_state_to_dict(agent) for agent in ordered_agents],
-        "attention": attention,
-        "board": board,
-        "tasks_summary": _tasks_summary(tasks, attention=attention),
-        "meta": context.meta if isinstance(context.meta, dict) else {},
-    }
+    board = _board_projection(tasks)
+    result = _build_context_full_result(
+        storage=storage,
+        context=context,
+        tasks=tasks,
+        ordered_agents=ordered_agents,
+        attention=attention,
+        board=board,
+    )
     return DaemonResponse(ok=True, result=result)
 
 

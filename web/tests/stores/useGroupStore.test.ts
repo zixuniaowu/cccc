@@ -28,6 +28,12 @@ function makeStorage() {
 const localStorageMock = makeStorage();
 vi.stubGlobal("localStorage", localStorageMock);
 
+async function flushDeferredUnreadRefresh() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 let useGroupStore: typeof import("../../src/stores/useGroupStore").useGroupStore;
 let api: typeof import("../../src/services/api");
 
@@ -95,9 +101,68 @@ describe("useGroupStore actors fetch policy", () => {
     expect(api.fetchActors).toHaveBeenCalledWith("g-demo", true);
   });
 
+  it("refreshActors can do pure-read refresh without wiping existing unread counts", async () => {
+    useGroupStore.setState({
+      actors: [{ id: "peer-1", unread_count: 4, running: true }],
+    });
+    vi.mocked(api.fetchActors).mockResolvedValue({
+      ok: true,
+      result: { actors: [{ id: "peer-1", running: false }] },
+    } as Awaited<ReturnType<typeof api.fetchActors>>);
+
+    await useGroupStore.getState().refreshActors("g-demo", { includeUnread: false });
+
+    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", false);
+    expect(useGroupStore.getState().actors).toEqual([{ id: "peer-1", running: false, unread_count: 4 }]);
+  });
+
   it("loadGroup keeps unread counts on the selected group path", async () => {
     await useGroupStore.getState().loadGroup("g-demo");
-    expect(api.fetchActors).toHaveBeenCalledWith("g-demo", true);
+    await vi.waitFor(() => {
+      expect(api.fetchActors).toHaveBeenNthCalledWith(1, "g-demo", false);
+      expect(api.fetchActors).toHaveBeenNthCalledWith(2, "g-demo", true);
+    });
+  });
+
+  it("loadGroup waits for pure-read actors before scheduling unread refresh", async () => {
+    let resolvePureRead: ((value: Awaited<ReturnType<typeof api.fetchActors>>) => void) | null = null;
+    vi.mocked(api.fetchActors).mockImplementation((groupId: string, includeUnread = false) => {
+      if (includeUnread) {
+        return Promise.resolve({ ok: true, result: { actors: [{ id: "peer-1", unread_count: 3 }] } }) as ReturnType<typeof api.fetchActors>;
+      }
+      return new Promise((resolve) => {
+        resolvePureRead = resolve as (value: Awaited<ReturnType<typeof api.fetchActors>>) => void;
+      }) as ReturnType<typeof api.fetchActors>;
+    });
+
+    await useGroupStore.getState().loadGroup("g-demo");
+    await flushDeferredUnreadRefresh();
+    expect(api.fetchActors).toHaveBeenCalledTimes(1);
+    expect(api.fetchActors).toHaveBeenNthCalledWith(1, "g-demo", false);
+
+    resolvePureRead?.({ ok: true, result: { actors: [{ id: "peer-1" }] } } as Awaited<ReturnType<typeof api.fetchActors>>);
+    await vi.waitFor(() => {
+      expect(api.fetchActors).toHaveBeenCalledTimes(2);
+      expect(api.fetchActors).toHaveBeenNthCalledWith(2, "g-demo", true);
+    });
+  });
+
+  it("scheduleActorUnreadRefresh delays the unread fetch", async () => {
+    vi.useFakeTimers();
+    try {
+      useGroupStore.getState().scheduleActorUnreadRefresh("g-demo", 250);
+      expect(api.fetchActors).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(249);
+      expect(api.fetchActors).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => {
+        expect(api.fetchActors).toHaveBeenCalledWith("g-demo", true);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("warmGroup preserves unread counts in the prefetched actor snapshot", async () => {
@@ -112,6 +177,6 @@ describe("useGroupStore actors fetch policy", () => {
     });
 
     await useGroupStore.getState().warmGroup(warmGroupId);
-    expect(api.fetchActors).toHaveBeenCalledWith(warmGroupId, true);
+    expect(api.fetchActors).toHaveBeenCalledWith(warmGroupId, false);
   });
 });

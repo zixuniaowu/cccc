@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
@@ -629,6 +629,7 @@ export function ContextModal({
   const [projectExpanded, setProjectExpanded] = useState(false);
   const [notifyAgents, setNotifyAgents] = useState(false);
   const [notifyError, setNotifyError] = useState("");
+  const lastOpenedGroupRef = useRef("");
   const [decisionDraft, setDecisionDraft] = useState<NoteDraft>(emptyNoteDraft());
   const [handoffDraft, setHandoffDraft] = useState<NoteDraft>(emptyNoteDraft());
   const [activityBusyKind, setActivityBusyKind] = useState<"decision" | "handoff" | null>(null);
@@ -774,6 +775,17 @@ export function ContextModal({
     setActivityBusyKind(null);
     setActivityError("");
   }, [groupId, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !groupId) {
+      lastOpenedGroupRef.current = "";
+      return;
+    }
+    if (lastOpenedGroupRef.current === groupId) return;
+    lastOpenedGroupRef.current = groupId;
+    // Modal 打开时统一补 full，上层热路径仍保持 summary。
+    void onRefreshContext();
+  }, [groupId, isOpen, onRefreshContext]);
 
   useEffect(() => {
     if (!isOpen || !groupId) return;

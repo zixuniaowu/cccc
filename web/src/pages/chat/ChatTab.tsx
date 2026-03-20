@@ -89,6 +89,7 @@ export function ChatTab({
     isLoadingHistory,
     hasMoreHistory,
     loadMoreHistory,
+    chatEmptyState,
 
     // UI state
     busy,
@@ -147,13 +148,15 @@ export function ChatTab({
 
   const { t } = useTranslation('chat');
 
-  // Empty state: show full-screen setup guidance.
-  // Don't show setup card while initial group data is still loading.
-  // Fresh buckets have hasMoreHistory=true; the API sets it to the real value.
-  // When hasMoreHistory is true but messages are empty, we're still loading —
-  // fall through to VirtualMessageList which shows a loading spinner.
-  const isInitiallyLoading = chatMessages.length === 0 && hasMoreHistory;
-  if (chatMessages.length === 0 && showSetupCard && !isInitiallyLoading) {
+  const isHydratingEmptyState = chatMessages.length === 0 && chatEmptyState === "hydrating";
+  const isBusinessEmptyState = chatMessages.length === 0 && chatEmptyState === "business_empty";
+  const listIsLoadingHistory = isLoadingHistory || isHydratingEmptyState;
+  const listHasMoreHistory = hasMoreHistory || isHydratingEmptyState;
+
+  // Empty state: only show setup guidance once the selected group's shell data
+  // has settled into a real business-empty state. During hydration, keep the
+  // message list's loading shell to avoid flashing setup UI on group switch.
+  if (isBusinessEmptyState && showSetupCard) {
     return (
       <>
         <div
@@ -428,8 +431,8 @@ export function ChatTab({
           chatUnreadCount={chatUnreadCount}
           onScrollChange={handleScrollChange}
           onScrollSnapshot={handleScrollSnapshot}
-          isLoadingHistory={isLoadingHistory}
-          hasMoreHistory={hasMoreHistory}
+          isLoadingHistory={listIsLoadingHistory}
+          hasMoreHistory={listHasMoreHistory}
           onLoadMore={loadMoreHistory}
         />
       </main>
