@@ -91,7 +91,7 @@ export function GroupSidebar({
     <>
       <aside
         className={classNames(
-          "h-full flex flex-col glass-sidebar",
+          "h-full min-h-0 flex flex-col glass-sidebar",
           "fixed md:relative z-40 transition-[width,transform] duration-300 ease-out",
           isCollapsed ? "w-[60px]" : "w-[280px]",
           isOpen ? "translate-x-0" : "-translate-x-full",
@@ -194,7 +194,7 @@ export function GroupSidebar({
 
         {/* Group list */}
         <div className={classNames(
-          "flex-1 overflow-auto",
+          "min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-subtle [scrollbar-gutter:stable]",
           isCollapsed ? "p-2" : "p-3"
         )}>
           {!isCollapsed && (

@@ -2,6 +2,22 @@
 import { create } from "zustand";
 import type { ReplyTarget } from "../types";
 
+export function getEffectiveComposerDestGroupId(
+  destGroupId: string,
+  activeGroupId: string,
+  selectedGroupId: string
+): string {
+  const selected = String(selectedGroupId || "").trim();
+  const active = String(activeGroupId || "").trim();
+  const dest = String(destGroupId || "").trim();
+
+  if (!selected) return dest;
+  // During the first render after group switch, composer state still belongs to
+  // the previous group. Avoid leaking that stale destination into the new group.
+  if (active !== selected) return selected;
+  return dest || selected;
+}
+
 interface GroupDraft {
   composerText: string;
   composerFiles: File[];

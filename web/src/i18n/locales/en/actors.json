@@ -119,8 +119,6 @@
   "destGroupDifferent": "Destination group must be different from the source group.",
   "relayTextEmpty": "Relay message text is empty.",
   "failedToListDir": "Failed to list directory",
-  "invalidTemplate": "Invalid template",
-  "failedToLoadTemplate": "Failed to load template",
   "failedToAddAgent": "Failed to add agent",
   "failedToLoadActorProfiles": "Failed to load runtime profiles.",
   "customRuntimeRequiresCommand": "Custom runtime requires a command.",

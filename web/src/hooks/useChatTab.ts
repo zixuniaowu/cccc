@@ -10,9 +10,11 @@ import {
   useFormStore,
   selectChatBucketState,
 } from "../stores";
+import { getEffectiveComposerDestGroupId } from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
 import type { Actor, LedgerEvent, ChatMessageData } from "../types";
+import { getEffectiveComposerRecipientText, getOptimisticRecipients } from "../utils/chatRecipients";
 import * as api from "../services/api";
 
 interface UseChatTabOptions {
@@ -71,6 +73,7 @@ export function useChatTab({
   const { chatFilter, showScrollButton, chatUnreadCount, scrollSnapshot } = chatSession;
 
   const {
+    activeGroupId,
     composerText,
     composerFiles,
     toText,
@@ -113,7 +116,7 @@ export function useChatTab({
 
   // Parse toText into validated tokens
   const toTokens = useMemo(() => {
-    const raw = toText
+    const raw = getEffectiveComposerRecipientText(toText, activeGroupId, selectedGroupId)
       .split(",")
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
@@ -128,7 +131,7 @@ export function useChatTab({
       out.push(normalized);
     }
     return out;
-  }, [toText, validRecipientSet]);
+  }, [toText, activeGroupId, selectedGroupId, validRecipientSet]);
 
   // Mention suggestions
   const mentionSuggestions = useMemo(() => {
@@ -139,9 +142,8 @@ export function useChatTab({
 
   // Send group ID (respects cross-group destination)
   const sendGroupId = useMemo(() => {
-    const raw = String(destGroupId || "").trim();
-    return raw || selectedGroupId;
-  }, [destGroupId, selectedGroupId]);
+    return getEffectiveComposerDestGroupId(destGroupId, activeGroupId, selectedGroupId);
+  }, [destGroupId, activeGroupId, selectedGroupId]);
 
   // Project root
   const projectRoot = useMemo(() => {
@@ -356,6 +358,10 @@ export function useChatTab({
     const prioritySnapshot = priority;
     const replyRequiredSnapshot = replyRequired;
     const toTextSnapshot = toText;
+    const optimisticRecipients = getOptimisticRecipients(
+      toTokens,
+      groupSettings?.default_send_to || "foreman"
+    );
 
     // Generate a local ID for outbox tracking
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -405,7 +411,7 @@ export function useChatTab({
         group_id: selectedGroupId,
         data: {
           text: txt,
-          to: toTokens,
+          to: optimisticRecipients,
           priority: prio,
           reply_required: replyRequired,
           client_id: localId,
@@ -497,6 +503,7 @@ export function useChatTab({
     replyRequired,
     toText,
     toTokens,
+    groupSettings,
     replyTarget,
     inChatWindow,
     appendEvent,

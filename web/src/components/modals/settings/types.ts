@@ -8,8 +8,7 @@ export type GroupTabId =
   | "space"
   | "messaging"
   | "im"
-  | "transcript"
-  | "blueprint";
+  | "transcript";
 export type GlobalTabId = "capabilities" | "actorProfiles" | "myProfiles" | "webAccess" | "developer";
 
 // Shared style class helpers — glass design system

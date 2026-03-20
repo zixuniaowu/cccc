@@ -255,6 +255,10 @@ export function invalidateGroupsRead(): void {
   clearGroupsReadRequest();
 }
 
+export type FetchGroupsOptions = {
+  bypassRecent?: boolean;
+};
+
 function clearPingReadRequest(includeHome?: boolean): void {
   if (typeof includeHome === "boolean") {
     clearRecentReadRequest(pingRequestKey(includeHome));
@@ -576,12 +580,12 @@ export async function apiForm<T>(path: string, form: FormData, init?: RequestIni
 
 // ============ Groups ============
 
-export async function fetchGroups() {
-  return reuseRecentReadRequest(
-    groupsRequestKey(),
-    RECENT_BOOTSTRAP_READ_TTL_MS,
-    () => apiJson<{ groups: GroupMeta[] }>("/api/v1/groups")
-  );
+export async function fetchGroups(opts?: FetchGroupsOptions) {
+  const loader = () => apiJson<{ groups: GroupMeta[] }>("/api/v1/groups");
+  if (opts?.bypassRecent) {
+    return reuseSharedReadRequest(groupsRequestKey(), loader);
+  }
+  return reuseRecentReadRequest(groupsRequestKey(), RECENT_BOOTSTRAP_READ_TTL_MS, loader);
 }
 
 export async function fetchPing(options?: { includeHome?: boolean }) {
@@ -606,28 +610,6 @@ export async function createGroup(title: string, topic: string = "") {
     method: "POST",
     body: JSON.stringify({ title, topic, by: "user" }),
   });
-}
-
-export async function createGroupFromTemplate(
-  path: string,
-  title: string,
-  topic: string,
-  file: File
-) {
-  clearGroupsReadRequest();
-  const form = new FormData();
-  form.append("path", path);
-  form.append("title", title);
-  form.append("topic", topic || "");
-  form.append("by", "user");
-  form.append("file", file);
-  return apiForm<{ group_id: string }>("/api/v1/groups/from_template", form);
-}
-
-export async function previewTemplate(file: File) {
-  const form = new FormData();
-  form.append("file", file);
-  return apiForm<{ template: unknown }>("/api/v1/templates/preview", form);
 }
 
 export async function updateGroup(groupId: string, title: string, topic: string) {
@@ -675,35 +657,6 @@ export async function setGroupState(groupId: string, state: "active" | "idle" | 
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/state?state=${encodeURIComponent(state)}&by=user`,
     { method: "POST" }
-  );
-}
-
-// ============ Group Templates (Replace) ============
-
-export async function exportGroupTemplate(groupId: string) {
-  return apiJson<{ template: string; filename: string }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/template/export`
-  );
-}
-
-export async function previewGroupTemplate(groupId: string, file: File) {
-  const form = new FormData();
-  form.append("by", "user");
-  form.append("file", file);
-  return apiForm<{ template: unknown; diff: unknown }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/template/preview_upload`,
-    form
-  );
-}
-
-export async function importGroupTemplateReplace(groupId: string, file: File) {
-  const form = new FormData();
-  form.append("confirm", groupId);
-  form.append("by", "user");
-  form.append("file", file);
-  return apiForm<{ applied: boolean }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/template/import_replace`,
-    form
   );
 }
 

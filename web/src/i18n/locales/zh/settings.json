@@ -10,7 +10,6 @@
     "messaging": "消息路由",
     "im": "IM 桥接",
     "transcript": "终端日志",
-    "blueprint": "蓝图",
     "actorProfiles": "智能体配置库",
     "myProfiles": "我的配置",
     "developer": "开发者",
@@ -625,24 +624,6 @@
     "unknownRole": "未知角色",
     "legacyRoleNotesHint": "检测到了旧版 Role Notes 结构，已映射到结构化字段。保存后会自动规范成最新的 scoped help 结构。",
     "noScopeWarning": "这个工作组目前还没有绑定 scope。由于 guidance override 是存放在 CCCC_HOME 下的，所以仍然可以工作；但依赖仓库作用域的功能在绑定 scope 之前可能不可用。"
-  },
-  "blueprint": {
-    "openFromGroup": "请从工作组中打开此标签页。",
-    "exportTitle": "导出",
-    "exportDescription": "将此工作组的 Actor、设置、自动化规则和引导保存为单个可移植文件。",
-    "exportBlueprint": "导出蓝图",
-    "downloaded": "已下载",
-    "applied": "已应用",
-    "importTitle": "导入（替换）",
-    "importDescription": "通过替换 Actor、设置、自动化规则/模板和工作组引导覆盖（CCCC_HOME）来应用蓝图。日志历史不会被修改。",
-    "blueprintFile": "蓝图文件",
-    "working": "处理中…",
-    "applyReplace": "应用（替换）",
-    "pickFileFirst": "请先选择文件进行预览",
-    "replaceConfirm": "使用 \"{{filename}}\" 替换此工作组的 Actor、设置、自动化规则和引导？\n\n这将停止运行中的 Agent，然后应用 CCCC_HOME 下的工作组引导覆盖：\n- CCCC_PREAMBLE.md\n- CCCC_HELP.md",
-    "failedToPreview": "预览模板失败",
-    "failedToExport": "导出模板失败",
-    "failedToImport": "导入模板失败"
   },
   "developer": {
     "title": "开发者模式（全局）",

@@ -12,7 +12,6 @@ import {
   TranscriptTab,
   GuidanceTab,
   GroupSpaceTab,
-  BlueprintTab,
   CapabilitiesTab,
   ActorProfilesTab,
   WebAccessTab,
@@ -797,7 +796,6 @@ export function SettingsModal({
     { id: "messaging", label: t("tabs.messaging") },
     { id: "im", label: t("tabs.im") },
     { id: "transcript", label: t("tabs.transcript") },
-    { id: "blueprint", label: t("tabs.blueprint") },
   ];
   const tabs = scope === "group" ? groupTabs : (globalScopeEnabled ? globalTabs : []);
   const activeTab = scope === "group" ? groupTab : globalTab;
@@ -981,9 +979,6 @@ export function SettingsModal({
                   isActive={scope === "group" && activeTab === "space"}
                 />
               )}
-
-              {activeTab === "blueprint" && <BlueprintTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
-
               {activeTab === "capabilities" && (
                 <CapabilitiesTab
                   isDark={isDark}

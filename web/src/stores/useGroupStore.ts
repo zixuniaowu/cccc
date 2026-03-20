@@ -78,7 +78,7 @@ interface GroupState {
   setIsChatWindowLoading: (v: boolean, groupId?: string) => void;
 
   // Async actions
-  refreshGroups: () => Promise<void>;
+  refreshGroups: (opts?: { bypassRecent?: boolean }) => Promise<void>;
   refreshActors: (groupId?: string, opts?: { includeUnread?: boolean }) => Promise<void>;
   scheduleActorUnreadRefresh: (groupId?: string, delayMs?: number) => void;
   loadGroup: (groupId: string) => Promise<void>;
@@ -131,6 +131,7 @@ function mergeGroupOrder(storedOrder: string[], groups: GroupMeta[]): string[] {
 // In-flight guards
 let refreshGroupsInFlight = false;
 let refreshGroupsQueued = false;
+let refreshGroupsQueuedBypassRecent = false;
 const refreshActorsInFlight = new Set<string>();
 const refreshActorsQueued = new Set<string>();
 const warmGroupInFlight = new Set<string>();
@@ -713,14 +714,17 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { isChatWindowLoading: value }) ?? state),
 
   // Async actions
-  refreshGroups: async () => {
+  refreshGroups: async (opts) => {
     if (refreshGroupsInFlight) {
       refreshGroupsQueued = true;
+      if (opts?.bypassRecent) {
+        refreshGroupsQueuedBypassRecent = true;
+      }
       return;
     }
     refreshGroupsInFlight = true;
     try {
-      const resp = await api.fetchGroups();
+      const resp = await api.fetchGroups({ bypassRecent: opts?.bypassRecent });
       if (resp.ok) {
         const next = resp.result.groups || [];
         // Use setGroups to ensure groupOrder is updated
@@ -784,8 +788,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     } finally {
       refreshGroupsInFlight = false;
       if (refreshGroupsQueued) {
+        const queuedBypassRecent = refreshGroupsQueuedBypassRecent;
         refreshGroupsQueued = false;
-        void get().refreshGroups();
+        refreshGroupsQueuedBypassRecent = false;
+        void get().refreshGroups({ bypassRecent: queuedBypassRecent });
       }
     }
   },

@@ -119,8 +119,6 @@
   "destGroupDifferent": "宛先グループは送信元グループとは異なる必要があります。",
   "relayTextEmpty": "リレーメッセージのテキストが空です。",
   "failedToListDir": "ディレクトリの一覧取得に失敗しました",
-  "invalidTemplate": "無効なテンプレート",
-  "failedToLoadTemplate": "テンプレートの読み込みに失敗しました",
   "failedToAddAgent": "エージェントの追加に失敗しました",
   "failedToLoadActorProfiles": "runtime profile の読み込みに失敗しました。",
   "customRuntimeRequiresCommand": "カスタムランタイムにはコマンドが必要です。",
