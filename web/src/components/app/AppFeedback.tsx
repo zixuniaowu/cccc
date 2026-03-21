@@ -4,7 +4,7 @@ import { classNames } from "../../utils/classNames";
 type AppNotice = {
   message: string;
   actionLabel?: string;
-  actionId?: string;
+  onAction?: () => void;
 };
 
 type AppFeedbackProps = {
@@ -25,6 +25,12 @@ export function AppFeedback({
   dismissNotice,
 }: AppFeedbackProps) {
   const { t } = useTranslation(["layout", "common"]);
+
+  const handleNoticeAction = () => {
+    if (!notice?.onAction) return;
+    notice.onAction();
+    dismissNotice();
+  };
 
   if (webReadOnly || (!errorMsg && !notice)) {
     return null;
@@ -64,14 +70,14 @@ export function AppFeedback({
           role="status"
         >
           <span className="min-w-0 flex-1 break-words">{notice.message}</span>
-          {notice.actionId && notice.actionLabel ? (
+          {notice.onAction && notice.actionLabel ? (
             <button
               type="button"
               className={classNames(
                 "glass-btn rounded-xl px-2 py-1 text-xs transition-all",
                 isDark ? "text-slate-100" : "text-gray-900"
               )}
-              onClick={dismissNotice}
+              onClick={handleNoticeAction}
             >
               {notice.actionLabel}
             </button>

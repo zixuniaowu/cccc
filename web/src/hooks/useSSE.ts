@@ -1,6 +1,7 @@
 // SSE connection management for the ledger stream.
 import { useEffect, useRef } from "react";
-import { useGroupStore, useUIStore } from "../stores";
+import i18n from "../i18n";
+import { useGroupStore, useUIStore, useModalStore } from "../stores";
 import { useChatOutboxStore } from "../stores/chatOutboxStore";
 import { beginContextRequest, isLatestContextRequest } from "../stores/useGroupStore";
 import * as api from "../services/api";
@@ -19,6 +20,8 @@ import {
   initializeObligationStatus,
   shouldIncrementUnread,
   getActorRefreshMode,
+  isPresentationPublishEvent,
+  isPresentationClearEvent,
   // Re-export for consumers
   getRecipientActorIdsForEvent,
   getAckRecipientIdsForEvent,
@@ -48,10 +51,13 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const updateActorActivity = useGroupStore((s) => s.updateActorActivity);
   const setGroupContext = useGroupStore((s) => s.setGroupContext);
   const refreshActors = useGroupStore((s) => s.refreshActors);
+  const refreshPresentation = useGroupStore((s) => s.refreshPresentation);
   const scheduleActorUnreadRefresh = useGroupStore((s) => s.scheduleActorUnreadRefresh);
 
+  const showNotice = useUIStore((s) => s.showNotice);
   const incrementChatUnread = useUIStore((s) => s.incrementChatUnread);
   const setSSEStatus = useUIStore((s) => s.setSSEStatus);
+  const setPresentationViewer = useModalStore((s) => s.setPresentationViewer);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const contextRefreshTimerRef = useRef<number | null>(null);
@@ -193,6 +199,35 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           if (Array.isArray(actors) && actors.length > 0) {
             updateActorActivity(actors);
           }
+          return;
+        }
+
+        if (isPresentationPublishEvent(ev)) {
+          void refreshPresentation(groupId);
+
+          const slotId = String(ev.data?.slot_id || "").trim();
+          const title = String(ev.data?.title || "").trim();
+          if (slotId) {
+            showNotice({
+              message: title
+                ? i18n.t("chat:presentationUpdatedNoticeWithTitle", {
+                    title,
+                    defaultValue: `Presentation updated: ${title}`,
+                  })
+                : i18n.t("chat:presentationUpdatedNotice", {
+                    defaultValue: "Presentation updated.",
+                  }),
+              actionLabel: i18n.t("chat:presentationViewAction", {
+                defaultValue: "View",
+              }),
+              onAction: () => setPresentationViewer({ groupId, slotId }),
+            });
+          }
+          return;
+        }
+
+        if (isPresentationClearEvent(ev)) {
+          void refreshPresentation(groupId);
           return;
         }
 

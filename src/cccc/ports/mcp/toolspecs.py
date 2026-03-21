@@ -167,6 +167,40 @@ MCP_TOOLS = [
         ),
     },
     {
+        "name": "cccc_presentation",
+        "description": (
+            "Group Presentation surface tool: action=get|publish|clear. "
+            "Use it to put a persistent report/preview/file on the Chat-tab Presentation rail. "
+            "When publishing with path, keep the file linked to the group's active workspace; "
+            "blob_rel_path is for snapshot-style uploaded assets."
+        ),
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_ACTOR,
+                "action": {"type": "string", "enum": ["get", "publish", "clear"], "default": "get"},
+                "slot": {
+                    "type": "string",
+                    "description": "Target slot: auto | slot-1 | slot-2 | slot-3 | slot-4. clear without slot clears all slots.",
+                },
+                "card_type": {
+                    "type": "string",
+                    "enum": ["markdown", "table", "image", "pdf", "file", "web_preview"],
+                },
+                "title": {"type": "string"},
+                "summary": {"type": "string"},
+                "source_label": {"type": "string"},
+                "source_ref": {"type": "string"},
+                "content": {"type": "string"},
+                "table": {"type": "object"},
+                "path": {"type": "string"},
+                "url": {"type": "string"},
+                "blob_rel_path": {"type": "string"},
+                "all": {"type": "boolean", "default": False},
+            }
+        ),
+    },
+    {
         "name": "cccc_group",
         "description": "Group operations: action=info|list|set_state.",
         "inputSchema": _obj(

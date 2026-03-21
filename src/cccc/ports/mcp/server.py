@@ -62,6 +62,11 @@ from .handlers.cccc_messaging import (  # noqa: F401
     message_reply,
     message_send,
 )
+from .handlers.presentation import (  # noqa: F401
+    presentation_clear,
+    presentation_get,
+    presentation_publish,
+)
 from .handlers.cccc_group_actor import (  # noqa: F401
     _sanitize_actors_for_agent,
     _sanitize_group_doc_for_agent,
@@ -337,6 +342,37 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 reply_required=coerce_bool(arguments.get("reply_required"), default=False),
             )
         raise MCPError(code="invalid_request", message="cccc_file action must be 'send' or 'blob_path'")
+
+    if name == "cccc_presentation":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        action = str(arguments.get("action") or "get").strip().lower()
+        if action == "get":
+            return presentation_get(group_id=gid)
+        if action == "publish":
+            return presentation_publish(
+                group_id=gid,
+                actor_id=aid,
+                slot=str(arguments.get("slot") or "auto"),
+                card_type=str(arguments.get("card_type") or ""),
+                title=str(arguments.get("title") or ""),
+                summary=str(arguments.get("summary") or ""),
+                source_label=str(arguments.get("source_label") or ""),
+                source_ref=str(arguments.get("source_ref") or ""),
+                content=str(arguments.get("content") or ""),
+                table=arguments.get("table"),
+                path=str(arguments.get("path") or ""),
+                url=str(arguments.get("url") or ""),
+                blob_rel_path=str(arguments.get("blob_rel_path") or ""),
+            )
+        if action == "clear":
+            return presentation_clear(
+                group_id=gid,
+                actor_id=aid,
+                slot=str(arguments.get("slot") or ""),
+                clear_all=coerce_bool(arguments.get("all"), default=False),
+            )
+        raise MCPError(code="invalid_request", message="cccc_presentation action must be 'get', 'publish', or 'clear'")
 
     # --- Group / Actor ---
     if name == "cccc_group":

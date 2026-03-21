@@ -8,6 +8,7 @@ import type {
   RuntimeInfo,
   GroupContext,
   GroupSettings,
+  GroupPresentation,
 } from "../types";
 import * as api from "../services/api";
 
@@ -48,6 +49,7 @@ interface GroupState {
   actors: Actor[];
   groupContext: GroupContext | null;
   groupSettings: GroupSettings | null;
+  groupPresentation: GroupPresentation | null;
   runtimes: RuntimeInfo[];
   hasMoreHistory: boolean;
   isLoadingHistory: boolean;
@@ -69,6 +71,7 @@ interface GroupState {
   updateActorActivity: (updates: Array<{ id: string; idle_seconds: number; running: boolean }>) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;
+  setGroupPresentation: (presentation: GroupPresentation | null) => void;
   setRuntimes: (runtimes: RuntimeInfo[]) => void;
   updateReadStatus: (eventId: string, actorId: string, groupId?: string) => void;
   updateAckStatus: (eventId: string, actorId: string, groupId?: string) => void;
@@ -80,6 +83,7 @@ interface GroupState {
   // Async actions
   refreshGroups: () => Promise<void>;
   refreshActors: (groupId?: string, opts?: { includeUnread?: boolean }) => Promise<void>;
+  refreshPresentation: (groupId?: string) => Promise<void>;
   scheduleActorUnreadRefresh: (groupId?: string, delayMs?: number) => void;
   loadGroup: (groupId: string) => Promise<void>;
   warmGroup: (groupId: string) => Promise<void>;
@@ -143,6 +147,7 @@ type GroupViewSnapshot = {
   actors: Actor[];
   groupContext: GroupContext | null;
   groupSettings: GroupSettings | null;
+  groupPresentation: GroupPresentation | null;
   hasMoreHistory: boolean;
   cachedAt: number;
 };
@@ -184,6 +189,35 @@ function cloneGroupSettings(settings: GroupSettings | null | undefined): GroupSe
   return settings ? { ...settings } : null;
 }
 
+function cloneGroupPresentation(presentation: GroupPresentation | null | undefined): GroupPresentation | null {
+  if (!presentation) return null;
+  return {
+    ...presentation,
+    slots: Array.isArray(presentation.slots)
+      ? presentation.slots.map((slot) => ({
+          ...slot,
+          card: slot.card
+            ? {
+                ...slot.card,
+                content: {
+                  ...(slot.card.content || {}),
+                  table: slot.card.content?.table
+                    ? {
+                        ...slot.card.content.table,
+                        columns: [...(slot.card.content.table.columns || [])],
+                        rows: Array.isArray(slot.card.content.table.rows)
+                          ? slot.card.content.table.rows.map((row) => [...row])
+                          : [],
+                      }
+                    : null,
+                },
+              }
+            : null,
+        }))
+      : [],
+  };
+}
+
 function getCachedGroupView(groupId: string): GroupViewSnapshot | null {
   const gid = String(groupId || "").trim();
   if (!gid) return null;
@@ -196,6 +230,7 @@ function getCachedGroupView(groupId: string): GroupViewSnapshot | null {
     actors: cloneActors(cached.actors),
     groupContext: cloneGroupContext(cached.groupContext),
     groupSettings: cloneGroupSettings(cached.groupSettings),
+    groupPresentation: cloneGroupPresentation(cached.groupPresentation),
     hasMoreHistory: !!cached.hasMoreHistory,
     cachedAt: cached.cachedAt,
   };
@@ -212,6 +247,7 @@ function saveGroupView(groupId: string, patch: Partial<Omit<GroupViewSnapshot, "
     actors: patch.actors !== undefined ? cloneActors(patch.actors) : cloneActors(prev?.actors),
     groupContext: patch.groupContext !== undefined ? cloneGroupContext(patch.groupContext) : cloneGroupContext(prev?.groupContext),
     groupSettings: patch.groupSettings !== undefined ? cloneGroupSettings(patch.groupSettings) : cloneGroupSettings(prev?.groupSettings),
+    groupPresentation: patch.groupPresentation !== undefined ? cloneGroupPresentation(patch.groupPresentation) : cloneGroupPresentation(prev?.groupPresentation),
     hasMoreHistory: patch.hasMoreHistory !== undefined ? !!patch.hasMoreHistory : !!prev?.hasMoreHistory,
     cachedAt: Date.now(),
   });
@@ -269,6 +305,7 @@ function saveCurrentViewSnapshot(groupId: string, state: GroupState): void {
     actors: state.actors,
     groupContext: state.groupContext,
     groupSettings: state.groupSettings,
+    groupPresentation: state.groupPresentation,
     hasMoreHistory: bucket.hasMoreHistory,
   });
 }
@@ -448,6 +485,7 @@ function buildPrimedGroupState(groupId: string, groups: GroupMeta[]) {
       actors: [],
       groupContext: null,
       groupSettings: null,
+      groupPresentation: null,
     };
   }
 
@@ -457,6 +495,7 @@ function buildPrimedGroupState(groupId: string, groups: GroupMeta[]) {
     actors: cached?.actors || [],
     groupContext: cached?.groupContext || null,
     groupSettings: cached?.groupSettings || null,
+    groupPresentation: cached?.groupPresentation || null,
   };
 }
 
@@ -476,6 +515,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   actors: [],
   groupContext: null,
   groupSettings: null,
+  groupPresentation: null,
   runtimes: [],
   hasMoreHistory: true,
   isLoadingHistory: false,
@@ -596,6 +636,14 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }),
   setGroupContext: (ctx) => set({ groupContext: ctx }),
   setGroupSettings: (settings) => set({ groupSettings: settings }),
+  setGroupPresentation: (presentation) =>
+    set((state) => {
+      const gid = String(state.selectedGroupId || "").trim();
+      if (gid) {
+        saveGroupView(gid, { groupPresentation: presentation });
+      }
+      return { groupPresentation: presentation };
+    }),
   setRuntimes: (runtimes) => set({ runtimes }),
 
   updateReadStatus: (eventId, actorId, groupId) =>
@@ -750,6 +798,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
               actors: [],
               groupContext: null,
               groupSettings: null,
+              groupPresentation: null,
               chatWindow: null,
               hasMoreHistory: false,
               isLoadingHistory: false,
@@ -825,6 +874,22 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }
   },
 
+  refreshPresentation: async (groupId?: string) => {
+    const gid = String(groupId || get().selectedGroupId || "").trim();
+    if (!gid) return;
+    try {
+      const resp = await api.fetchPresentation(gid);
+      if (!resp.ok) return;
+      const nextPresentation = resp.result.presentation || null;
+      saveGroupView(gid, { groupPresentation: nextPresentation });
+      if (String(get().selectedGroupId || "").trim() === gid) {
+        set({ groupPresentation: nextPresentation });
+      }
+    } catch (error) {
+      console.error(`Failed to refresh presentation for group=${gid}:`, error);
+    }
+  },
+
   scheduleActorUnreadRefresh: (groupId?: string, delayMs = 0) => {
     const gid = String(groupId || get().selectedGroupId || "").trim();
     if (!gid) return;
@@ -841,7 +906,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     const token = ++loadGroupToken;
     const isLatestSelection = () => get().selectedGroupId === gid && loadGroupToken === token;
-    const commitViewPatch = (patch: Partial<Pick<GroupState, "groupDoc" | "actors" | "groupContext" | "groupSettings">>) => {
+    const commitViewPatch = (patch: Partial<Pick<GroupState, "groupDoc" | "actors" | "groupContext" | "groupSettings" | "groupPresentation">>) => {
       saveGroupView(gid, patch);
       if (isLatestSelection()) {
         set(patch);
@@ -871,6 +936,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         actors: primedState.actors,
         groupContext: primedState.groupContext,
         groupSettings: primedState.groupSettings,
+        groupPresentation: primedState.groupPresentation,
         hasMoreHistory: chatBucket.hasMoreHistory,
       });
       if (isLatestSelection()) {
@@ -905,6 +971,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
                 actors: [],
                 groupContext: null,
                 groupSettings: null,
+                groupPresentation: null,
               }
             : {}),
         }));
@@ -939,7 +1006,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       });
     });
 
-    // 首屏稳定后再补 context/settings，避免它们拖住切组体感。
+    // 首屏稳定后再补 context/settings/presentation，避免它们拖住切组体感。
     void Promise.allSettled([showPromise, tailPromise, actorsPromise]).then(() => {
       const contextEpoch = beginContextRequest(gid);
       void api.fetchContext(gid, { detail: "summary" }).then((ctx) => {
@@ -956,6 +1023,13 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       }).catch((error) => {
         console.error(`Failed to load settings for group=${gid}:`, error);
       });
+
+      void api.fetchPresentation(gid).then((presentationResp) => {
+        if (!presentationResp.ok) return;
+        commitViewPatch({ groupPresentation: presentationResp.result.presentation || null });
+      }).catch((error) => {
+        console.error(`Failed to load presentation for group=${gid}:`, error);
+      });
     });
   },
 
@@ -968,10 +1042,11 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     warmGroupInFlight.add(gid);
     try {
-      const [show, tail, actorsResp] = await Promise.all([
+      const [show, tail, actorsResp, presentationResp] = await Promise.all([
         api.fetchGroup(gid),
         api.fetchLedgerTail(gid),
         api.fetchActors(gid, false),
+        api.fetchPresentation(gid),
       ]);
 
       const patch: Partial<Omit<GroupViewSnapshot, "cachedAt">> = {};
@@ -986,6 +1061,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       }
       if (actorsResp.ok) {
         patch.actors = actorsResp.result.actors || [];
+      }
+      if (presentationResp.ok) {
+        patch.groupPresentation = presentationResp.result.presentation || null;
       }
 
       saveGroupView(gid, patch);

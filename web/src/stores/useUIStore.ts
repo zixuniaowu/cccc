@@ -4,7 +4,7 @@ import { create } from "zustand";
 interface UINotice {
   message: string;
   actionLabel?: string;
-  actionId?: string;
+  onAction?: () => void;
 }
 
 export type ChatFilter = "all" | "user" | "attention" | "task";
@@ -153,7 +153,7 @@ export const useUIStore = create<UIState>((set) => ({
     }
     set({ notice });
     // Actionable notices remain until user dismisses/clicks action.
-    const persistent = Boolean(notice.actionId && notice.actionLabel);
+    const persistent = Boolean(notice.onAction && notice.actionLabel);
     if (!persistent) {
       noticeTimeoutId = window.setTimeout(() => {
         set({ notice: null });

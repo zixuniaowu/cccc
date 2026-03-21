@@ -23,6 +23,7 @@ CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_message_send",
     "cccc_message_reply",
     "cccc_file",
+    "cccc_presentation",
     "cccc_context_get",
     "cccc_coordination",
     "cccc_task",

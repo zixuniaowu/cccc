@@ -6,6 +6,7 @@ vi.mock("../../src/services/api", () => ({
   fetchLedgerTail: vi.fn(),
   fetchContext: vi.fn(),
   fetchSettings: vi.fn(),
+  fetchPresentation: vi.fn(),
   fetchGroups: vi.fn(),
 }));
 
@@ -57,6 +58,7 @@ describe("useGroupStore actors fetch policy", () => {
       actors: [],
       groupContext: null,
       groupSettings: null,
+      groupPresentation: null,
       runtimes: [],
       hasMoreHistory: true,
       isLoadingHistory: false,
@@ -90,6 +92,13 @@ describe("useGroupStore actors fetch policy", () => {
       ok: true,
       result: { settings: null },
     } as Awaited<ReturnType<typeof api.fetchSettings>>);
+    vi.mocked(api.fetchPresentation).mockResolvedValue({
+      ok: true,
+      result: {
+        group_id: "g-demo",
+        presentation: { v: 1, updated_at: "", highlight_slot_id: "", slots: [] },
+      },
+    } as Awaited<ReturnType<typeof api.fetchPresentation>>);
     vi.mocked(api.fetchGroups).mockResolvedValue({
       ok: true,
       result: { groups: [] },
@@ -178,5 +187,29 @@ describe("useGroupStore actors fetch policy", () => {
 
     await useGroupStore.getState().warmGroup(warmGroupId);
     expect(api.fetchActors).toHaveBeenCalledWith(warmGroupId, false);
+  });
+
+  it("refreshPresentation updates the selected group snapshot", async () => {
+    vi.mocked(api.fetchPresentation).mockResolvedValue({
+      ok: true,
+      result: {
+        group_id: "g-demo",
+        presentation: {
+          v: 1,
+          updated_at: "2026-03-21T00:00:00Z",
+          highlight_slot_id: "slot-2",
+          slots: [
+            { slot_id: "slot-1", index: 1, card: null },
+            { slot_id: "slot-2", index: 2, card: { slot_id: "slot-2", title: "Deck", card_type: "markdown", published_by: "peer-1", published_at: "2026-03-21T00:00:00Z", content: { mode: "inline", markdown: "# deck" } } },
+          ],
+        },
+      },
+    } as Awaited<ReturnType<typeof api.fetchPresentation>>);
+
+    await useGroupStore.getState().refreshPresentation("g-demo");
+
+    expect(api.fetchPresentation).toHaveBeenCalledWith("g-demo");
+    expect(useGroupStore.getState().groupPresentation?.highlight_slot_id).toBe("slot-2");
+    expect(useGroupStore.getState().groupPresentation?.slots[1]?.card?.title).toBe("Deck");
   });
 });

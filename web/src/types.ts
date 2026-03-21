@@ -342,6 +342,49 @@ export type GroupTasksSummary = {
 
 export type TaskBoardEntry = string | Partial<Task>;
 
+export type PresentationCardType = "markdown" | "table" | "image" | "pdf" | "file" | "web_preview";
+
+export type PresentationTableData = {
+  columns: string[];
+  rows: string[][];
+};
+
+export type PresentationContent = {
+  mode?: "inline" | "reference" | "workspace_link";
+  markdown?: string | null;
+  table?: PresentationTableData | null;
+  url?: string | null;
+  blob_rel_path?: string | null;
+  workspace_rel_path?: string | null;
+  mime_type?: string | null;
+  file_name?: string | null;
+};
+
+export type PresentationCard = {
+  slot_id: string;
+  title: string;
+  card_type: PresentationCardType;
+  published_by: string;
+  published_at: string;
+  source_label?: string;
+  source_ref?: string;
+  summary?: string;
+  content: PresentationContent;
+};
+
+export type PresentationSlot = {
+  slot_id: string;
+  index: number;
+  card?: PresentationCard | null;
+};
+
+export type GroupPresentation = {
+  v: number;
+  updated_at?: string;
+  highlight_slot_id?: string;
+  slots: PresentationSlot[];
+};
+
 export type ContextAttention = {
   blocked?: number | TaskBoardEntry[];
   waiting_user?: number | TaskBoardEntry[];
@@ -755,6 +798,13 @@ export type IMStatus = {
 
 export type DirItem = { name: string; path: string; is_dir: boolean };
 export type DirSuggestion = { name: string; path: string; icon: string };
+export type PresentationWorkspaceItem = { name: string; path: string; is_dir: boolean; mime_type?: string | null };
+export type PresentationWorkspaceListing = {
+  root_path: string;
+  path: string;
+  parent: string | null;
+  items: PresentationWorkspaceItem[];
+};
 
 // Runtime configuration
 export const SUPPORTED_RUNTIMES = [

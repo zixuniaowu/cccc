@@ -37,6 +37,14 @@ import type {
   TaskBoardEntry,
   TaskChecklistItem,
   ContextDetailLevel,
+  GroupPresentation,
+  PresentationCard,
+  PresentationCardType,
+  PresentationContent,
+  PresentationSlot,
+  PresentationTableData,
+  PresentationWorkspaceItem,
+  PresentationWorkspaceListing,
 } from "../types";
 import { actorProfileIdentityKey } from "../utils/actorProfiles";
 
@@ -496,6 +504,99 @@ function normalizeContext(raw: unknown): GroupContext {
   };
 }
 
+function normalizePresentationTable(value: unknown): PresentationTableData | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const columns = Array.isArray(record.columns) ? record.columns.map((item) => asString(item)) : [];
+  const rows = Array.isArray(record.rows)
+    ? record.rows.map((row) =>
+        Array.isArray(row) ? row.map((cell) => asString(cell)) : []
+      )
+    : [];
+  return { columns, rows };
+}
+
+function normalizePresentationContent(value: unknown): PresentationContent {
+  const record = asRecord(value) ?? {};
+  const rawMode = asString(record.mode).trim();
+  return {
+    mode: rawMode === "reference" || rawMode === "workspace_link" ? rawMode : "inline",
+    markdown: asOptionalString(record.markdown),
+    table: normalizePresentationTable(record.table),
+    url: asOptionalString(record.url),
+    blob_rel_path: asOptionalString(record.blob_rel_path),
+    workspace_rel_path: asOptionalString(record.workspace_rel_path),
+    mime_type: asOptionalString(record.mime_type),
+    file_name: asOptionalString(record.file_name),
+  };
+}
+
+function normalizePresentationCard(value: unknown): PresentationCard | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const slotId = asString(record.slot_id).trim();
+  const title = asString(record.title).trim();
+  if (!slotId || !title) return null;
+
+  const rawCardType = asString(record.card_type).trim();
+  const cardType: PresentationCardType =
+    rawCardType === "markdown" ||
+    rawCardType === "table" ||
+    rawCardType === "image" ||
+    rawCardType === "pdf" ||
+    rawCardType === "web_preview"
+      ? rawCardType
+      : "file";
+
+  return {
+    slot_id: slotId,
+    title,
+    card_type: cardType,
+    published_by: asString(record.published_by).trim() || "user",
+    published_at: asString(record.published_at).trim(),
+    source_label: asString(record.source_label).trim(),
+    source_ref: asString(record.source_ref).trim(),
+    summary: asString(record.summary).trim(),
+    content: normalizePresentationContent(record.content),
+  };
+}
+
+function normalizePresentationSlot(value: unknown, fallbackIndex: number): PresentationSlot {
+  const record = asRecord(value) ?? {};
+  const index = Number(record.index || fallbackIndex);
+  const normalizedIndex = Number.isFinite(index) && index > 0 ? index : fallbackIndex;
+  const slotId = asString(record.slot_id).trim() || `slot-${normalizedIndex}`;
+  return {
+    slot_id: slotId,
+    index: normalizedIndex,
+    card: normalizePresentationCard(record.card),
+  };
+}
+
+function normalizePresentation(raw: unknown): GroupPresentation {
+  const record = asRecord(raw) ?? {};
+  const rawSlots = Array.isArray(record.slots) ? record.slots : [];
+  const slotsById = new Map<string, PresentationSlot>();
+  rawSlots.forEach((slot, index) => {
+    const normalized = normalizePresentationSlot(slot, index + 1);
+    slotsById.set(normalized.slot_id, normalized);
+  });
+
+  const orderedSlots = Array.from({ length: 4 }, (_, index) => {
+    const slotId = `slot-${index + 1}`;
+    const existing = slotsById.get(slotId);
+    return existing || { slot_id: slotId, index: index + 1, card: null };
+  });
+
+  const highlightSlotId = asString(record.highlight_slot_id).trim();
+  return {
+    v: Number(record.v || 1) || 1,
+    updated_at: asString(record.updated_at).trim(),
+    highlight_slot_id: highlightSlotId,
+    slots: orderedSlots,
+  };
+}
+
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   let resp: Response;
   try {
@@ -598,6 +699,184 @@ export async function fetchPing(options?: { includeHome?: boolean }) {
 
 export async function fetchGroup(groupId: string) {
   return apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(groupId)}`);
+}
+
+export async function fetchPresentation(groupId: string): Promise<ApiResponse<{ group_id: string; presentation: GroupPresentation }>> {
+  const resp = await apiJson<{ group_id?: string; presentation?: unknown }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/presentation`
+  );
+  if (!resp.ok) return resp as ApiResponse<{ group_id: string; presentation: GroupPresentation }>;
+  return {
+    ok: true,
+    result: {
+      group_id: asString(resp.result.group_id).trim() || groupId,
+      presentation: normalizePresentation(resp.result.presentation),
+    },
+  };
+}
+
+type PresentationMutationResult = {
+  group_id: string;
+  slot_id?: string;
+  cleared_slots?: string[];
+  card?: PresentationCard;
+  presentation: GroupPresentation;
+};
+
+function normalizePresentationMutationResult(
+  groupId: string,
+  result: { group_id?: unknown; slot_id?: unknown; cleared_slots?: unknown; card?: unknown; presentation?: unknown },
+): PresentationMutationResult {
+  return {
+    group_id: asString(result.group_id).trim() || groupId,
+    slot_id: asOptionalString(result.slot_id) || undefined,
+    cleared_slots: Array.isArray(result.cleared_slots) ? result.cleared_slots.map((slot) => asString(slot).trim()).filter(Boolean) : undefined,
+    card: normalizePresentationCard(result.card) || undefined,
+    presentation: normalizePresentation(result.presentation),
+  };
+}
+
+export async function publishPresentationUrl(
+  groupId: string,
+  payload: { slotId: string; url: string; title?: string; summary?: string },
+): Promise<ApiResponse<PresentationMutationResult>> {
+  const resp = await apiJson<{
+    group_id?: unknown;
+    slot_id?: unknown;
+    card?: unknown;
+    presentation?: unknown;
+  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/presentation/publish`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      slot: String(payload.slotId || "").trim() || "auto",
+      url: String(payload.url || "").trim(),
+      title: String(payload.title || "").trim(),
+      summary: String(payload.summary || "").trim(),
+    }),
+  });
+  if (!resp.ok) return resp as ApiResponse<PresentationMutationResult>;
+  return { ok: true, result: normalizePresentationMutationResult(groupId, resp.result) };
+}
+
+export async function publishPresentationUpload(
+  groupId: string,
+  payload: { slotId: string; file: File; title?: string; summary?: string },
+): Promise<ApiResponse<PresentationMutationResult>> {
+  const form = new FormData();
+  form.append("by", "user");
+  form.append("slot", String(payload.slotId || "").trim() || "auto");
+  form.append("title", String(payload.title || "").trim());
+  form.append("summary", String(payload.summary || "").trim());
+  form.append("file", payload.file);
+  const resp = await apiForm<{
+    group_id?: unknown;
+    slot_id?: unknown;
+    card?: unknown;
+    presentation?: unknown;
+  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/presentation/publish_upload`, form);
+  if (!resp.ok) return resp as ApiResponse<PresentationMutationResult>;
+  return { ok: true, result: normalizePresentationMutationResult(groupId, resp.result) };
+}
+
+export async function publishPresentationWorkspace(
+  groupId: string,
+  payload: { slotId: string; path: string; title?: string; summary?: string },
+): Promise<ApiResponse<PresentationMutationResult>> {
+  const resp = await apiJson<{
+    group_id?: unknown;
+    slot_id?: unknown;
+    card?: unknown;
+    presentation?: unknown;
+  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/presentation/publish_workspace`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      slot: String(payload.slotId || "").trim() || "auto",
+      path: String(payload.path || "").trim(),
+      title: String(payload.title || "").trim(),
+      summary: String(payload.summary || "").trim(),
+    }),
+  });
+  if (!resp.ok) return resp as ApiResponse<PresentationMutationResult>;
+  return { ok: true, result: normalizePresentationMutationResult(groupId, resp.result) };
+}
+
+export async function clearPresentationSlot(
+  groupId: string,
+  slotId: string,
+): Promise<ApiResponse<PresentationMutationResult>> {
+  const resp = await apiJson<{
+    group_id?: unknown;
+    cleared_slots?: unknown;
+    presentation?: unknown;
+  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/presentation/clear`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      slot: String(slotId || "").trim(),
+    }),
+  });
+  if (!resp.ok) return resp as ApiResponse<PresentationMutationResult>;
+  return { ok: true, result: normalizePresentationMutationResult(groupId, resp.result) };
+}
+
+function normalizePresentationWorkspaceItem(value: unknown): PresentationWorkspaceItem | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const name = asString(record.name).trim();
+  const path = asString(record.path).trim();
+  if (!name || !path) return null;
+  return {
+    name,
+    path,
+    is_dir: !!record.is_dir,
+    mime_type: asOptionalString(record.mime_type),
+  };
+}
+
+export async function fetchPresentationWorkspaceListing(
+  groupId: string,
+  path = "",
+): Promise<ApiResponse<PresentationWorkspaceListing>> {
+  const params = new URLSearchParams();
+  if (String(path || "").trim()) params.set("path", String(path).trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const resp = await apiJson<{
+    root_path?: unknown;
+    path?: unknown;
+    parent?: unknown;
+    items?: unknown;
+  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/presentation/workspace/list${suffix}`);
+  if (!resp.ok) return resp as ApiResponse<PresentationWorkspaceListing>;
+  const items = Array.isArray(resp.result.items)
+    ? resp.result.items
+        .map((item) => normalizePresentationWorkspaceItem(item))
+        .filter((item): item is PresentationWorkspaceItem => !!item)
+    : [];
+  return {
+    ok: true,
+    result: {
+      root_path: asString(resp.result.root_path).trim(),
+      path: asString(resp.result.path).trim(),
+      parent:
+        typeof resp.result.parent === "string"
+          ? String(resp.result.parent)
+          : resp.result.parent == null
+            ? null
+            : String(resp.result.parent),
+      items,
+    },
+  };
+}
+
+export function getPresentationAssetUrl(groupId: string, slotId: string, cacheBust?: string | number): string {
+  const base = withAuthToken(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/slots/${encodeURIComponent(slotId)}/asset`
+  );
+  if (cacheBust === undefined || cacheBust === null || cacheBust === "") return base;
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}v=${encodeURIComponent(String(cacheBust))}`;
 }
 
 export async function createGroup(title: string, topic: string = "") {

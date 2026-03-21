@@ -1,0 +1,315 @@
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { MarkdownRenderer } from "../MarkdownRenderer";
+import { ModalFrame } from "../modals/ModalFrame";
+import { useModalA11y } from "../../hooks/useModalA11y";
+import type { GroupPresentation, PresentationSlot } from "../../types";
+import { getPresentationAssetUrl } from "../../services/api";
+import { classNames } from "../../utils/classNames";
+import { findPresentationSlot } from "../../utils/presentation";
+
+type PresentationViewerModalProps = {
+  isOpen: boolean;
+  isDark: boolean;
+  readOnly?: boolean;
+  groupId: string;
+  slotId: string;
+  presentation: GroupPresentation | null;
+  onReplaceSlot?: (slotId: string) => void;
+  onClearSlot?: (slotId: string) => void;
+  onClose: () => void;
+};
+
+function getReferenceHref(groupId: string, slot: PresentationSlot | null, cacheBust?: string | number): string {
+  const card = slot?.card;
+  if (!card) return "";
+  const url = String(card.content.url || "").trim();
+  if (url) return url;
+  return getPresentationAssetUrl(groupId, slot.slot_id, cacheBust);
+}
+
+function formatTimestamp(value: string | undefined, locale: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleString(locale, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getCardTypeLabel(type: string, t: (key: string, options?: Record<string, unknown>) => string): string {
+  switch (String(type || "").trim()) {
+    case "markdown":
+      return t("presentationTypeMarkdown", { defaultValue: "Markdown" });
+    case "table":
+      return t("presentationTypeTable", { defaultValue: "Table" });
+    case "image":
+      return t("presentationTypeImage", { defaultValue: "Image" });
+    case "pdf":
+      return t("presentationTypePdf", { defaultValue: "PDF" });
+    case "web_preview":
+      return t("presentationTypeWebPreview", { defaultValue: "Web" });
+    default:
+      return t("presentationTypeFile", { defaultValue: "File" });
+  }
+}
+
+export function PresentationViewerModal({
+  isOpen,
+  isDark,
+  readOnly,
+  groupId,
+  slotId,
+  presentation,
+  onReplaceSlot,
+  onClearSlot,
+  onClose,
+}: PresentationViewerModalProps) {
+  const { t, i18n } = useTranslation("chat");
+  const { modalRef } = useModalA11y(isOpen, onClose);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [linkedMarkdown, setLinkedMarkdown] = useState("");
+  const [linkedMarkdownError, setLinkedMarkdownError] = useState("");
+
+  const slot = useMemo(() => findPresentationSlot(presentation, slotId), [presentation, slotId]);
+  const card = slot?.card || null;
+  const isWorkspaceLinked = !!card && card.content.mode === "workspace_link" && !!String(card.content.workspace_rel_path || "").trim();
+  const cacheBust = isWorkspaceLinked ? `${card?.published_at || "linked"}:${refreshTick}` : undefined;
+  const href = useMemo(() => getReferenceHref(groupId, slot, cacheBust), [cacheBust, groupId, slot]);
+  const publishedAt = formatTimestamp(card?.published_at, i18n.language);
+  const useSandboxedPreview = !!card && card.card_type === "web_preview" && !String(card.content.url || "").trim();
+  const cardType = String(card?.card_type || "").trim();
+  const cardMode = String(card?.content.mode || "inline").trim();
+
+  useEffect(() => {
+    if (!isOpen || !isWorkspaceLinked) return;
+    const timer = window.setInterval(() => {
+      setRefreshTick((value) => value + 1);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [isOpen, isWorkspaceLinked, slotId, card?.published_at]);
+
+  useEffect(() => {
+    if (!isOpen || cardType !== "markdown") return;
+    if (cardMode === "inline") return;
+    if (!href) {
+      setLinkedMarkdown("");
+      setLinkedMarkdownError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+
+    const run = async () => {
+      try {
+        const resp = await fetch(href, { cache: "no-store", signal: controller.signal });
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        const text = await resp.text();
+        if (!active) return;
+        setLinkedMarkdown(text);
+        setLinkedMarkdownError("");
+      } catch (error) {
+        if (!active || controller.signal.aborted) return;
+        setLinkedMarkdown("");
+        setLinkedMarkdownError(error instanceof Error ? error.message : String(error));
+      }
+    };
+
+    void run();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [cardMode, cardType, href, isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <ModalFrame
+      isDark={isDark}
+      onClose={onClose}
+      titleId="presentation-viewer-title"
+      title={card?.title || t("presentationTitle", { defaultValue: "Presentation" })}
+      closeAriaLabel={t("presentationCloseViewer", { defaultValue: "Close presentation viewer" })}
+      panelClassName="h-full w-full sm:h-[90vh] sm:max-w-6xl"
+      modalRef={modalRef}
+    >
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div
+          className={classNames(
+            "flex flex-wrap items-center gap-2 border-b px-5 py-3 text-xs",
+            isDark ? "border-white/10 text-slate-400" : "border-black/10 text-gray-600"
+          )}
+        >
+          {card ? (
+            <>
+              <span className={classNames("rounded-full px-2 py-1 font-medium", isDark ? "bg-cyan-500/10 text-cyan-200" : "bg-cyan-50 text-cyan-700")}>
+                {getCardTypeLabel(card.card_type, t)}
+              </span>
+              {isWorkspaceLinked ? (
+                <span className={classNames("rounded-full px-2 py-1 font-medium", isDark ? "bg-emerald-500/10 text-emerald-200" : "bg-emerald-50 text-emerald-700")}>
+                  {t("presentationWorkspaceLiveBadge", { defaultValue: "Live workspace link" })}
+                </span>
+              ) : null}
+              {card.source_label ? <span>{card.source_label}</span> : null}
+              {publishedAt ? <span>{publishedAt}</span> : null}
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                {isWorkspaceLinked ? (
+                  <button
+                    type="button"
+                    onClick={() => setRefreshTick((value) => value + 1)}
+                    className={classNames(
+                      "rounded-full px-3 py-1 font-medium transition-colors",
+                      isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200"
+                    )}
+                  >
+                    {t("presentationRefreshAction", { defaultValue: "Refresh" })}
+                  </button>
+                ) : null}
+                {href ? (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={classNames(
+                      "rounded-full px-3 py-1 font-medium transition-colors",
+                      isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200"
+                    )}
+                  >
+                    {t("presentationOpenNewTab", { defaultValue: "Open in new tab" })}
+                  </a>
+                ) : null}
+                {!readOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => slot && onReplaceSlot?.(slot.slot_id)}
+                    className={classNames(
+                      "rounded-full px-3 py-1 font-medium transition-colors",
+                      isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200"
+                    )}
+                  >
+                    {t("presentationReplaceAction", { defaultValue: "Replace" })}
+                  </button>
+                ) : null}
+                {!readOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => slot && onClearSlot?.(slot.slot_id)}
+                    className={classNames(
+                      "rounded-full px-3 py-1 font-medium transition-colors",
+                      isDark ? "bg-rose-500/15 text-rose-200 hover:bg-rose-500/25" : "bg-rose-50 text-rose-700 hover:bg-rose-100"
+                    )}
+                  >
+                    {t("presentationClearAction", { defaultValue: "Clear" })}
+                  </button>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <span>{t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}</span>
+          )}
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-auto px-5 py-5">
+          {!card ? (
+            <div className={classNames("flex h-full min-h-[320px] items-center justify-center rounded-3xl border border-dashed text-sm", isDark ? "border-white/10 text-slate-500" : "border-black/10 text-gray-500")}>
+              {t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}
+            </div>
+          ) : card.card_type === "markdown" ? (
+            <div className={classNames("rounded-3xl border p-5", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
+              {linkedMarkdownError ? (
+                <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>{linkedMarkdownError}</div>
+              ) : (
+                <MarkdownRenderer
+                  content={String(card.content.mode === "inline" ? card.content.markdown || "" : linkedMarkdown || "")}
+                  isDark={isDark}
+                  className="break-words [overflow-wrap:anywhere]"
+                />
+              )}
+            </div>
+          ) : card.card_type === "table" ? (
+            <div className={classNames("overflow-hidden rounded-3xl border", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/95")}>
+              <div className="overflow-auto">
+                <table className="min-w-full border-collapse text-sm">
+                  <thead className={isDark ? "bg-slate-900/80 text-slate-200" : "bg-gray-50 text-gray-800"}>
+                    <tr>
+                      {(card.content.table?.columns || []).map((column) => (
+                        <th key={column} className="border-b border-inherit px-4 py-3 text-left font-semibold">
+                          {column}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className={isDark ? "text-slate-300" : "text-gray-700"}>
+                    {(card.content.table?.rows || []).map((row, rowIndex) => (
+                      <tr key={`row-${rowIndex}`} className={rowIndex % 2 === 0 ? (isDark ? "bg-slate-950/40" : "bg-white") : (isDark ? "bg-slate-900/30" : "bg-gray-50/80")}>
+                        {row.map((cell, cellIndex) => (
+                          <td key={`cell-${rowIndex}:${cellIndex}`} className="border-b border-[var(--glass-border-subtle)] px-4 py-3 align-top">
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : card.card_type === "image" ? (
+            <div className="flex min-h-[360px] items-center justify-center">
+              <img
+                src={href}
+                alt={card.title}
+                className="max-h-[70vh] max-w-full rounded-3xl border border-[var(--glass-border-subtle)] object-contain shadow-xl"
+              />
+            </div>
+          ) : card.card_type === "pdf" ? (
+            <iframe
+              title={card.title}
+              src={href}
+              className="min-h-[72vh] w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+            />
+          ) : card.card_type === "web_preview" ? (
+            <iframe
+              title={card.title}
+              src={href}
+              sandbox={useSandboxedPreview ? "allow-scripts allow-forms allow-modals allow-popups allow-downloads" : undefined}
+              className="min-h-[72vh] w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+            />
+          ) : (
+            <div className={classNames("rounded-3xl border p-6", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
+              <div className={classNames("text-base font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
+                {card.title}
+              </div>
+              <div className={classNames("mt-2 text-sm", isDark ? "text-slate-400" : "text-gray-600")}>
+                {card.summary || card.source_label || t("presentationFileReady", { defaultValue: "File ready to open or download." })}
+              </div>
+              {href ? (
+                <div className="mt-5">
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={classNames(
+                      "inline-flex items-center rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                      isDark ? "bg-slate-800 text-slate-100 hover:bg-slate-700" : "bg-gray-100 text-gray-900 hover:bg-gray-200"
+                    )}
+                  >
+                    {t("presentationDownloadFile", { defaultValue: "Open or download file" })}
+                  </a>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+      </div>
+    </ModalFrame>
+  );
+}

@@ -16,12 +16,15 @@ import {
 } from "./modals/EditActorModal";
 import { GroupEditModal } from "./modals/GroupEditModal";
 import { InboxModal } from "./modals/InboxModal";
+import { PresentationPinModal } from "./presentation/PresentationPinModal";
+import { PresentationViewerModal } from "./presentation/PresentationViewerModal";
 import { RelayMessageModal } from "./modals/RelayMessageModal";
 import { RecipientsModal } from "./modals/RecipientsModal";
 import { parsePrivateEnvSetText } from "../utils/privateEnvInput";
 import { parseHelpMarkdown, updateActorHelpNote } from "../utils/helpMarkdown";
 import { formatCapabilityIdInput, normalizeCapabilityIdList, parseCapabilityIdInput } from "../utils/capabilityAutoload";
 import { actorProfileIdentityKey, actorProfileMatchesRef } from "../utils/actorProfiles";
+import { findPresentationSlot } from "../utils/presentation";
 import {
   useGroupStore,
   useUIStore,
@@ -35,6 +38,7 @@ import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMess
 
 interface AppModalsProps {
   isDark: boolean;
+  readOnly?: boolean;
   ccccHome: string;
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
   onStartReply: (ev: LedgerEvent) => void;
@@ -55,6 +59,7 @@ function getErrorDetailGroupId(err: unknown): string {
 
 export function AppModals({
   isDark,
+  readOnly,
   ccccHome,
   composerRef,
   onStartReply,
@@ -65,7 +70,7 @@ export function AppModals({
   fetchContext,
   canManageGroups,
 }: AppModalsProps) {
-  const { t } = useTranslation('actors');
+  const { t } = useTranslation(['actors', 'chat']);
   // Stores
   const {
     groups,
@@ -76,11 +81,13 @@ export function AppModals({
     actors,
     groupContext,
     groupSettings,
+    groupPresentation,
     runtimes,
     setSelectedGroupId,
     setGroupDoc,
     setGroupContext,
     setGroupSettings,
+    setGroupPresentation,
     refreshGroups,
     refreshActors,
     loadGroup,
@@ -101,11 +108,15 @@ export function AppModals({
     recipientsEventId: _recipientsEventId,
     relayEventId,
     relaySource,
+    presentationViewer,
+    presentationPin,
     editingActor,
     openModal,
     closeModal,
     setRecipientsModal,
     setRelayModal,
+    setPresentationViewer,
+    setPresentationPin,
     setEditingActor,
   } = useModalStore();
 
@@ -178,6 +189,18 @@ export function AppModals({
   const [editActorRoleNotesBusy, setEditActorRoleNotesBusy] = useState(false);
   const editActorRoleNotesBaselineRef = useRef("");
   const editActorRoleNotesSeqRef = useRef(0);
+
+  useEffect(() => {
+    if (presentationViewer && presentationViewer.groupId !== selectedGroupId) {
+      setPresentationViewer(null);
+    }
+  }, [presentationViewer, selectedGroupId, setPresentationViewer]);
+
+  useEffect(() => {
+    if (presentationPin && presentationPin.groupId !== selectedGroupId) {
+      setPresentationPin(null);
+    }
+  }, [presentationPin, selectedGroupId, setPresentationPin]);
 
   const loadEditingActorRoleNotes = useCallback(async (groupId: string, actorId: string) => {
     const gid = String(groupId || "").trim();
@@ -1069,6 +1092,122 @@ export function AppModals({
     }
   };
 
+  const handlePresentationPublishUrl = useCallback(
+    async (payload: { slotId: string; url: string; title: string; summary: string }) => {
+      const gid = String(selectedGroupId || "").trim();
+      if (!gid) return;
+      setBusy("presentation-pin");
+      try {
+        const resp = await api.publishPresentationUrl(gid, payload);
+        if (!resp.ok) {
+          showError(`${resp.error.code}: ${resp.error.message}`);
+          return;
+        }
+        setGroupPresentation(resp.result.presentation);
+        setPresentationPin(null);
+        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId });
+        showNotice({
+          message: t("chat:presentationPinnedNotice", {
+            title: resp.result.card?.title || payload.title || payload.url,
+            defaultValue: `Pinned to Presentation: ${resp.result.card?.title || payload.title || payload.url}`,
+          }),
+        });
+      } finally {
+        setBusy("");
+      }
+    },
+    [selectedGroupId, setBusy, setGroupPresentation, setPresentationPin, setPresentationViewer, showError, showNotice, t],
+  );
+
+  const handlePresentationPublishFile = useCallback(
+    async (payload: { slotId: string; file: File; title: string; summary: string }) => {
+      const gid = String(selectedGroupId || "").trim();
+      if (!gid) return;
+      setBusy("presentation-pin");
+      try {
+        const resp = await api.publishPresentationUpload(gid, payload);
+        if (!resp.ok) {
+          showError(`${resp.error.code}: ${resp.error.message}`);
+          return;
+        }
+        setGroupPresentation(resp.result.presentation);
+        setPresentationPin(null);
+        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId });
+        showNotice({
+          message: t("chat:presentationPinnedNotice", {
+            title: resp.result.card?.title || payload.title || payload.file.name,
+            defaultValue: `Pinned to Presentation: ${resp.result.card?.title || payload.title || payload.file.name}`,
+          }),
+        });
+      } finally {
+        setBusy("");
+      }
+    },
+    [selectedGroupId, setBusy, setGroupPresentation, setPresentationPin, setPresentationViewer, showError, showNotice, t],
+  );
+
+  const handlePresentationPublishWorkspace = useCallback(
+    async (payload: { slotId: string; path: string; title: string; summary: string }) => {
+      const gid = String(selectedGroupId || "").trim();
+      if (!gid) return;
+      setBusy("presentation-pin");
+      try {
+        const resp = await api.publishPresentationWorkspace(gid, payload);
+        if (!resp.ok) {
+          showError(`${resp.error.code}: ${resp.error.message}`);
+          return;
+        }
+        setGroupPresentation(resp.result.presentation);
+        setPresentationPin(null);
+        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId });
+        showNotice({
+          message: t("chat:presentationPinnedNotice", {
+            title: resp.result.card?.title || payload.title || payload.path,
+            defaultValue: `Pinned to Presentation: ${resp.result.card?.title || payload.title || payload.path}`,
+          }),
+        });
+      } finally {
+        setBusy("");
+      }
+    },
+    [selectedGroupId, setBusy, setGroupPresentation, setPresentationPin, setPresentationViewer, showError, showNotice, t],
+  );
+
+  const handlePresentationClear = useCallback(
+    async (slotId: string) => {
+      const gid = String(selectedGroupId || "").trim();
+      const normalizedSlotId = String(slotId || "").trim();
+      if (!gid || !normalizedSlotId) return;
+      const confirmed = window.confirm(
+        t("chat:presentationClearConfirm", {
+          index: Number(normalizedSlotId.replace("slot-", "") || 0) || normalizedSlotId,
+          defaultValue: `Clear ${normalizedSlotId}?`,
+        }),
+      );
+      if (!confirmed) return;
+      setBusy("presentation-clear");
+      try {
+        const resp = await api.clearPresentationSlot(gid, normalizedSlotId);
+        if (!resp.ok) {
+          showError(`${resp.error.code}: ${resp.error.message}`);
+          return;
+        }
+        setGroupPresentation(resp.result.presentation);
+        setPresentationViewer(null);
+        setPresentationPin(null);
+        showNotice({
+          message: t("chat:presentationClearedNotice", {
+            index: Number(normalizedSlotId.replace("slot-", "") || 0) || normalizedSlotId,
+            defaultValue: `Cleared slot ${normalizedSlotId}.`,
+          }),
+        });
+      } finally {
+        setBusy("");
+      }
+    },
+    [selectedGroupId, setBusy, setGroupPresentation, setPresentationViewer, setPresentationPin, showError, showNotice, t],
+  );
+
   return (
     <>
       <MobileMenuSheet
@@ -1136,6 +1275,42 @@ export function AppModals({
           window.history.replaceState({}, "", url.pathname + "?" + url.searchParams.toString());
           void openChatWindow(gid, eid);
         }}
+      />
+
+      <PresentationPinModal
+        key={
+          presentationPin
+            ? `${presentationPin.groupId}:${presentationPin.slotId}:${
+                findPresentationSlot(groupPresentation, presentationPin?.slotId || "")?.card?.published_at || "empty"
+              }`
+            : "presentation-pin-closed"
+        }
+        isOpen={!!presentationPin && presentationPin.groupId === selectedGroupId}
+        groupId={selectedGroupId}
+        isDark={isDark}
+        slot={presentationPin?.groupId === selectedGroupId ? findPresentationSlot(groupPresentation, presentationPin?.slotId || "") : null}
+        busy={busy === "presentation-pin"}
+        onClose={() => setPresentationPin(null)}
+        onSubmitUrl={handlePresentationPublishUrl}
+        onSubmitWorkspace={handlePresentationPublishWorkspace}
+        onSubmitFile={handlePresentationPublishFile}
+      />
+
+      <PresentationViewerModal
+        isOpen={!!presentationViewer && presentationViewer.groupId === selectedGroupId}
+        isDark={isDark}
+        readOnly={readOnly}
+        groupId={presentationViewer?.groupId || selectedGroupId}
+        slotId={presentationViewer?.slotId || ""}
+        presentation={presentationViewer?.groupId === selectedGroupId ? groupPresentation : null}
+        onReplaceSlot={(slotId) => {
+          const gid = String(selectedGroupId || "").trim();
+          if (!gid || !slotId) return;
+          setPresentationViewer(null);
+          setPresentationPin({ groupId: gid, slotId });
+        }}
+        onClearSlot={(slotId) => void handlePresentationClear(slotId)}
+        onClose={() => setPresentationViewer(null)}
       />
 
       <ContextModal

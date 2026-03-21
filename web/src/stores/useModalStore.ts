@@ -7,6 +7,16 @@ interface RelaySource {
   event: LedgerEvent;
 }
 
+interface PresentationViewerState {
+  groupId: string;
+  slotId: string;
+}
+
+interface PresentationPinState {
+  groupId: string;
+  slotId: string;
+}
+
 interface ModalState {
   // Modal visibility state
   modals: {
@@ -23,6 +33,8 @@ interface ModalState {
   recipientsEventId: string | null;
   relayEventId: string | null;
   relaySource: RelaySource | null;
+  presentationViewer: PresentationViewerState | null;
+  presentationPin: PresentationPinState | null;
   editingActor: Actor | null;
 
   // Actions
@@ -30,6 +42,8 @@ interface ModalState {
   closeModal: (name: keyof ModalState["modals"]) => void;
   setRecipientsModal: (eventId: string | null) => void;
   setRelayModal: (eventId: string | null, groupId?: string, event?: LedgerEvent | null) => void;
+  setPresentationViewer: (viewer: PresentationViewerState | null) => void;
+  setPresentationPin: (pin: PresentationPinState | null) => void;
   setEditingActor: (actor: Actor | null) => void;
 }
 
@@ -48,6 +62,8 @@ export const useModalStore = create<ModalState>((set) => ({
   recipientsEventId: null,
   relayEventId: null,
   relaySource: null,
+  presentationViewer: null,
+  presentationPin: null,
   editingActor: null,
 
   openModal: (name) =>
@@ -67,5 +83,7 @@ export const useModalStore = create<ModalState>((set) => ({
       relaySource: eventId && groupId && event ? { groupId, event } : null,
       modals: { ...state.modals, relay: !!eventId },
     })),
+  setPresentationViewer: (viewer) => set({ presentationViewer: viewer }),
+  setPresentationPin: (pin) => set({ presentationPin: pin }),
   setEditingActor: (actor) => set({ editingActor: actor }),
 }));

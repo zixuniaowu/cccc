@@ -87,6 +87,363 @@ describe("api.fetchActors", () => {
   });
 });
 
+describe("api.fetchPresentation", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    fetchMock.mockReset();
+    sessionStorageMock.clear();
+  });
+
+  afterEach(async () => {
+    const api = await import("../../src/services/api");
+    api.clearAuthToken();
+  });
+
+  it("normalizes the presentation snapshot into four stable slots", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            presentation: {
+              v: 1,
+              updated_at: "2026-03-21T00:00:00Z",
+              highlight_slot_id: "slot-2",
+              slots: [
+                {
+                  slot_id: "slot-2",
+                  index: 2,
+                  card: {
+                    slot_id: "slot-2",
+                    title: "Report",
+                    card_type: "table",
+                    published_by: "peer-1",
+                    published_at: "2026-03-21T00:00:00Z",
+                    content: {
+                      mode: "inline",
+                      table: {
+                        columns: ["name"],
+                        rows: [["demo"]],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.fetchPresentation("g-demo");
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) return;
+    expect(resp.result.presentation.highlight_slot_id).toBe("slot-2");
+    expect(resp.result.presentation.slots).toHaveLength(4);
+    expect(resp.result.presentation.slots[0]?.slot_id).toBe("slot-1");
+    expect(resp.result.presentation.slots[1]?.card?.title).toBe("Report");
+    expect(resp.result.presentation.slots[1]?.card?.content.table?.rows).toEqual([["demo"]]);
+  });
+
+  it("builds token-aware asset urls for presentation slots", async () => {
+    sessionStorageMock.setItem("cccc_dev_token", "dev-token");
+    const api = await import("../../src/services/api");
+    expect(api.getPresentationAssetUrl("g-demo", "slot-4")).toBe(
+      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?token=dev-token"
+    );
+    expect(api.getPresentationAssetUrl("g-demo", "slot-4", "tick-2")).toBe(
+      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?token=dev-token&v=tick-2"
+    );
+  });
+
+  it("publishes a presentation URL on the JSON endpoint", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            slot_id: "slot-2",
+            card: {
+              slot_id: "slot-2",
+              title: "Dashboard",
+              card_type: "web_preview",
+              published_by: "user",
+              published_at: "2026-03-21T00:00:00Z",
+              content: {
+                mode: "reference",
+                url: "https://example.com/dashboard",
+              },
+            },
+            presentation: {
+              v: 1,
+              highlight_slot_id: "slot-2",
+              slots: [
+                {
+                  slot_id: "slot-2",
+                  index: 2,
+                  card: {
+                    slot_id: "slot-2",
+                    title: "Dashboard",
+                    card_type: "web_preview",
+                    published_by: "user",
+                    published_at: "2026-03-21T00:00:00Z",
+                    content: {
+                      mode: "reference",
+                      url: "https://example.com/dashboard",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.publishPresentationUrl("g-demo", {
+      slotId: "slot-2",
+      url: "https://example.com/dashboard",
+      title: "Dashboard",
+    });
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) return;
+    expect(resp.result.slot_id).toBe("slot-2");
+    expect(resp.result.card?.card_type).toBe("web_preview");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/presentation/publish",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          by: "user",
+          slot: "slot-2",
+          url: "https://example.com/dashboard",
+          title: "Dashboard",
+          summary: "",
+        }),
+      }),
+    );
+  });
+
+  it("publishes a local file on the upload endpoint", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            slot_id: "slot-1",
+            card: {
+              slot_id: "slot-1",
+              title: "notes.md",
+              card_type: "markdown",
+              published_by: "user",
+              published_at: "2026-03-21T00:00:00Z",
+              content: {
+                mode: "inline",
+                markdown: "# notes",
+              },
+            },
+            presentation: {
+              v: 1,
+              highlight_slot_id: "slot-1",
+              slots: [
+                {
+                  slot_id: "slot-1",
+                  index: 1,
+                  card: {
+                    slot_id: "slot-1",
+                    title: "notes.md",
+                    card_type: "markdown",
+                    published_by: "user",
+                    published_at: "2026-03-21T00:00:00Z",
+                    content: {
+                      mode: "inline",
+                      markdown: "# notes",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const file = new File(["# notes"], "notes.md", { type: "text/markdown" });
+    const resp = await api.publishPresentationUpload("g-demo", {
+      slotId: "slot-1",
+      file,
+    });
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) return;
+    expect(resp.result.card?.title).toBe("notes.md");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/presentation/publish_upload",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData),
+      }),
+    );
+  });
+
+  it("publishes a workspace file on the JSON endpoint", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            slot_id: "slot-3",
+            card: {
+              slot_id: "slot-3",
+              title: "report.md",
+              card_type: "markdown",
+              published_by: "user",
+              published_at: "2026-03-21T00:00:00Z",
+              content: {
+                mode: "workspace_link",
+                workspace_rel_path: "docs/report.md",
+                mime_type: "text/markdown",
+                file_name: "report.md",
+              },
+            },
+            presentation: {
+              v: 1,
+              highlight_slot_id: "slot-3",
+              slots: [
+                {
+                  slot_id: "slot-3",
+                  index: 3,
+                  card: {
+                    slot_id: "slot-3",
+                    title: "report.md",
+                    card_type: "markdown",
+                    published_by: "user",
+                    published_at: "2026-03-21T00:00:00Z",
+                    content: {
+                      mode: "workspace_link",
+                      workspace_rel_path: "docs/report.md",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.publishPresentationWorkspace("g-demo", {
+      slotId: "slot-3",
+      path: "docs/report.md",
+      title: "report.md",
+    });
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) return;
+    expect(resp.result.card?.content.workspace_rel_path).toBe("docs/report.md");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/presentation/publish_workspace",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          by: "user",
+          slot: "slot-3",
+          path: "docs/report.md",
+          title: "report.md",
+          summary: "",
+        }),
+      }),
+    );
+  });
+
+  it("loads workspace listing for presentation pinning", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            root_path: "/workspace/demo",
+            path: "docs",
+            parent: "",
+            items: [
+              { name: "report.md", path: "docs/report.md", is_dir: false, mime_type: "text/markdown" },
+              { name: "assets", path: "docs/assets", is_dir: true },
+            ],
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.fetchPresentationWorkspaceListing("g-demo", "docs");
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) return;
+    expect(resp.result.root_path).toBe("/workspace/demo");
+    expect(resp.result.path).toBe("docs");
+    expect(resp.result.items[0]?.path).toBe("docs/report.md");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/presentation/workspace/list?path=docs",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "content-type": "application/json" }),
+      }),
+    );
+  });
+
+  it("clears a presentation slot on the mutation endpoint", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            cleared_slots: ["slot-4"],
+            presentation: {
+              v: 1,
+              highlight_slot_id: "",
+              slots: [],
+            },
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.clearPresentationSlot("g-demo", "slot-4");
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) return;
+    expect(resp.result.cleared_slots).toEqual(["slot-4"]);
+    expect(resp.result.presentation.slots).toHaveLength(4);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/presentation/clear",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          by: "user",
+          slot: "slot-4",
+        }),
+      }),
+    );
+  });
+});
+
 describe("blueprint api entrypoints", () => {
   beforeEach(() => {
     vi.resetModules();

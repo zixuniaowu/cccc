@@ -386,6 +386,7 @@ export default function App() {
       <Suspense fallback={null}>
         <AppModals
           isDark={isDark}
+          readOnly={webReadOnly}
           ccccHome={ccccHome}
           composerRef={composerRef}
           onStartReply={startReply}

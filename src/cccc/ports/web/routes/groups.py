@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 from pathlib import Path
 import time
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from ....contracts.v1.automation import AutomationRuleSet
-from ....kernel.blobs import resolve_blob_attachment_path
+from ....daemon.group.presentation_ops import load_presentation_snapshot, resolve_workspace_asset_path
+from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
 from ....kernel.group_template import parse_group_template
 from ....kernel.ledger import read_last_lines
@@ -21,6 +24,7 @@ from ....kernel.prompt_files import (
     delete_group_prompt_file,
     load_builtin_help_markdown,
     read_group_prompt_file,
+    resolve_active_scope_root,
     write_group_prompt_file,
 )
 from ....kernel.access_tokens import list_access_tokens
@@ -32,6 +36,9 @@ from ..schemas import (
     GroupAutomationManageRequest,
     GroupAutomationRequest,
     GroupAutomationResetBaselineRequest,
+    GroupPresentationClearRequest,
+    GroupPresentationPublishRequest,
+    GroupPresentationPublishWorkspaceRequest,
     GroupSettingsRequest,
     GroupTemplatePreviewRequest,
     GroupUpdateRequest,
@@ -39,6 +46,7 @@ from ..schemas import (
     RepoPromptUpdateRequest,
     RouteContext,
     WEB_MAX_TEMPLATE_BYTES,
+    WEB_MAX_FILE_BYTES,
     _safe_int,
     filter_groups_for_principal,
     require_admin,
@@ -134,6 +142,79 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if cookie_token:
             return cookie_token
         return str(request.query_params.get("token") or "").strip()
+
+    def _presentation_card_type_for_url(url: str) -> str:
+        suffix = Path(urlparse(str(url or "").strip()).path or "").suffix.lower()
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"}:
+            return "image"
+        if suffix == ".pdf":
+            return "pdf"
+        return "web_preview"
+
+    def _presentation_card_type_for_upload(filename: str, content_type: str) -> str:
+        suffix = Path(str(filename or "").strip()).suffix.lower()
+        mime = str(content_type or "").strip().lower()
+        if suffix in {".md", ".markdown"} or mime in {"text/markdown", "text/x-markdown"}:
+            return "markdown"
+        if suffix in {".html", ".htm"} or mime == "text/html":
+            return "web_preview"
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"} or mime.startswith("image/"):
+            return "image"
+        if suffix == ".pdf" or mime == "application/pdf":
+            return "pdf"
+        return "file"
+
+    def _normalize_presentation_slot(value: str) -> str:
+        normalized = str(value or "auto").strip().lower().replace("_", "-") or "auto"
+        if normalized in {"auto", "slot-1", "slot-2", "slot-3", "slot-4"}:
+            return normalized
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_slot", "message": "slot must be auto or one of: slot-1, slot-2, slot-3, slot-4"},
+        )
+
+    def _presentation_workspace_root(group_id: str) -> Path:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        root = resolve_active_scope_root(group)
+        if root is None:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "presentation_workspace_missing_scope", "message": "group has no active scope"},
+            )
+        return root
+
+    def _resolve_presentation_workspace_dir(group_id: str, raw_path: str) -> tuple[Path, Path]:
+        root = _presentation_workspace_root(group_id)
+        path_text = str(raw_path or "").strip().replace("\\", "/")
+        target = root if not path_text else (root / Path(*Path(path_text).parts)).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "presentation_workspace_out_of_scope",
+                    "message": "path must stay under the group's active scope root",
+                },
+            ) from exc
+        if not target.exists():
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "presentation_workspace_not_found", "message": f"path not found: {path_text or '.'}"},
+            )
+        if not target.is_dir():
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "presentation_workspace_not_dir", "message": f"not a directory: {path_text or '.'}"},
+            )
+        return root, target
+
+    def _presentation_workspace_relpath(root: Path, path: Path) -> str:
+        rel = path.relative_to(root)
+        rel_text = rel.as_posix()
+        return "" if rel_text == "." else rel_text
 
     # ------------------------------------------------------------------ #
     # Global routes
@@ -347,6 +428,212 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if task_id:
             args["task_id"] = task_id
         return await ctx.daemon({"op": "task_list", "args": args})
+
+    @group_router.get("/presentation")
+    async def group_presentation_get(group_id: str) -> Dict[str, Any]:
+        return await ctx.daemon({"op": "presentation_get", "args": {"group_id": group_id}})
+
+    @group_router.post("/presentation/publish")
+    async def group_presentation_publish(group_id: str, req: GroupPresentationPublishRequest) -> Dict[str, Any]:
+        url = str(req.url or "").strip()
+        if not url:
+            raise HTTPException(status_code=400, detail={"code": "missing_url", "message": "missing url"})
+        slot = _normalize_presentation_slot(req.slot)
+        return await ctx.daemon(
+            {
+                "op": "presentation_publish",
+                "args": {
+                    "group_id": group_id,
+                    "by": req.by,
+                    "slot": slot,
+                    "card_type": _presentation_card_type_for_url(url),
+                    "title": req.title,
+                    "summary": req.summary,
+                    "url": url,
+                },
+            }
+        )
+
+    @group_router.get("/presentation/workspace/list")
+    async def group_presentation_workspace_list(group_id: str, path: str = "") -> Dict[str, Any]:
+        root, target = _resolve_presentation_workspace_dir(group_id, path)
+        items = []
+        try:
+            for entry in sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+                if entry.name.startswith("."):
+                    continue
+                rel_path = _presentation_workspace_relpath(root, entry)
+                items.append(
+                    {
+                        "name": entry.name,
+                        "path": rel_path,
+                        "is_dir": entry.is_dir(),
+                        "mime_type": (str(mimetypes.guess_type(entry.name)[0] or "") if entry.is_file() else ""),
+                    }
+                )
+        except PermissionError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "presentation_workspace_permission_denied", "message": str(exc)},
+            ) from exc
+
+        current_path = _presentation_workspace_relpath(root, target)
+        parent_path = None
+        if target != root:
+            parent_path = _presentation_workspace_relpath(root, target.parent)
+        return {
+            "ok": True,
+            "result": {
+                "root_path": str(root),
+                "path": current_path,
+                "parent": parent_path,
+                "items": items[:200],
+            },
+        }
+
+    @group_router.post("/presentation/publish_workspace")
+    async def group_presentation_publish_workspace(
+        group_id: str, req: GroupPresentationPublishWorkspaceRequest
+    ) -> Dict[str, Any]:
+        path_text = str(req.path or "").strip()
+        if not path_text:
+            raise HTTPException(status_code=400, detail={"code": "missing_path", "message": "missing path"})
+        _resolve_presentation_workspace_dir(group_id, Path(path_text).parent.as_posix() if Path(path_text).parent.as_posix() != "." else "")
+        slot = _normalize_presentation_slot(req.slot)
+        return await ctx.daemon(
+            {
+                "op": "presentation_publish",
+                "args": {
+                    "group_id": group_id,
+                    "by": req.by,
+                    "slot": slot,
+                    "title": req.title,
+                    "summary": req.summary,
+                    "path": path_text,
+                },
+            }
+        )
+
+    @group_router.post("/presentation/publish_upload")
+    async def group_presentation_publish_upload(
+        group_id: str,
+        by: str = Form("user"),
+        slot: str = Form("auto"),
+        title: str = Form(""),
+        summary: str = Form(""),
+        file: UploadFile = File(...),
+    ) -> Dict[str, Any]:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        raw = await file.read()
+        if len(raw) > WEB_MAX_FILE_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "file_too_large", "message": "file too large"})
+
+        normalized_slot = _normalize_presentation_slot(slot)
+        filename = str(getattr(file, "filename", "") or "file").strip() or "file"
+        content_type = str(getattr(file, "content_type", "") or "").strip()
+        card_type = _presentation_card_type_for_upload(filename, content_type)
+        resolved_title = str(title or "").strip() or filename
+        args: Dict[str, Any] = {
+            "group_id": group_id,
+            "by": str(by or "user").strip() or "user",
+            "slot": normalized_slot,
+            "card_type": card_type,
+            "title": resolved_title,
+            "summary": str(summary or "").strip(),
+            "source_label": filename,
+        }
+
+        if card_type == "markdown":
+            args["content"] = raw.decode("utf-8", errors="replace")
+            args["source_ref"] = filename
+        else:
+            stored = store_blob_bytes(
+                group,
+                data=raw,
+                filename=filename,
+                mime_type=content_type,
+            )
+            args["blob_rel_path"] = str(stored.get("path") or "")
+            args["source_ref"] = str(stored.get("path") or "")
+
+        return await ctx.daemon({"op": "presentation_publish", "args": args})
+
+    @group_router.post("/presentation/clear")
+    async def group_presentation_clear(group_id: str, req: GroupPresentationClearRequest) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "presentation_clear",
+                "args": {
+                    "group_id": group_id,
+                    "by": req.by,
+                    "slot": req.slot,
+                    "all": bool(req.all),
+                },
+            }
+        )
+
+    @group_router.get("/presentation/slots/{slot_id}/asset")
+    async def group_presentation_asset(group_id: str, slot_id: str) -> FileResponse:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        normalized_slot_id = str(slot_id or "").strip().lower().replace("_", "-")
+        if normalized_slot_id not in {"slot-1", "slot-2", "slot-3", "slot-4"}:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_slot", "message": "slot must be one of: slot-1, slot-2, slot-3, slot-4"},
+            )
+
+        snapshot = load_presentation_snapshot(group_id)
+        slot = next((item for item in snapshot.slots if str(item.slot_id or "") == normalized_slot_id), None)
+        card = slot.card if slot else None
+        workspace_rel_path = str((card.content.workspace_rel_path if card and card.content else "") or "").strip()
+        blob_rel_path = str((card.content.blob_rel_path if card and card.content else "") or "").strip()
+        if not card or (not blob_rel_path and not workspace_rel_path):
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "presentation_asset_not_found", "message": f"presentation slot has no local asset: {normalized_slot_id}"},
+            )
+
+        abs_path: Path
+        if workspace_rel_path:
+            try:
+                abs_path = resolve_workspace_asset_path(group, workspace_rel_path)
+            except FileNotFoundError:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "workspace_file_not_found", "message": f"workspace file not found: {workspace_rel_path}"},
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "workspace_file_invalid", "message": str(exc)},
+                ) from exc
+        else:
+            try:
+                abs_path = resolve_blob_attachment_path(group, rel_path=blob_rel_path)
+            except FileNotFoundError:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "blob_not_found", "message": f"blob not found: {blob_rel_path}"},
+                )
+
+        media_type = str(card.content.mime_type or "").strip()
+        if not media_type:
+            media_type = str(mimetypes.guess_type(abs_path.name)[0] or "application/octet-stream")
+        filename = str(card.content.file_name or card.source_label or abs_path.name).strip() or abs_path.name
+        response = FileResponse(
+            path=abs_path,
+            media_type=media_type,
+            filename=filename,
+            content_disposition_type="inline",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @group_router.get("/project_md")
     async def project_md_get(group_id: str) -> Dict[str, Any]:

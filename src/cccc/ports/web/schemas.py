@@ -148,6 +148,28 @@ class GroupUpdateRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class GroupPresentationPublishRequest(BaseModel):
+    slot: str = Field(default="auto")
+    url: str = Field(default="")
+    title: str = Field(default="")
+    summary: str = Field(default="")
+    by: str = Field(default="user")
+
+
+class GroupPresentationPublishWorkspaceRequest(BaseModel):
+    slot: str = Field(default="auto")
+    path: str = Field(default="")
+    title: str = Field(default="")
+    summary: str = Field(default="")
+    by: str = Field(default="user")
+
+
+class GroupPresentationClearRequest(BaseModel):
+    slot: str = Field(default="")
+    all: bool = False
+    by: str = Field(default="user")
+
+
 class GroupSettingsRequest(BaseModel):
     default_send_to: Optional[Literal["foreman", "broadcast"]] = None
     nudge_after_seconds: Optional[int] = None
