@@ -7,6 +7,7 @@ interface ModalFrameProps {
   title: ReactNode;
   closeAriaLabel: string;
   panelClassName: string;
+  headerActions?: ReactNode;
   modalRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }
@@ -18,6 +19,7 @@ export function ModalFrame({
   title,
   closeAriaLabel,
   panelClassName,
+  headerActions,
   modalRef,
   children,
 }: ModalFrameProps) {
@@ -39,16 +41,19 @@ export function ModalFrame({
         <div
           className="flex flex-shrink-0 items-center justify-between px-5 py-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)]"
         >
-          <h2 id={titleId} className="text-lg font-semibold text-[var(--color-text-primary)]">
+          <h2 id={titleId} className="min-w-0 flex-1 pr-3 text-lg font-semibold text-[var(--color-text-primary)]">
             {title}
           </h2>
-          <button
-            onClick={onClose}
-            className="text-xl leading-none min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors glass-btn text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
-            aria-label={closeAriaLabel}
-          >
-            ×
-          </button>
+          <div className="flex flex-shrink-0 items-center gap-1.5">
+            {headerActions}
+            <button
+              onClick={onClose}
+              className="text-xl leading-none min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors glass-btn text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+              aria-label={closeAriaLabel}
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         {children}

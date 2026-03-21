@@ -66,6 +66,87 @@ function getPreviewText(slot: PresentationSlot, t: (key: string, options?: Recor
   return getCardTypeLabel(card.card_type, t);
 }
 
+function getRailSlotTone(cardType: string, isDark: boolean): {
+  buttonClassName: string;
+  overlayClassName: string;
+  dotClassName: string;
+} {
+  switch (String(cardType || "").trim()) {
+    case "markdown":
+      return isDark
+        ? {
+            buttonClassName: "border-emerald-400/28 bg-emerald-400/[0.08] text-emerald-100 hover:border-emerald-300/45 hover:bg-emerald-400/[0.12]",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(52,211,153,0.18),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]",
+            dotClassName: "bg-emerald-300 ring-emerald-100/20",
+          }
+        : {
+            buttonClassName: "border-emerald-500/25 bg-emerald-50/90 text-emerald-900 hover:border-emerald-500/40 hover:bg-emerald-50",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.16),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,255,255,0.42))]",
+            dotClassName: "bg-emerald-500 ring-emerald-100",
+          };
+    case "table":
+      return isDark
+        ? {
+            buttonClassName: "border-amber-400/28 bg-amber-400/[0.08] text-amber-100 hover:border-amber-300/45 hover:bg-amber-400/[0.12]",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]",
+            dotClassName: "bg-amber-300 ring-amber-100/20",
+          }
+        : {
+            buttonClassName: "border-amber-500/25 bg-amber-50/90 text-amber-900 hover:border-amber-500/40 hover:bg-amber-50",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.16),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,255,255,0.42))]",
+            dotClassName: "bg-amber-500 ring-amber-100",
+          };
+    case "image":
+      return isDark
+        ? {
+            buttonClassName: "border-sky-400/28 bg-sky-400/[0.08] text-sky-100 hover:border-sky-300/45 hover:bg-sky-400/[0.12]",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.18),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]",
+            dotClassName: "bg-sky-300 ring-sky-100/20",
+          }
+        : {
+            buttonClassName: "border-sky-500/25 bg-sky-50/90 text-sky-900 hover:border-sky-500/40 hover:bg-sky-50",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(14,165,233,0.16),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,255,255,0.42))]",
+            dotClassName: "bg-sky-500 ring-sky-100",
+          };
+    case "pdf":
+      return isDark
+        ? {
+            buttonClassName: "border-rose-400/28 bg-rose-400/[0.08] text-rose-100 hover:border-rose-300/45 hover:bg-rose-400/[0.12]",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(251,113,133,0.18),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]",
+            dotClassName: "bg-rose-300 ring-rose-100/20",
+          }
+        : {
+            buttonClassName: "border-rose-500/25 bg-rose-50/90 text-rose-900 hover:border-rose-500/40 hover:bg-rose-50",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(244,63,94,0.16),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,255,255,0.42))]",
+            dotClassName: "bg-rose-500 ring-rose-100",
+          };
+    case "web_preview":
+      return isDark
+        ? {
+            buttonClassName: "border-cyan-400/28 bg-cyan-400/[0.08] text-cyan-100 hover:border-cyan-300/45 hover:bg-cyan-400/[0.12]",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.18),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]",
+            dotClassName: "bg-cyan-300 ring-cyan-100/20",
+          }
+        : {
+            buttonClassName: "border-cyan-500/25 bg-cyan-50/90 text-cyan-900 hover:border-cyan-500/40 hover:bg-cyan-50",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(6,182,212,0.16),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,255,255,0.42))]",
+            dotClassName: "bg-cyan-500 ring-cyan-100",
+          };
+    default:
+      return isDark
+        ? {
+            buttonClassName: "border-slate-300/18 bg-slate-200/[0.07] text-slate-100 hover:border-slate-200/28 hover:bg-slate-200/[0.1]",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(226,232,240,0.14),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]",
+            dotClassName: "bg-slate-200 ring-slate-50/10",
+          }
+        : {
+            buttonClassName: "border-slate-400/20 bg-slate-50/90 text-slate-800 hover:border-slate-400/34 hover:bg-slate-50",
+            overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(148,163,184,0.14),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,255,255,0.42))]",
+            dotClassName: "bg-slate-500 ring-slate-100",
+          };
+  }
+}
+
 export function PresentationRail({
   mode,
   presentation,
@@ -285,12 +366,12 @@ export function PresentationRail({
         </div>
       ) : null}
 
-      <div
-        className={classNames(
-          "pointer-events-auto relative flex flex-col items-center gap-2 overflow-hidden rounded-[30px] border px-2.5 py-2.5 shadow-[0_24px_64px_-34px_rgba(15,23,42,0.42)] backdrop-blur-2xl",
-          isDark
-            ? "border-white/12 bg-slate-950/58 ring-1 ring-white/6"
-            : "border-white/80 bg-white/60 ring-1 ring-black/5"
+          <div
+            className={classNames(
+              "pointer-events-auto relative flex flex-col items-center gap-1.5 overflow-hidden rounded-[26px] border px-2 py-2 shadow-[0_24px_64px_-34px_rgba(15,23,42,0.42)] backdrop-blur-2xl",
+              isDark
+                ? "border-white/12 bg-slate-950/58 ring-1 ring-white/6"
+                : "border-white/80 bg-white/60 ring-1 ring-black/5"
         )}
       >
         <div
@@ -301,11 +382,12 @@ export function PresentationRail({
               : "bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.46)),radial-gradient(circle_at_top,rgba(14,165,233,0.12),transparent_36%)]"
           )}
         />
-        <div className="relative z-10 flex flex-col items-center gap-2">
+        <div className="relative z-10 flex flex-col items-center gap-1.5">
           {normalizedPresentation.slots.map((slot) => {
               const card = slot.card;
               const isHighlighted = slot.slot_id === highlightSlotId;
               const isActive = slot.slot_id === hoveredSlotId;
+              const tone = card ? getRailSlotTone(card.card_type, isDark) : null;
               return (
                 <button
                   key={slot.slot_id}
@@ -327,16 +409,14 @@ export function PresentationRail({
                     }
                   }}
                   className={classNames(
-                    "group relative flex h-[62px] w-[62px] origin-top-right items-center justify-center overflow-hidden rounded-[20px] border text-center transition-all duration-200",
+                    "group relative flex h-[54px] w-[54px] origin-top-right items-center justify-center overflow-hidden rounded-[18px] border text-center transition-all duration-200",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50",
                     card || !readOnly ? "cursor-pointer" : "cursor-default",
                     card
-                      ? isDark
-                        ? "border-white/14 bg-white/[0.09] text-slate-100 hover:border-cyan-300/45 hover:bg-white/[0.12]"
-                        : "border-black/10 bg-white/82 text-gray-900 hover:border-cyan-500/35 hover:bg-white/95"
+                      ? tone?.buttonClassName
                       : isDark
-                        ? "border-dashed border-white/10 bg-white/[0.03] text-slate-400"
-                        : "border-dashed border-black/10 bg-white/42 text-gray-500",
+                        ? "border-dashed border-white/10 bg-white/[0.025] text-slate-400 hover:border-white/14 hover:bg-white/[0.05]"
+                        : "border-dashed border-black/10 bg-white/46 text-gray-500 hover:border-black/15 hover:bg-white/68",
                     !card && !readOnly && (isDark ? "hover:border-cyan-300/30 hover:bg-white/[0.05]" : "hover:border-cyan-500/25 hover:bg-white/60"),
                     card && isActive && "scale-[1.08] shadow-[0_18px_34px_-24px_rgba(15,23,42,0.8)]",
                     !card && isActive && "scale-[1.04]",
@@ -359,14 +439,21 @@ export function PresentationRail({
                     className={classNames(
                       "pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-200",
                       card
-                        ? isDark
-                          ? "bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02))]"
-                          : "bg-[radial-gradient(circle_at_top,rgba(14,165,233,0.12),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.4))]"
+                        ? tone?.overlayClassName
                         : "bg-transparent",
-                      isActive && "opacity-100"
+                      isActive && "opacity-100",
+                      card && "opacity-100"
                     )}
                   />
-                  <span className="relative text-[15px] font-semibold tracking-[0.02em]">{slot.index}</span>
+                  {card ? (
+                    <span
+                      className={classNames(
+                        "pointer-events-none absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-1",
+                        tone?.dotClassName
+                      )}
+                    />
+                  ) : null}
+                  <span className="relative text-[14px] font-semibold tracking-[0.02em]">{slot.index}</span>
                 </button>
               );
             })}

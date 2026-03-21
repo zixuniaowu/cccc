@@ -144,6 +144,42 @@ class TestWebPresentationApi(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_presentation_asset_route_supports_attachment_download(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as workspace:
+                file_path = os.path.join(workspace, "artifact.bin")
+                with open(file_path, "wb") as handle:
+                    handle.write(b"\x00\x01\x02demo")
+
+                create, _ = self._call("group_create", {"title": "web-presentation-download", "topic": "", "by": "user"})
+                self.assertTrue(create.ok, getattr(create, "error", None))
+                group_id = str((create.result or {}).get("group_id") or "")
+
+                attach, _ = self._call("attach", {"group_id": group_id, "path": workspace, "by": "user"})
+                self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+                publish, _ = self._call(
+                    "presentation_publish",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "slot": "slot-1",
+                        "path": "artifact.bin",
+                    },
+                )
+                self.assertTrue(publish.ok, getattr(publish, "error", None))
+
+                with self._client() as client:
+                    resp = client.get(f"/api/v1/groups/{group_id}/presentation/slots/slot-1/asset?download=1")
+
+                self.assertEqual(resp.status_code, 200)
+                self.assertIn("attachment", str(resp.headers.get("content-disposition") or ""))
+                self.assertEqual(resp.headers.get("cache-control"), "no-store")
+                self.assertEqual(resp.content, b"\x00\x01\x02demo")
+        finally:
+            cleanup()
+
     def test_group_presentation_publish_route_pins_url(self) -> None:
         _, cleanup = self._with_home()
         try:

@@ -14,6 +14,7 @@ type PresentationBrowserSurfacePanelProps = {
   url: string;
   isDark: boolean;
   refreshNonce: number;
+  viewportClassName?: string;
 };
 
 type BrowserStreamFrame = {
@@ -93,6 +94,7 @@ export function PresentationBrowserSurfacePanel({
   url,
   isDark,
   refreshNonce,
+  viewportClassName,
 }: PresentationBrowserSurfacePanelProps) {
   const { t } = useTranslation("chat");
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -432,7 +434,8 @@ export function PresentationBrowserSurfacePanel({
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
       className={classNames(
-        "relative flex min-h-[72vh] flex-col overflow-hidden rounded-3xl border outline-none",
+        viewportClassName || "min-h-[72vh]",
+        "relative flex flex-col overflow-hidden rounded-3xl border outline-none",
         isDark ? "border-white/10 bg-slate-950/80" : "border-black/10 bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)]"
       )}
     >

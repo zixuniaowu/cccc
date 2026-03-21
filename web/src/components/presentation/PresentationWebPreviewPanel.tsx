@@ -12,6 +12,7 @@ type PresentationWebPreviewPanelProps = {
   useSandboxedPreview: boolean;
   allowLiveBrowser: boolean;
   refreshNonce: number;
+  viewportClassName?: string;
 };
 
 export function PresentationWebPreviewPanel({
@@ -22,6 +23,7 @@ export function PresentationWebPreviewPanel({
   useSandboxedPreview,
   allowLiveBrowser,
   refreshNonce,
+  viewportClassName,
 }: PresentationWebPreviewPanelProps) {
   const { t } = useTranslation("chat");
   const preferInteractive = allowLiveBrowser && shouldPreferPresentationLiveBrowser(href);
@@ -68,14 +70,23 @@ export function PresentationWebPreviewPanel({
       ) : null}
 
       {mode === "interactive" && allowLiveBrowser ? (
-        <PresentationBrowserSurfacePanel groupId={groupId} url={href} isDark={isDark} refreshNonce={refreshNonce} />
+        <PresentationBrowserSurfacePanel
+          groupId={groupId}
+          url={href}
+          isDark={isDark}
+          refreshNonce={refreshNonce}
+          viewportClassName={viewportClassName}
+        />
       ) : (
         <iframe
           key={`embedded:${href}:${refreshNonce}`}
           title={title || t("presentationTypeWebPreview", { defaultValue: "Web" })}
           src={href}
           sandbox={useSandboxedPreview ? "allow-scripts allow-forms allow-modals allow-popups allow-downloads" : undefined}
-          className="min-h-[72vh] w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+          className={classNames(
+            viewportClassName || "min-h-[72vh]",
+            "w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+          )}
         />
       )}
     </div>

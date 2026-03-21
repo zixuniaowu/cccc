@@ -29,6 +29,13 @@ function getReferenceHref(groupId: string, slot: PresentationSlot | null, cacheB
   return getPresentationAssetUrl(groupId, slot.slot_id, cacheBust);
 }
 
+function appendQueryParam(url: string, key: string, value: string): string {
+  const base = String(url || "").trim();
+  if (!base) return "";
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
 async function copyText(value: string): Promise<boolean> {
   const text = String(value || "");
   if (!text) return false;
@@ -88,6 +95,23 @@ function getCardTypeLabel(type: string, t: (key: string, options?: Record<string
   }
 }
 
+function PresentationWindowExpandIcon({ expanded }: { expanded: boolean }) {
+  if (expanded) {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+        <path d="M7 3.75H4.75v2.5M13 3.75h2.25v2.5M7 16.25H4.75v-2.5M13 16.25h2.25v-2.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M8 8l-3.25-3.25M12 8l3.25-3.25M8 12l-3.25 3.25M12 12l3.25 3.25" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path d="M7 3.75H4.75v2.5M13 3.75h2.25v2.5M7 16.25H4.75v-2.5M13 16.25h2.25v-2.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 4.75H4.75V8M12 4.75h3.25V8M8 15.25H4.75V12M12 15.25h3.25V12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function PresentationViewerModal({
   isOpen,
   isDark,
@@ -102,6 +126,7 @@ export function PresentationViewerModal({
   const { t, i18n } = useTranslation("chat");
   const { modalRef } = useModalA11y(isOpen, onClose);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [linkedMarkdown, setLinkedMarkdown] = useState("");
   const [linkedMarkdownError, setLinkedMarkdownError] = useState("");
   const [copiedReference, setCopiedReference] = useState(false);
@@ -119,6 +144,41 @@ export function PresentationViewerModal({
   const allowLiveBrowser = !!card && card.card_type === "web_preview" && !!String(card.content.url || "").trim() && !readOnly;
   const canRefresh = !!card && (isWorkspaceLinked || card.card_type === "web_preview");
   const copyReferenceValue = String(card?.content.url || card?.content.workspace_rel_path || href || "").trim();
+  const downloadHref = useMemo(() => {
+    if (!card || card.card_type !== "file" || !href) return "";
+    return appendQueryParam(href, "download", "1");
+  }, [card, href]);
+  const viewerPanelClassName = isExpanded
+    ? "h-full w-full sm:h-[96vh] sm:max-w-[96vw]"
+    : "h-full w-full sm:h-[90vh] sm:max-w-6xl";
+  const immersiveViewportClassName = isExpanded
+    ? "min-h-[calc(96vh-11rem)]"
+    : "min-h-[72vh]";
+  const imageViewportClassName = isExpanded
+    ? "max-h-[calc(96vh-12rem)]"
+    : "max-h-[70vh]";
+  const fullScreenLabel = isExpanded
+    ? t("presentationExitFullScreenAction", { defaultValue: "Exit full screen" })
+    : t("presentationFullScreenAction", { defaultValue: "Full screen" });
+  const headerActions = card ? (
+    <button
+      type="button"
+      onClick={() => setIsExpanded((value) => !value)}
+      className={classNames(
+        "hidden sm:inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg transition-colors glass-btn",
+        isDark ? "text-slate-300 hover:text-slate-100" : "text-gray-600 hover:text-gray-900"
+      )}
+      aria-label={fullScreenLabel}
+      title={fullScreenLabel}
+    >
+      <PresentationWindowExpandIcon expanded={isExpanded} />
+    </button>
+  ) : null;
+
+  useEffect(() => {
+    if (isOpen) return;
+    setIsExpanded(false);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || !isWorkspaceLinked) return;
@@ -195,7 +255,8 @@ export function PresentationViewerModal({
       titleId="presentation-viewer-title"
       title={card?.title || t("presentationTitle", { defaultValue: "Presentation" })}
       closeAriaLabel={t("presentationCloseViewer", { defaultValue: "Close presentation viewer" })}
-      panelClassName="h-full w-full sm:h-[90vh] sm:max-w-6xl"
+      panelClassName={viewerPanelClassName}
+      headerActions={headerActions}
       modalRef={modalRef}
     >
       <div className="flex min-h-0 flex-1 flex-col">
@@ -326,14 +387,20 @@ export function PresentationViewerModal({
               <img
                 src={href}
                 alt={card.title}
-                className="max-h-[70vh] max-w-full rounded-3xl border border-[var(--glass-border-subtle)] object-contain shadow-xl"
+                className={classNames(
+                  imageViewportClassName,
+                  "max-w-full rounded-3xl border border-[var(--glass-border-subtle)] object-contain shadow-xl"
+                )}
               />
             </div>
           ) : card.card_type === "pdf" ? (
             <iframe
               title={card.title}
               src={href}
-              className="min-h-[72vh] w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+              className={classNames(
+                immersiveViewportClassName,
+                "w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+              )}
             />
           ) : card.card_type === "web_preview" ? (
             <PresentationWebPreviewPanel
@@ -345,6 +412,7 @@ export function PresentationViewerModal({
               useSandboxedPreview={useSandboxedPreview}
               allowLiveBrowser={allowLiveBrowser}
               refreshNonce={refreshTick}
+              viewportClassName={immersiveViewportClassName}
             />
           ) : (
             <div className={classNames("rounded-3xl border p-6", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
@@ -352,20 +420,19 @@ export function PresentationViewerModal({
                 {card.title}
               </div>
               <div className={classNames("mt-2 text-sm", isDark ? "text-slate-400" : "text-gray-600")}>
-                {card.summary || card.source_label || t("presentationFileReady", { defaultValue: "File ready to open or download." })}
+                {card.summary || card.source_label || t("presentationFileReady", { defaultValue: "This file cannot be previewed in Presentation yet." })}
               </div>
-              {href ? (
+              {downloadHref ? (
                 <div className="mt-5">
                   <a
-                    href={href}
-                    target="_blank"
-                    rel="noreferrer"
+                    href={downloadHref}
+                    download=""
                     className={classNames(
                       "inline-flex items-center rounded-full px-4 py-2 text-sm font-medium transition-colors",
                       isDark ? "bg-slate-800 text-slate-100 hover:bg-slate-700" : "bg-gray-100 text-gray-900 hover:bg-gray-200"
                     )}
                   >
-                    {t("presentationDownloadFile", { defaultValue: "Open or download file" })}
+                    {t("presentationDownloadFile", { defaultValue: "Download file" })}
                   </a>
                 </div>
               ) : null}

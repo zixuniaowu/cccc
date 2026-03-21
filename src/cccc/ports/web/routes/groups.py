@@ -623,7 +623,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.get("/presentation/slots/{slot_id}/asset")
-    async def group_presentation_asset(group_id: str, slot_id: str) -> FileResponse:
+    async def group_presentation_asset(group_id: str, slot_id: str, download: bool = False) -> FileResponse:
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -677,7 +677,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             path=abs_path,
             media_type=media_type,
             filename=filename,
-            content_disposition_type="inline",
+            content_disposition_type="attachment" if download else "inline",
         )
         response.headers["Cache-Control"] = "no-store"
         return response
