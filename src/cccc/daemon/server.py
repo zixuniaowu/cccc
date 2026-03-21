@@ -107,6 +107,7 @@ from .space.group_space_memory_sync import process_due_memory_space_syncs
 from .space.group_space_runtime import process_due_space_jobs
 from .space.group_space_sync import process_due_space_syncs
 from .space.group_space_store import get_space_provider_state
+from .group.presentation_browser_runtime import close_all_browser_surface_sessions
 from .ops.template_ops import (
     group_create_from_template,
     group_template_export,
@@ -975,6 +976,11 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             )
             if should_exit:
                 stop_event.set()
+
+    try:
+        close_all_browser_surface_sessions()
+    except Exception:
+        pass
 
     cleanup_after_stop(
         stop_event=stop_event,

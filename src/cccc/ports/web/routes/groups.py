@@ -8,10 +8,11 @@ import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ....contracts.v1.automation import AutomationRuleSet
+from ....daemon.server import get_daemon_endpoint
 from ....daemon.group.presentation_ops import load_presentation_snapshot, resolve_workspace_asset_path
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
@@ -36,6 +37,7 @@ from ..schemas import (
     GroupAutomationManageRequest,
     GroupAutomationRequest,
     GroupAutomationResetBaselineRequest,
+    GroupPresentationBrowserSessionRequest,
     GroupPresentationClearRequest,
     GroupPresentationPublishRequest,
     GroupPresentationPublishWorkspaceRequest,
@@ -48,10 +50,13 @@ from ..schemas import (
     WEB_MAX_TEMPLATE_BYTES,
     WEB_MAX_FILE_BYTES,
     _safe_int,
+    check_group,
     filter_groups_for_principal,
     require_admin,
     require_group,
     require_user,
+    resolve_websocket_principal,
+    websocket_tokens_active,
 )
 
 
@@ -571,6 +576,46 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "by": req.by,
                     "slot": req.slot,
                     "all": bool(req.all),
+                },
+            }
+        )
+
+    @group_router.get("/presentation/browser_surface/session")
+    async def group_presentation_browser_surface_info(group_id: str) -> Dict[str, Any]:
+        return await ctx.daemon({"op": "presentation_browser_info", "args": {"group_id": group_id}})
+
+    @group_router.post("/presentation/browser_surface/session")
+    async def group_presentation_browser_surface_open(
+        group_id: str, req: GroupPresentationBrowserSessionRequest
+    ) -> Dict[str, Any]:
+        url = str(req.url or "").strip()
+        if not url:
+            raise HTTPException(status_code=400, detail={"code": "missing_url", "message": "missing url"})
+        width = _safe_int(req.width, default=1280, min_value=640, max_value=2560)
+        height = _safe_int(req.height, default=800, min_value=480, max_value=1600)
+        return await ctx.daemon(
+            {
+                "op": "presentation_browser_open",
+                "args": {
+                    "group_id": group_id,
+                    "by": req.by,
+                    "url": url,
+                    "width": width,
+                    "height": height,
+                },
+            }
+        )
+
+    @group_router.post("/presentation/browser_surface/session/close")
+    async def group_presentation_browser_surface_close(
+        group_id: str, req: GroupPresentationBrowserSessionRequest
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "presentation_browser_close",
+                "args": {
+                    "group_id": group_id,
+                    "by": req.by,
                 },
             }
         )
@@ -1403,6 +1448,137 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         from ....kernel.inbox import get_read_status
         status = get_read_status(group, event_id)
         return {"ok": True, "result": {"event_id": event_id, "read_status": status}}
+
+    @global_router.websocket("/groups/{group_id}/presentation/browser_surface/ws")
+    async def group_presentation_browser_surface_ws(websocket: WebSocket, group_id: str) -> None:
+        await websocket.accept()
+
+        principal = resolve_websocket_principal(websocket)
+        websocket.state.principal = principal
+
+        auth_header = str((getattr(websocket, "headers", {}) or {}).get("authorization") or "").strip()
+        has_header_token = auth_header.lower().startswith("bearer ") and bool(str(auth_header[7:] or "").strip())
+        has_cookie_token = False
+        try:
+            cookies = getattr(websocket, "cookies", None) or {}
+            has_cookie_token = bool(str(cookies.get("cccc_access_token") or "").strip())
+        except Exception:
+            has_cookie_token = False
+        has_query_token = bool(str(websocket.query_params.get("token") or "").strip())
+        if (has_header_token or has_cookie_token or has_query_token) and str(getattr(principal, "kind", "anonymous") or "anonymous") != "user" and websocket_tokens_active():
+            try:
+                await websocket.send_json({"ok": False, "error": {"code": "auth_required", "message": "Invalid or missing authentication token"}})
+            except Exception:
+                pass
+            await websocket.close(code=4401)
+            return
+
+        try:
+            check_group(websocket, group_id)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"code": "permission_denied", "message": str(exc.detail or "permission denied")}
+            try:
+                await websocket.send_json({"ok": False, "error": detail})
+            except Exception:
+                pass
+            await websocket.close(code=1008)
+            return
+
+        if ctx.read_only:
+            try:
+                await websocket.send_json(
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": "read_only_browser_surface",
+                            "message": "Browser surface control is disabled in read-only mode.",
+                            "details": {},
+                        },
+                    }
+                )
+            except Exception:
+                pass
+            try:
+                await websocket.close(code=1000)
+            except Exception:
+                pass
+            return
+
+        group = load_group(group_id)
+        if group is None:
+            await websocket.send_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+            await websocket.close(code=1008)
+            return
+
+        try:
+            ep = get_daemon_endpoint()
+            transport = str(ep.get("transport") or "").strip().lower()
+            if transport == "tcp":
+                host = str(ep.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+                port = int(ep.get("port") or 0)
+                reader, writer = await asyncio.open_connection(host, port)
+            else:
+                sock_path = ctx.home / "daemon" / "ccccd.sock"
+                path = str(ep.get("path") or sock_path)
+                reader, writer = await asyncio.open_unix_connection(path)
+        except Exception:
+            await websocket.send_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
+            await websocket.close(code=1011)
+            return
+
+        try:
+            req = {"op": "presentation_browser_attach", "args": {"group_id": group_id, "by": "user"}}
+            writer.write((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
+            await writer.drain()
+            line = await reader.readline()
+            try:
+                resp = json.loads(line.decode("utf-8", errors="replace"))
+            except Exception:
+                resp = {}
+            if not isinstance(resp, dict) or not resp.get("ok"):
+                err = resp.get("error") if isinstance(resp.get("error"), dict) else {"code": "browser_surface_attach_failed", "message": "browser surface attach failed"}
+                await websocket.send_json({"ok": False, "error": err})
+                await websocket.close(code=1008)
+                return
+
+            async def _pump_out() -> None:
+                while True:
+                    line = await reader.readline()
+                    if not line:
+                        break
+                    await websocket.send_text(line.decode("utf-8", errors="replace").rstrip("\n"))
+
+            async def _pump_in() -> None:
+                while True:
+                    raw = await websocket.receive_text()
+                    if not raw:
+                        continue
+                    writer.write((raw + "\n").encode("utf-8", errors="replace"))
+                    await writer.drain()
+
+            out_task = asyncio.create_task(_pump_out())
+            in_task = asyncio.create_task(_pump_in())
+            try:
+                done, pending = await asyncio.wait({out_task, in_task}, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    try:
+                        _ = task.result()
+                    except Exception:
+                        pass
+                for task in pending:
+                    task.cancel()
+                try:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                except Exception:
+                    pass
+            except WebSocketDisconnect:
+                pass
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
     @group_router.get("/ledger/stream")
     async def ledger_stream(group_id: str) -> StreamingResponse:

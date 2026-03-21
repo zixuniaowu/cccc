@@ -170,6 +170,13 @@ class GroupPresentationClearRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class GroupPresentationBrowserSessionRequest(BaseModel):
+    url: str = Field(default="")
+    width: int = Field(default=1280)
+    height: int = Field(default=800)
+    by: str = Field(default="user")
+
+
 class GroupSettingsRequest(BaseModel):
     default_send_to: Optional[Literal["foreman", "broadcast"]] = None
     nudge_after_seconds: Optional[int] = None
