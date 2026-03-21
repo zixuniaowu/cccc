@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -157,6 +158,41 @@ class TestWebPresentationBrowserApi(unittest.TestCase):
             payload = resp.json()
             self.assertTrue(bool(payload.get("ok")))
             self.assertTrue(bool(payload["result"]["closed"]))
+        finally:
+            cleanup()
+
+    def test_browser_surface_websocket_uses_large_stream_limit(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.ports.web.routes import groups as groups_routes
+
+            create, _ = self._call("group_create", {"title": "browser-ws-limit", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "")
+            captured: dict[str, object] = {}
+
+            async def fake_open_connection(host: str, port: int, *, limit: int | None = None):
+                captured["host"] = host
+                captured["port"] = port
+                captured["limit"] = limit
+                raise RuntimeError("simulated connect failure")
+
+            with patch("cccc.ports.web.routes.groups.get_daemon_endpoint", return_value={"transport": "tcp", "host": "127.0.0.1", "port": 9001}), patch(
+                "cccc.ports.web.routes.groups.check_group",
+                return_value=None,
+            ), patch(
+                "cccc.ports.web.routes.groups.load_group",
+                return_value=SimpleNamespace(group_id=group_id),
+            ), patch(
+                "cccc.ports.web.routes.groups.asyncio.open_connection",
+                side_effect=fake_open_connection,
+            ):
+                with self._client() as client:
+                    with client.websocket_connect(f"/api/v1/groups/{group_id}/presentation/browser_surface/ws") as ws:
+                        payload = ws.receive_json()
+
+            self.assertEqual(payload["error"]["code"], "daemon_unavailable")
+            self.assertEqual(captured.get("limit"), groups_routes._PRESENTATION_BROWSER_STREAM_LIMIT_BYTES)
         finally:
             cleanup()
 

@@ -30,6 +30,7 @@ from ...util.time import utc_now_iso
 _FRAME_INTERVAL_SECONDS = 0.35
 _SOCKET_READ_TIMEOUT_SECONDS = 0.2
 _START_WAIT_TIMEOUT_SECONDS = 20.0
+_CONTROLLER_RECONNECT_GRACE_SECONDS = 25.0
 
 
 def _ensure_dir(path: Path, mode: int = 0o700) -> None:
@@ -110,6 +111,7 @@ class _PlaywrightBrowserRuntime:
         width: int,
         height: int,
     ) -> None:
+        self._lock = threading.RLock()
         self._playwright_cm = playwright_cm
         self._context = context
         self._page = page
@@ -117,19 +119,115 @@ class _PlaywrightBrowserRuntime:
         self.strategy = "playwright_chromium_cdp"
         self.width = int(width)
         self.height = int(height)
+        self._page_history: list[Any] = []
+        self._known_page_ids: set[int] = set()
+        self._register_page(page)
+        try:
+            self._context.on("page", self._handle_new_page)
+        except Exception:
+            pass
 
     @property
     def page(self) -> Any:
-        return self._page
+        with self._lock:
+            return self._page
+
+    def _is_page_live(self, page: Any) -> bool:
+        if page is None:
+            return False
+        try:
+            return not bool(page.is_closed())
+        except Exception:
+            return False
+
+    def _remember_page(self, page: Any) -> None:
+        if not self._is_page_live(page):
+            return
+        self._page_history = [item for item in self._page_history if item is not page and self._is_page_live(item)]
+        self._page_history.append(page)
+
+    def _pop_previous_page(self) -> Any | None:
+        while self._page_history:
+            candidate = self._page_history.pop()
+            if self._is_page_live(candidate):
+                return candidate
+        return None
+
+    def _register_page(self, page: Any) -> None:
+        if page is None:
+            return
+        page_id = id(page)
+        if page_id in self._known_page_ids:
+            return
+        self._known_page_ids.add(page_id)
+        try:
+            page.on("close", lambda *_args, _page=page: self._handle_closed_page(_page))
+        except Exception:
+            pass
+
+    def _bind_cdp(self, page: Any) -> None:
+        old_cdp = self._cdp
+        self._page = page
+        self._cdp = self._context.new_cdp_session(page)
+        try:
+            self._cdp.send("Page.enable")
+        except Exception:
+            pass
+        try:
+            page.set_viewport_size({"width": self.width, "height": self.height})
+        except Exception:
+            pass
+        if old_cdp is not None and old_cdp is not self._cdp:
+            try:
+                old_cdp.detach()
+            except Exception:
+                pass
+
+    def _activate_page(self, page: Any, *, remember_previous: bool) -> None:
+        if not self._is_page_live(page):
+            return
+        with self._lock:
+            current = self._page
+            if remember_previous and current is not None and current is not page and self._is_page_live(current):
+                self._remember_page(current)
+            self._register_page(page)
+            self._bind_cdp(page)
+
+    def _handle_new_page(self, page: Any) -> None:
+        if page is None:
+            return
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+        except Exception:
+            pass
+        self._activate_page(page, remember_previous=True)
+
+    def _handle_closed_page(self, page: Any) -> None:
+        fallback = None
+        with self._lock:
+            self._page_history = [item for item in self._page_history if item is not page and self._is_page_live(item)]
+            if page is not self._page:
+                return
+            fallback = self._pop_previous_page()
+            if fallback is None:
+                for candidate in reversed(list(getattr(self._context, "pages", []) or [])):
+                    if candidate is not page and self._is_page_live(candidate):
+                        fallback = candidate
+                        break
+        if fallback is not None:
+            self._activate_page(fallback, remember_previous=False)
 
     def current_url(self) -> str:
         try:
-            return str(getattr(self._page, "url", "") or "").strip()
+            page = self.page
+            return str(getattr(page, "url", "") or "").strip()
         except Exception:
             return ""
 
     def capture_frame(self) -> bytes:
-        payload = self._cdp.send(
+        with self._lock:
+            cdp = self._cdp
+        payload = cdp.send(
             "Page.captureScreenshot",
             {
                 "format": "jpeg",
@@ -142,27 +240,40 @@ class _PlaywrightBrowserRuntime:
         return base64.b64decode(data) if data else b""
 
     def click(self, *, x: float, y: float, button: str = "left") -> None:
-        self._page.mouse.click(float(x), float(y), button=str(button or "left"))
+        self.page.mouse.click(float(x), float(y), button=str(button or "left"))
 
     def scroll(self, *, dx: float, dy: float) -> None:
-        self._page.mouse.wheel(float(dx), float(dy))
+        self.page.mouse.wheel(float(dx), float(dy))
 
     def key_press(self, *, key: str) -> None:
-        self._page.keyboard.press(str(key or ""))
+        self.page.keyboard.press(str(key or ""))
 
     def input_text(self, *, text: str) -> None:
-        self._page.keyboard.insert_text(str(text or ""))
+        self.page.keyboard.insert_text(str(text or ""))
 
     def resize(self, *, width: int, height: int) -> None:
         self.width = int(width)
         self.height = int(height)
-        self._page.set_viewport_size({"width": self.width, "height": self.height})
+        self.page.set_viewport_size({"width": self.width, "height": self.height})
 
     def navigate(self, *, url: str) -> None:
-        self._page.goto(str(url or ""), wait_until="domcontentloaded", timeout=30000)
+        self.page.goto(str(url or ""), wait_until="domcontentloaded", timeout=30000)
 
     def refresh(self) -> None:
-        self._page.reload(wait_until="domcontentloaded", timeout=30000)
+        self.page.reload(wait_until="domcontentloaded", timeout=30000)
+
+    def back(self) -> None:
+        page = self.page
+        try:
+            result = page.go_back(wait_until="domcontentloaded", timeout=10000)
+        except Exception:
+            result = None
+        if result is not None:
+            return
+        with self._lock:
+            fallback = self._pop_previous_page()
+        if fallback is not None:
+            self._activate_page(fallback, remember_previous=False)
 
     def close(self) -> None:
         try:
@@ -255,6 +366,7 @@ class _BrowserSurfaceSession:
         self._last_frame_seq = 0
         self._last_frame_at = ""
         self._last_frame_bytes = b""
+        self._controller_detached_at = time.monotonic()
 
     def start(self) -> None:
         self._thread.start()
@@ -319,6 +431,7 @@ class _BrowserSurfaceSession:
             if self._controller_attached:
                 return False
             self._controller_attached = True
+            self._controller_detached_at = None
             self._updated_at = utc_now_iso()
         threading.Thread(
             target=self._serve_socket,
@@ -379,6 +492,8 @@ class _BrowserSurfaceSession:
             return {"ok": True}
         if kind == "navigate":
             runtime.navigate(url=str(payload.get("url") or "").strip())
+        elif kind == "back":
+            runtime.back()
         elif kind == "refresh":
             runtime.refresh()
         elif kind == "click":
@@ -412,6 +527,15 @@ class _BrowserSurfaceSession:
             self._updated_at = utc_now_iso()
         return {"ok": True}
 
+    def _should_expire_unattached(self) -> bool:
+        with self._lock:
+            if self._controller_attached:
+                return False
+            detached_at = self._controller_detached_at
+        if detached_at is None:
+            return False
+        return (time.monotonic() - float(detached_at)) >= _CONTROLLER_RECONNECT_GRACE_SECONDS
+
     def _run(self) -> None:
         runtime: Any = None
         try:
@@ -428,6 +552,10 @@ class _BrowserSurfaceSession:
             self._set_state("ready", message=f"Browser surface ready ({self._strategy or 'chromium'}).")
             next_frame_at = 0.0
             while not self._stop_event.is_set():
+                if self._should_expire_unattached():
+                    self._set_state("closed", message="Browser surface session expired after disconnect.")
+                    self._stop_event.set()
+                    break
                 timeout = max(0.05, min(0.20, next_frame_at - time.time())) if next_frame_at else 0.05
                 try:
                     kind, payload, reply = self._commands.get(timeout=timeout)
@@ -450,6 +578,8 @@ class _BrowserSurfaceSession:
                 now = time.time()
                 if next_frame_at and now < next_frame_at:
                     continue
+                with self._lock:
+                    self._url = str(runtime.current_url() or self._url)
                 frame = runtime.capture_frame()
                 if frame:
                     self._record_frame(frame)
@@ -495,20 +625,21 @@ class _BrowserSurfaceSession:
                     sort_keys=True,
                 )
                 if state_marker != sent_state_marker:
-                    _send_json_line(
+                    if not _send_json_line(
                         sock,
                         {
                             "t": "state",
                             **snapshot,
                         },
-                    )
+                    ):
+                        break
                     sent_state_marker = state_marker
                     if snapshot["state"] == "failed":
                         break
 
                 frame = self.wait_for_frame(after_seq=last_seq, timeout=0.25)
                 if frame is not None:
-                    _send_json_line(
+                    if not _send_json_line(
                         sock,
                         {
                             "t": "frame",
@@ -520,7 +651,8 @@ class _BrowserSurfaceSession:
                             "height": frame["height"],
                             "url": frame["url"],
                         },
-                    )
+                    ):
+                        break
                     last_seq = int(frame["seq"])
 
                 incoming, buffer, disconnected = _recv_json_line_nonblocking(sock, buffer)
@@ -533,17 +665,19 @@ class _BrowserSurfaceSession:
                     try:
                         self.submit_command(kind, incoming, timeout=5.0)
                     except Exception as exc:
-                        _send_json_line(
+                        if not _send_json_line(
                             sock,
                             {
                                 "t": "error",
                                 "code": "browser_surface_command_failed",
                                 "message": str(exc),
                             },
-                        )
+                        ):
+                            break
         finally:
             with self._lock:
                 self._controller_attached = False
+                self._controller_detached_at = time.monotonic()
                 self._updated_at = utc_now_iso()
                 self._frame_cond.notify_all()
             try:
@@ -552,8 +686,12 @@ class _BrowserSurfaceSession:
                 pass
 
 
-def _send_json_line(sock: socket.socket, obj: dict[str, Any]) -> None:
-    sock.sendall((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
+def _send_json_line(sock: socket.socket, obj: dict[str, Any]) -> bool:
+    try:
+        sock.sendall((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
+        return True
+    except Exception:
+        return False
 
 
 def _recv_json_line_nonblocking(

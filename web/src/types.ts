@@ -385,6 +385,25 @@ export type GroupPresentation = {
   slots: PresentationSlot[];
 };
 
+export type PresentationBrowserSurfaceState = {
+  active: boolean;
+  state: string;
+  message?: string | null;
+  error?: {
+    code?: string | null;
+    message?: string | null;
+  } | null;
+  strategy?: string | null;
+  url?: string | null;
+  width?: number;
+  height?: number;
+  started_at?: string | null;
+  updated_at?: string | null;
+  last_frame_seq?: number;
+  last_frame_at?: string | null;
+  controller_attached?: boolean;
+};
+
 export type ContextAttention = {
   blocked?: number | TaskBoardEntry[];
   waiting_user?: number | TaskBoardEntry[];

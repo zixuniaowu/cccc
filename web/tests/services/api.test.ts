@@ -32,7 +32,7 @@ const sessionStorageMock = makeStorage();
 
 vi.stubGlobal("fetch", fetchMock);
 vi.stubGlobal("window", {
-  location: { search: "" },
+  location: { search: "", protocol: "http:", host: "localhost" },
 });
 vi.stubGlobal("sessionStorage", sessionStorageMock);
 
@@ -157,6 +157,61 @@ describe("api.fetchPresentation", () => {
     );
     expect(api.getPresentationAssetUrl("g-demo", "slot-4", "tick-2")).toBe(
       "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?token=dev-token&v=tick-2"
+    );
+  });
+
+  it("starts a browser-surface session and normalizes its state", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            browser_surface: {
+              active: true,
+              state: "ready",
+              message: "Browser surface ready.",
+              strategy: "playwright_chromium_cdp",
+              url: "http://127.0.0.1:3000",
+              width: 1440,
+              height: 900,
+              last_frame_seq: 2,
+              controller_attached: false,
+            },
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.startPresentationBrowserSurfaceSession("g-demo", {
+      url: "http://127.0.0.1:3000",
+      width: 1440,
+      height: 900,
+    });
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) return;
+    expect(resp.result.browser_surface.state).toBe("ready");
+    expect(resp.result.browser_surface.strategy).toBe("playwright_chromium_cdp");
+    expect(resp.result.browser_surface.width).toBe(1440);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/presentation/browser_surface/session",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+  });
+
+  it("builds a token-aware websocket url for browser-surface streaming", async () => {
+    sessionStorageMock.setItem("cccc_dev_token", "dev-token");
+    vi.stubGlobal("window", {
+      location: { search: "", protocol: "https:", host: "cccc.test" },
+    });
+    const api = await import("../../src/services/api");
+    expect(api.getPresentationBrowserSurfaceWebSocketUrl("g-demo")).toBe(
+      "wss://cccc.test/api/v1/groups/g-demo/presentation/browser_surface/ws?token=dev-token"
     );
   });
 

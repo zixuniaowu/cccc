@@ -274,7 +274,7 @@ export function PresentationPinModal({
         replaceMode
           ? t("presentationReplaceSlotTitle", {
               index: slotIndex,
-              defaultValue: `Replace slot ${slotIndex}`,
+              defaultValue: `Edit slot ${slotIndex}`,
             })
           : t("presentationPinSlotTitle", {
               index: slotIndex,
@@ -295,7 +295,7 @@ export function PresentationPinModal({
           <div className="font-medium">
             {replaceMode
               ? t("presentationReplaceHelp", {
-                  defaultValue: "Replace the current card with a URL, a workspace file, or an uploaded snapshot.",
+                  defaultValue: "Edit the current slot by updating it with a URL, a workspace file, or an uploaded snapshot.",
                 })
               : t("presentationPinHelp", {
                   defaultValue:
@@ -512,7 +512,7 @@ export function PresentationPinModal({
             )}
           >
             {replaceMode
-              ? t("presentationReplaceSubmit", { defaultValue: "Replace slot" })
+              ? t("presentationReplaceSubmit", { defaultValue: "Save changes" })
               : t("presentationPinSubmit", { defaultValue: "Pin to slot" })}
           </button>
         </div>

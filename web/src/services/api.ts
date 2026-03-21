@@ -45,6 +45,7 @@ import type {
   PresentationTableData,
   PresentationWorkspaceItem,
   PresentationWorkspaceListing,
+  PresentationBrowserSurfaceState,
 } from "../types";
 import { actorProfileIdentityKey } from "../utils/actorProfiles";
 
@@ -597,6 +598,31 @@ function normalizePresentation(raw: unknown): GroupPresentation {
   };
 }
 
+function normalizePresentationBrowserSurfaceState(value: unknown): PresentationBrowserSurfaceState {
+  const record = asRecord(value) ?? {};
+  const errorRecord = asRecord(record.error);
+  return {
+    active: !!record.active,
+    state: asString(record.state).trim() || "idle",
+    message: asOptionalString(record.message),
+    error: errorRecord
+      ? {
+          code: asOptionalString(errorRecord.code),
+          message: asOptionalString(errorRecord.message),
+        }
+      : null,
+    strategy: asOptionalString(record.strategy),
+    url: asOptionalString(record.url),
+    width: Number.isFinite(Number(record.width)) ? Number(record.width) : 0,
+    height: Number.isFinite(Number(record.height)) ? Number(record.height) : 0,
+    started_at: asOptionalString(record.started_at),
+    updated_at: asOptionalString(record.updated_at),
+    last_frame_seq: Number.isFinite(Number(record.last_frame_seq)) ? Number(record.last_frame_seq) : 0,
+    last_frame_at: asOptionalString(record.last_frame_at),
+    controller_attached: !!record.controller_attached,
+  };
+}
+
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   let resp: Response;
   try {
@@ -877,6 +903,77 @@ export function getPresentationAssetUrl(groupId: string, slotId: string, cacheBu
   if (cacheBust === undefined || cacheBust === null || cacheBust === "") return base;
   const separator = base.includes("?") ? "&" : "?";
   return `${base}${separator}v=${encodeURIComponent(String(cacheBust))}`;
+}
+
+export async function fetchPresentationBrowserSurfaceSession(
+  groupId: string,
+): Promise<ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>> {
+  const resp = await apiJson<{ group_id?: unknown; browser_surface?: unknown }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session`
+  );
+  if (!resp.ok) return resp as ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>;
+  return {
+    ok: true,
+    result: {
+      group_id: asString(resp.result.group_id).trim() || groupId,
+      browser_surface: normalizePresentationBrowserSurfaceState(resp.result.browser_surface),
+    },
+  };
+}
+
+export async function startPresentationBrowserSurfaceSession(
+  groupId: string,
+  payload: { url: string; width?: number; height?: number },
+): Promise<ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>> {
+  const resp = await apiJson<{ group_id?: unknown; browser_surface?: unknown }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        by: "user",
+        url: String(payload.url || "").trim(),
+        width: Number.isFinite(Number(payload.width)) ? Number(payload.width) : 1280,
+        height: Number.isFinite(Number(payload.height)) ? Number(payload.height) : 800,
+      }),
+    }
+  );
+  if (!resp.ok) return resp as ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>;
+  return {
+    ok: true,
+    result: {
+      group_id: asString(resp.result.group_id).trim() || groupId,
+      browser_surface: normalizePresentationBrowserSurfaceState(resp.result.browser_surface),
+    },
+  };
+}
+
+export async function closePresentationBrowserSurfaceSession(
+  groupId: string,
+): Promise<ApiResponse<{ group_id: string; closed: boolean; browser_surface: PresentationBrowserSurfaceState }>> {
+  const resp = await apiJson<{ group_id?: unknown; closed?: unknown; browser_surface?: unknown }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session/close`,
+    {
+      method: "POST",
+      body: JSON.stringify({ by: "user" }),
+    }
+  );
+  if (!resp.ok) {
+    return resp as ApiResponse<{ group_id: string; closed: boolean; browser_surface: PresentationBrowserSurfaceState }>;
+  }
+  return {
+    ok: true,
+    result: {
+      group_id: asString(resp.result.group_id).trim() || groupId,
+      closed: !!resp.result.closed,
+      browser_surface: normalizePresentationBrowserSurfaceState(resp.result.browser_surface),
+    },
+  };
+}
+
+export function getPresentationBrowserSurfaceWebSocketUrl(groupId: string): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const base = `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/ws`;
+  return withAuthToken(base);
 }
 
 export async function createGroup(title: string, topic: string = "") {

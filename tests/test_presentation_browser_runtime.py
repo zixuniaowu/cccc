@@ -44,6 +44,9 @@ class _FakeRuntime:
     def refresh(self) -> None:
         self.actions.append(("refresh", True))
 
+    def back(self) -> None:
+        self.actions.append(("back", True))
+
     def close(self) -> None:
         self.closed = True
 
@@ -108,10 +111,11 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
                     right.sendall((json.dumps({"t": "key", "key": "Enter"}) + "\n").encode("utf-8"))
                     right.sendall((json.dumps({"t": "scroll", "dx": 0, "dy": 360}) + "\n").encode("utf-8"))
                     right.sendall((json.dumps({"t": "resize", "width": 1440, "height": 900}) + "\n").encode("utf-8"))
+                    right.sendall((json.dumps({"t": "back"}) + "\n").encode("utf-8"))
                     right.sendall((json.dumps({"t": "navigate", "url": "http://127.0.0.1:8848/demo"}) + "\n").encode("utf-8"))
 
                     deadline = time.time() + 3.0
-                    while time.time() < deadline and len(fake_runtime.actions) < 6:
+                    while time.time() < deadline and len(fake_runtime.actions) < 7:
                         time.sleep(0.05)
 
                     self.assertIn(("click", (120, 240, "left")), fake_runtime.actions)
@@ -119,6 +123,7 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
                     self.assertIn(("key", "Enter"), fake_runtime.actions)
                     self.assertIn(("scroll", (0, 360)), fake_runtime.actions)
                     self.assertIn(("resize", (1440, 900)), fake_runtime.actions)
+                    self.assertIn(("back", True), fake_runtime.actions)
                     self.assertIn(("navigate", "http://127.0.0.1:8848/demo"), fake_runtime.actions)
                 finally:
                     try:
@@ -129,6 +134,57 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
                 closed = runtime.close_browser_surface_session(group_id="g_demo")
                 self.assertTrue(bool(closed.get("closed")))
                 self.assertTrue(fake_runtime.closed)
+        finally:
+            try:
+                from cccc.daemon.group.presentation_browser_runtime import close_all_browser_surface_sessions
+
+                close_all_browser_surface_sessions()
+            except Exception:
+                pass
+            cleanup()
+
+    def test_socket_disconnect_keeps_session_alive_for_reconnect(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.group import presentation_browser_runtime as runtime
+
+            fake_runtime = _FakeRuntime()
+            with patch.object(runtime, "_launch_browser_surface_runtime", return_value=fake_runtime):
+                state = runtime.open_browser_surface_session(
+                    group_id="g_demo",
+                    url="http://127.0.0.1:3000",
+                    width=1280,
+                    height=800,
+                )
+                self.assertEqual(state.get("state"), "ready")
+
+                left, right = socket.socketpair()
+                self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", sock=left))
+                _ = self._read_json_line(right)
+                right.close()
+
+                deadline = time.time() + 2.0
+                snapshot = runtime.get_browser_surface_session_state(group_id="g_demo")
+                while time.time() < deadline and snapshot.get("controller_attached"):
+                    time.sleep(0.05)
+                    snapshot = runtime.get_browser_surface_session_state(group_id="g_demo")
+
+                self.assertEqual(snapshot.get("state"), "ready")
+                self.assertTrue(bool(snapshot.get("active")))
+                self.assertFalse(bool(snapshot.get("controller_attached")))
+
+                left2, right2 = socket.socketpair()
+                try:
+                    self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", sock=left2))
+                    second_state = self._read_json_line(right2)
+                    self.assertEqual(second_state.get("t"), "state")
+                    self.assertEqual(second_state.get("state"), "ready")
+                finally:
+                    try:
+                        right2.close()
+                    except Exception:
+                        pass
+                runtime.close_browser_surface_session(group_id="g_demo")
         finally:
             try:
                 from cccc.daemon.group.presentation_browser_runtime import close_all_browser_surface_sessions

@@ -59,6 +59,8 @@ from ..schemas import (
     websocket_tokens_active,
 )
 
+_PRESENTATION_BROWSER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
+
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
     # --- global router (user/admin scope, per-route guard where needed) ---
@@ -1516,11 +1518,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if transport == "tcp":
                 host = str(ep.get("host") or "127.0.0.1").strip() or "127.0.0.1"
                 port = int(ep.get("port") or 0)
-                reader, writer = await asyncio.open_connection(host, port)
+                reader, writer = await asyncio.open_connection(host, port, limit=_PRESENTATION_BROWSER_STREAM_LIMIT_BYTES)
             else:
                 sock_path = ctx.home / "daemon" / "ccccd.sock"
                 path = str(ep.get("path") or sock_path)
-                reader, writer = await asyncio.open_unix_connection(path)
+                reader, writer = await asyncio.open_unix_connection(path, limit=_PRESENTATION_BROWSER_STREAM_LIMIT_BYTES)
         except Exception:
             await websocket.send_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
             await websocket.close(code=1011)

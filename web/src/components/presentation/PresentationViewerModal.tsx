@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "../MarkdownRenderer";
 import { ModalFrame } from "../modals/ModalFrame";
@@ -7,6 +7,7 @@ import type { GroupPresentation, PresentationSlot } from "../../types";
 import { getPresentationAssetUrl } from "../../services/api";
 import { classNames } from "../../utils/classNames";
 import { findPresentationSlot } from "../../utils/presentation";
+import { PresentationWebPreviewPanel } from "./PresentationWebPreviewPanel";
 
 type PresentationViewerModalProps = {
   isOpen: boolean;
@@ -26,6 +27,34 @@ function getReferenceHref(groupId: string, slot: PresentationSlot | null, cacheB
   const url = String(card.content.url || "").trim();
   if (url) return url;
   return getPresentationAssetUrl(groupId, slot.slot_id, cacheBust);
+}
+
+async function copyText(value: string): Promise<boolean> {
+  const text = String(value || "");
+  if (!text) return false;
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to textarea copy.
+  }
+  try {
+    if (typeof document === "undefined") return false;
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return !!ok;
+  } catch {
+    return false;
+  }
 }
 
 function formatTimestamp(value: string | undefined, locale: string): string {
@@ -75,6 +104,8 @@ export function PresentationViewerModal({
   const [refreshTick, setRefreshTick] = useState(0);
   const [linkedMarkdown, setLinkedMarkdown] = useState("");
   const [linkedMarkdownError, setLinkedMarkdownError] = useState("");
+  const [copiedReference, setCopiedReference] = useState(false);
+  const copyResetTimerRef = useRef<number | null>(null);
 
   const slot = useMemo(() => findPresentationSlot(presentation, slotId), [presentation, slotId]);
   const card = slot?.card || null;
@@ -85,6 +116,9 @@ export function PresentationViewerModal({
   const useSandboxedPreview = !!card && card.card_type === "web_preview" && !String(card.content.url || "").trim();
   const cardType = String(card?.card_type || "").trim();
   const cardMode = String(card?.content.mode || "inline").trim();
+  const allowLiveBrowser = !!card && card.card_type === "web_preview" && !!String(card.content.url || "").trim() && !readOnly;
+  const canRefresh = !!card && (isWorkspaceLinked || card.card_type === "web_preview");
+  const copyReferenceValue = String(card?.content.url || card?.content.workspace_rel_path || href || "").trim();
 
   useEffect(() => {
     if (!isOpen || !isWorkspaceLinked) return;
@@ -130,6 +164,28 @@ export function PresentationViewerModal({
     };
   }, [cardMode, cardType, href, isOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopyReference = async () => {
+    if (!copyReferenceValue) return;
+    const ok = await copyText(copyReferenceValue);
+    if (!ok) return;
+    setCopiedReference(true);
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+    }
+    copyResetTimerRef.current = window.setTimeout(() => {
+      copyResetTimerRef.current = null;
+      setCopiedReference(false);
+    }, 1600);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -162,7 +218,7 @@ export function PresentationViewerModal({
               {card.source_label ? <span>{card.source_label}</span> : null}
               {publishedAt ? <span>{publishedAt}</span> : null}
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                {isWorkspaceLinked ? (
+                {canRefresh ? (
                   <button
                     type="button"
                     onClick={() => setRefreshTick((value) => value + 1)}
@@ -174,18 +230,21 @@ export function PresentationViewerModal({
                     {t("presentationRefreshAction", { defaultValue: "Refresh" })}
                   </button>
                 ) : null}
-                {href ? (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noreferrer"
+                {copyReferenceValue ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleCopyReference();
+                    }}
                     className={classNames(
                       "rounded-full px-3 py-1 font-medium transition-colors",
                       isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200"
                     )}
                   >
-                    {t("presentationOpenNewTab", { defaultValue: "Open in new tab" })}
-                  </a>
+                    {copiedReference
+                      ? t("presentationCopyReferenceCopied", { defaultValue: "Copied" })
+                      : t("presentationCopyReferenceAction", { defaultValue: "Copy URL/path" })}
+                  </button>
                 ) : null}
                 {!readOnly ? (
                   <button
@@ -196,7 +255,7 @@ export function PresentationViewerModal({
                       isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200"
                     )}
                   >
-                    {t("presentationReplaceAction", { defaultValue: "Replace" })}
+                    {t("presentationReplaceAction", { defaultValue: "Edit" })}
                   </button>
                 ) : null}
                 {!readOnly ? (
@@ -277,11 +336,15 @@ export function PresentationViewerModal({
               className="min-h-[72vh] w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
             />
           ) : card.card_type === "web_preview" ? (
-            <iframe
+            <PresentationWebPreviewPanel
+              key={`${slot?.slot_id || ""}:${card.published_at}:${href}`}
+              groupId={groupId}
               title={card.title}
-              src={href}
-              sandbox={useSandboxedPreview ? "allow-scripts allow-forms allow-modals allow-popups allow-downloads" : undefined}
-              className="min-h-[72vh] w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+              href={href}
+              isDark={isDark}
+              useSandboxedPreview={useSandboxedPreview}
+              allowLiveBrowser={allowLiveBrowser}
+              refreshNonce={refreshTick}
             />
           ) : (
             <div className={classNames("rounded-3xl border p-6", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
