@@ -281,12 +281,14 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
+        refs_raw = arguments.get("refs")
         if isinstance(to_raw, list):
             to_val: Optional[List[str]] = [str(x).strip() for x in to_raw if str(x).strip()]
         elif isinstance(to_raw, str) and to_raw.strip():
             to_val = [to_raw.strip()]
         else:
             to_val = None
+        refs_val = [item for item in refs_raw if isinstance(item, dict)] if isinstance(refs_raw, list) else None
         return message_send(
             group_id=gid,
             dst_group_id=arguments.get("dst_group_id"),
@@ -295,18 +297,21 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             to=to_val,
             priority=str(arguments.get("priority") or "normal"),
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
+            refs=refs_val,
         )
 
     if name == "cccc_message_reply":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
+        refs_raw = arguments.get("refs")
         if isinstance(to_raw, list):
             to_val_reply: Optional[List[str]] = [str(x).strip() for x in to_raw if str(x).strip()]
         elif isinstance(to_raw, str) and to_raw.strip():
             to_val_reply = [to_raw.strip()]
         else:
             to_val_reply = None
+        refs_val_reply = [item for item in refs_raw if isinstance(item, dict)] if isinstance(refs_raw, list) else None
         reply_to = str(arguments.get("event_id") or arguments.get("reply_to") or "").strip()
         return message_reply(
             group_id=gid,
@@ -316,6 +321,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             to=to_val_reply,
             priority=str(arguments.get("priority") or "normal"),
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
+            refs=refs_val_reply,
         )
 
     if name == "cccc_file":

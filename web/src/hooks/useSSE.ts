@@ -5,7 +5,7 @@ import { useChatOutboxStore } from "../stores/chatOutboxStore";
 import { beginContextRequest, isLatestContextRequest } from "../stores/useGroupStore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
-import type { Actor, GroupContext } from "../types";
+import type { Actor, ChatMessageData, GroupContext } from "../types";
 import {
   isContextSyncEvent,
   isChatReadEvent,
@@ -25,6 +25,7 @@ import {
   getRecipientActorIdsForEvent,
   getAckRecipientIdsForEvent,
 } from "../utils/ledgerEventHandlers";
+import { getPresentationMessageRefs, getPresentationRefStatus } from "../utils/presentationRefs";
 
 // Re-export for backward compatibility
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
@@ -268,6 +269,22 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           const replyBy = String(ev.by || "").trim();
           if (replyTo && replyBy) {
             updateReplyStatus(replyTo, replyBy, groupId);
+          }
+        }
+
+        if (isChatMessageEvent(ev) && String(ev.by || "").trim() !== "user") {
+          const msgData = ev.data && typeof ev.data === "object" ? (ev.data as ChatMessageData) : null;
+          const presentationRefs = getPresentationMessageRefs(msgData?.refs);
+          const needsAttention =
+            String(msgData?.priority || "normal").trim() === "attention" ||
+            !!msgData?.reply_required;
+          for (const ref of presentationRefs) {
+            if (needsAttention || getPresentationRefStatus(ref, msgData, ev) === "needs_user") {
+              const slotId = String(ref.slot_id || "").trim();
+              if (slotId) {
+                markPresentationSlotAttention(groupId, slotId);
+              }
+            }
           }
         }
 

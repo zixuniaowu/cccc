@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { fetchPresentationBrowserSurfaceSession } from "../../services/api";
 import { classNames } from "../../utils/classNames";
 import { shouldPreferPresentationLiveBrowser } from "../../utils/presentation";
+import { shouldAutoOpenInteractivePresentation } from "../../utils/presentationLocator";
 import { PresentationBrowserSurfacePanel } from "./PresentationBrowserSurfacePanel";
+import type { PresentationBrowserFrame } from "./PresentationBrowserSurfacePanel";
 
 type PresentationWebPreviewPanelProps = {
   groupId: string;
@@ -14,6 +17,7 @@ type PresentationWebPreviewPanelProps = {
   allowLiveBrowser: boolean;
   refreshNonce: number;
   viewportClassName?: string;
+  onInteractiveFrameUpdate?: (frame: PresentationBrowserFrame | null) => void;
 };
 
 export function PresentationWebPreviewPanel({
@@ -26,14 +30,33 @@ export function PresentationWebPreviewPanel({
   allowLiveBrowser,
   refreshNonce,
   viewportClassName,
+  onInteractiveFrameUpdate,
 }: PresentationWebPreviewPanelProps) {
   const { t } = useTranslation("chat");
   const preferInteractive = allowLiveBrowser && shouldPreferPresentationLiveBrowser(href);
   const initialMode: "embedded" | "interactive" = preferInteractive ? "interactive" : "embedded";
   const [mode, setMode] = useState<"embedded" | "interactive">(initialMode);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!allowLiveBrowser) return;
+
+    const run = async () => {
+      const existing = await fetchPresentationBrowserSurfaceSession(groupId, slotId);
+      if (cancelled || !existing.ok) return;
+      if (shouldAutoOpenInteractivePresentation(allowLiveBrowser, existing.result.browser_surface)) {
+        setMode("interactive");
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [allowLiveBrowser, groupId, slotId]);
+
   return (
-    <div className="flex min-h-[72vh] flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       {allowLiveBrowser ? (
         <div
           className={classNames(
@@ -79,6 +102,7 @@ export function PresentationWebPreviewPanel({
           isDark={isDark}
           refreshNonce={refreshNonce}
           viewportClassName={viewportClassName}
+          onFrameUpdate={onInteractiveFrameUpdate}
         />
       ) : (
         <iframe
@@ -87,8 +111,8 @@ export function PresentationWebPreviewPanel({
           src={href}
           sandbox={useSandboxedPreview ? "allow-scripts allow-forms allow-modals allow-popups allow-downloads" : undefined}
           className={classNames(
-            viewportClassName || "min-h-[72vh]",
-            "w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+            viewportClassName || "flex-1 min-h-0",
+            "w-full flex-1 min-h-0 rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
           )}
         />
       )}

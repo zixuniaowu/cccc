@@ -1,9 +1,9 @@
 // ChatTab is the main chat page component.
 // Refactored to use useChatTab hook for business logic, reducing prop drilling.
 
-import { useState, type MutableRefObject, type RefObject } from "react";
+import { useCallback, type MutableRefObject, type RefObject } from "react";
 import { CompassIcon } from "../../components/Icons";
-import { Actor, GroupMeta } from "../../types";
+import { Actor, GroupMeta, LedgerEvent, PresentationMessageRef } from "../../types";
 import { PresentationRail } from "../../components/presentation/PresentationRail";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
@@ -11,7 +11,8 @@ import { SetupChecklist } from "./SetupChecklist";
 import { ChatComposer } from "./ChatComposer";
 import { useChatTab } from "../../hooks/useChatTab";
 import { useTranslation } from 'react-i18next';
-import { useGroupStore, useModalStore } from "../../stores";
+import { useGroupStore, useModalStore, useUIStore } from "../../stores";
+import { getChatSession } from "../../stores/useUIStore";
 
 const EMPTY_PRESENTATION_ATTENTION: Record<string, boolean> = {};
 
@@ -112,7 +113,9 @@ export function ChatTab({
     composerFiles,
     removeComposerFile,
     replyTarget,
+    quotedPresentationRef,
     cancelReply,
+    clearQuotedPresentationRef,
     toTokens,
     toggleRecipient,
     clearRecipients,
@@ -154,36 +157,41 @@ export function ChatTab({
   const groupPresentation = useGroupStore((state) => state.groupPresentation);
   const setPresentationViewer = useModalStore((state) => state.setPresentationViewer);
   const setPresentationPin = useModalStore((state) => state.setPresentationPin);
+  const mobileSurface = useUIStore((state) =>
+    selectedGroupId ? getChatSession(selectedGroupId, state.chatSessions).mobileSurface : "messages"
+  );
+  const setChatMobileSurface = useUIStore((state) => state.setChatMobileSurface);
   const presentationAttention = useModalStore((state) =>
     selectedGroupId ? (state.presentationAttention[selectedGroupId] || EMPTY_PRESENTATION_ATTENTION) : EMPTY_PRESENTATION_ATTENTION
   );
-  const [mobileSurfaceState, setMobileSurfaceState] = useState<{
-    groupId: string;
-    value: "messages" | "presentation";
-  }>({
-    groupId: "",
-    value: "messages",
-  });
 
   const isHydratingEmptyState = chatMessages.length === 0 && chatEmptyState === "hydrating";
   const isBusinessEmptyState = chatMessages.length === 0 && chatEmptyState === "business_empty";
   const listIsLoadingHistory = isLoadingHistory || isHydratingEmptyState;
   const listHasMoreHistory = hasMoreHistory || isHydratingEmptyState;
-  const mobileSurface =
-    mobileSurfaceState.groupId === selectedGroupId
-      ? mobileSurfaceState.value
-      : "messages";
   const hasPresentationAttention = Object.keys(presentationAttention).length > 0;
 
-  const openPresentationSlot = (slotId: string) => {
+  const openPresentationSlot = useCallback((slotId: string) => {
     if (!selectedGroupId || !slotId) return;
     setPresentationViewer({ groupId: selectedGroupId, slotId });
-  };
+  }, [selectedGroupId, setPresentationViewer]);
 
-  const pinPresentationSlot = (slotId: string) => {
+  const openPresentationRef = useCallback((ref: PresentationMessageRef, event: LedgerEvent) => {
+    if (!selectedGroupId) return;
+    const slotId = String(ref.slot_id || "").trim();
+    if (!slotId) return;
+    setPresentationViewer({
+      groupId: selectedGroupId,
+      slotId,
+      focusRef: ref,
+      focusEventId: String(event.id || "").trim() || null,
+    });
+  }, [selectedGroupId, setPresentationViewer]);
+
+  const pinPresentationSlot = useCallback((slotId: string) => {
     if (!selectedGroupId || !slotId || readOnly) return;
     setPresentationPin({ groupId: selectedGroupId, slotId });
-  };
+  }, [readOnly, selectedGroupId, setPresentationPin]);
 
   const filterOptions: Array<["all" | "user" | "attention" | "task", string]> = [
     ["all", t('filterAll')],
@@ -303,7 +311,7 @@ export function ChatTab({
                           ? "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
                           : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                     )}
-                    onClick={() => setMobileSurfaceState({ groupId: selectedGroupId, value: surface })}
+                    onClick={() => selectedGroupId && setChatMobileSurface(selectedGroupId, surface)}
                     aria-pressed={active}
                   >
                     {label}
@@ -465,11 +473,12 @@ export function ChatTab({
                   scrollRef={scrollRef}
                   onReply={startReply}
                   onShowRecipients={showRecipients}
-                  onCopyLink={copyMessageLink}
-                  onRelay={relayMessage}
-                  onOpenSource={openSourceMessage}
-                  showScrollButton={showScrollButton}
-                  onScrollButtonClick={handleScrollButtonClick}
+                onCopyLink={copyMessageLink}
+                onRelay={relayMessage}
+                onOpenSource={openSourceMessage}
+                onOpenPresentationRef={openPresentationRef}
+                showScrollButton={showScrollButton}
+                onScrollButtonClick={handleScrollButtonClick}
                   chatUnreadCount={chatUnreadCount}
                   onScrollChange={handleScrollChange}
                   onScrollSnapshot={handleScrollSnapshot}
@@ -526,6 +535,8 @@ export function ChatTab({
             busy={busy}
             replyTarget={replyTarget}
             onCancelReply={cancelReply}
+            quotedPresentationRef={quotedPresentationRef}
+            onClearQuotedPresentationRef={clearQuotedPresentationRef}
             toTokens={toTokens}
             onToggleRecipient={toggleRecipient}
             onClearRecipients={clearRecipients}

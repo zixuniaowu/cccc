@@ -1,6 +1,6 @@
 // Modal state store.
 import { create } from "zustand";
-import type { Actor, LedgerEvent } from "../types";
+import type { Actor, LedgerEvent, PresentationMessageRef } from "../types";
 
 interface RelaySource {
   groupId: string;
@@ -10,6 +10,8 @@ interface RelaySource {
 interface PresentationViewerState {
   groupId: string;
   slotId: string;
+  focusRef?: PresentationMessageRef | null;
+  focusEventId?: string | null;
 }
 
 interface PresentationPinState {
@@ -108,7 +110,12 @@ export const useModalStore = create<ModalState>((set) => ({
         delete nextAttention[groupId];
       }
       return {
-        presentationViewer: { groupId, slotId },
+        presentationViewer: {
+          groupId,
+          slotId,
+          focusRef: viewer.focusRef || null,
+          focusEventId: viewer.focusEventId ? String(viewer.focusEventId).trim() : null,
+        },
         presentationAttention: nextAttention,
       };
     }),

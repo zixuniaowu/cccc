@@ -1,13 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "../MarkdownRenderer";
+import { CopyIcon, EditIcon, RefreshIcon, TrashIcon } from "../Icons";
 import { ModalFrame } from "../modals/ModalFrame";
 import { useModalA11y } from "../../hooks/useModalA11y";
-import type { GroupPresentation, PresentationSlot } from "../../types";
-import { getPresentationAssetUrl } from "../../services/api";
+import type { GroupPresentation, LedgerEvent, PresentationMessageRef, PresentationSlot } from "../../types";
+import {
+  getGroupBlobUrl,
+  getPresentationAssetUrl,
+  uploadPresentationReferenceSnapshot,
+} from "../../services/api";
 import { classNames } from "../../utils/classNames";
 import { findPresentationSlot } from "../../utils/presentation";
+import {
+  canRestorePresentationRefInViewer,
+  getPresentationRefViewerScrollTop,
+} from "../../utils/presentationLocator";
+import { buildPresentationRefForSlot } from "../../utils/presentationRefs";
 import { PresentationWebPreviewPanel } from "./PresentationWebPreviewPanel";
+import type { PresentationBrowserFrame } from "./PresentationBrowserSurfacePanel";
 
 type PresentationViewerModalProps = {
   isOpen: boolean;
@@ -16,6 +27,15 @@ type PresentationViewerModalProps = {
   groupId: string;
   slotId: string;
   presentation: GroupPresentation | null;
+  sourceEvent?: LedgerEvent | null;
+  focusRef?: PresentationMessageRef | null;
+  focusEventId?: string | null;
+  onQuoteInChat?: (payload: {
+    slotId: string;
+    ref?: PresentationMessageRef | null;
+  }) => void;
+  onOpenMessageContext?: (eventId: string) => void;
+  onReplyToMessage?: (event: LedgerEvent) => void;
   onReplaceSlot?: (slotId: string) => void;
   onClearSlot?: (slotId: string) => void;
   onClose: () => void;
@@ -29,11 +49,16 @@ function getReferenceHref(groupId: string, slot: PresentationSlot | null, cacheB
   return getPresentationAssetUrl(groupId, slot.slot_id, cacheBust);
 }
 
-function appendQueryParam(url: string, key: string, value: string): string {
-  const base = String(url || "").trim();
-  if (!base) return "";
-  const separator = base.includes("?") ? "&" : "?";
-  return `${base}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+async function dataUrlToFile(dataUrl: string, filename: string): Promise<File | null> {
+  const raw = String(dataUrl || "").trim();
+  if (!raw) return null;
+  try {
+    const response = await fetch(raw);
+    const blob = await response.blob();
+    return new File([blob], filename, { type: blob.type || "image/jpeg" });
+  } catch {
+    return null;
+  }
 }
 
 async function copyText(value: string): Promise<boolean> {
@@ -119,6 +144,12 @@ export function PresentationViewerModal({
   groupId,
   slotId,
   presentation,
+  sourceEvent,
+  focusRef,
+  focusEventId,
+  onQuoteInChat,
+  onOpenMessageContext,
+  onReplyToMessage,
   onReplaceSlot,
   onClearSlot,
   onClose,
@@ -130,7 +161,13 @@ export function PresentationViewerModal({
   const [linkedMarkdown, setLinkedMarkdown] = useState("");
   const [linkedMarkdownError, setLinkedMarkdownError] = useState("");
   const [copiedReference, setCopiedReference] = useState(false);
+  const [quotePending, setQuotePending] = useState(false);
+  const [browserFrameForQuote, setBrowserFrameForQuote] = useState<PresentationBrowserFrame | null>(null);
+  const [snapshotViewMode, setSnapshotViewMode] = useState<"hidden" | "compare" | "snapshot">("hidden");
+  const [snapshotMobileTab, setSnapshotMobileTab] = useState<"live" | "snapshot">("live");
+  const [snapshotLightboxOpen, setSnapshotLightboxOpen] = useState(false);
   const copyResetTimerRef = useRef<number | null>(null);
+  const evidenceScrollRef = useRef<HTMLDivElement | null>(null);
 
   const slot = useMemo(() => findPresentationSlot(presentation, slotId), [presentation, slotId]);
   const card = slot?.card || null;
@@ -144,36 +181,133 @@ export function PresentationViewerModal({
   const allowLiveBrowser = !!card && card.card_type === "web_preview" && !!String(card.content.url || "").trim() && !readOnly;
   const canRefresh = !!card && (isWorkspaceLinked || card.card_type === "web_preview");
   const copyReferenceValue = String(card?.content.url || card?.content.workspace_rel_path || href || "").trim();
-  const downloadHref = useMemo(() => {
-    if (!card || card.card_type !== "file" || !href) return "";
-    return appendQueryParam(href, "download", "1");
-  }, [card, href]);
   const viewerPanelClassName = isExpanded
-    ? "h-full w-full sm:h-[96vh] sm:max-w-[96vw]"
-    : "h-full w-full sm:h-[90vh] sm:max-w-6xl";
-  const immersiveViewportClassName = isExpanded
-    ? "min-h-[calc(96vh-11rem)]"
-    : "min-h-[72vh]";
-  const imageViewportClassName = isExpanded
-    ? "max-h-[calc(96vh-12rem)]"
-    : "max-h-[70vh]";
+    ? "h-screen w-screen max-w-none sm:h-[96vh] sm:w-[96vw] sm:max-w-[96vw]"
+    : "h-screen w-screen max-w-none sm:h-[88vh] sm:w-[min(1280px,96vw)]";
+  const immersiveViewportClassName = "h-full min-h-0";
+  const imageViewportClassName = isExpanded ? "max-h-[calc(96vh-14rem)]" : "max-h-[70vh]";
   const fullScreenLabel = isExpanded
     ? t("presentationExitFullScreenAction", { defaultValue: "Exit full screen" })
     : t("presentationFullScreenAction", { defaultValue: "Full screen" });
-  const headerActions = card ? (
-    <button
-      type="button"
-      onClick={() => setIsExpanded((value) => !value)}
-      className={classNames(
-        "hidden sm:inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg transition-colors glass-btn",
-        isDark ? "text-slate-300 hover:text-slate-100" : "text-gray-600 hover:text-gray-900"
-      )}
-      aria-label={fullScreenLabel}
-      title={fullScreenLabel}
-    >
-      <PresentationWindowExpandIcon expanded={isExpanded} />
-    </button>
-  ) : null;
+  const sourceEventId = String(sourceEvent?.id || focusEventId || "").trim();
+  const canReuseFocusedReference = useMemo(() => {
+    if (!focusRef) return false;
+    if (String(focusRef.slot_id || "").trim() !== String(slotId || "").trim()) return false;
+    if (!slot?.card) return true;
+    const focusedCardType = String(focusRef.card_type || "").trim();
+    const currentCardType = String(slot.card.card_type || "").trim();
+    if (focusedCardType && currentCardType && focusedCardType !== currentCardType) {
+      return false;
+    }
+    const focusedHref = String(focusRef.href || "").trim();
+    if (focusedHref && href && focusedHref !== href) {
+      return false;
+    }
+    return true;
+  }, [focusRef, href, slot, slotId]);
+
+  const currentRef = useMemo(() => {
+    if (focusRef && canReuseFocusedReference) {
+      return focusRef;
+    }
+    return buildPresentationRefForSlot(slot, { href });
+  }, [canReuseFocusedReference, focusRef, href, slot]);
+  const quotedSnapshot = focusRef?.snapshot || currentRef?.snapshot;
+  const currentSnapshotUrl = useMemo(
+    () => getGroupBlobUrl(groupId, String(quotedSnapshot?.path || "").trim()),
+    [groupId, quotedSnapshot?.path],
+  );
+  const prefersInnerViewportScroll = cardType === "web_preview" || cardType === "pdf";
+  const useOuterEvidenceScroll = !prefersInnerViewportScroll;
+  const canRestoreRefInViewer = useMemo(() => canRestorePresentationRefInViewer(cardType), [cardType]);
+  const targetViewerScrollTop = useMemo(() => getPresentationRefViewerScrollTop(currentRef), [currentRef]);
+  const quoteStillMatchesLive = !!card && (!focusRef || canReuseFocusedReference);
+  const canCompareSnapshot = !!currentSnapshotUrl && quoteStillMatchesLive;
+  const quoteContextChanged = !!focusRef && !quoteStillMatchesLive;
+  const showSnapshotCompare = snapshotViewMode === "compare" && canCompareSnapshot;
+  const showSnapshotOverlay = snapshotViewMode === "snapshot" && !!currentSnapshotUrl;
+  const snapshotTimestamp = formatTimestamp(quotedSnapshot?.captured_at, i18n.language);
+  const snapshotToggleLabel =
+    snapshotViewMode === "hidden"
+      ? canCompareSnapshot
+        ? t("presentationCompareSnapshotAction", { defaultValue: "Compare with snapshot" })
+        : t("presentationOpenQuotedSnapshotAction", { defaultValue: "Open quoted snapshot" })
+      : t("presentationHideSnapshotAction", { defaultValue: "Hide snapshot" });
+  const iconButtonClassName = classNames(
+    "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+    isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+  );
+  const destructiveIconButtonClassName = classNames(
+    "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+    isDark ? "bg-rose-500/15 text-rose-200 hover:bg-rose-500/25" : "bg-rose-50 text-rose-700 hover:bg-rose-100",
+  );
+  const copiedIconButtonClassName = classNames(
+    "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+    isDark ? "bg-cyan-500/20 text-cyan-100" : "bg-cyan-50 text-cyan-700",
+  );
+  const refreshActionLabel = t("presentationRefreshAction", { defaultValue: "Refresh" });
+  const copyActionLabel = copiedReference
+    ? t("presentationCopyReferenceCopied", { defaultValue: "Copied" })
+    : t("presentationCopyReferenceAction", { defaultValue: "Copy URL/path" });
+  const editActionLabel = t("presentationReplaceAction", { defaultValue: "Edit" });
+  const clearActionLabel = t("presentationClearAction", { defaultValue: "Clear" });
+
+  const headerActions = (
+    <>
+      {sourceEventId && onOpenMessageContext ? (
+        <button
+          type="button"
+          onClick={() => onOpenMessageContext(sourceEventId)}
+          className={classNames(
+            "inline-flex min-h-[40px] items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors glass-btn",
+            isDark ? "text-slate-300 hover:text-slate-100" : "text-gray-600 hover:text-gray-900",
+          )}
+        >
+          {t("presentationJumpToChatAction", { defaultValue: "Jump to chat" })}
+        </button>
+      ) : null}
+      {sourceEvent && onReplyToMessage ? (
+        <button
+          type="button"
+          onClick={() => onReplyToMessage(sourceEvent)}
+          className={classNames(
+            "inline-flex min-h-[40px] items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors glass-btn",
+            isDark ? "text-cyan-200 hover:text-cyan-100" : "text-cyan-700 hover:text-cyan-800",
+          )}
+        >
+          {t("presentationReplyInChatAction", { defaultValue: "Reply in chat" })}
+        </button>
+      ) : null}
+      {canRefresh ? (
+        <button
+          type="button"
+          onClick={() => setRefreshTick((value) => value + 1)}
+          className={classNames(
+            "inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg transition-colors glass-btn",
+            isDark ? "text-slate-300 hover:text-slate-100" : "text-gray-600 hover:text-gray-900",
+          )}
+          aria-label={refreshActionLabel}
+          title={refreshActionLabel}
+        >
+          <RefreshIcon size={16} />
+        </button>
+      ) : null}
+      {card ? (
+        <button
+          type="button"
+          onClick={() => setIsExpanded((value) => !value)}
+          className={classNames(
+            "hidden sm:inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg transition-colors glass-btn",
+            isDark ? "text-slate-300 hover:text-slate-100" : "text-gray-600 hover:text-gray-900",
+          )}
+          aria-label={fullScreenLabel}
+          title={fullScreenLabel}
+        >
+          <PresentationWindowExpandIcon expanded={isExpanded} />
+        </button>
+      ) : null}
+    </>
+  );
 
   useEffect(() => {
     if (!isOpen || !isWorkspaceLinked) return;
@@ -227,6 +361,73 @@ export function PresentationViewerModal({
     };
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) {
+      setSnapshotViewMode("hidden");
+      setSnapshotMobileTab("live");
+      setSnapshotLightboxOpen(false);
+      return;
+    }
+    if (!currentSnapshotUrl) {
+      setSnapshotViewMode("hidden");
+      setSnapshotMobileTab("live");
+      setSnapshotLightboxOpen(false);
+      return;
+    }
+    setSnapshotViewMode("hidden");
+    setSnapshotMobileTab("live");
+    setSnapshotLightboxOpen(false);
+  }, [currentSnapshotUrl, focusEventId, isOpen, slotId]);
+
+  useEffect(() => {
+    if (snapshotViewMode === "compare" && !canCompareSnapshot) {
+      setSnapshotViewMode(currentSnapshotUrl ? "snapshot" : "hidden");
+    }
+  }, [canCompareSnapshot, currentSnapshotUrl, snapshotViewMode]);
+
+  useEffect(() => {
+    if (!isOpen || !canRestoreRefInViewer || targetViewerScrollTop == null) return;
+
+    let timeoutId: number | null = null;
+    let rafIdOne: number | null = null;
+    let rafIdTwo: number | null = null;
+
+    const applyScrollRestore = () => {
+      const el = evidenceScrollRef.current;
+      if (!el) return;
+      el.scrollTop = targetViewerScrollTop;
+    };
+
+    timeoutId = window.setTimeout(() => {
+      applyScrollRestore();
+      rafIdOne = window.requestAnimationFrame(() => {
+        applyScrollRestore();
+        rafIdTwo = window.requestAnimationFrame(() => {
+          applyScrollRestore();
+        });
+      });
+    }, 0);
+
+    return () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      if (rafIdOne !== null) {
+        window.cancelAnimationFrame(rafIdOne);
+      }
+      if (rafIdTwo !== null) {
+        window.cancelAnimationFrame(rafIdTwo);
+      }
+    };
+  }, [
+    canRestoreRefInViewer,
+    isOpen,
+    linkedMarkdown,
+    linkedMarkdownError,
+    slotId,
+    targetViewerScrollTop,
+  ]);
+
   const handleCopyReference = async () => {
     if (!copyReferenceValue) return;
     const ok = await copyText(copyReferenceValue);
@@ -240,6 +441,221 @@ export function PresentationViewerModal({
       setCopiedReference(false);
     }, 1600);
   };
+
+  const handleQuoteInChat = async () => {
+    if (!slot?.card || !onQuoteInChat || quotePending) return;
+    const activeCard = slot.card;
+    const viewerScrollTop = evidenceScrollRef.current?.scrollTop || 0;
+    const nextLocator: Record<string, unknown> = {};
+    if (viewerScrollTop > 0) {
+      nextLocator.viewer_scroll_top = viewerScrollTop;
+    }
+    if (activeCard.card_type === "web_preview") {
+      const browserUrl = String(browserFrameForQuote?.url || href || "").trim();
+      if (browserUrl) nextLocator.url = browserUrl;
+      const capturedAt = String(browserFrameForQuote?.capturedAt || "").trim();
+      if (capturedAt) nextLocator.captured_at = capturedAt;
+    }
+
+    let snapshot = undefined;
+    if (activeCard.card_type === "web_preview" && browserFrameForQuote?.dataUrl) {
+      setQuotePending(true);
+      try {
+        const extension = browserFrameForQuote.dataUrl.includes("image/png") ? "png" : "jpg";
+        const file = await dataUrlToFile(
+          browserFrameForQuote.dataUrl,
+          `presentation-ref-${String(slot.slot_id || "slot").trim()}.${extension}`,
+        );
+        if (file) {
+          const upload = await uploadPresentationReferenceSnapshot(groupId, {
+            slotId: slot.slot_id,
+            file,
+            source: "browser_surface",
+            capturedAt: browserFrameForQuote.capturedAt,
+            width: browserFrameForQuote.width,
+            height: browserFrameForQuote.height,
+          });
+          if (upload.ok) {
+            snapshot = upload.result.snapshot;
+          }
+        }
+      } finally {
+        setQuotePending(false);
+      }
+    }
+
+    const ref = buildPresentationRefForSlot(slot, {
+      href,
+      status: "open",
+      locator: Object.keys(nextLocator).length > 0 ? nextLocator : undefined,
+      snapshot,
+    });
+    if (!ref) return;
+    onQuoteInChat({ slotId: slot.slot_id, ref });
+  };
+
+  const handleToggleSnapshotView = () => {
+    if (!currentSnapshotUrl) return;
+    if (snapshotViewMode !== "hidden") {
+      setSnapshotViewMode("hidden");
+      setSnapshotMobileTab("live");
+      return;
+    }
+    if (canCompareSnapshot) {
+      setIsExpanded(true);
+    }
+    setSnapshotViewMode(canCompareSnapshot ? "compare" : "snapshot");
+    setSnapshotMobileTab("live");
+  };
+
+  const snapshotPanel = currentSnapshotUrl ? (
+    <div
+      className={classNames(
+        "flex h-full min-h-0 flex-col overflow-hidden rounded-3xl border",
+        isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/92",
+      )}
+    >
+      <div
+        className={classNames(
+          "flex items-start justify-between gap-3 border-b px-4 py-3",
+          isDark ? "border-white/10" : "border-black/10",
+        )}
+      >
+        <div className="min-w-0">
+          <div className={classNames("text-xs font-semibold uppercase tracking-[0.16em]", isDark ? "text-cyan-200/85" : "text-cyan-700/85")}>
+            {t("presentationSnapshotFromQuoteLabel", { defaultValue: "Snapshot from this quote" })}
+          </div>
+          {snapshotTimestamp ? (
+            <div className={classNames("mt-1 text-xs", isDark ? "text-slate-400" : "text-gray-500")}>
+              {snapshotTimestamp}
+            </div>
+          ) : null}
+          {quoteContextChanged ? (
+            <div className={classNames("mt-1 text-xs", isDark ? "text-amber-300/90" : "text-amber-700")}>
+              {t("presentationSnapshotLiveChangedHint", { defaultValue: "The current slot no longer matches this quote." })}
+            </div>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={() => setSnapshotLightboxOpen(true)}
+          className={classNames(
+            "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+            isDark ? "bg-white/5 text-slate-300 hover:bg-white/10 hover:text-slate-100" : "bg-black/5 text-gray-600 hover:bg-black/10 hover:text-gray-900",
+          )}
+          aria-label={t("presentationOpenSnapshotLightboxAction", { defaultValue: "Open snapshot" })}
+          title={t("presentationOpenSnapshotLightboxAction", { defaultValue: "Open snapshot" })}
+        >
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+            <path d="M7 3.75H4.75v2.5M13 3.75h2.25v2.5M7 16.25H4.75v-2.5M13 16.25h2.25v-2.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M8 4.75H4.75V8M12 4.75h3.25V8M8 15.25H4.75V12M12 15.25h3.25V12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-3">
+        <button
+          type="button"
+          onClick={() => setSnapshotLightboxOpen(true)}
+          className="flex h-full min-h-[240px] w-full items-center justify-center"
+          aria-label={t("presentationOpenSnapshotLightboxAction", { defaultValue: "Open snapshot" })}
+        >
+          <img
+            src={currentSnapshotUrl}
+            alt={t("presentationQuotedSnapshotAlt", { defaultValue: "Quoted snapshot" })}
+            className="max-h-full w-full rounded-2xl border border-[var(--glass-border-subtle)] object-contain bg-black/5"
+          />
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  const evidencePanel = !card ? (
+    <div className={classNames("flex h-full min-h-[320px] items-center justify-center rounded-3xl border border-dashed text-sm", isDark ? "border-white/10 text-slate-500" : "border-black/10 text-gray-500")}>
+      {t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}
+    </div>
+  ) : card.card_type === "markdown" ? (
+    <div className={classNames("rounded-3xl border p-5", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
+      {linkedMarkdownError ? (
+        <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>{linkedMarkdownError}</div>
+      ) : (
+        <MarkdownRenderer
+          content={String(card.content.mode === "inline" ? card.content.markdown || "" : linkedMarkdown || "")}
+          isDark={isDark}
+          className="break-words [overflow-wrap:anywhere]"
+        />
+      )}
+    </div>
+  ) : card.card_type === "table" ? (
+    <div className={classNames("overflow-hidden rounded-3xl border", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/95")}>
+      <div className="overflow-auto">
+        <table className="min-w-full border-collapse text-sm">
+          <thead className={isDark ? "bg-slate-900/80 text-slate-200" : "bg-gray-50 text-gray-800"}>
+            <tr>
+              {(card.content.table?.columns || []).map((column) => (
+                <th key={column} className="border-b border-inherit px-4 py-3 text-left font-semibold">
+                  {column}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className={isDark ? "text-slate-300" : "text-gray-700"}>
+            {(card.content.table?.rows || []).map((row, rowIndex) => (
+              <tr key={`row-${rowIndex}`} className={rowIndex % 2 === 0 ? (isDark ? "bg-slate-950/40" : "bg-white") : (isDark ? "bg-slate-900/30" : "bg-gray-50/80")}>
+                {row.map((cell, cellIndex) => (
+                  <td key={`cell-${rowIndex}:${cellIndex}`} className="border-b border-[var(--glass-border-subtle)] px-4 py-3 align-top">
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  ) : card.card_type === "image" ? (
+    <div className="flex min-h-[360px] items-center justify-center">
+      <img
+        src={href}
+        alt={card.title}
+        className={classNames(
+          imageViewportClassName,
+          "max-w-full rounded-3xl border border-[var(--glass-border-subtle)] object-contain shadow-xl",
+        )}
+      />
+    </div>
+  ) : card.card_type === "pdf" ? (
+    <iframe
+      title={card.title}
+      src={href}
+      className={classNames(
+        immersiveViewportClassName,
+        "w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white",
+      )}
+    />
+  ) : card.card_type === "web_preview" ? (
+    <PresentationWebPreviewPanel
+      key={`${slot?.slot_id || ""}:${card.published_at}:${href}`}
+      groupId={groupId}
+      slotId={slot?.slot_id || ""}
+      title={card.title}
+      href={href}
+      isDark={isDark}
+      useSandboxedPreview={useSandboxedPreview}
+      allowLiveBrowser={allowLiveBrowser}
+      refreshNonce={refreshTick}
+      viewportClassName={immersiveViewportClassName}
+      onInteractiveFrameUpdate={setBrowserFrameForQuote}
+    />
+  ) : (
+    <div className={classNames("rounded-3xl border p-6", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
+      <div className={classNames("text-base font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
+        {card.title}
+      </div>
+      <div className={classNames("mt-2 text-sm", isDark ? "text-slate-400" : "text-gray-600")}>
+        {card.summary || card.source_label || t("presentationFileReady", { defaultValue: "This file cannot be previewed in Presentation yet." })}
+      </div>
+    </div>
+  );
 
   return (
     <ModalFrame
@@ -257,7 +673,7 @@ export function PresentationViewerModal({
         <div
           className={classNames(
             "flex flex-wrap items-center gap-2 border-b px-5 py-3 text-xs",
-            isDark ? "border-white/10 text-slate-400" : "border-black/10 text-gray-600"
+            isDark ? "border-white/10 text-slate-400" : "border-black/10 text-gray-600",
           )}
         >
           {card ? (
@@ -272,57 +688,40 @@ export function PresentationViewerModal({
               ) : null}
               {card.source_label ? <span>{card.source_label}</span> : null}
               {publishedAt ? <span>{publishedAt}</span> : null}
-              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                {canRefresh ? (
-                  <button
-                    type="button"
-                    onClick={() => setRefreshTick((value) => value + 1)}
-                    className={classNames(
-                      "rounded-full px-3 py-1 font-medium transition-colors",
-                      isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-                    )}
-                  >
-                    {t("presentationRefreshAction", { defaultValue: "Refresh" })}
-                  </button>
-                ) : null}
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
                 {copyReferenceValue ? (
                   <button
                     type="button"
                     onClick={() => {
                       void handleCopyReference();
                     }}
-                    className={classNames(
-                      "rounded-full px-3 py-1 font-medium transition-colors",
-                      isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-                    )}
+                    className={copiedReference ? copiedIconButtonClassName : iconButtonClassName}
+                    aria-label={copyActionLabel}
+                    title={copyActionLabel}
                   >
-                    {copiedReference
-                      ? t("presentationCopyReferenceCopied", { defaultValue: "Copied" })
-                      : t("presentationCopyReferenceAction", { defaultValue: "Copy URL/path" })}
+                    <CopyIcon size={16} />
                   </button>
                 ) : null}
                 {!readOnly ? (
                   <button
                     type="button"
                     onClick={() => slot && onReplaceSlot?.(slot.slot_id)}
-                    className={classNames(
-                      "rounded-full px-3 py-1 font-medium transition-colors",
-                      isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-                    )}
+                    className={iconButtonClassName}
+                    aria-label={editActionLabel}
+                    title={editActionLabel}
                   >
-                    {t("presentationReplaceAction", { defaultValue: "Edit" })}
+                    <EditIcon size={16} />
                   </button>
                 ) : null}
                 {!readOnly ? (
                   <button
                     type="button"
                     onClick={() => slot && onClearSlot?.(slot.slot_id)}
-                    className={classNames(
-                      "rounded-full px-3 py-1 font-medium transition-colors",
-                      isDark ? "bg-rose-500/15 text-rose-200 hover:bg-rose-500/25" : "bg-rose-50 text-rose-700 hover:bg-rose-100"
-                    )}
+                    className={destructiveIconButtonClassName}
+                    aria-label={clearActionLabel}
+                    title={clearActionLabel}
                   >
-                    {t("presentationClearAction", { defaultValue: "Clear" })}
+                    <TrashIcon size={16} />
                   </button>
                 ) : null}
               </div>
@@ -332,107 +731,195 @@ export function PresentationViewerModal({
           )}
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto px-5 py-5">
-          {!card ? (
-            <div className={classNames("flex h-full min-h-[320px] items-center justify-center rounded-3xl border border-dashed text-sm", isDark ? "border-white/10 text-slate-500" : "border-black/10 text-gray-500")}>
-              {t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}
-            </div>
-          ) : card.card_type === "markdown" ? (
-            <div className={classNames("rounded-3xl border p-5", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
-              {linkedMarkdownError ? (
-                <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>{linkedMarkdownError}</div>
-              ) : (
-                <MarkdownRenderer
-                  content={String(card.content.mode === "inline" ? card.content.markdown || "" : linkedMarkdown || "")}
-                  isDark={isDark}
-                  className="break-words [overflow-wrap:anywhere]"
-                />
-              )}
-            </div>
-          ) : card.card_type === "table" ? (
-            <div className={classNames("overflow-hidden rounded-3xl border", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/95")}>
-              <div className="overflow-auto">
-                <table className="min-w-full border-collapse text-sm">
-                  <thead className={isDark ? "bg-slate-900/80 text-slate-200" : "bg-gray-50 text-gray-800"}>
-                    <tr>
-                      {(card.content.table?.columns || []).map((column) => (
-                        <th key={column} className="border-b border-inherit px-4 py-3 text-left font-semibold">
-                          {column}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className={isDark ? "text-slate-300" : "text-gray-700"}>
-                    {(card.content.table?.rows || []).map((row, rowIndex) => (
-                      <tr key={`row-${rowIndex}`} className={rowIndex % 2 === 0 ? (isDark ? "bg-slate-950/40" : "bg-white") : (isDark ? "bg-slate-900/30" : "bg-gray-50/80")}>
-                        {row.map((cell, cellIndex) => (
-                          <td key={`cell-${rowIndex}:${cellIndex}`} className="border-b border-[var(--glass-border-subtle)] px-4 py-3 align-top">
-                            {cell}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : card.card_type === "image" ? (
-            <div className="flex min-h-[360px] items-center justify-center">
-              <img
-                src={href}
-                alt={card.title}
+        <div className="relative min-h-0 flex-1 overflow-hidden px-5 py-5">
+          {showSnapshotCompare ? (
+            <div className="mb-3 flex items-center gap-2 lg:hidden">
+              <button
+                type="button"
+                onClick={() => setSnapshotMobileTab("live")}
                 className={classNames(
-                  imageViewportClassName,
-                  "max-w-full rounded-3xl border border-[var(--glass-border-subtle)] object-contain shadow-xl"
+                  "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+                  snapshotMobileTab === "live"
+                    ? isDark
+                      ? "bg-slate-100 text-slate-950"
+                      : "bg-slate-900 text-white"
+                    : isDark
+                      ? "bg-white/5 text-slate-300 hover:bg-white/10"
+                      : "bg-black/5 text-gray-600 hover:bg-black/10",
                 )}
-              />
+              >
+                {t("presentationCurrentLiveViewLabel", { defaultValue: "Current view" })}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSnapshotMobileTab("snapshot")}
+                className={classNames(
+                  "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+                  snapshotMobileTab === "snapshot"
+                    ? isDark
+                      ? "bg-slate-100 text-slate-950"
+                      : "bg-slate-900 text-white"
+                    : isDark
+                      ? "bg-white/5 text-slate-300 hover:bg-white/10"
+                      : "bg-black/5 text-gray-600 hover:bg-black/10",
+                )}
+              >
+                {t("presentationSnapshotTabLabel", { defaultValue: "Snapshot" })}
+              </button>
             </div>
-          ) : card.card_type === "pdf" ? (
-            <iframe
-              title={card.title}
-              src={href}
+          ) : null}
+          <div
+            className={classNames(
+              "h-full min-h-0",
+              showSnapshotCompare ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)]" : "",
+            )}
+          >
+            <div
+              ref={evidenceScrollRef}
               className={classNames(
-                immersiveViewportClassName,
-                "w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+                "h-full min-h-0",
+                useOuterEvidenceScroll ? "overflow-auto" : "overflow-hidden",
+                !useOuterEvidenceScroll && card ? "flex flex-col" : "",
+                useOuterEvidenceScroll && !readOnly && card && onQuoteInChat ? "pb-20" : "",
+                showSnapshotCompare && snapshotMobileTab !== "live" ? "hidden lg:block" : "",
               )}
-            />
-          ) : card.card_type === "web_preview" ? (
-            <PresentationWebPreviewPanel
-              key={`${slot?.slot_id || ""}:${card.published_at}:${href}`}
-              groupId={groupId}
-              slotId={slot?.slot_id || ""}
-              title={card.title}
-              href={href}
-              isDark={isDark}
-              useSandboxedPreview={useSandboxedPreview}
-              allowLiveBrowser={allowLiveBrowser}
-              refreshNonce={refreshTick}
-              viewportClassName={immersiveViewportClassName}
-            />
-          ) : (
-            <div className={classNames("rounded-3xl border p-6", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
-              <div className={classNames("text-base font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
-                {card.title}
-              </div>
-              <div className={classNames("mt-2 text-sm", isDark ? "text-slate-400" : "text-gray-600")}>
-                {card.summary || card.source_label || t("presentationFileReady", { defaultValue: "This file cannot be previewed in Presentation yet." })}
-              </div>
-              {downloadHref ? (
-                <div className="mt-5">
-                  <a
-                    href={downloadHref}
-                    download=""
-                    className={classNames(
-                      "inline-flex items-center rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                      isDark ? "bg-slate-800 text-slate-100 hover:bg-slate-700" : "bg-gray-100 text-gray-900 hover:bg-gray-200"
-                    )}
-                  >
-                    {t("presentationDownloadFile", { defaultValue: "Download file" })}
-                  </a>
-                </div>
-              ) : null}
+            >
+              {evidencePanel}
             </div>
-          )}
+            {showSnapshotCompare ? (
+              <div className={classNames("min-h-0", snapshotMobileTab !== "snapshot" ? "hidden lg:block" : "")}>
+                {snapshotPanel}
+              </div>
+            ) : null}
+          </div>
+          {showSnapshotOverlay && snapshotPanel ? (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20 p-4 backdrop-blur-[2px]">
+              <button
+                type="button"
+                className="absolute inset-0"
+                onClick={() => setSnapshotViewMode("hidden")}
+                aria-label={t("presentationCloseSnapshotAction", { defaultValue: "Close snapshot" })}
+              />
+              <div className="relative z-10 h-full min-h-0 w-full max-w-5xl">
+                {snapshotPanel}
+              </div>
+            </div>
+          ) : null}
+          {snapshotLightboxOpen && currentSnapshotUrl ? (
+            <div className="absolute inset-0 z-30 flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                onClick={() => setSnapshotLightboxOpen(false)}
+                aria-label={t("presentationCloseSnapshotAction", { defaultValue: "Close snapshot" })}
+              />
+              <div
+                className={classNames(
+                  "relative z-10 flex h-full max-h-full w-full max-w-6xl min-h-0 flex-col overflow-hidden rounded-3xl border shadow-2xl",
+                  isDark ? "border-white/10 bg-slate-950/96" : "border-black/10 bg-white/96",
+                )}
+              >
+                <div
+                  className={classNames(
+                    "flex items-start justify-between gap-3 border-b px-4 py-3",
+                    isDark ? "border-white/10" : "border-black/10",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
+                      {t("presentationSnapshotFromQuoteLabel", { defaultValue: "Snapshot from this quote" })}
+                    </div>
+                    {snapshotTimestamp ? (
+                      <div className={classNames("mt-1 text-xs", isDark ? "text-slate-400" : "text-gray-500")}>
+                        {snapshotTimestamp}
+                      </div>
+                    ) : null}
+                    {quoteContextChanged ? (
+                      <div className={classNames("mt-1 text-xs", isDark ? "text-amber-300/90" : "text-amber-700")}>
+                        {t("presentationSnapshotLiveChangedHint", { defaultValue: "The current slot no longer matches this quote." })}
+                      </div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSnapshotLightboxOpen(false)}
+                    className={classNames(
+                      "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+                      isDark ? "bg-white/5 text-slate-300 hover:bg-white/10 hover:text-slate-100" : "bg-black/5 text-gray-600 hover:bg-black/10 hover:text-gray-900",
+                    )}
+                    aria-label={t("presentationCloseSnapshotAction", { defaultValue: "Close snapshot" })}
+                    title={t("presentationCloseSnapshotAction", { defaultValue: "Close snapshot" })}
+                  >
+                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+                      <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto bg-black/10 p-4">
+                  <img
+                    src={currentSnapshotUrl}
+                    alt={t("presentationQuotedSnapshotAlt", { defaultValue: "Quoted snapshot" })}
+                    className="mx-auto h-auto max-h-full max-w-full rounded-2xl object-contain"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {!readOnly && card && onQuoteInChat ? (
+            <div className="pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-5 z-10 flex items-center gap-2">
+              {currentSnapshotUrl ? (
+                <button
+                  type="button"
+                  onClick={handleToggleSnapshotView}
+                  className={classNames(
+                    "pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border px-3 text-sm font-medium shadow-lg backdrop-blur-xl transition-colors",
+                    snapshotViewMode !== "hidden"
+                      ? isDark
+                        ? "border-cyan-400/20 bg-cyan-500/18 text-cyan-50 hover:bg-cyan-500/24"
+                        : "border-cyan-200 bg-cyan-50/92 text-cyan-700 hover:bg-cyan-100"
+                      : isDark
+                        ? "border-white/10 bg-slate-900/78 text-slate-200 hover:bg-slate-900"
+                        : "border-black/10 bg-white/88 text-gray-700 hover:bg-white",
+                  )}
+                  aria-label={snapshotToggleLabel}
+                  title={snapshotToggleLabel}
+                >
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+                    <rect x="3.75" y="4.25" width="12.5" height="9.5" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M6.5 11l2-2 1.75 1.75 2.75-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M16.25 15.75H8.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                  <span>{snapshotToggleLabel}</span>
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  void handleQuoteInChat();
+                }}
+                disabled={quotePending}
+                className={classNames(
+                  "pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border px-3.5 text-sm font-medium shadow-lg backdrop-blur-xl transition-colors",
+                  isDark
+                    ? "border-white/10 bg-slate-900/82 text-cyan-100 hover:bg-slate-900"
+                    : "border-black/10 bg-white/88 text-cyan-700 hover:bg-white",
+                  quotePending ? "opacity-70" : "",
+                )}
+                aria-label={t("presentationQuoteInChatAction", { defaultValue: "Quote in chat" })}
+                title={t("presentationQuoteInChatAction", { defaultValue: "Quote in chat" })}
+              >
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+                  <path d="M6.25 5.75h7.5a2 2 0 0 1 2 2v4.5a2 2 0 0 1-2 2h-4.25L6 17v-2.75H6.25a2 2 0 0 1-2-2v-4.5a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M7.75 8.75h4.5M7.75 11.25h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                <span>
+                  {quotePending
+                    ? t("presentationQuotePendingAction", { defaultValue: "Quoting..." })
+                    : t("presentationQuoteAction", { defaultValue: "Quote" })}
+                </span>
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     </ModalFrame>

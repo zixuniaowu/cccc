@@ -568,6 +568,57 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         return await ctx.daemon({"op": "presentation_publish", "args": args})
 
+    @group_router.post("/presentation/ref_snapshot")
+    async def group_presentation_reference_snapshot_upload(
+        group_id: str,
+        by: str = Form("user"),
+        slot: str = Form(""),
+        source: str = Form("browser_surface"),
+        captured_at: str = Form(""),
+        width: int = Form(0),
+        height: int = Form(0),
+        file: UploadFile = File(...),
+    ) -> Dict[str, Any]:
+        _ = by
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        raw = await file.read()
+        if len(raw) > WEB_MAX_FILE_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "file_too_large", "message": "file too large"})
+
+        normalized_slot = _normalize_presentation_slot(slot)
+        filename = str(getattr(file, "filename", "") or "").strip()
+        if not filename:
+            suffix = Path(str(getattr(file, "filename", "") or "snapshot.jpg")).suffix or ".jpg"
+            filename = f"presentation-ref-{normalized_slot or 'slot'}{suffix}"
+        content_type = str(getattr(file, "content_type", "") or "").strip() or "image/jpeg"
+
+        stored = store_blob_bytes(
+            group,
+            data=raw,
+            filename=filename,
+            mime_type=content_type,
+            kind="image",
+        )
+        return {
+            "ok": True,
+            "result": {
+                "group_id": group_id,
+                "snapshot": {
+                    "path": str(stored.get("path") or ""),
+                    "mime_type": str(stored.get("mime_type") or content_type),
+                    "bytes": int(stored.get("bytes") or len(raw)),
+                    "sha256": str(stored.get("sha256") or ""),
+                    "width": _safe_int(width, default=0, min_value=0),
+                    "height": _safe_int(height, default=0, min_value=0),
+                    "captured_at": str(captured_at or "").strip(),
+                    "source": str(source or "").strip() or "browser_surface",
+                },
+            },
+        }
+
     @group_router.post("/presentation/clear")
     async def group_presentation_clear(group_id: str, req: GroupPresentationClearRequest) -> Dict[str, Any]:
         return await ctx.daemon(

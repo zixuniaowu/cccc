@@ -1,10 +1,11 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Actor, GroupMeta, ReplyTarget } from "../../types";
+import { Actor, GroupMeta, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
+import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
 
 export interface ChatComposerProps {
@@ -23,6 +24,8 @@ export interface ChatComposerProps {
   // Reply
   replyTarget: ReplyTarget;
   onCancelReply: () => void;
+  quotedPresentationRef: PresentationMessageRef | null;
+  onClearQuotedPresentationRef: () => void;
 
   // Recipients
   toTokens: string[];
@@ -69,6 +72,8 @@ export function ChatComposer({
   busy,
   replyTarget,
   onCancelReply,
+  quotedPresentationRef,
+  onClearQuotedPresentationRef,
   toTokens,
   onToggleRecipient,
   onClearRecipients,
@@ -154,6 +159,10 @@ export function ChatComposer({
     const actor = actors.find(a => a.id === replyTarget.by);
     return actor?.title || replyTarget.by;
   }, [replyTarget, actors]);
+  const quotedPresentationRefLabel = useMemo(
+    () => (quotedPresentationRef ? getPresentationRefChipLabel(quotedPresentationRef) : ""),
+    [quotedPresentationRef],
+  );
 
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -288,7 +297,7 @@ export function ChatComposer({
   const isAttention = priority === "attention";
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
   const canChooseDestGroup =
-    !!selectedGroupId && busy !== "send" && !replyTarget && composerFiles.length === 0;
+    !!selectedGroupId && busy !== "send" && !replyTarget && !quotedPresentationRef && composerFiles.length === 0;
 
   type MessageMode = "normal" | "attention" | "task";
   const modeOptions: Array<{ key: MessageMode; label: string; description: string }> = [
@@ -407,6 +416,33 @@ export function ChatComposer({
             onClick={onCancelReply}
             title={t('cancelReply')}
             aria-label={t('cancelReply')}
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      )}
+
+      {quotedPresentationRef && (
+        <div
+          className={classNames(
+            "mb-3 flex items-center gap-2 text-xs rounded-xl px-3 py-2",
+            isDark ? "text-slate-400 bg-cyan-500/10" : "text-gray-600 bg-cyan-50",
+          )}
+        >
+          <span className={classNames("font-medium flex-shrink-0", isDark ? "text-cyan-100" : "text-cyan-700")}>
+            {t("presentationQuotedViewLabel", { defaultValue: "Quoted view" })}
+          </span>
+          <span className="min-w-0 flex-1 truncate" title={quotedPresentationRef.title || quotedPresentationRefLabel}>
+            {quotedPresentationRefLabel}
+          </span>
+          <button
+            className={classNames(
+              "p-2.5 -m-1.5 rounded-full transition-colors",
+              isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-black/10 text-gray-400 hover:text-gray-600",
+            )}
+            onClick={onClearQuotedPresentationRef}
+            title={t("presentationRemoveQuotedView", { defaultValue: "Remove quoted view" })}
+            aria-label={t("presentationRemoveQuotedView", { defaultValue: "Remove quoted view" })}
           >
             <CloseIcon size={14} />
           </button>

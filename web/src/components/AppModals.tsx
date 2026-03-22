@@ -25,16 +25,18 @@ import { parseHelpMarkdown, updateActorHelpNote } from "../utils/helpMarkdown";
 import { formatCapabilityIdInput, normalizeCapabilityIdList, parseCapabilityIdInput } from "../utils/capabilityAutoload";
 import { actorProfileIdentityKey, actorProfileMatchesRef } from "../utils/actorProfiles";
 import { findPresentationSlot } from "../utils/presentation";
+import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import {
   useGroupStore,
   useUIStore,
   useModalStore,
+  useComposerStore,
   useInboxStore,
   useFormStore,
 } from "../stores";
 import { getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import * as api from "../services/api";
-import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, SupportedRuntime } from "../types";
+import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, PresentationMessageRef, SupportedRuntime } from "../types";
 
 interface AppModalsProps {
   isDark: boolean;
@@ -109,6 +111,7 @@ export function AppModals({
     showError,
     showNotice,
     setActiveTab,
+    setChatMobileSurface,
   } = useUIStore();
 
   const {
@@ -130,6 +133,8 @@ export function AppModals({
   } = useModalStore();
 
   const { inboxActorId, inboxMessages, setInboxMessages } = useInboxStore();
+  const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
+  const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
 
   const {
     editGroupTitle,
@@ -245,6 +250,7 @@ export function AppModals({
     if (!presentationViewer) return;
     if (presentationViewer.groupId !== selectedGroupId) return;
     if (findPresentationSlot(groupPresentation, presentationViewer.slotId)?.card) return;
+    if (presentationViewer.focusRef) return;
     setPresentationViewer(null);
   }, [groupPresentation, presentationViewer, selectedGroupId, setPresentationViewer]);
 
@@ -262,10 +268,18 @@ export function AppModals({
   const presentationViewerSlotIds = useMemo(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return [];
-    return sortPresentationSlotIds(
-      (presentationViewerCacheByGroup[gid] || []).filter((slotId) => !!findPresentationSlot(groupPresentation, slotId)?.card)
+    const cachedSlots = (presentationViewerCacheByGroup[gid] || []).filter(
+      (slotId) => !!findPresentationSlot(groupPresentation, slotId)?.card
     );
-  }, [groupPresentation, presentationViewerCacheByGroup, selectedGroupId]);
+    const activeSlotId =
+      presentationViewer && presentationViewer.groupId === gid
+        ? String(presentationViewer.slotId || "").trim()
+        : "";
+    if (activeSlotId && !cachedSlots.includes(activeSlotId)) {
+      cachedSlots.push(activeSlotId);
+    }
+    return sortPresentationSlotIds(cachedSlots);
+  }, [groupPresentation, presentationViewer, presentationViewerCacheByGroup, selectedGroupId]);
 
   const loadEditingActorRoleNotes = useCallback(async (groupId: string, actorId: string) => {
     const gid = String(groupId || "").trim();
@@ -1120,6 +1134,27 @@ export function AppModals({
     return (events || []).find((ev) => String(ev.id || "") === eid) || null;
   }, [chatWindow, events, relayEventId, relaySource, selectedGroupId]);
 
+  const presentationReferenceEvents = useMemo(() => {
+    const next = new Map<string, LedgerEvent>();
+    for (const event of events || []) {
+      if (!event?.id) continue;
+      next.set(String(event.id), event);
+    }
+    if (chatWindow?.groupId === selectedGroupId) {
+      for (const event of chatWindow.events || []) {
+        if (!event?.id) continue;
+        next.set(String(event.id), event);
+      }
+    }
+    return Array.from(next.values());
+  }, [chatWindow, events, selectedGroupId]);
+
+  const presentationViewerSourceEvent = useMemo(() => {
+    const focusEventId = String(presentationViewer?.focusEventId || "").trim();
+    if (!focusEventId || presentationViewer?.groupId !== selectedGroupId) return null;
+    return presentationReferenceEvents.find((event) => String(event.id || "").trim() === focusEventId) || null;
+  }, [presentationReferenceEvents, presentationViewer, selectedGroupId]);
+
   const handleRelayMessage = async (dstGroupId: string, toTokens: string[], note: string) => {
     const src = relaySourceEvent;
      const srcGroupId = relaySourceGroupId;
@@ -1251,6 +1286,55 @@ export function AppModals({
     [clearPresentationSlotAttention, forgetPresentationViewerSlot, selectedGroupId, setBusy, setGroupPresentation, setPresentationViewer, setPresentationPin, showError, t],
   );
 
+  const handleQuotePresentationReference = useCallback(
+    (payload: { slotId: string; ref?: PresentationMessageRef | null }) => {
+      const gid = String(selectedGroupId || "").trim();
+      const normalizedSlotId = String(payload.slotId || "").trim();
+      if (!gid || !normalizedSlotId) return;
+      const slot = findPresentationSlot(groupPresentation, normalizedSlotId);
+      const ref = payload.ref || buildPresentationRefForSlot(slot);
+      if (!ref) {
+        showError(t("chat:presentationMissingCard", { defaultValue: "This presentation slot is empty." }));
+        return;
+      }
+      setQuotedPresentationRef(ref);
+      setComposerDestGroupId(gid);
+      setActiveTab("chat");
+      setChatMobileSurface(gid, "messages");
+      setPresentationViewer(null);
+      window.setTimeout(() => composerRef.current?.focus(), 0);
+    },
+    [composerRef, groupPresentation, selectedGroupId, setActiveTab, setChatMobileSurface, setComposerDestGroupId, setPresentationViewer, setQuotedPresentationRef, showError, t],
+  );
+
+  const handleOpenPresentationMessageContext = useCallback(
+    async (eventId: string) => {
+      const gid = String(selectedGroupId || "").trim();
+      const eid = String(eventId || "").trim();
+      if (!gid || !eid) return;
+      setActiveTab("chat");
+      setChatMobileSurface(gid, "messages");
+      setPresentationViewer(null);
+      await openChatWindow(gid, eid);
+    },
+    [openChatWindow, selectedGroupId, setActiveTab, setChatMobileSurface, setPresentationViewer],
+  );
+
+  const handleReplyToPresentationMessage = useCallback(
+    async (event: LedgerEvent) => {
+      const gid = String(selectedGroupId || "").trim();
+      const eid = String(event.id || "").trim();
+      if (!gid || !eid) return;
+      setActiveTab("chat");
+      setChatMobileSurface(gid, "messages");
+      onStartReply(event);
+      setPresentationViewer(null);
+      await openChatWindow(gid, eid);
+      window.setTimeout(() => composerRef.current?.focus(), 0);
+    },
+    [composerRef, onStartReply, openChatWindow, selectedGroupId, setActiveTab, setChatMobileSurface, setPresentationViewer],
+  );
+
   return (
     <>
       <MobileMenuSheet
@@ -1351,6 +1435,12 @@ export function AppModals({
             groupId={selectedGroupId}
             slotId={slotId}
             presentation={groupPresentation}
+            focusRef={presentationViewer?.groupId === selectedGroupId && presentationViewer.slotId === slotId ? presentationViewer.focusRef || null : null}
+            focusEventId={presentationViewer?.groupId === selectedGroupId && presentationViewer.slotId === slotId ? presentationViewer.focusEventId || null : null}
+            sourceEvent={presentationViewer?.groupId === selectedGroupId && presentationViewer.slotId === slotId ? presentationViewerSourceEvent : null}
+            onQuoteInChat={handleQuotePresentationReference}
+            onOpenMessageContext={(eventId) => void handleOpenPresentationMessageContext(eventId)}
+            onReplyToMessage={(event) => void handleReplyToPresentationMessage(event)}
             onReplaceSlot={(nextSlotId) => {
               const gid = String(selectedGroupId || "").trim();
               if (!gid || !nextSlotId) return;

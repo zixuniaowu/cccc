@@ -12,12 +12,13 @@ import {
     useDismiss,
     FloatingPortal,
 } from "@floating-ui/react";
-import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
+import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, EventAttachment, PresentationMessageRef } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
 import { ImageIcon, FileIcon, CloseIcon } from "./Icons";
+import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
 
 const RUNTIME_LOGO_BASE = import.meta.env.BASE_URL;
 const RUNTIME_LOGO: Record<string, string> = {
@@ -229,6 +230,7 @@ export interface MessageBubbleProps {
     onCopyLink?: (eventId: string) => void;
     onRelay?: (ev: LedgerEvent) => void;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
+    onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -246,6 +248,7 @@ export const MessageBubble = memo(function MessageBubble({
     onCopyLink,
     onRelay,
     onOpenSource,
+    onOpenPresentationRef,
 }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
     const isOptimistic = !!(ev.data as Record<string, unknown> | undefined)?._optimistic;
@@ -261,7 +264,7 @@ export const MessageBubble = memo(function MessageBubble({
         return true;
     }, [ev.by, isUserMessage]);
 
-    const { refs, floatingStyles, context } = useFloating({
+    const { refs: floatingRefs, floatingStyles, context } = useFloating({
         open: isAgentStateOpen && canShowAgentState,
         onOpenChange: setIsAgentStateOpen,
         placement: "bottom-start",
@@ -275,16 +278,16 @@ export const MessageBubble = memo(function MessageBubble({
 
     const setAgentStateReference = useCallback(
         (node: HTMLElement | null) => {
-            refs.setReference(node);
+            floatingRefs.setReference(node);
         },
-        [refs]
+        [floatingRefs]
     );
 
     const setAgentStateFloating = useCallback(
         (node: HTMLElement | null) => {
-            refs.setFloating(node);
+            floatingRefs.setFloating(node);
         },
-        [refs]
+        [floatingRefs]
     );
 
     const hover = useHover(context, {
@@ -331,6 +334,7 @@ export const MessageBubble = memo(function MessageBubble({
 
     // Use event's group_id for blob URLs (attachments are stored in the event's original group)
     const blobGroupId = String(ev.group_id || "").trim() || groupId;
+    const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
 
     const readStatus = ev._read_status;
     const ackStatus = ev._ack_status;
@@ -620,6 +624,27 @@ export const MessageBubble = memo(function MessageBubble({
                             "{quoteText}"
                         </div>
                     )}
+
+                    {presentationRefs.length > 0 ? (
+                        <div className="mb-2 flex flex-wrap gap-1.5">
+                            {presentationRefs.map((ref, index) => (
+                                <button
+                                    key={`${String(ev.id || "message")}:presentation-ref:${index}:${String(ref.slot_id || "")}`}
+                                    type="button"
+                                    onClick={() => onOpenPresentationRef?.(ref, ev)}
+                                    className={classNames(
+                                        "inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                                        isUserMessage
+                                            ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
+                                            : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                                    )}
+                                    title={getPresentationRefChipLabel(ref)}
+                                >
+                                    <span className="truncate">{getPresentationRefChipLabel(ref)}</span>
+                                </button>
+                            ))}
+                        </div>
+                    ) : null}
 
                     {/* Text Content */}
                     <MarkdownRenderer
@@ -975,6 +1000,7 @@ export const MessageBubble = memo(function MessageBubble({
         prevProps.groupLabelById === nextProps.groupLabelById &&
         prevProps.isHighlighted === nextProps.isHighlighted &&
         prevProps.onRelay === nextProps.onRelay &&
-        prevProps.onOpenSource === nextProps.onOpenSource
+        prevProps.onOpenSource === nextProps.onOpenSource &&
+        prevProps.onOpenPresentationRef === nextProps.onOpenPresentationRef
     );
 });

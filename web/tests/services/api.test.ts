@@ -160,6 +160,15 @@ describe("api.fetchPresentation", () => {
     );
   });
 
+  it("builds token-aware blob urls only for group-scoped blob paths", async () => {
+    sessionStorageMock.setItem("cccc_dev_token", "dev-token");
+    const api = await import("../../src/services/api");
+    expect(api.getGroupBlobUrl("g-demo", "state/blobs/sha256_demo.jpg")).toBe(
+      "/api/v1/groups/g-demo/blobs/sha256_demo.jpg?token=dev-token"
+    );
+    expect(api.getGroupBlobUrl("g-demo", "workspace/demo.jpg")).toBe("");
+  });
+
   it("starts a browser-surface session and normalizes its state", async () => {
     fetchMock.mockResolvedValue({
       status: 200,
@@ -250,6 +259,61 @@ describe("api.fetchPresentation", () => {
         headers: expect.objectContaining({ "content-type": "application/json" }),
       }),
     );
+  });
+
+  it("uploads a presentation ref snapshot and normalizes the stored blob metadata", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            snapshot: {
+              path: "state/blobs/sha256_demo.jpg",
+              mime_type: "image/jpeg",
+              bytes: 3210,
+              sha256: "sha256_demo",
+              width: 1440,
+              height: 900,
+              captured_at: "2026-03-22T12:00:00Z",
+              source: "browser_surface",
+            },
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const file = new File(["fake-image"], "snapshot.jpg", { type: "image/jpeg" });
+    const resp = await api.uploadPresentationReferenceSnapshot("g-demo", {
+      slotId: "slot-3",
+      file,
+      source: "browser_surface",
+      capturedAt: "2026-03-22T12:00:00Z",
+      width: 1440,
+      height: 900,
+    });
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) return;
+    expect(resp.result.snapshot.path).toBe("state/blobs/sha256_demo.jpg");
+    expect(resp.result.snapshot.width).toBe(1440);
+    const [url, requestInit] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe("/api/v1/groups/g-demo/presentation/ref_snapshot");
+    expect(requestInit).toEqual(
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData),
+      }),
+    );
+    const form = requestInit.body as FormData;
+    expect(form.get("slot")).toBe("slot-3");
+    expect(form.get("source")).toBe("browser_surface");
+    expect(form.get("captured_at")).toBe("2026-03-22T12:00:00Z");
+    expect(form.get("width")).toBe("1440");
+    expect(form.get("height")).toBe("900");
+    expect(form.get("file")).toBe(file);
   });
 
   it("publishes a presentation URL on the JSON endpoint", async () => {
@@ -533,6 +597,76 @@ describe("api.fetchPresentation", () => {
         }),
       }),
     );
+  });
+});
+
+describe("api.message refs", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    fetchMock.mockReset();
+    sessionStorageMock.clear();
+  });
+
+  afterEach(async () => {
+    const api = await import("../../src/services/api");
+    api.clearAuthToken();
+  });
+
+  it("sends structured refs on the JSON send path", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { event_id: "evt-1" } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const refs = [{ kind: "presentation_ref", slot_id: "slot-2", locator: { viewer_scroll_top: 240 } }];
+    await api.sendMessage("g-demo", "please review", ["worker-1"], undefined, "normal", false, "client-1", refs);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/send",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          text: "please review",
+          by: "user",
+          to: ["worker-1"],
+          path: "",
+          priority: "normal",
+          reply_required: false,
+          client_id: "client-1",
+          refs,
+        }),
+      }),
+    );
+  });
+
+  it("sends structured refs on the upload reply path", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { event_id: "evt-2" } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const refs = [{ kind: "presentation_ref", slot_id: "slot-3", locator: { url: "http://127.0.0.1:3000" } }];
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
+    await api.replyMessage("g-demo", "see attached", ["worker-2"], "evt-parent", [file], "attention", true, "client-2", refs);
+
+    const [url, requestInit] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe("/api/v1/groups/g-demo/reply_upload");
+    expect(requestInit).toEqual(
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData),
+      }),
+    );
+    const form = requestInit.body as FormData;
+    expect(form.get("reply_to")).toBe("evt-parent");
+    expect(form.get("reply_required")).toBe("true");
+    expect(form.get("client_id")).toBe("client-2");
+    expect(form.get("refs_json")).toBe(JSON.stringify(refs));
+    expect(form.get("files")).toBe(file);
   });
 });
 

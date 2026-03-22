@@ -31,6 +31,39 @@ export type EventAttachment = {
   mime_type?: string;
 };
 
+export type MessageRef = {
+  kind?: string;
+  [key: string]: unknown;
+};
+
+export type PresentationRefStatus = "open" | "needs_user" | "resolved";
+
+export type PresentationRefSnapshot = {
+  path: string;
+  mime_type?: string;
+  bytes?: number;
+  sha256?: string;
+  width?: number;
+  height?: number;
+  captured_at?: string;
+  source?: string;
+};
+
+export type PresentationMessageRef = MessageRef & {
+  kind: "presentation_ref";
+  v?: number;
+  slot_id: string;
+  label?: string;
+  locator_label?: string;
+  title?: string;
+  card_type?: string;
+  status?: PresentationRefStatus | string;
+  href?: string;
+  excerpt?: string;
+  locator?: Record<string, unknown>;
+  snapshot?: PresentationRefSnapshot;
+};
+
 // Chat message payload
 export type ChatMessageData = {
   text?: string;
@@ -43,6 +76,7 @@ export type ChatMessageData = {
   src_event_id?: string;
   dst_group_id?: string;
   dst_to?: string[];
+  refs?: MessageRef[];
   attachments?: EventAttachment[];
 };
 

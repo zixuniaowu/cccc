@@ -1,7 +1,7 @@
 import { memo, useRef, useEffect, useCallback, useMemo } from "react";
 import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { LedgerEvent, Actor, AgentState } from "../types";
+import { LedgerEvent, Actor, AgentState, PresentationMessageRef } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
 
@@ -24,6 +24,7 @@ export interface VirtualMessageListProps {
   onCopyLink?: (eventId: string) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
+  onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
   showScrollButton: boolean;
   onScrollButtonClick: () => void;
   chatUnreadCount: number;
@@ -58,6 +59,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onCopyLink,
   onRelay,
   onOpenSource,
+  onOpenPresentationRef,
   showScrollButton,
   onScrollButtonClick,
   chatUnreadCount,
@@ -619,6 +621,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     onCopyLink={onCopyLink}
                     onRelay={onRelay}
                     onOpenSource={onOpenSource}
+                    onOpenPresentationRef={onOpenPresentationRef}
                   />
                 </div>
               );

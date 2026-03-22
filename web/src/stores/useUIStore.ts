@@ -20,6 +20,7 @@ export interface ChatSessionState {
   chatUnreadCount: number;
   chatFilter: ChatFilter;
   scrollSnapshot: ChatScrollSnapshot | null;
+  mobileSurface: "messages" | "presentation";
 }
 
 const DEFAULT_CHAT_SESSION: ChatSessionState = {
@@ -27,6 +28,7 @@ const DEFAULT_CHAT_SESSION: ChatSessionState = {
   chatUnreadCount: 0,
   chatFilter: "all",
   scrollSnapshot: null,
+  mobileSurface: "messages",
 };
 
 export function getChatSession(groupId: string | null | undefined, sessions: Record<string, ChatSessionState>): ChatSessionState {
@@ -67,6 +69,7 @@ interface UIState {
   setSmallScreen: (v: boolean) => void;
   setChatFilter: (groupId: string, v: ChatFilter) => void;
   setChatScrollSnapshot: (groupId: string, snap: ChatScrollSnapshot | null) => void;
+  setChatMobileSurface: (groupId: string, v: "messages" | "presentation") => void;
   setWebReadOnly: (v: boolean) => void;
   setSSEStatus: (v: "connected" | "connecting" | "disconnected") => void;
 }
@@ -201,6 +204,8 @@ export const useUIStore = create<UIState>((set) => ({
     set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { chatFilter: v }) })),
   setChatScrollSnapshot: (groupId, snap) =>
     set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { scrollSnapshot: snap }) })),
+  setChatMobileSurface: (groupId, v) =>
+    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { mobileSurface: v }) })),
   setWebReadOnly: (v) => set({ webReadOnly: v }),
   setSSEStatus: (v) => set({ sseStatus: v }),
 }));

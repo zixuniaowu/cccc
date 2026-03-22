@@ -15,9 +15,10 @@ type PresentationBrowserSurfacePanelProps = {
   isDark: boolean;
   refreshNonce: number;
   viewportClassName?: string;
+  onFrameUpdate?: (frame: PresentationBrowserFrame | null) => void;
 };
 
-type BrowserStreamFrame = {
+export type PresentationBrowserFrame = {
   seq: number;
   dataUrl: string;
   width: number;
@@ -96,6 +97,7 @@ export function PresentationBrowserSurfacePanel({
   isDark,
   refreshNonce,
   viewportClassName,
+  onFrameUpdate,
 }: PresentationBrowserSurfacePanelProps) {
   const { t } = useTranslation("chat");
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -115,11 +117,12 @@ export function PresentationBrowserSurfacePanel({
       message: "",
     })
   );
-  const [frame, setFrame] = useState<BrowserStreamFrame | null>(null);
+  const [frame, setFrame] = useState<PresentationBrowserFrame | null>(null);
   const [panelError, setPanelError] = useState("");
 
   useEffect(() => {
     return () => {
+      onFrameUpdate?.(null);
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -134,7 +137,7 @@ export function PresentationBrowserSurfacePanel({
         reconnectTimerRef.current = null;
       }
     };
-  }, []);
+  }, [onFrameUpdate]);
 
   const sendCommand = (payload: Record<string, unknown>) => {
     const ws = wsRef.current;
@@ -185,14 +188,16 @@ export function PresentationBrowserSurfacePanel({
             const rawBase64 = String(payload.data_base64 || "").trim();
             if (!rawBase64) return;
             const mime = String(payload.mime || "image/jpeg").trim() || "image/jpeg";
-            setFrame({
+            const nextFrame = {
               seq: Number(payload.seq || 0) || 0,
               dataUrl: `data:${mime};base64,${rawBase64}`,
               width: Number(payload.width || 0) || 0,
               height: Number(payload.height || 0) || 0,
               capturedAt: String(payload.captured_at || "").trim(),
               url: String(payload.url || "").trim(),
-            });
+            };
+            setFrame(nextFrame);
+            onFrameUpdate?.(nextFrame);
             return;
           }
           if (payload.t === "error") {
@@ -266,6 +271,7 @@ export function PresentationBrowserSurfacePanel({
       reconnectAttemptsRef.current = 0;
       setPanelError("");
       setFrame(null);
+      onFrameUpdate?.(null);
       const container = containerRef.current;
       const width = Math.max(960, Math.round(container?.clientWidth || 1280));
       const height = Math.max(640, Math.round(container?.clientHeight || 800));
@@ -315,7 +321,7 @@ export function PresentationBrowserSurfacePanel({
       disposed = true;
       cleanupTransport();
     };
-  }, [groupId, runNonce, slotId, t, url]);
+  }, [groupId, onFrameUpdate, runNonce, slotId, t, url]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -445,7 +451,7 @@ export function PresentationBrowserSurfacePanel({
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
       className={classNames(
-        viewportClassName || "min-h-[72vh]",
+        viewportClassName || "flex-1 min-h-0",
         "relative flex flex-col overflow-hidden rounded-3xl border outline-none",
         isDark ? "border-white/10 bg-slate-950/80" : "border-black/10 bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)]"
       )}

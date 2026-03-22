@@ -12,7 +12,7 @@ import {
 } from "../stores";
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
-import type { Actor, LedgerEvent, ChatMessageData } from "../types";
+import type { Actor, LedgerEvent, ChatMessageData, MessageRef } from "../types";
 import * as api from "../services/api";
 
 interface UseChatTabOptions {
@@ -75,6 +75,7 @@ export function useChatTab({
     composerFiles,
     toText,
     replyTarget,
+    quotedPresentationRef,
     priority,
     replyRequired,
     destGroupId,
@@ -82,6 +83,7 @@ export function useChatTab({
     setComposerFiles,
     setToText,
     setReplyTarget,
+    setQuotedPresentationRef,
     setPriority,
     setReplyRequired,
     setDestGroupId,
@@ -353,6 +355,8 @@ export function useChatTab({
     const prio = replyRequired ? "attention" : (priority || "normal");
     const replyTargetSnapshot = replyTarget;
     const composerFilesSnapshot = composerFiles.slice();
+    const quotedPresentationRefSnapshot = quotedPresentationRef;
+    const refsSnapshot: MessageRef[] = quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : [];
     const prioritySnapshot = priority;
     const replyRequiredSnapshot = replyRequired;
     const toTextSnapshot = toText;
@@ -364,6 +368,7 @@ export function useChatTab({
       setComposerText(txt);
       setComposerFiles(composerFilesSnapshot);
       setReplyTarget(replyTargetSnapshot);
+      setQuotedPresentationRef(quotedPresentationRefSnapshot);
       setPriority(prioritySnapshot);
       setReplyRequired(replyRequiredSnapshot);
       setToText(toTextSnapshot);
@@ -389,6 +394,11 @@ export function useChatTab({
       setDestGroupId(selectedGroupId);
       return;
     }
+    if (quotedPresentationRefSnapshot && isCrossGroup) {
+      showError("Cross-group send does not support quoted presentation views.");
+      setDestGroupId(selectedGroupId);
+      return;
+    }
     if (!replyTargetSnapshot && isCrossGroup && composerFilesSnapshot.length > 0) {
       showError("Cross-group send does not support attachments yet.");
       return;
@@ -411,6 +421,7 @@ export function useChatTab({
           client_id: localId,
           reply_to: replyTargetSnapshot?.eventId || null,
           quote_text: replyTargetSnapshot?.text || undefined,
+          refs: refsSnapshot,
           format: "plain",
           // Keep optimistic events schema-compatible with real ledger events.
           // Attachment previews should only render after the server returns blob paths.
@@ -435,7 +446,8 @@ export function useChatTab({
           composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
           prio,
           replyRequired,
-          localId
+          localId,
+          refsSnapshot,
         );
       } else {
         if (isCrossGroup) {
@@ -448,7 +460,8 @@ export function useChatTab({
             composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
             prio,
             replyRequired,
-            localId
+            localId,
+            refsSnapshot,
           );
         }
       }
@@ -498,6 +511,7 @@ export function useChatTab({
     toText,
     toTokens,
     replyTarget,
+    quotedPresentationRef,
     inChatWindow,
     appendEvent,
     enqueueOutbox,
@@ -508,6 +522,7 @@ export function useChatTab({
     setComposerText,
     setComposerFiles,
     setReplyTarget,
+    setQuotedPresentationRef,
     setPriority,
     setReplyRequired,
     setToText,
@@ -721,7 +736,9 @@ export function useChatTab({
     setComposerFiles,
     removeComposerFile,
     replyTarget,
+    quotedPresentationRef,
     cancelReply,
+    clearQuotedPresentationRef: () => setQuotedPresentationRef(null),
     toTokens,
     toggleRecipient,
     clearRecipients,

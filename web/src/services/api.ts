@@ -38,9 +38,11 @@ import type {
   TaskChecklistItem,
   ContextDetailLevel,
   GroupPresentation,
+  MessageRef,
   PresentationCard,
   PresentationCardType,
   PresentationContent,
+  PresentationRefSnapshot,
   PresentationSlot,
   PresentationTableData,
   PresentationWorkspaceItem,
@@ -905,6 +907,14 @@ export function getPresentationAssetUrl(groupId: string, slotId: string, cacheBu
   return `${base}${separator}v=${encodeURIComponent(String(cacheBust))}`;
 }
 
+export function getGroupBlobUrl(groupId: string, relPath: string): string {
+  const normalized = String(relPath || "").trim();
+  if (!normalized.startsWith("state/blobs/")) return "";
+  const blobName = normalized.split("/").pop() || "";
+  if (!blobName) return "";
+  return withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`);
+}
+
 export async function fetchPresentationBrowserSurfaceSession(
   groupId: string,
   slotId: string,
@@ -945,6 +955,49 @@ export async function startPresentationBrowserSurfaceSession(
     result: {
       group_id: asString(resp.result.group_id).trim() || groupId,
       browser_surface: normalizePresentationBrowserSurfaceState(resp.result.browser_surface),
+    },
+  };
+}
+
+export async function uploadPresentationReferenceSnapshot(
+  groupId: string,
+  payload: {
+    slotId: string;
+    file: File;
+    source?: string;
+    capturedAt?: string;
+    width?: number;
+    height?: number;
+  },
+): Promise<ApiResponse<{ group_id: string; snapshot: PresentationRefSnapshot }>> {
+  const form = new FormData();
+  form.append("by", "user");
+  form.append("slot", String(payload.slotId || "").trim());
+  form.append("source", String(payload.source || "").trim() || "browser_surface");
+  form.append("captured_at", String(payload.capturedAt || "").trim());
+  form.append("width", String(Number.isFinite(Number(payload.width)) ? Number(payload.width) : 0));
+  form.append("height", String(Number.isFinite(Number(payload.height)) ? Number(payload.height) : 0));
+  form.append("file", payload.file);
+  const resp = await apiForm<{ group_id?: unknown; snapshot?: unknown }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/ref_snapshot`,
+    form,
+  );
+  if (!resp.ok) return resp as ApiResponse<{ group_id: string; snapshot: PresentationRefSnapshot }>;
+  const snapshot = asRecord(resp.result.snapshot);
+  return {
+    ok: true,
+    result: {
+      group_id: asString(resp.result.group_id).trim() || groupId,
+      snapshot: {
+        path: asString(snapshot?.path).trim(),
+        mime_type: asOptionalString(snapshot?.mime_type) || undefined,
+        bytes: Number.isFinite(Number(snapshot?.bytes)) ? Number(snapshot?.bytes) : undefined,
+        sha256: asOptionalString(snapshot?.sha256) || undefined,
+        width: Number.isFinite(Number(snapshot?.width)) ? Number(snapshot?.width) : undefined,
+        height: Number.isFinite(Number(snapshot?.height)) ? Number(snapshot?.height) : undefined,
+        captured_at: asOptionalString(snapshot?.captured_at) || undefined,
+        source: asOptionalString(snapshot?.source) || undefined,
+      },
     },
   };
 }
@@ -1908,7 +1961,8 @@ export async function sendMessage(
   files?: File[],
   priority: "normal" | "attention" = "normal",
   replyRequired = false,
-  clientId = ""
+  clientId = "",
+  refs?: MessageRef[],
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -1919,12 +1973,13 @@ export async function sendMessage(
     form.append("priority", priority);
     form.append("reply_required", replyRequired ? "true" : "false");
     if (clientId) form.append("client_id", clientId);
+    if (refs && refs.length > 0) form.append("refs_json", JSON.stringify(refs));
     for (const f of files) form.append("files", f);
     return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/send_upload`, form);
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/send`, {
     method: "POST",
-    body: JSON.stringify({ text, by: "user", to, path: "", priority, reply_required: replyRequired, client_id: clientId }),
+    body: JSON.stringify({ text, by: "user", to, path: "", priority, reply_required: replyRequired, client_id: clientId, refs: refs || [] }),
   });
 }
 
@@ -1936,7 +1991,8 @@ export async function replyMessage(
   files?: File[],
   priority: "normal" | "attention" = "normal",
   replyRequired = false,
-  clientId = ""
+  clientId = "",
+  refs?: MessageRef[],
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -1947,12 +2003,13 @@ export async function replyMessage(
     form.append("priority", priority);
     form.append("reply_required", replyRequired ? "true" : "false");
     if (clientId) form.append("client_id", clientId);
+    if (refs && refs.length > 0) form.append("refs_json", JSON.stringify(refs));
     for (const f of files) form.append("files", f);
     return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/reply_upload`, form);
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/reply`, {
     method: "POST",
-    body: JSON.stringify({ text, by: "user", to, reply_to: replyTo, priority, reply_required: replyRequired, client_id: clientId }),
+    body: JSON.stringify({ text, by: "user", to, reply_to: replyTo, priority, reply_required: replyRequired, client_id: clientId, refs: refs || [] }),
   });
 }
 

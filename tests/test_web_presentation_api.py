@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -99,6 +100,39 @@ class TestWebPresentationApi(unittest.TestCase):
             self.assertIn("inline", str(resp.headers.get("content-disposition") or ""))
             self.assertTrue(str(resp.headers.get("content-type") or "").startswith("text/html"))
             self.assertIn("<h1>hello</h1>", resp.text)
+        finally:
+            cleanup()
+
+    def test_group_presentation_ref_snapshot_upload_stores_blob(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "web-presentation-ref-snapshot", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "")
+
+            with self._client() as client:
+                resp = client.post(
+                    f"/api/v1/groups/{group_id}/presentation/ref_snapshot",
+                    data={
+                        "by": "user",
+                        "slot": "slot-2",
+                        "source": "browser_surface",
+                        "captured_at": "2026-03-22T12:00:00Z",
+                        "width": "1280",
+                        "height": "720",
+                    },
+                    files={"file": ("snapshot.jpg", b"fake-jpeg-bytes", "image/jpeg")},
+                )
+
+            self.assertEqual(resp.status_code, 200)
+            payload = resp.json()
+            self.assertTrue(bool(payload.get("ok")))
+            snapshot = payload["result"]["snapshot"]
+            self.assertTrue(str(snapshot.get("path") or "").startswith("state/blobs/"))
+            self.assertEqual(str(snapshot.get("source") or ""), "browser_surface")
+            self.assertEqual(int(snapshot.get("width") or 0), 1280)
+            self.assertEqual(int(snapshot.get("height") or 0), 720)
+            self.assertTrue((Path(home) / "groups" / group_id / str(snapshot.get("path") or "")).exists())
         finally:
             cleanup()
 
