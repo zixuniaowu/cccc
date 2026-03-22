@@ -1,13 +1,15 @@
-"""Daemon-local browser-surface proof runtime for group Presentation.
+"""Daemon-local browser-surface runtime for Presentation slots.
 
-This module intentionally implements a narrow proof path:
+This module intentionally keeps the runtime model narrow:
 
-1. one live browser session per group
+1. one live browser session per slot
 2. one active controller connection at a time
 3. frame projection over JSON-lines sockets
 4. input relay back into the same Chromium session
 
-It is not yet wired into the persisted Presentation card contract.
+The browser session lifetime follows the slot content, not the viewer chrome:
+closing the viewer hides it visually, while clear/replace is the destruction
+boundary.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import base64
 import json
 import os
 import queue
+import shutil
 import socket
 import subprocess
 import sys
@@ -30,7 +33,6 @@ from ...util.time import utc_now_iso
 _FRAME_INTERVAL_SECONDS = 0.35
 _SOCKET_READ_TIMEOUT_SECONDS = 0.2
 _START_WAIT_TIMEOUT_SECONDS = 20.0
-_CONTROLLER_RECONNECT_GRACE_SECONDS = 25.0
 
 
 def _ensure_dir(path: Path, mode: int = 0o700) -> None:
@@ -48,10 +50,40 @@ def _safe_group_token(group_id: str) -> str:
     return cleaned[:96] or "group"
 
 
-def _browser_profile_dir(group_id: str) -> Path:
-    root = ensure_home() / "state" / "presentation_browser" / _safe_group_token(group_id) / "profile"
+def _safe_slot_token(slot_id: str) -> str:
+    raw = str(slot_id or "").strip().lower().replace("_", "-")
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in raw)
+    cleaned = cleaned.strip("_")
+    return cleaned[:96] or "slot"
+
+
+def _browser_profile_dir(group_id: str, slot_id: str) -> Path:
+    root = (
+        ensure_home()
+        / "state"
+        / "presentation_browser"
+        / _safe_group_token(group_id)
+        / _safe_slot_token(slot_id)
+        / "profile"
+    )
     _ensure_dir(root, 0o700)
     return root
+
+
+def _reset_browser_profile_dir(group_id: str, slot_id: str) -> None:
+    root = (
+        ensure_home()
+        / "state"
+        / "presentation_browser"
+        / _safe_group_token(group_id)
+        / _safe_slot_token(slot_id)
+    )
+    try:
+        shutil.rmtree(root)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
 
 
 def _install_playwright_package() -> None:
@@ -292,14 +324,14 @@ class _PlaywrightBrowserRuntime:
             pass
 
 
-def _launch_browser_surface_runtime(*, group_id: str, url: str, width: int, height: int) -> _PlaywrightBrowserRuntime:
+def _launch_browser_surface_runtime(*, group_id: str, slot_id: str, url: str, width: int, height: int) -> _PlaywrightBrowserRuntime:
     sync_playwright = _ensure_sync_playwright()
     playwright_cm = sync_playwright()
     pw = playwright_cm.__enter__()
 
     def _open_once() -> _PlaywrightBrowserRuntime:
         context = pw.chromium.launch_persistent_context(
-            user_data_dir=str(_browser_profile_dir(group_id)),
+            user_data_dir=str(_browser_profile_dir(group_id, slot_id)),
             headless=True,
             viewport={"width": int(width), "height": int(height)},
         )
@@ -345,8 +377,9 @@ def _launch_browser_surface_runtime(*, group_id: str, url: str, width: int, heig
 
 
 class _BrowserSurfaceSession:
-    def __init__(self, *, group_id: str, url: str, width: int, height: int) -> None:
+    def __init__(self, *, group_id: str, slot_id: str, url: str, width: int, height: int) -> None:
         self.group_id = str(group_id or "").strip()
+        self.slot_id = str(slot_id or "").strip()
         self.initial_url = str(url or "").strip()
         self.width = max(640, min(int(width), 2560))
         self.height = max(480, min(int(height), 1600))
@@ -354,7 +387,11 @@ class _BrowserSurfaceSession:
         self._frame_cond = threading.Condition(self._lock)
         self._commands: "queue.Queue[tuple[str, dict[str, Any], Optional[queue.Queue[dict[str, Any]]]]]" = queue.Queue()
         self._stop_event = threading.Event()
-        self._thread = threading.Thread(target=self._run, daemon=True, name=f"cccc-presentation-browser-{self.group_id[:12]}")
+        self._thread = threading.Thread(
+            target=self._run,
+            daemon=True,
+            name=f"cccc-presentation-browser-{self.group_id[:12]}-{self.slot_id[:12]}",
+        )
         self._controller_attached = False
         self._state = "starting"
         self._message = "Preparing browser runtime..."
@@ -366,7 +403,6 @@ class _BrowserSurfaceSession:
         self._last_frame_seq = 0
         self._last_frame_at = ""
         self._last_frame_bytes = b""
-        self._controller_detached_at = time.monotonic()
 
     def start(self) -> None:
         self._thread.start()
@@ -431,13 +467,12 @@ class _BrowserSurfaceSession:
             if self._controller_attached:
                 return False
             self._controller_attached = True
-            self._controller_detached_at = None
             self._updated_at = utc_now_iso()
         threading.Thread(
             target=self._serve_socket,
             args=(sock,),
             daemon=True,
-            name=f"cccc-presentation-browser-stream-{self.group_id[:12]}",
+            name=f"cccc-presentation-browser-stream-{self.group_id[:12]}-{self.slot_id[:12]}",
         ).start()
         return True
 
@@ -527,20 +562,12 @@ class _BrowserSurfaceSession:
             self._updated_at = utc_now_iso()
         return {"ok": True}
 
-    def _should_expire_unattached(self) -> bool:
-        with self._lock:
-            if self._controller_attached:
-                return False
-            detached_at = self._controller_detached_at
-        if detached_at is None:
-            return False
-        return (time.monotonic() - float(detached_at)) >= _CONTROLLER_RECONNECT_GRACE_SECONDS
-
     def _run(self) -> None:
         runtime: Any = None
         try:
             runtime = _launch_browser_surface_runtime(
                 group_id=self.group_id,
+                slot_id=self.slot_id,
                 url=self.initial_url,
                 width=self.width,
                 height=self.height,
@@ -552,10 +579,6 @@ class _BrowserSurfaceSession:
             self._set_state("ready", message=f"Browser surface ready ({self._strategy or 'chromium'}).")
             next_frame_at = 0.0
             while not self._stop_event.is_set():
-                if self._should_expire_unattached():
-                    self._set_state("closed", message="Browser surface session expired after disconnect.")
-                    self._stop_event.set()
-                    break
                 timeout = max(0.05, min(0.20, next_frame_at - time.time())) if next_frame_at else 0.05
                 try:
                     kind, payload, reply = self._commands.get(timeout=timeout)
@@ -677,7 +700,6 @@ class _BrowserSurfaceSession:
         finally:
             with self._lock:
                 self._controller_attached = False
-                self._controller_detached_at = time.monotonic()
                 self._updated_at = utc_now_iso()
                 self._frame_cond.notify_all()
             try:
@@ -730,28 +752,33 @@ def _recv_json_line_nonblocking(
 class _BrowserSurfaceManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._sessions: dict[str, _BrowserSurfaceSession] = {}
+        self._sessions: dict[tuple[str, str], _BrowserSurfaceSession] = {}
 
-    def open(self, *, group_id: str, url: str, width: int, height: int) -> dict[str, Any]:
+    def _key(self, *, group_id: str, slot_id: str) -> tuple[str, str]:
+        return (str(group_id or "").strip(), str(slot_id or "").strip())
+
+    def open(self, *, group_id: str, slot_id: str, url: str, width: int, height: int) -> dict[str, Any]:
         replacement: Optional[_BrowserSurfaceSession] = None
         previous: Optional[_BrowserSurfaceSession] = None
+        key = self._key(group_id=group_id, slot_id=slot_id)
         with self._lock:
-            previous = self._sessions.get(group_id)
-            replacement = _BrowserSurfaceSession(group_id=group_id, url=url, width=width, height=height)
-            self._sessions[group_id] = replacement
+            previous = self._sessions.get(key)
+            replacement = _BrowserSurfaceSession(group_id=group_id, slot_id=slot_id, url=url, width=width, height=height)
+            self._sessions[key] = replacement
         if previous is not None:
             previous.close()
+        _reset_browser_profile_dir(group_id, slot_id)
         replacement.start()
         return replacement.wait_until_started()
 
-    def info(self, *, group_id: str) -> dict[str, Any]:
+    def info(self, *, group_id: str, slot_id: str) -> dict[str, Any]:
         with self._lock:
-            session = self._sessions.get(group_id)
+            session = self._sessions.get(self._key(group_id=group_id, slot_id=slot_id))
         if session is None:
             return {
                 "active": False,
                 "state": "idle",
-                "message": "No browser surface session is active.",
+                "message": "No browser surface session is active for this slot.",
                 "error": {},
                 "strategy": "",
                 "url": "",
@@ -765,18 +792,18 @@ class _BrowserSurfaceManager:
             }
         return session.snapshot()
 
-    def close(self, *, group_id: str) -> dict[str, Any]:
+    def close(self, *, group_id: str, slot_id: str) -> dict[str, Any]:
         with self._lock:
-            session = self._sessions.pop(group_id, None)
+            session = self._sessions.pop(self._key(group_id=group_id, slot_id=slot_id), None)
         if session is None:
             return {
                 "closed": False,
-                "browser_surface": self.info(group_id=group_id),
+                "browser_surface": self.info(group_id=group_id, slot_id=slot_id),
             }
         session.close()
         return {
             "closed": True,
-            "browser_surface": self.info(group_id=group_id),
+            "browser_surface": self.info(group_id=group_id, slot_id=slot_id),
         }
 
     def close_all(self) -> None:
@@ -789,20 +816,20 @@ class _BrowserSurfaceManager:
             except Exception:
                 pass
 
-    def can_attach(self, *, group_id: str) -> tuple[bool, dict[str, Any]]:
+    def can_attach(self, *, group_id: str, slot_id: str) -> tuple[bool, dict[str, Any]]:
         with self._lock:
-            session = self._sessions.get(group_id)
+            session = self._sessions.get(self._key(group_id=group_id, slot_id=slot_id))
         if session is None:
             return False, {
                 "code": "browser_surface_not_found",
-                "message": "no browser surface session is active for this group",
+                "message": "no browser surface session is active for this slot",
                 "details": {},
             }
         return session.can_attach()
 
-    def attach_socket(self, *, group_id: str, sock: socket.socket) -> bool:
+    def attach_socket(self, *, group_id: str, slot_id: str, sock: socket.socket) -> bool:
         with self._lock:
-            session = self._sessions.get(group_id)
+            session = self._sessions.get(self._key(group_id=group_id, slot_id=slot_id))
         if session is None:
             return False
         return session.attach_socket(sock)
@@ -811,25 +838,25 @@ class _BrowserSurfaceManager:
 _MANAGER = _BrowserSurfaceManager()
 
 
-def open_browser_surface_session(*, group_id: str, url: str, width: int, height: int) -> dict[str, Any]:
-    return _MANAGER.open(group_id=group_id, url=url, width=width, height=height)
+def open_browser_surface_session(*, group_id: str, slot_id: str, url: str, width: int, height: int) -> dict[str, Any]:
+    return _MANAGER.open(group_id=group_id, slot_id=slot_id, url=url, width=width, height=height)
 
 
-def get_browser_surface_session_state(*, group_id: str) -> dict[str, Any]:
-    return _MANAGER.info(group_id=group_id)
+def get_browser_surface_session_state(*, group_id: str, slot_id: str) -> dict[str, Any]:
+    return _MANAGER.info(group_id=group_id, slot_id=slot_id)
 
 
-def close_browser_surface_session(*, group_id: str) -> dict[str, Any]:
-    return _MANAGER.close(group_id=group_id)
+def close_browser_surface_session(*, group_id: str, slot_id: str) -> dict[str, Any]:
+    return _MANAGER.close(group_id=group_id, slot_id=slot_id)
 
 
 def close_all_browser_surface_sessions() -> None:
     _MANAGER.close_all()
 
 
-def can_attach_browser_surface_socket(*, group_id: str) -> tuple[bool, dict[str, Any]]:
-    return _MANAGER.can_attach(group_id=group_id)
+def can_attach_browser_surface_socket(*, group_id: str, slot_id: str) -> tuple[bool, dict[str, Any]]:
+    return _MANAGER.can_attach(group_id=group_id, slot_id=slot_id)
 
 
-def attach_browser_surface_socket(*, group_id: str, sock: socket.socket) -> bool:
-    return _MANAGER.attach_socket(group_id=group_id, sock=sock)
+def attach_browser_surface_socket(*, group_id: str, slot_id: str, sock: socket.socket) -> bool:
+    return _MANAGER.attach_socket(group_id=group_id, slot_id=slot_id, sock=sock)

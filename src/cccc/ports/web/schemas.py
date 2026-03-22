@@ -171,6 +171,7 @@ class GroupPresentationClearRequest(BaseModel):
 
 
 class GroupPresentationBrowserSessionRequest(BaseModel):
+    slot: str = Field(default="")
     url: str = Field(default="")
     width: int = Field(default=1280)
     height: int = Field(default=800)

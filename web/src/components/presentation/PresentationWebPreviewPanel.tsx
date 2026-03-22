@@ -6,6 +6,7 @@ import { PresentationBrowserSurfacePanel } from "./PresentationBrowserSurfacePan
 
 type PresentationWebPreviewPanelProps = {
   groupId: string;
+  slotId: string;
   title: string;
   href: string;
   isDark: boolean;
@@ -17,6 +18,7 @@ type PresentationWebPreviewPanelProps = {
 
 export function PresentationWebPreviewPanel({
   groupId,
+  slotId,
   title,
   href,
   isDark,
@@ -72,6 +74,7 @@ export function PresentationWebPreviewPanel({
       {mode === "interactive" && allowLiveBrowser ? (
         <PresentationBrowserSurfacePanel
           groupId={groupId}
+          slotId={slotId}
           url={href}
           isDark={isDark}
           refreshNonce={refreshNonce}

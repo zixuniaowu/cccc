@@ -24,6 +24,7 @@ from ...kernel.ledger import append_event
 from ...kernel.prompt_files import resolve_active_scope_root
 from ...util.fs import atomic_write_json, read_json
 from ...util.time import utc_now_iso
+from .presentation_browser_runtime import close_browser_surface_session
 
 _PRESENTATION_VERSION = 1
 _SLOT_IDS = tuple(f"slot-{index}" for index in range(1, 5))
@@ -95,6 +96,13 @@ def load_presentation_snapshot(group_id: str) -> PresentationSnapshot:
 def _write_snapshot(group_id: str, snapshot: PresentationSnapshot) -> None:
     path = _presentation_state_path(group_id)
     atomic_write_json(path, snapshot.model_dump(mode="json", exclude_none=True), indent=2)
+
+
+def _close_browser_surface_session_quietly(group_id: str, slot_id: str) -> None:
+    try:
+        close_browser_surface_session(group_id=group_id, slot_id=slot_id)
+    except Exception:
+        pass
 
 
 def _validate_publisher(group: Any, by: str) -> None:
@@ -525,6 +533,7 @@ def handle_presentation_publish(args: Dict[str, Any]) -> DaemonResponse:
             url=url_text,
             blob_rel_path=blob_rel_path_text,
         )
+        replacing_existing_card = any(slot.slot_id == slot_id and slot.card is not None for slot in snapshot.slots)
     except Exception as exc:
         return _error("presentation_publish_failed", str(exc))
 
@@ -541,6 +550,8 @@ def handle_presentation_publish(args: Dict[str, Any]) -> DaemonResponse:
         slots=next_slots,
     )
     try:
+        if replacing_existing_card:
+            _close_browser_surface_session_quietly(group.group_id, slot_id)
         _write_snapshot(group.group_id, next_snapshot)
         event = append_event(
             group.ledger_path,
@@ -615,6 +626,8 @@ def handle_presentation_clear(args: Dict[str, Any]) -> DaemonResponse:
     )
     try:
         _write_snapshot(group.group_id, next_snapshot)
+        for cleared_slot_id in cleared_slots:
+            _close_browser_surface_session_quietly(group.group_id, cleared_slot_id)
         event = append_event(
             group.ledger_path,
             kind="presentation.clear",

@@ -186,6 +186,7 @@ describe("api.fetchPresentation", () => {
 
     const api = await import("../../src/services/api");
     const resp = await api.startPresentationBrowserSurfaceSession("g-demo", {
+      slotId: "slot-2",
       url: "http://127.0.0.1:3000",
       width: 1440,
       height: 900,
@@ -200,6 +201,13 @@ describe("api.fetchPresentation", () => {
       "/api/v1/groups/g-demo/presentation/browser_surface/session",
       expect.objectContaining({
         method: "POST",
+        body: JSON.stringify({
+          by: "user",
+          slot: "slot-2",
+          url: "http://127.0.0.1:3000",
+          width: 1440,
+          height: 900,
+        }),
       }),
     );
   });
@@ -210,8 +218,37 @@ describe("api.fetchPresentation", () => {
       location: { search: "", protocol: "https:", host: "cccc.test" },
     });
     const api = await import("../../src/services/api");
-    expect(api.getPresentationBrowserSurfaceWebSocketUrl("g-demo")).toBe(
-      "wss://cccc.test/api/v1/groups/g-demo/presentation/browser_surface/ws?token=dev-token"
+    expect(api.getPresentationBrowserSurfaceWebSocketUrl("g-demo", "slot-3")).toBe(
+      "wss://cccc.test/api/v1/groups/g-demo/presentation/browser_surface/ws?slot=slot-3&token=dev-token"
+    );
+  });
+
+  it("requests browser-surface session info for a specific slot", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            browser_surface: {
+              active: false,
+              state: "idle",
+            },
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.fetchPresentationBrowserSurfaceSession("g-demo", "slot-1");
+
+    expect(resp.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/groups/g-demo/presentation/browser_surface/session?slot=slot-1",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "content-type": "application/json" }),
+      }),
     );
   });
 

@@ -137,9 +137,12 @@ def try_handle_socket_special_op(
 
     if op == "presentation_browser_attach":
         group_id = str(args.get("group_id") or "").strip()
+        slot_id = str(args.get("slot") or "").strip().lower().replace("_", "-")
         by = str(args.get("by") or "user").strip() or "user"
         if not group_id:
             resp = error("missing_group_id", "missing group_id")
+        elif slot_id not in {"slot-1", "slot-2", "slot-3", "slot-4"}:
+            resp = error("invalid_slot", "slot must be one of: slot-1, slot-2, slot-3, slot-4")
         else:
             group = load_group(group_id)
             if group is None:
@@ -147,7 +150,7 @@ def try_handle_socket_special_op(
             elif by != "user" and not isinstance(find_actor(group, by), dict):
                 resp = error("unknown_actor", f"unknown actor: {by}")
             else:
-                ok, info = can_attach_browser_surface_socket(group_id=group_id)
+                ok, info = can_attach_browser_surface_socket(group_id=group_id, slot_id=slot_id)
                 if not ok:
                     resp = error(
                         str(info.get("code") or "browser_surface_attach_failed"),
@@ -161,7 +164,7 @@ def try_handle_socket_special_op(
             send_json(conn, dump_response(resp))
             if resp.ok:
                 _set_blocking_io(conn)
-                if attach_browser_surface_socket(group_id=group_id, sock=conn):
+                if attach_browser_surface_socket(group_id=group_id, slot_id=slot_id, sock=conn):
                     return True
         except Exception:
             pass

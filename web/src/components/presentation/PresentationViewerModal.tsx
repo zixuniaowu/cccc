@@ -176,11 +176,6 @@ export function PresentationViewerModal({
   ) : null;
 
   useEffect(() => {
-    if (isOpen) return;
-    setIsExpanded(false);
-  }, [isOpen]);
-
-  useEffect(() => {
     if (!isOpen || !isWorkspaceLinked) return;
     const timer = window.setInterval(() => {
       setRefreshTick((value) => value + 1);
@@ -246,10 +241,9 @@ export function PresentationViewerModal({
     }, 1600);
   };
 
-  if (!isOpen) return null;
-
   return (
     <ModalFrame
+      isOpen={isOpen}
       isDark={isDark}
       onClose={onClose}
       titleId="presentation-viewer-title"
@@ -406,6 +400,7 @@ export function PresentationViewerModal({
             <PresentationWebPreviewPanel
               key={`${slot?.slot_id || ""}:${card.published_at}:${href}`}
               groupId={groupId}
+              slotId={slot?.slot_id || ""}
               title={card.title}
               href={href}
               isDark={isDark}

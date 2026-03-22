@@ -87,6 +87,7 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
             with patch.object(runtime, "_launch_browser_surface_runtime", return_value=fake_runtime):
                 state = runtime.open_browser_surface_session(
                     group_id="g_demo",
+                    slot_id="slot-1",
                     url="http://127.0.0.1:3000",
                     width=1280,
                     height=800,
@@ -95,7 +96,7 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
 
                 left, right = socket.socketpair()
                 try:
-                    self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", sock=left))
+                    self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", slot_id="slot-1", sock=left))
 
                     first = self._read_json_line(right)
                     self.assertEqual(first.get("t"), "state")
@@ -131,7 +132,7 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
                     except Exception:
                         pass
 
-                closed = runtime.close_browser_surface_session(group_id="g_demo")
+                closed = runtime.close_browser_surface_session(group_id="g_demo", slot_id="slot-1")
                 self.assertTrue(bool(closed.get("closed")))
                 self.assertTrue(fake_runtime.closed)
         finally:
@@ -152,6 +153,7 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
             with patch.object(runtime, "_launch_browser_surface_runtime", return_value=fake_runtime):
                 state = runtime.open_browser_surface_session(
                     group_id="g_demo",
+                    slot_id="slot-1",
                     url="http://127.0.0.1:3000",
                     width=1280,
                     height=800,
@@ -159,15 +161,15 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
                 self.assertEqual(state.get("state"), "ready")
 
                 left, right = socket.socketpair()
-                self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", sock=left))
+                self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", slot_id="slot-1", sock=left))
                 _ = self._read_json_line(right)
                 right.close()
 
                 deadline = time.time() + 2.0
-                snapshot = runtime.get_browser_surface_session_state(group_id="g_demo")
+                snapshot = runtime.get_browser_surface_session_state(group_id="g_demo", slot_id="slot-1")
                 while time.time() < deadline and snapshot.get("controller_attached"):
                     time.sleep(0.05)
-                    snapshot = runtime.get_browser_surface_session_state(group_id="g_demo")
+                    snapshot = runtime.get_browser_surface_session_state(group_id="g_demo", slot_id="slot-1")
 
                 self.assertEqual(snapshot.get("state"), "ready")
                 self.assertTrue(bool(snapshot.get("active")))
@@ -175,7 +177,7 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
 
                 left2, right2 = socket.socketpair()
                 try:
-                    self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", sock=left2))
+                    self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", slot_id="slot-1", sock=left2))
                     second_state = self._read_json_line(right2)
                     self.assertEqual(second_state.get("t"), "state")
                     self.assertEqual(second_state.get("state"), "ready")
@@ -184,7 +186,51 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
                         right2.close()
                     except Exception:
                         pass
-                runtime.close_browser_surface_session(group_id="g_demo")
+                runtime.close_browser_surface_session(group_id="g_demo", slot_id="slot-1")
+        finally:
+            try:
+                from cccc.daemon.group.presentation_browser_runtime import close_all_browser_surface_sessions
+
+                close_all_browser_surface_sessions()
+            except Exception:
+                pass
+            cleanup()
+
+    def test_runtime_sessions_are_slot_scoped(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.group import presentation_browser_runtime as runtime
+
+            first_runtime = _FakeRuntime()
+            second_runtime = _FakeRuntime()
+            second_runtime._url = "http://127.0.0.1:4000"
+            with patch.object(runtime, "_launch_browser_surface_runtime", side_effect=[first_runtime, second_runtime]):
+                first = runtime.open_browser_surface_session(
+                    group_id="g_demo",
+                    slot_id="slot-1",
+                    url="http://127.0.0.1:3000",
+                    width=1280,
+                    height=800,
+                )
+                second = runtime.open_browser_surface_session(
+                    group_id="g_demo",
+                    slot_id="slot-2",
+                    url="http://127.0.0.1:4000",
+                    width=1280,
+                    height=800,
+                )
+
+                self.assertEqual(first.get("state"), "ready")
+                self.assertEqual(second.get("state"), "ready")
+                slot_one = runtime.get_browser_surface_session_state(group_id="g_demo", slot_id="slot-1")
+                slot_two = runtime.get_browser_surface_session_state(group_id="g_demo", slot_id="slot-2")
+                self.assertEqual(slot_one.get("url"), "http://127.0.0.1:3000")
+                self.assertEqual(slot_two.get("url"), "http://127.0.0.1:4000")
+
+                runtime.close_browser_surface_session(group_id="g_demo", slot_id="slot-1")
+                slot_two_after = runtime.get_browser_surface_session_state(group_id="g_demo", slot_id="slot-2")
+                self.assertEqual(slot_two_after.get("state"), "ready")
+                self.assertTrue(bool(slot_two_after.get("active")))
         finally:
             try:
                 from cccc.daemon.group.presentation_browser_runtime import close_all_browser_surface_sessions

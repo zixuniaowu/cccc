@@ -1,6 +1,5 @@
 // SSE connection management for the ledger stream.
 import { useEffect, useRef } from "react";
-import i18n from "../i18n";
 import { useGroupStore, useUIStore, useModalStore } from "../stores";
 import { useChatOutboxStore } from "../stores/chatOutboxStore";
 import { beginContextRequest, isLatestContextRequest } from "../stores/useGroupStore";
@@ -54,10 +53,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const refreshPresentation = useGroupStore((s) => s.refreshPresentation);
   const scheduleActorUnreadRefresh = useGroupStore((s) => s.scheduleActorUnreadRefresh);
 
-  const showNotice = useUIStore((s) => s.showNotice);
   const incrementChatUnread = useUIStore((s) => s.incrementChatUnread);
   const setSSEStatus = useUIStore((s) => s.setSSEStatus);
-  const setPresentationViewer = useModalStore((s) => s.setPresentationViewer);
+  const markPresentationSlotAttention = useModalStore((s) => s.markPresentationSlotAttention);
+  const clearPresentationSlotAttention = useModalStore((s) => s.clearPresentationSlotAttention);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const contextRefreshTimerRef = useRef<number | null>(null);
@@ -206,28 +205,23 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           void refreshPresentation(groupId);
 
           const slotId = String(ev.data?.slot_id || "").trim();
-          const title = String(ev.data?.title || "").trim();
           if (slotId) {
-            showNotice({
-              message: title
-                ? i18n.t("chat:presentationUpdatedNoticeWithTitle", {
-                    title,
-                    defaultValue: `Presentation updated: ${title}`,
-                  })
-                : i18n.t("chat:presentationUpdatedNotice", {
-                    defaultValue: "Presentation updated.",
-                  }),
-              actionLabel: i18n.t("chat:presentationViewAction", {
-                defaultValue: "View",
-              }),
-              onAction: () => setPresentationViewer({ groupId, slotId }),
-            });
+            markPresentationSlotAttention(groupId, slotId);
           }
           return;
         }
 
         if (isPresentationClearEvent(ev)) {
           void refreshPresentation(groupId);
+          const clearedSlots = Array.isArray(ev.data?.cleared_slots)
+            ? ev.data.cleared_slots
+            : [];
+          for (const slot of clearedSlots) {
+            const slotId = String(slot || "").trim();
+            if (slotId) {
+              clearPresentationSlotAttention(groupId, slotId);
+            }
+          }
           return;
         }
 

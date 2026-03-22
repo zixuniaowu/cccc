@@ -583,8 +583,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.get("/presentation/browser_surface/session")
-    async def group_presentation_browser_surface_info(group_id: str) -> Dict[str, Any]:
-        return await ctx.daemon({"op": "presentation_browser_info", "args": {"group_id": group_id}})
+    async def group_presentation_browser_surface_info(group_id: str, slot: str = "") -> Dict[str, Any]:
+        return await ctx.daemon({"op": "presentation_browser_info", "args": {"group_id": group_id, "slot": slot}})
 
     @group_router.post("/presentation/browser_surface/session")
     async def group_presentation_browser_surface_open(
@@ -600,6 +600,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "op": "presentation_browser_open",
                 "args": {
                     "group_id": group_id,
+                    "slot": req.slot,
                     "by": req.by,
                     "url": url,
                     "width": width,
@@ -617,6 +618,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "op": "presentation_browser_close",
                 "args": {
                     "group_id": group_id,
+                    "slot": req.slot,
                     "by": req.by,
                 },
             }
@@ -1454,6 +1456,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @global_router.websocket("/groups/{group_id}/presentation/browser_surface/ws")
     async def group_presentation_browser_surface_ws(websocket: WebSocket, group_id: str) -> None:
         await websocket.accept()
+        slot_id = str(websocket.query_params.get("slot") or "").strip()
 
         principal = resolve_websocket_principal(websocket)
         websocket.state.principal = principal
@@ -1529,7 +1532,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return
 
         try:
-            req = {"op": "presentation_browser_attach", "args": {"group_id": group_id, "by": "user"}}
+            req = {"op": "presentation_browser_attach", "args": {"group_id": group_id, "slot": slot_id, "by": "user"}}
             writer.write((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
             await writer.drain()
             line = await reader.readline()

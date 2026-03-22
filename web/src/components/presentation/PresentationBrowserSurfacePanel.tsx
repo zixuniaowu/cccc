@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  closePresentationBrowserSurfaceSession,
   fetchPresentationBrowserSurfaceSession,
   getPresentationBrowserSurfaceWebSocketUrl,
   startPresentationBrowserSurfaceSession,
@@ -11,6 +10,7 @@ import { classNames } from "../../utils/classNames";
 
 type PresentationBrowserSurfacePanelProps = {
   groupId: string;
+  slotId: string;
   url: string;
   isDark: boolean;
   refreshNonce: number;
@@ -91,6 +91,7 @@ function buttonFromMouseEvent(button: number): "left" | "middle" | "right" {
 
 export function PresentationBrowserSurfacePanel({
   groupId,
+  slotId,
   url,
   isDark,
   refreshNonce,
@@ -132,9 +133,8 @@ export function PresentationBrowserSurfacePanel({
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-      void closePresentationBrowserSurfaceSession(groupId);
     };
-  }, [groupId]);
+  }, []);
 
   const sendCommand = (payload: Record<string, unknown>) => {
     const ws = wsRef.current;
@@ -166,7 +166,7 @@ export function PresentationBrowserSurfacePanel({
     };
 
     const attachSocket = () => {
-      const ws = new WebSocket(getPresentationBrowserSurfaceWebSocketUrl(groupId));
+      const ws = new WebSocket(getPresentationBrowserSurfaceWebSocketUrl(groupId, slotId));
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
@@ -208,7 +208,7 @@ export function PresentationBrowserSurfacePanel({
         if (disposed || runIdRef.current !== runId) return;
         wsRef.current = null;
         void (async () => {
-          const info = await fetchPresentationBrowserSurfaceSession(groupId);
+          const info = await fetchPresentationBrowserSurfaceSession(groupId, slotId);
           if (disposed || runIdRef.current !== runId) return;
           if (
             info.ok &&
@@ -269,15 +269,26 @@ export function PresentationBrowserSurfacePanel({
       const container = containerRef.current;
       const width = Math.max(960, Math.round(container?.clientWidth || 1280));
       const height = Math.max(640, Math.round(container?.clientHeight || 800));
+      const existing = await fetchPresentationBrowserSurfaceSession(groupId, slotId);
+      if (disposed) return;
+
+      if (
+        existing.ok &&
+        existing.result.browser_surface.active &&
+        ["starting", "ready"].includes(String(existing.result.browser_surface.state || "").trim())
+      ) {
+        setSessionState(normalizeState(existing.result.browser_surface));
+        attachSocket();
+        return;
+      }
+
       const started = await startPresentationBrowserSurfaceSession(groupId, {
+        slotId,
         url,
         width,
         height,
       });
       if (disposed) {
-        if (started.ok) {
-          void closePresentationBrowserSurfaceSession(groupId);
-        }
         return;
       }
       if (!started.ok) {
@@ -304,7 +315,7 @@ export function PresentationBrowserSurfacePanel({
       disposed = true;
       cleanupTransport();
     };
-  }, [groupId, runNonce, t, url]);
+  }, [groupId, runNonce, slotId, t, url]);
 
   useEffect(() => {
     const container = containerRef.current;

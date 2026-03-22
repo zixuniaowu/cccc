@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class TestPresentationOps(unittest.TestCase):
@@ -95,12 +96,17 @@ class TestPresentationOps(unittest.TestCase):
             self.assertTrue(blob_rel_path.startswith("state/blobs/"))
             self.assertTrue((Path(home) / "groups" / group_id / blob_rel_path).exists())
 
-            cleared, _ = self._call(
-                "presentation_clear",
-                {"group_id": group_id, "by": "user", "slot": "slot-2"},
-            )
+            with patch(
+                "cccc.daemon.group.presentation_ops.close_browser_surface_session",
+                return_value={"closed": True, "browser_surface": {"active": False, "state": "idle"}},
+            ) as close_mock:
+                cleared, _ = self._call(
+                    "presentation_clear",
+                    {"group_id": group_id, "by": "user", "slot": "slot-2"},
+                )
             self.assertTrue(cleared.ok, getattr(cleared, "error", None))
             self.assertEqual((cleared.result or {}).get("cleared_slots") or [], ["slot-2"])
+            close_mock.assert_called_once_with(group_id=group_id, slot_id="slot-2")
 
             fetched, _ = self._call("presentation_get", {"group_id": group_id})
             self.assertTrue(fetched.ok, getattr(fetched, "error", None))
@@ -142,6 +148,47 @@ class TestPresentationOps(unittest.TestCase):
                 self.assertEqual(str(content.get("workspace_rel_path") or ""), "notes.md")
                 self.assertEqual(str(content.get("blob_rel_path") or ""), "")
                 self.assertEqual(str(card.get("source_ref") or ""), "notes.md")
+        finally:
+            cleanup()
+
+    def test_publish_replacement_closes_existing_browser_session_for_slot(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "presentation-replace", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "")
+
+            initial, _ = self._call(
+                "presentation_publish",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "slot": "slot-3",
+                    "url": "https://example.com/one",
+                    "card_type": "web_preview",
+                    "title": "Initial",
+                },
+            )
+            self.assertTrue(initial.ok, getattr(initial, "error", None))
+
+            with patch(
+                "cccc.daemon.group.presentation_ops.close_browser_surface_session",
+                return_value={"closed": True, "browser_surface": {"active": False, "state": "idle"}},
+            ) as close_mock:
+                updated, _ = self._call(
+                    "presentation_publish",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "slot": "slot-3",
+                        "url": "https://example.com/two",
+                        "card_type": "web_preview",
+                        "title": "Updated",
+                    },
+                )
+
+            self.assertTrue(updated.ok, getattr(updated, "error", None))
+            close_mock.assert_called_once_with(group_id=group_id, slot_id="slot-3")
         finally:
             cleanup()
 

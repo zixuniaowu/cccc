@@ -72,7 +72,7 @@ class TestWebPresentationBrowserApi(unittest.TestCase):
                     with self._client() as client:
                         resp = client.post(
                             f"/api/v1/groups/{group_id}/presentation/browser_surface/session",
-                            json={"url": "http://127.0.0.1:3000", "width": 1600, "height": 900, "by": "user"},
+                            json={"slot": "slot-2", "url": "http://127.0.0.1:3000", "width": 1600, "height": 900, "by": "user"},
                         )
 
             self.assertEqual(resp.status_code, 200)
@@ -101,7 +101,7 @@ class TestWebPresentationBrowserApi(unittest.TestCase):
 
             with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
                 with self._client() as client:
-                    resp = client.get(f"/api/v1/groups/{group_id}/presentation/browser_surface/session")
+                    resp = client.get(f"/api/v1/groups/{group_id}/presentation/browser_surface/session?slot=slot-1")
 
             self.assertEqual(resp.status_code, 200)
             payload = resp.json()
@@ -151,7 +151,7 @@ class TestWebPresentationBrowserApi(unittest.TestCase):
                     with self._client() as client:
                         resp = client.post(
                             f"/api/v1/groups/{group_id}/presentation/browser_surface/session/close",
-                            json={"by": "user"},
+                            json={"slot": "slot-4", "by": "user"},
                         )
 
             self.assertEqual(resp.status_code, 200)
@@ -188,7 +188,7 @@ class TestWebPresentationBrowserApi(unittest.TestCase):
                 side_effect=fake_open_connection,
             ):
                 with self._client() as client:
-                    with client.websocket_connect(f"/api/v1/groups/{group_id}/presentation/browser_surface/ws") as ws:
+                    with client.websocket_connect(f"/api/v1/groups/{group_id}/presentation/browser_surface/ws?slot=slot-1") as ws:
                         payload = ws.receive_json()
 
             self.assertEqual(payload["error"]["code"], "daemon_unavailable")

@@ -55,6 +55,7 @@ class TestPresentationBrowserOps(unittest.TestCase):
                     "presentation_browser_open",
                     {
                         "group_id": group_id,
+                        "slot": "slot-2",
                         "by": "user",
                         "url": "http://127.0.0.1:3000",
                         "width": 1440,
@@ -65,6 +66,7 @@ class TestPresentationBrowserOps(unittest.TestCase):
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             open_mock.assert_called_once_with(
                 group_id=group_id,
+                slot_id="slot-2",
                 url="http://127.0.0.1:3000",
                 width=1440,
                 height=900,
@@ -82,7 +84,7 @@ class TestPresentationBrowserOps(unittest.TestCase):
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "")
 
-            resp, _ = self._call("presentation_browser_info", {"group_id": group_id})
+            resp, _ = self._call("presentation_browser_info", {"group_id": group_id, "slot": "slot-1"})
 
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             surface = (resp.result or {}).get("browser_surface") or {}
@@ -119,10 +121,10 @@ class TestPresentationBrowserOps(unittest.TestCase):
                     },
                 },
             ) as close_mock:
-                resp, _ = self._call("presentation_browser_close", {"group_id": group_id, "by": "user"})
+                resp, _ = self._call("presentation_browser_close", {"group_id": group_id, "slot": "slot-3", "by": "user"})
 
             self.assertTrue(resp.ok, getattr(resp, "error", None))
-            close_mock.assert_called_once_with(group_id=group_id)
+            close_mock.assert_called_once_with(group_id=group_id, slot_id="slot-3")
             self.assertTrue(bool((resp.result or {}).get("closed")))
         finally:
             cleanup()

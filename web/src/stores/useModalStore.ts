@@ -17,6 +17,8 @@ interface PresentationPinState {
   slotId: string;
 }
 
+type PresentationAttentionState = Record<string, Record<string, boolean>>;
+
 interface ModalState {
   // Modal visibility state
   modals: {
@@ -35,6 +37,7 @@ interface ModalState {
   relaySource: RelaySource | null;
   presentationViewer: PresentationViewerState | null;
   presentationPin: PresentationPinState | null;
+  presentationAttention: PresentationAttentionState;
   editingActor: Actor | null;
 
   // Actions
@@ -44,6 +47,8 @@ interface ModalState {
   setRelayModal: (eventId: string | null, groupId?: string, event?: LedgerEvent | null) => void;
   setPresentationViewer: (viewer: PresentationViewerState | null) => void;
   setPresentationPin: (pin: PresentationPinState | null) => void;
+  markPresentationSlotAttention: (groupId: string, slotId: string) => void;
+  clearPresentationSlotAttention: (groupId: string, slotId: string) => void;
   setEditingActor: (actor: Actor | null) => void;
 }
 
@@ -64,6 +69,7 @@ export const useModalStore = create<ModalState>((set) => ({
   relaySource: null,
   presentationViewer: null,
   presentationPin: null,
+  presentationAttention: {},
   editingActor: null,
 
   openModal: (name) =>
@@ -83,7 +89,69 @@ export const useModalStore = create<ModalState>((set) => ({
       relaySource: eventId && groupId && event ? { groupId, event } : null,
       modals: { ...state.modals, relay: !!eventId },
     })),
-  setPresentationViewer: (viewer) => set({ presentationViewer: viewer }),
+  setPresentationViewer: (viewer) =>
+    set((state) => {
+      if (!viewer) {
+        return { presentationViewer: null };
+      }
+      const groupId = String(viewer.groupId || "").trim();
+      const slotId = String(viewer.slotId || "").trim();
+      if (!groupId || !slotId) {
+        return { presentationViewer: null };
+      }
+      const nextAttention = { ...state.presentationAttention };
+      const groupAttention = { ...(nextAttention[groupId] || {}) };
+      delete groupAttention[slotId];
+      if (Object.keys(groupAttention).length > 0) {
+        nextAttention[groupId] = groupAttention;
+      } else {
+        delete nextAttention[groupId];
+      }
+      return {
+        presentationViewer: { groupId, slotId },
+        presentationAttention: nextAttention,
+      };
+    }),
   setPresentationPin: (pin) => set({ presentationPin: pin }),
+  markPresentationSlotAttention: (groupId, slotId) =>
+    set((state) => {
+      const normalizedGroupId = String(groupId || "").trim();
+      const normalizedSlotId = String(slotId || "").trim();
+      if (!normalizedGroupId || !normalizedSlotId) return {};
+      const viewer = state.presentationViewer;
+      if (
+        viewer &&
+        viewer.groupId === normalizedGroupId &&
+        viewer.slotId === normalizedSlotId
+      ) {
+        return {};
+      }
+      return {
+        presentationAttention: {
+          ...state.presentationAttention,
+          [normalizedGroupId]: {
+            ...(state.presentationAttention[normalizedGroupId] || {}),
+            [normalizedSlotId]: true,
+          },
+        },
+      };
+    }),
+  clearPresentationSlotAttention: (groupId, slotId) =>
+    set((state) => {
+      const normalizedGroupId = String(groupId || "").trim();
+      const normalizedSlotId = String(slotId || "").trim();
+      if (!normalizedGroupId || !normalizedSlotId) return {};
+      const currentGroup = state.presentationAttention[normalizedGroupId];
+      if (!currentGroup || !currentGroup[normalizedSlotId]) return {};
+      const nextGroup = { ...currentGroup };
+      delete nextGroup[normalizedSlotId];
+      const nextAttention = { ...state.presentationAttention };
+      if (Object.keys(nextGroup).length > 0) {
+        nextAttention[normalizedGroupId] = nextGroup;
+      } else {
+        delete nextAttention[normalizedGroupId];
+      }
+      return { presentationAttention: nextAttention };
+    }),
   setEditingActor: (actor) => set({ editingActor: actor }),
 }));

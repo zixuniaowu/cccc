@@ -13,6 +13,8 @@ import { useChatTab } from "../../hooks/useChatTab";
 import { useTranslation } from 'react-i18next';
 import { useGroupStore, useModalStore } from "../../stores";
 
+const EMPTY_PRESENTATION_ATTENTION: Record<string, boolean> = {};
+
 export interface ChatTabProps {
   // UI configuration
   isDark: boolean;
@@ -152,6 +154,9 @@ export function ChatTab({
   const groupPresentation = useGroupStore((state) => state.groupPresentation);
   const setPresentationViewer = useModalStore((state) => state.setPresentationViewer);
   const setPresentationPin = useModalStore((state) => state.setPresentationPin);
+  const presentationAttention = useModalStore((state) =>
+    selectedGroupId ? (state.presentationAttention[selectedGroupId] || EMPTY_PRESENTATION_ATTENTION) : EMPTY_PRESENTATION_ATTENTION
+  );
   const [mobileSurfaceState, setMobileSurfaceState] = useState<{
     groupId: string;
     value: "messages" | "presentation";
@@ -168,6 +173,7 @@ export function ChatTab({
     mobileSurfaceState.groupId === selectedGroupId
       ? mobileSurfaceState.value
       : "messages";
+  const hasPresentationAttention = Object.keys(presentationAttention).length > 0;
 
   const openPresentationSlot = (slotId: string) => {
     if (!selectedGroupId || !slotId) return;
@@ -290,7 +296,7 @@ export function ChatTab({
                     key={surface}
                     type="button"
                     className={classNames(
-                      "rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+                      "relative rounded-full px-3 py-1.5 text-xs font-medium transition-all",
                       active
                         ? "bg-blue-600 text-white shadow-sm"
                         : isDark
@@ -301,6 +307,22 @@ export function ChatTab({
                     aria-pressed={active}
                   >
                     {label}
+                    {surface === "presentation" && hasPresentationAttention ? (
+                      <>
+                        <span
+                          className={classNames(
+                            "pointer-events-none absolute right-1.5 top-1.5 h-2 w-2 rounded-full animate-ping",
+                            active ? "bg-white/65" : isDark ? "bg-cyan-300/70" : "bg-cyan-500/45"
+                          )}
+                        />
+                        <span
+                          className={classNames(
+                            "pointer-events-none absolute right-1.5 top-1.5 h-2 w-2 rounded-full",
+                            active ? "bg-white" : isDark ? "bg-cyan-200" : "bg-cyan-500"
+                          )}
+                        />
+                      </>
+                    ) : null}
                   </button>
                 );
               })}
@@ -465,6 +487,7 @@ export function ChatTab({
               presentation={groupPresentation}
               isDark={isDark}
               readOnly={readOnly}
+              attentionSlots={presentationAttention}
               onOpenSlot={openPresentationSlot}
               onPinSlot={pinPresentationSlot}
             />
@@ -477,6 +500,7 @@ export function ChatTab({
                 presentation={groupPresentation}
                 isDark={isDark}
                 readOnly={readOnly}
+                attentionSlots={presentationAttention}
                 onOpenSlot={openPresentationSlot}
                 onPinSlot={pinPresentationSlot}
               />

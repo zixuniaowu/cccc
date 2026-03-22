@@ -9,6 +9,7 @@ type PresentationRailProps = {
   presentation: GroupPresentation | null;
   isDark: boolean;
   readOnly?: boolean;
+  attentionSlots?: Record<string, boolean>;
   onOpenSlot: (slotId: string) => void;
   onPinSlot?: (slotId: string) => void;
 };
@@ -152,6 +153,7 @@ export function PresentationRail({
   presentation,
   isDark,
   readOnly,
+  attentionSlots,
   onOpenSlot,
   onPinSlot,
 }: PresentationRailProps) {
@@ -209,6 +211,7 @@ export function PresentationRail({
             {normalizedPresentation.slots.map((slot) => {
               const card = slot.card;
               const isHighlighted = slot.slot_id === highlightSlotId;
+              const hasAttention = !!attentionSlots?.[slot.slot_id];
               return (
                 <button
                   key={slot.slot_id}
@@ -223,13 +226,17 @@ export function PresentationRail({
                     }
                   }}
                   className={classNames(
-                    "rounded-3xl border p-4 text-left transition-all",
+                    "relative rounded-3xl border p-4 text-left transition-all",
                     "min-h-[164px] shadow-sm hover:-translate-y-0.5",
                     isDark
                       ? "border-white/10 bg-slate-900/70 hover:border-cyan-400/40"
                       : "border-black/10 bg-white/85 hover:border-cyan-500/40",
                     !card && readOnly && (isDark ? "cursor-default opacity-80" : "cursor-default opacity-90"),
-                    isHighlighted && (isDark ? "ring-2 ring-cyan-400/50" : "ring-2 ring-cyan-500/40")
+                    isHighlighted && (isDark ? "ring-2 ring-cyan-400/50" : "ring-2 ring-cyan-500/40"),
+                    hasAttention &&
+                      (isDark
+                        ? "ring-2 ring-cyan-300/70 presentation-slot-attention presentation-slot-attention-dark"
+                        : "ring-2 ring-cyan-500/60 presentation-slot-attention presentation-slot-attention-light")
                   )}
                   aria-label={t("presentationOpenSlot", {
                     index: slot.index,
@@ -387,6 +394,7 @@ export function PresentationRail({
               const card = slot.card;
               const isHighlighted = slot.slot_id === highlightSlotId;
               const isActive = slot.slot_id === hoveredSlotId;
+              const hasAttention = !!attentionSlots?.[slot.slot_id];
               const tone = card ? getRailSlotTone(card.card_type, isDark) : null;
               return (
                 <button
@@ -420,7 +428,11 @@ export function PresentationRail({
                     !card && !readOnly && (isDark ? "hover:border-cyan-300/30 hover:bg-white/[0.05]" : "hover:border-cyan-500/25 hover:bg-white/60"),
                     card && isActive && "scale-[1.08] shadow-[0_18px_34px_-24px_rgba(15,23,42,0.8)]",
                     !card && isActive && "scale-[1.04]",
-                    isHighlighted && (isDark ? "ring-1 ring-cyan-300/45" : "ring-1 ring-cyan-500/35")
+                    isHighlighted && (isDark ? "ring-1 ring-cyan-300/45" : "ring-1 ring-cyan-500/35"),
+                    hasAttention &&
+                      (isDark
+                        ? "ring-2 ring-cyan-300/70 presentation-slot-attention presentation-slot-attention-dark"
+                        : "ring-2 ring-cyan-500/60 presentation-slot-attention presentation-slot-attention-light")
                   )}
                   aria-label={
                     card

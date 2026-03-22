@@ -907,9 +907,10 @@ export function getPresentationAssetUrl(groupId: string, slotId: string, cacheBu
 
 export async function fetchPresentationBrowserSurfaceSession(
   groupId: string,
+  slotId: string,
 ): Promise<ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>> {
   const resp = await apiJson<{ group_id?: unknown; browser_surface?: unknown }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session`
+    `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session?slot=${encodeURIComponent(slotId)}`
   );
   if (!resp.ok) return resp as ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>;
   return {
@@ -923,7 +924,7 @@ export async function fetchPresentationBrowserSurfaceSession(
 
 export async function startPresentationBrowserSurfaceSession(
   groupId: string,
-  payload: { url: string; width?: number; height?: number },
+  payload: { slotId: string; url: string; width?: number; height?: number },
 ): Promise<ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>> {
   const resp = await apiJson<{ group_id?: unknown; browser_surface?: unknown }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session`,
@@ -931,6 +932,7 @@ export async function startPresentationBrowserSurfaceSession(
       method: "POST",
       body: JSON.stringify({
         by: "user",
+        slot: String(payload.slotId || "").trim(),
         url: String(payload.url || "").trim(),
         width: Number.isFinite(Number(payload.width)) ? Number(payload.width) : 1280,
         height: Number.isFinite(Number(payload.height)) ? Number(payload.height) : 800,
@@ -949,12 +951,13 @@ export async function startPresentationBrowserSurfaceSession(
 
 export async function closePresentationBrowserSurfaceSession(
   groupId: string,
+  slotId: string,
 ): Promise<ApiResponse<{ group_id: string; closed: boolean; browser_surface: PresentationBrowserSurfaceState }>> {
   const resp = await apiJson<{ group_id?: unknown; closed?: unknown; browser_surface?: unknown }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session/close`,
     {
       method: "POST",
-      body: JSON.stringify({ by: "user" }),
+      body: JSON.stringify({ by: "user", slot: String(slotId || "").trim() }),
     }
   );
   if (!resp.ok) {
@@ -970,9 +973,9 @@ export async function closePresentationBrowserSurfaceSession(
   };
 }
 
-export function getPresentationBrowserSurfaceWebSocketUrl(groupId: string): string {
+export function getPresentationBrowserSurfaceWebSocketUrl(groupId: string, slotId: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const base = `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/ws`;
+  const base = `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/ws?slot=${encodeURIComponent(slotId)}`;
   return withAuthToken(base);
 }
 
