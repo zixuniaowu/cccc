@@ -61,6 +61,7 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 - Update the brief with `cccc_coordination(action="update_brief"|...)`.
 - Add decisions and handoffs with `cccc_coordination(action="add_decision"|"add_handoff", ...)`.
 - Use `cccc_task` for shared work units; runtime todo stays private.
+- For task lifecycle changes, use `cccc_task(action="move", ...)` as the canonical path. `update` is for task fields; if `status` is included with `update`, the MCP wrapper also applies the matching move.
 
 ### Agent State
 

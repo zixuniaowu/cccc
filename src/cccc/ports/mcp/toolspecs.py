@@ -575,7 +575,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_task",
-        "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore|delete. Use for multi-actor, long-horizon, or user-tracked work.",
+        "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore|delete. Use for multi-actor, long-horizon, or user-tracked work. Lifecycle transitions are canonical via move; update with status auto-applies the matching lifecycle move.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -589,7 +589,11 @@ MCP_TOOLS = [
                 "include_archived": {"type": "boolean", "default": False},
                 "title": {"type": "string"},
                 "outcome": {"type": "string"},
-                "status": {"type": "string", "enum": ["planned", "active", "done", "archived"]},
+                "status": {
+                    "type": "string",
+                    "enum": ["planned", "active", "done", "archived"],
+                    "description": "Lifecycle status. Required for action=move. If passed with action=update, the wrapper also applies the corresponding lifecycle transition.",
+                },
                 "parent_id": {"type": "string"},
                 "assignee": {"type": "string"},
                 "priority": {"type": "string"},
