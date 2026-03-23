@@ -19,7 +19,12 @@ from ..kernel.group import load_group
 from ..kernel.actors import find_actor, find_foreman, update_actor, get_effective_role
 from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.ledger_retention import compact as compact_ledger
-from ..kernel.settings import get_observability_settings, update_observability_settings
+from ..kernel.settings import (
+    get_observability_settings,
+    get_web_branding_settings,
+    update_observability_settings,
+    update_web_branding_settings,
+)
 from ..kernel.terminal_transcript import get_terminal_transcript_settings
 from ..kernel.messaging import disabled_recipient_actor_ids
 from ..paths import ensure_home
@@ -654,6 +659,8 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
         get_observability=_get_observability,
         update_observability_settings=update_observability_settings,
         apply_observability_settings=lambda obs: _apply_observability_settings(ensure_home(), obs),
+        get_web_branding=get_web_branding_settings,
+        update_web_branding_settings=update_web_branding_settings,
         developer_mode_enabled=_developer_mode_enabled,
         effective_runner_kind=_effective_runner_kind,
         throttle_debug_summary=THROTTLE.debug_summary,

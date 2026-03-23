@@ -13,7 +13,7 @@ import {
     FloatingPortal,
 } from "@floating-ui/react";
 import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, EventAttachment, PresentationMessageRef } from "../types";
-import { formatFullTime, formatTime } from "../utils/time";
+import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
@@ -53,6 +53,65 @@ function formatEventLine(ev: LedgerEvent): string {
         return String(msg.text || "");
     }
     return "";
+}
+
+async function copyText(value: string): Promise<boolean> {
+    const text = String(value || "");
+    if (!text.trim()) return false;
+    try {
+        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch {
+        // Fall through to the prompt fallback below.
+    }
+    if (typeof window !== "undefined" && typeof window.prompt === "function") {
+        window.prompt("Copy to clipboard:", text);
+        return true;
+    }
+    return false;
+}
+
+function buildMessageCopyText({
+    quoteText,
+    messageText,
+    presentationRefs,
+    attachments,
+}: {
+    quoteText?: string;
+    messageText: string;
+    presentationRefs: PresentationMessageRef[];
+    attachments: { title: string; path: string }[];
+}): string {
+    const sections: string[] = [];
+    const trimmedQuote = String(quoteText || "").trim();
+    const trimmedMessage = String(messageText || "").trim();
+
+    if (trimmedQuote) {
+        sections.push(`> ${trimmedQuote}`);
+    }
+    if (trimmedMessage) {
+        sections.push(trimmedMessage);
+    }
+    if (presentationRefs.length > 0) {
+        sections.push([
+            "Presentation refs:",
+            ...presentationRefs.map((ref) => `- ${getPresentationRefChipLabel(ref)}`),
+        ].join("\n"));
+    }
+    if (attachments.length > 0) {
+        sections.push([
+            "Attachments:",
+            ...attachments.map((attachment) => {
+                const rawTitle = String(attachment.title || "").trim();
+                if (rawTitle) return `- ${rawTitle}`;
+                const parts = String(attachment.path || "").split("/");
+                return `- ${parts[parts.length - 1] || "file"}`;
+            }),
+        ].join("\n"));
+    }
+    return sections.join("\n\n").trim();
 }
 
 // Image preview component with loading state and error handling
@@ -253,9 +312,11 @@ export const MessageBubble = memo(function MessageBubble({
     const isUserMessage = ev.by === "user";
     const isOptimistic = !!(ev.data as Record<string, unknown> | undefined)?._optimistic;
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
+    const messageText = useMemo(() => formatEventLine(ev), [ev]);
 
     // Floating UI for agent-state tooltip
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
+    const [copiedMessageText, setCopiedMessageText] = useState(false);
 
     const canShowAgentState = useMemo(() => {
         if (isUserMessage) return false;
@@ -331,10 +392,22 @@ export const MessageBubble = memo(function MessageBubble({
             mime_type: String(a.mime_type || ""),
         }))
         .filter((a) => a.path.startsWith("state/blobs/"));
+    const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
+    const copyableMessageText = useMemo(
+        () =>
+            buildMessageCopyText({
+                quoteText,
+                messageText,
+                presentationRefs,
+                attachments: blobAttachments,
+            }),
+        [blobAttachments, messageText, presentationRefs, quoteText]
+    );
+    const messageTimestamp = formatMessageTimestamp(ev.ts);
+    const fullMessageTimestamp = formatFullTime(ev.ts);
 
     // Use event's group_id for blob URLs (attachments are stored in the event's original group)
     const blobGroupId = String(ev.group_id || "").trim() || groupId;
-    const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
 
     const readStatus = ev._read_status;
     const ackStatus = ev._ack_status;
@@ -434,6 +507,21 @@ export const MessageBubble = memo(function MessageBubble({
         ? "border-white/14 bg-white/8 text-blue-100 shadow-none hover:bg-white/12"
         : "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]";
 
+    useEffect(() => {
+        if (!copiedMessageText) return undefined;
+        const timer = window.setTimeout(() => {
+            setCopiedMessageText(false);
+        }, 1400);
+        return () => window.clearTimeout(timer);
+    }, [copiedMessageText]);
+
+    const handleCopyMessageText = useCallback(async () => {
+        const ok = await copyText(copyableMessageText);
+        if (ok) {
+            setCopiedMessageText(true);
+        }
+    }, [copyableMessageText]);
+
     return (
         <div
             className={classNames(
@@ -508,13 +596,13 @@ export const MessageBubble = memo(function MessageBubble({
                     >
                         {senderDisplayName}
                     </span>
-                    <span className={`text-[10px] flex-shrink-0 text-[var(--color-text-muted)]`}>
-                        {formatTime(ev.ts)}
+                    <span className={`text-[10px] flex-shrink-0 text-[var(--color-text-tertiary)]`}>
+                        <span title={fullMessageTimestamp}>{messageTimestamp}</span>
                     </span>
                     <span
                         className={classNames(
                             "text-[10px] min-w-0 truncate",
-                            "text-[var(--color-text-muted)]"
+                            "text-[var(--color-text-tertiary)]"
                         )}
                         title={`to ${toLabel}`}
                     >
@@ -529,21 +617,21 @@ export const MessageBubble = memo(function MessageBubble({
                             "text-[11px] font-medium flex-shrink-0",
                             isUserMessage
                                 ? isDark
-                                    ? "text-slate-400"
+                                    ? "text-[var(--color-text-secondary)]"
                                     : "text-gray-500"
                                 : senderAccent
                                     ? senderAccent.text
                                     : isDark
-                                        ? "text-slate-400"
+                                        ? "text-[var(--color-text-secondary)]"
                                         : "text-gray-500"
                         )}
                     >
                         {senderDisplayName}
                     </span>
-                    <span className={`text-[10px] flex-shrink-0 text-[var(--color-text-muted)]`}>
-                        {formatTime(ev.ts)}
+                    <span className={`text-[10px] flex-shrink-0 text-[var(--color-text-tertiary)]`}>
+                        <span title={fullMessageTimestamp}>{messageTimestamp}</span>
                     </span>
-                    <span className={classNames("text-[10px] min-w-0 truncate", "text-[var(--color-text-muted)]")} title={`to ${toLabel}`}>
+                    <span className={classNames("text-[10px] min-w-0 truncate", "text-[var(--color-text-tertiary)]")} title={`to ${toLabel}`}>
                         to {toLabel}
                     </span>
                 </div>
@@ -648,7 +736,7 @@ export const MessageBubble = memo(function MessageBubble({
 
                     {/* Text Content */}
                     <MarkdownRenderer
-                        content={formatEventLine(ev)}
+                        content={messageText}
                         isDark={isDark}
                         invertText={isUserMessage}
                         className="break-words [overflow-wrap:anywhere] max-w-full"
@@ -722,8 +810,8 @@ export const MessageBubble = memo(function MessageBubble({
                     className={classNames(
                         "flex items-center gap-3 mt-1 px-1 text-[10px] transition-opacity",
                         (obligationSummary || ackSummary || visibleReadStatusEntries.length > 0 || replyRequired) ? "justify-between" : "justify-end",
-                        "opacity-70 group-hover:opacity-100",
-                        "text-[var(--color-text-muted)]"
+                        "opacity-85 group-hover:opacity-100",
+                        "text-[var(--color-text-tertiary)]"
                     )}
                 >
                     {obligationSummary ? (
@@ -823,7 +911,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         </span>
                                     ))}
                                     {readPreviewOverflow > 0 && (
-                                        <span className={classNames("text-[10px]", "text-[var(--color-text-muted)]")}>
+                                        <span className={classNames("text-[10px]", "text-[var(--color-text-tertiary)]")}>
                                             +{readPreviewOverflow}
                                         </span>
                                     )}
@@ -861,7 +949,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         </span>
                                     ))}
                                     {readPreviewOverflow > 0 && (
-                                        <span className={classNames("text-[10px]", "text-[var(--color-text-muted)]")}>
+                                        <span className={classNames("text-[10px]", "text-[var(--color-text-tertiary)]")}>
                                             +{readPreviewOverflow}
                                         </span>
                                     )}
@@ -883,12 +971,25 @@ export const MessageBubble = memo(function MessageBubble({
 
                     {!readOnly && (
                       <div className="flex items-center gap-1.5 flex-wrap">
+                        {copyableMessageText ? (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                                )}
+                                onClick={() => void handleCopyMessageText()}
+                                title={copiedMessageText ? t("common:copied") : t("copyText")}
+                            >
+                                {copiedMessageText ? t("common:copied") : t("copyText")}
+                            </button>
+                        ) : null}
                         {ev.id && onCopyLink ? (
                             <button
                                 type="button"
                                 className={classNames(
                                     "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
-                                    "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
                                 )}
                                 onClick={() => onCopyLink(String(ev.id))}
                                 title={t('copyLink')}
@@ -901,7 +1002,7 @@ export const MessageBubble = memo(function MessageBubble({
                                 type="button"
                                 className={classNames(
                                     "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
-                                    "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
                                 )}
                                 onClick={() => onRelay(ev)}
                                 title={t('relayToGroup')}
@@ -913,7 +1014,7 @@ export const MessageBubble = memo(function MessageBubble({
                             type="button"
                             className={classNames(
                                 "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
-                                "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
                             )}
                             onClick={onReply}
                         >
@@ -978,7 +1079,7 @@ export const MessageBubble = memo(function MessageBubble({
                                     </div>
                                 ) : null}
                                 {stateChanged ? (
-                                    <div className={classNames("text-[11px]", "text-[var(--color-text-muted)]")}>
+                                    <div className={classNames("text-[11px]", "text-[var(--color-text-tertiary)]")}>
                                         {t("changedShort", { value: stateChanged })}
                                     </div>
                                 ) : null}

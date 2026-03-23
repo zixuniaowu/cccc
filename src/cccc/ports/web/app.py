@@ -96,7 +96,7 @@ def _web_mode() -> Literal["normal", "exhibit"]:
     return "normal"
 
 
-_PUBLIC_API_PATHS = frozenset({"/api/v1/health"})
+_PUBLIC_API_PATHS = frozenset({"/api/v1/health", "/api/v1/branding"})
 
 
 def _is_public_ui_path(request: Request) -> bool:
@@ -107,7 +107,7 @@ def _is_public_ui_path(request: Request) -> bool:
 def _is_public_path(request: Request) -> bool:
     """Routes that bypass token authentication (UI assets + health check)."""
     path = str(request.url.path or "")
-    return _is_public_ui_path(request) or path in _PUBLIC_API_PATHS
+    return _is_public_ui_path(request) or path in _PUBLIC_API_PATHS or path.startswith("/api/v1/branding/assets/")
 
 
 def _request_token_parts(request: Request) -> tuple[str, Literal["", "header", "cookie", "query"]]:

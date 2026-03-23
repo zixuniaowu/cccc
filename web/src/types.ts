@@ -570,6 +570,15 @@ export type WebAccessSession = {
   can_access_global_settings?: boolean;
 };
 
+export type WebBranding = {
+  product_name: string;
+  logo_icon_url?: string | null;
+  favicon_url?: string | null;
+  has_custom_logo_icon?: boolean;
+  has_custom_favicon?: boolean;
+  updated_at?: string | null;
+};
+
 export type GroupSpaceProviderState = {
   provider: "notebooklm" | string;
   enabled: boolean;

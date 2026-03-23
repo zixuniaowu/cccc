@@ -3,6 +3,7 @@
   "closeSidebar": "Close sidebar",
   "collapseSidebar": "Collapse sidebar",
   "expandSidebar": "Expand sidebar",
+  "resizeSidebar": "Resize sidebar",
   "selectGroup": "Select a group",
   "editGroup": "Edit group",
   "searchMessages": "Search messages",

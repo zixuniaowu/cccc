@@ -3,6 +3,7 @@
   "closeSidebar": "サイドバーを閉じる",
   "collapseSidebar": "サイドバーを折りたたむ",
   "expandSidebar": "サイドバーを展開",
+  "resizeSidebar": "サイドバー幅を調整",
   "selectGroup": "作業グループを選択",
   "editGroup": "グループを編集",
   "searchMessages": "メッセージを検索",

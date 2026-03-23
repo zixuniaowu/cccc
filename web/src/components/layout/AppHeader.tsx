@@ -66,7 +66,7 @@ export function AppHeader({
   const headerRailClass =
     "flex items-center gap-1 rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1 shadow-sm backdrop-blur-xl";
   const headerRailButtonClass =
-    "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-muted)] hover:bg-black/5 hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-muted)] dark:hover:bg-white/6";
+    "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]";
   const selectedStatus = selectedGroupId ? getGroupStatusUnified(selectedGroupRunning, groupDoc?.state) : null;
   const selectedStatusKey = selectedStatus?.key ?? null;
   const launchMode = getLaunchControlMode(selectedStatusKey);
@@ -109,7 +109,7 @@ export function AppHeader({
             "md:hidden -ml-1",
             headerIconButtonBaseClass,
             "glass-btn",
-            "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+            "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
           )}
           onClick={onOpenSidebar}
           aria-label={t('openSidebar')}
@@ -148,7 +148,7 @@ export function AppHeader({
           <button
             className={classNames(
               "hidden md:inline-flex items-center justify-center gap-1 text-xs px-2.5 py-1.5 rounded-xl transition-all glass-btn",
-              "text-[var(--color-text-secondary)]"
+              "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
             )}
             onClick={onOpenGroupEdit}
             title={t('editGroup')}
@@ -254,7 +254,7 @@ export function AppHeader({
                 "md:hidden",
                 headerIconButtonBaseClass,
                 "glass-btn",
-                "text-[var(--color-text-muted)]"
+                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
               )}
               onClick={onOpenMobileMenu}
               title={t('menu')}

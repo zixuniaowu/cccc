@@ -7,3 +7,4 @@ export { useInboxStore } from "./useInboxStore";
 export { useFormStore } from "./useFormStore";
 export { useObservabilityStore } from "./useObservabilityStore";
 export { useWebPetStore } from "./useWebPetStore";
+export { useBrandingStore } from "./useBrandingStore";

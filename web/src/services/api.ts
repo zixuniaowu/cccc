@@ -21,6 +21,7 @@ import type {
   IMPlatform,
   RemoteAccessState,
   WebAccessSession,
+  WebBranding,
   GroupSpaceStatus,
   GroupSpaceRemoteSpace,
   GroupSpaceSource,
@@ -2270,6 +2271,39 @@ export async function fetchWebAccessSession() {
     RECENT_BOOTSTRAP_READ_TTL_MS,
     () => apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session")
   );
+}
+
+export async function fetchWebBranding() {
+  return apiJson<{ branding: WebBranding }>("/api/v1/branding");
+}
+
+export async function updateWebBranding(args: {
+  productName?: string;
+  clearLogoIcon?: boolean;
+  clearFavicon?: boolean;
+}) {
+  return apiJson<{ branding: WebBranding }>("/api/v1/branding", {
+    method: "PUT",
+    body: JSON.stringify({
+      by: "user",
+      product_name: args.productName,
+      clear_logo_icon: Boolean(args.clearLogoIcon),
+      clear_favicon: Boolean(args.clearFavicon),
+    }),
+  });
+}
+
+export async function uploadWebBrandingAsset(assetKind: "logo_icon" | "favicon", file: File) {
+  const form = new FormData();
+  form.append("by", "user");
+  form.append("file", file);
+  return apiForm<{ branding: WebBranding }>(`/api/v1/branding/assets/${assetKind}`, form);
+}
+
+export async function clearWebBrandingAsset(assetKind: "logo_icon" | "favicon") {
+  return apiJson<{ branding: WebBranding }>(`/api/v1/branding/assets/${assetKind}?by=user`, {
+    method: "DELETE",
+  });
 }
 
 export async function logoutWebAccess() {

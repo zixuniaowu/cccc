@@ -15,6 +15,7 @@ import {
   BlueprintTab,
   CapabilitiesTab,
   ActorProfilesTab,
+  BrandingTab,
   WebAccessTab,
   DeveloperTab,
   SettingsScope,
@@ -763,6 +764,7 @@ export function SettingsModal({
     // Non-admin signed-in users see My Profiles; admin already has Actor Profiles covering all
     ...(currentBrowserSignedIn && !globalSettingsEnabled ? [{ id: "myProfiles" as const, label: t("tabs.myProfiles") }] : []),
     ...(globalSettingsEnabled ? [
+      { id: "branding" as const, label: t("tabs.branding") },
       { id: "webAccess" as const, label: t("tabs.webAccess") },
       { id: "developer" as const, label: t("tabs.developer") },
     ] : []),
@@ -1004,6 +1006,13 @@ export function SettingsModal({
                   isDark={isDark}
                   isActive={scope === "global" && activeTab === "myProfiles"}
                   scope="my"
+                />
+              )}
+
+              {activeTab === "branding" && (
+                <BrandingTab
+                  isDark={isDark}
+                  isActive={scope === "global" && activeTab === "branding"}
                 />
               )}
 

@@ -62,6 +62,7 @@ export default function App() {
   const isTransitioning = useUIStore((s) => s.isTransitioning);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  const sidebarWidth = useUIStore((s) => s.sidebarWidth);
   const activeTab = useUIStore((s) => s.activeTab);
   const chatSessions = useUIStore((s) => s.chatSessions);
   const isSmallScreen = useUIStore((s) => s.isSmallScreen);
@@ -71,6 +72,7 @@ export default function App() {
   const dismissNotice = useUIStore((s) => s.dismissNotice);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const toggleSidebarCollapsed = useUIStore((s) => s.toggleSidebarCollapsed);
+  const setSidebarWidth = useUIStore((s) => s.setSidebarWidth);
   const setActiveTab = useUIStore((s) => s.setActiveTab);
   const setShowScrollButton = useUIStore((s) => s.setShowScrollButton);
   const setChatUnreadCount = useUIStore((s) => s.setChatUnreadCount);
@@ -297,6 +299,7 @@ export default function App() {
         isTransitioning={isTransitioning}
         sidebarOpen={sidebarOpen}
         sidebarCollapsed={sidebarCollapsed}
+        sidebarWidth={sidebarWidth}
         isDark={isDark}
         isSmallScreen={isSmallScreen}
         webReadOnly={webReadOnly}
@@ -325,6 +328,7 @@ export default function App() {
         }
         onCloseSidebar={() => setSidebarOpen(false)}
         onToggleSidebar={toggleSidebarCollapsed}
+        onResizeSidebar={setSidebarWidth}
         onReorderGroups={reorderGroups}
         onOpenSidebar={() => setSidebarOpen(true)}
         onOpenGroupEdit={

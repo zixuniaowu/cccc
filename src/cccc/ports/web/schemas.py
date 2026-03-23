@@ -281,6 +281,13 @@ class RemoteAccessConfigureRequest(BaseModel):
     web_public_url: Optional[str] = None
 
 
+class BrandingUpdateRequest(BaseModel):
+    by: str = Field(default="user")
+    product_name: Optional[str] = None
+    clear_logo_icon: bool = False
+    clear_favicon: bool = False
+
+
 class GroupSpaceBindRequest(BaseModel):
     by: str = Field(default="user")
     provider: Optional[str] = Field(default="notebooklm")

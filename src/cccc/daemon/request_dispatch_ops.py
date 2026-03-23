@@ -46,6 +46,8 @@ class RequestDispatchDeps:
     get_observability: Callable[[], dict[str, Any]]
     update_observability_settings: Callable[..., bool]
     apply_observability_settings: Callable[[dict[str, Any]], bool]
+    get_web_branding: Callable[[], dict[str, Any]]
+    update_web_branding_settings: Callable[..., bool]
     developer_mode_enabled: Callable[[], bool]
     effective_runner_kind: Callable[[str], str]
     throttle_debug_summary: Callable[[], dict[str, Any]]
@@ -114,6 +116,8 @@ def dispatch_request(
         get_observability=deps.get_observability,
         update_observability_settings=deps.update_observability_settings,
         apply_observability_settings=deps.apply_observability_settings,
+        get_web_branding=deps.get_web_branding,
+        update_web_branding_settings=deps.update_web_branding_settings,
     )
     if daemon_core_resp is not None:
         return daemon_core_resp

@@ -363,6 +363,25 @@ export function TerminalIcon({ className, size = 18 }: IconProps) {
   );
 }
 
+export function BookmarkIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M7 4.75h10A1.25 1.25 0 0 1 18.25 6v13l-6.25-3.9-6.25 3.9V6A1.25 1.25 0 0 1 7 4.75Z" />
+      <path d="M9.25 8.25h5.5" opacity="0.35" />
+    </svg>
+  );
+}
+
 export function InboxIcon({ className, size = 18 }: IconProps) {
   return (
     <svg

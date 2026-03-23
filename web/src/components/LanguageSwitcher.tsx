@@ -108,7 +108,7 @@ export function LanguageSwitcher({ isDark: _isDark, showLabel = false, variant =
                   "w-full flex items-center gap-3 px-3 py-2 text-[13px] transition-colors relative",
                   isActive
                     ? "text-[var(--color-text-primary)]"
-                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-black/[.03] dark:hover:bg-white/5"
+                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-black/[.03] dark:hover:bg-[var(--glass-tab-bg-hover)]"
                 )}
               >
                 {isActive && (
@@ -153,7 +153,7 @@ export function LanguageSwitcher({ isDark: _isDark, showLabel = false, variant =
           isRow
             ? "text-[var(--color-text-primary)] hover:bg-black/5 dark:hover:bg-white/6"
             : isRail
-            ? "text-[var(--color-text-muted)] hover:bg-black/5 hover:text-[var(--color-text-primary)] dark:hover:bg-white/6"
+            ? "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
             : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
           className
         )}

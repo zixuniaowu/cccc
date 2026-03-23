@@ -371,6 +371,41 @@ Result:
 { observability: Record<string, unknown> }
 ```
 
+#### `branding_get`
+
+Args: none
+
+Result:
+```ts
+{
+  branding: {
+    product_name: string
+    logo_icon_asset_path?: string
+    favicon_asset_path?: string
+    updated_at?: string
+  }
+}
+```
+
+#### `branding_update`
+
+Args:
+```ts
+{ by?: "user"; patch: Record<string, unknown> }
+```
+
+Result:
+```ts
+{
+  branding: {
+    product_name: string
+    logo_icon_asset_path?: string
+    favicon_asset_path?: string
+    updated_at?: string
+  }
+}
+```
+
 #### `debug_snapshot`
 
 Developer-mode diagnostic snapshot (global + optional group context).

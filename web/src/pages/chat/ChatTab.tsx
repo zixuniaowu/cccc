@@ -160,7 +160,11 @@ export function ChatTab({
   const mobileSurface = useUIStore((state) =>
     selectedGroupId ? getChatSession(selectedGroupId, state.chatSessions).mobileSurface : "messages"
   );
+  const presentationDockOpen = useUIStore((state) =>
+    selectedGroupId ? getChatSession(selectedGroupId, state.chatSessions).presentationDockOpen : false
+  );
   const setChatMobileSurface = useUIStore((state) => state.setChatMobileSurface);
+  const setChatPresentationDockOpen = useUIStore((state) => state.setChatPresentationDockOpen);
   const presentationAttention = useModalStore((state) =>
     selectedGroupId ? (state.presentationAttention[selectedGroupId] || EMPTY_PRESENTATION_ATTENTION) : EMPTY_PRESENTATION_ATTENTION
   );
@@ -192,6 +196,11 @@ export function ChatTab({
     if (!selectedGroupId || !slotId || readOnly) return;
     setPresentationPin({ groupId: selectedGroupId, slotId });
   }, [readOnly, selectedGroupId, setPresentationPin]);
+
+  const setPresentationDockOpen = useCallback((next: boolean) => {
+    if (!selectedGroupId) return;
+    setChatPresentationDockOpen(selectedGroupId, next);
+  }, [selectedGroupId, setChatPresentationDockOpen]);
 
   const filterOptions: Array<["all" | "user" | "attention" | "task", string]> = [
     ["all", t('filterAll')],
@@ -492,10 +501,12 @@ export function ChatTab({
 
           {!isSmallScreen ? (
             <PresentationRail
-              mode="rail"
+              mode="dock"
               presentation={groupPresentation}
               isDark={isDark}
               readOnly={readOnly}
+              isOpen={presentationDockOpen}
+              onOpenChange={setPresentationDockOpen}
               attentionSlots={presentationAttention}
               onOpenSlot={openPresentationSlot}
               onPinSlot={pinPresentationSlot}

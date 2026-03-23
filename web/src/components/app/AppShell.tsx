@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { TabBar } from "../TabBar";
 import { AppHeader } from "../layout/AppHeader";
@@ -5,6 +6,7 @@ import { GroupSidebar } from "../layout/GroupSidebar";
 import { ActorTab } from "../../pages/ActorTab";
 import { ChatTab } from "../../pages/chat";
 import type { Actor, GroupContext, GroupDoc, GroupMeta } from "../../types";
+import { SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
 
 type AppShellProps = {
   orderedGroups: GroupMeta[];
@@ -23,6 +25,7 @@ type AppShellProps = {
   isTransitioning: boolean;
   sidebarOpen: boolean;
   sidebarCollapsed: boolean;
+  sidebarWidth: number;
   isDark: boolean;
   isSmallScreen: boolean;
   webReadOnly: boolean;
@@ -44,6 +47,7 @@ type AppShellProps = {
   onCreateGroup: (() => void) | undefined;
   onCloseSidebar: () => void;
   onToggleSidebar: () => void;
+  onResizeSidebar: (width: number) => void;
   onReorderGroups: (fromIndex: number, toIndex: number) => void;
   onOpenSidebar: () => void;
   onOpenGroupEdit: (() => void) | undefined;
@@ -88,6 +92,7 @@ export function AppShell({
   isTransitioning,
   sidebarOpen,
   sidebarCollapsed,
+  sidebarWidth,
   isDark,
   isSmallScreen,
   webReadOnly,
@@ -109,6 +114,7 @@ export function AppShell({
   onCreateGroup,
   onCloseSidebar,
   onToggleSidebar,
+  onResizeSidebar,
   onReorderGroups,
   onOpenSidebar,
   onOpenGroupEdit,
@@ -135,11 +141,14 @@ export function AppShell({
   onTouchStart,
   onTouchEnd,
 }: AppShellProps) {
+  const shellStyle = {
+    "--sidebar-width": `${sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth}px`,
+  } as CSSProperties;
+
   return (
     <div
-      className={`relative h-full transition-[grid-template-columns] duration-300 ease-out md:grid ${
-        sidebarCollapsed ? "md:grid-cols-[60px_1fr]" : "md:grid-cols-[280px_1fr]"
-      }`}
+      className="relative h-full transition-[grid-template-columns] duration-300 ease-out md:grid md:[grid-template-columns:var(--sidebar-width)_minmax(0,1fr)]"
+      style={shellStyle}
     >
       <GroupSidebar
         orderedGroups={orderedGroups}
@@ -147,6 +156,7 @@ export function AppShell({
         selectedGroupId={selectedGroupId}
         isOpen={sidebarOpen}
         isCollapsed={sidebarCollapsed}
+        sidebarWidth={sidebarWidth}
         isDark={isDark}
         readOnly={webReadOnly}
         onSelectGroup={onSelectGroup}
@@ -154,6 +164,7 @@ export function AppShell({
         onCreateGroup={onCreateGroup}
         onClose={onCloseSidebar}
         onToggleCollapse={onToggleSidebar}
+        onResizeWidth={onResizeSidebar}
         onReorder={onReorderGroups}
       />
 
