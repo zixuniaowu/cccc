@@ -6,6 +6,7 @@ import {
   getTaskDoneTransitionBlockers,
   getTaskWorkflowScaffold,
   recommendTaskWorkflowScaffold,
+  resolveTaskWorkflowScaffold,
 } from "./taskWorkflow";
 
 describe("taskWorkflow", () => {
@@ -39,6 +40,27 @@ describe("taskWorkflow", () => {
     expect(recommendTaskWorkflowScaffold({ parentId: "" })).toBe("root");
     expect(recommendTaskWorkflowScaffold({ parentId: "T001" })).toBe("lean");
     expect(recommendTaskWorkflowScaffold({ notes: "Baseline:\n- 120 ms" })).toBe("optimization");
+  });
+
+  it("resolves persisted release presets from their checklist shape", () => {
+    expect(resolveTaskWorkflowScaffold({
+      notes: [
+        "Goal:",
+        "- Ship v0.4.7",
+        "",
+        "Success Criteria:",
+        "- Release notes, version surface, and smoke all line up",
+        "",
+        "Required Evidence:",
+        "- Smoke verification and release note",
+      ].join("\n"),
+      checklist: [
+        "[x] Update the release note",
+        "[x] Check version and docs drift",
+        "[ ] Run smoke verification",
+        "[ ] Record the shipping verdict",
+      ].join("\n"),
+    })).toBe("release");
   });
 
   it("evaluates root-task contract coverage conservatively", () => {
@@ -100,6 +122,87 @@ describe("taskWorkflow", () => {
     expect(coverage.needsContract).toBe(false);
     expect(coverage.needsCloseout).toBe(true);
     expect(coverage.missingCloseout).toEqual(["Verification summary"]);
+  });
+
+  it("derives a compact release closeout signal from existing fields only", () => {
+    const inProgress = evaluateTaskWorkflow({
+      assignee: "foreman",
+      status: "active",
+      outcome: "",
+      notes: [
+        "Goal:",
+        "- Ship v0.4.7",
+        "",
+        "Success Criteria:",
+        "- Release notes, version surface, and smoke all line up",
+        "",
+        "Required Evidence:",
+        "- Smoke verification and release note",
+      ].join("\n"),
+      checklist: [
+        "[x] Update the release note",
+        "[ ] Check version and docs drift",
+        "[ ] Run smoke verification",
+        "[ ] Record the shipping verdict",
+      ].join("\n"),
+    });
+    expect(inProgress.isRelease).toBe(true);
+    expect(inProgress.releaseCloseoutState).toBe("in_progress");
+
+    const needsCloseout = evaluateTaskWorkflow({
+      assignee: "foreman",
+      status: "done",
+      outcome: "v0.4.7 shipped.",
+      notes: [
+        "Goal:",
+        "- Ship v0.4.7",
+        "",
+        "Success Criteria:",
+        "- Release notes, version surface, and smoke all line up",
+        "",
+        "Required Evidence:",
+        "- Smoke verification and release note",
+        "",
+        "Closeout Verdict:",
+        "- DONE",
+      ].join("\n"),
+      checklist: [
+        "[x] Update the release note",
+        "[x] Check version and docs drift",
+        "[x] Run smoke verification",
+        "[x] Record the shipping verdict",
+      ].join("\n"),
+    });
+    expect(needsCloseout.releaseCloseoutState).toBe("needs_closeout");
+
+    const ready = evaluateTaskWorkflow({
+      assignee: "foreman",
+      status: "done",
+      outcome: "v0.4.7 shipped.",
+      notes: [
+        "Goal:",
+        "- Ship v0.4.7",
+        "",
+        "Success Criteria:",
+        "- Release notes, version surface, and smoke all line up",
+        "",
+        "Required Evidence:",
+        "- Smoke verification and release note",
+        "",
+        "Closeout Verdict:",
+        "- DONE",
+        "",
+        "Verification Summary:",
+        "- Release note updated, version surface checked, smoke passed",
+      ].join("\n"),
+      checklist: [
+        "[x] Update the release note",
+        "[x] Check version and docs drift",
+        "[x] Run smoke verification",
+        "[x] Record the shipping verdict",
+      ].join("\n"),
+    });
+    expect(ready.releaseCloseoutState).toBe("ready");
   });
 
   it("treats optimization tasks as metric-sensitive work", () => {

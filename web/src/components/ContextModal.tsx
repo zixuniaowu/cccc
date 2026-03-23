@@ -25,7 +25,7 @@ import {
   getTaskDisplaySummary,
   getTaskDoneTransitionBlockers,
   getTaskWorkflowScaffold,
-  recommendTaskWorkflowScaffold,
+  resolveTaskWorkflowScaffold,
 } from "../utils/taskWorkflow";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { useModalA11y } from "../hooks/useModalA11y";
@@ -963,7 +963,7 @@ export function ContextModal({
     if (!taskDraft) {
       const nextDraft = taskToDraft(selectedTask);
       setTaskDraft(nextDraft);
-      setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
+      setTaskScaffoldId(resolveTaskWorkflowScaffold(nextDraft));
     }
   }, [selectedTaskId, selectedTask, taskDraft, taskEditorMode]);
 
@@ -998,6 +998,35 @@ export function ContextModal({
     "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
     "glass-card border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
   );
+  const releaseSignalLabel = (state: string | null) => {
+    if (state === "missing_setup") return tr("context.releaseMissingSetup", "Release: missing setup");
+    if (state === "needs_closeout") return tr("context.releaseNeedsCloseout", "Release: needs closeout");
+    if (state === "ready") return tr("context.releaseReady", "Release: ready");
+    return tr("context.releaseInProgress", "Release: in progress");
+  };
+  const releaseSignalTone = (state: string | null) => classNames(
+    "rounded-full px-2 py-0.5",
+    state === "ready"
+      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+      : state === "needs_closeout"
+        ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
+        : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+  );
+  const renderWorkflowBadges = (workflow: ReturnType<typeof evaluateTaskWorkflow>) => {
+    if (workflow.isRelease && workflow.releaseCloseoutState) {
+      return (
+        <span className={releaseSignalTone(workflow.releaseCloseoutState)}>
+          {releaseSignalLabel(workflow.releaseCloseoutState)}
+        </span>
+      );
+    }
+    return (
+      <>
+        {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Missing setup")}</span> : null}
+        {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}
+      </>
+    );
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -1026,7 +1055,7 @@ export function ContextModal({
     const nextDraft = options?.draft ?? taskToDraft(task);
     setSelectedTaskId(task.id);
     setTaskDraft(nextDraft);
-    setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
+    setTaskScaffoldId(resolveTaskWorkflowScaffold(nextDraft));
     setTaskEditorMode("edit");
     setSyncError(options?.error || "");
     setActiveView("coordination");
@@ -1107,6 +1136,7 @@ export function ContextModal({
       assignee: task.assignee,
       outcome: task.outcome,
       notes: task.notes,
+      checklist: task.checklist,
     });
     return (
       <div className={classNames(
@@ -1124,8 +1154,7 @@ export function ContextModal({
         <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
           {task.assignee ? <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.assignee}</span> : null}
           {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
-          {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs contract")}</span> : null}
-          {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}
+          {renderWorkflowBadges(workflow)}
         </div>
       </div>
     );
@@ -1142,6 +1171,7 @@ export function ContextModal({
       assignee: task.assignee,
       outcome: task.outcome,
       notes: task.notes,
+      checklist: task.checklist,
     });
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
       id: `task:${task.id}`,
@@ -1207,8 +1237,7 @@ export function ContextModal({
             {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
             {waiting && waiting !== "none" ? <span className={classNames("rounded-full px-2 py-0.5", "bg-violet-500/15 text-violet-600 dark:text-violet-400")}>{waitingLabel(waiting)}</span> : null}
             {handoff ? <span className={classNames("rounded-full px-2 py-0.5", "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400")}>{tr("context.handoffTo", "Handoff →")} {handoff}</span> : null}
-            {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs contract")}</span> : null}
-            {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}
+            {renderWorkflowBadges(workflow)}
           </div>
 
           <div className="mt-3 flex items-center gap-2 border-t pt-3" onClick={(event) => event.stopPropagation()}>
@@ -1268,7 +1297,7 @@ export function ContextModal({
     const nextDraft = taskToDraft(task);
     setSelectedTaskId(task.id);
     setTaskDraft(nextDraft);
-    setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
+    setTaskScaffoldId(resolveTaskWorkflowScaffold(nextDraft));
     setTaskEditorMode("edit");
     setSyncError("");
     setActiveView("coordination");
@@ -1508,7 +1537,7 @@ export function ContextModal({
     if (!selectedTask) return;
     const nextDraft = taskToDraft(selectedTask);
     setTaskDraft(nextDraft);
-    setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
+    setTaskScaffoldId(resolveTaskWorkflowScaffold(nextDraft));
     setSyncError("");
   };
 
@@ -1694,7 +1723,7 @@ export function ContextModal({
       const confirmed = window.confirm(
         tr(
           "context.taskScaffoldConfirm",
-          "Apply this scaffold and replace the current outcome, notes, and checklist?"
+          "Apply this preset and replace the current outcome, notes, and checklist?"
         )
       );
       if (!confirmed) return;
@@ -1720,26 +1749,48 @@ export function ContextModal({
         ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
         : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
     );
-    const workflowSummary = taskWorkflowCoverage.needsCloseout
-      ? tr(
-        "context.taskWorkflowNeedsCloseout",
-        "Closeout is still missing {{items}}.",
-        { items: taskWorkflowCoverage.missingCloseout.join(", ") }
-      )
-      : taskWorkflowCoverage.needsContract
+    const workflowSummary = taskWorkflowCoverage.isRelease
+      ? taskWorkflowCoverage.releaseCloseoutState === "missing_setup"
         ? tr(
-          "context.taskWorkflowNeedsContract",
-          "This task contract is still missing {{items}}.",
+          "context.taskWorkflowReleaseMissingSetup",
+          "This release preset is still missing setup: {{items}}.",
           { items: taskWorkflowCoverage.missingSetup.join(", ") }
         )
-        : taskWorkflowCoverage.isOptimization
+        : taskWorkflowCoverage.releaseCloseoutState === "needs_closeout"
           ? tr(
-            "context.taskWorkflowOptimizationReady",
-            "This optimization task has a usable baseline / metric contract."
+            "context.taskWorkflowReleaseNeedsCloseout",
+            "Release execution is done enough to close, but closeout is still missing {{items}}.",
+            { items: taskWorkflowCoverage.missingCloseout.join(", ") }
           )
-          : taskWorkflowCoverage.isRoot
-            ? tr("context.taskWorkflowRootReady", "This root task has a usable goal / evidence contract.")
-            : tr("context.taskWorkflowLeanReady", "Keep subtasks lean unless more workflow structure adds clarity.");
+          : taskWorkflowCoverage.releaseCloseoutState === "ready"
+            ? tr(
+              "context.taskWorkflowReleaseReady",
+              "This release preset is ready: checklist and closeout are both complete."
+            )
+            : tr(
+              "context.taskWorkflowReleaseInProgress",
+              "Finish the release checklist before closeout."
+            )
+      : taskWorkflowCoverage.needsCloseout
+        ? tr(
+          "context.taskWorkflowNeedsCloseout",
+          "Closeout is still missing {{items}}.",
+          { items: taskWorkflowCoverage.missingCloseout.join(", ") }
+        )
+        : taskWorkflowCoverage.needsContract
+          ? tr(
+            "context.taskWorkflowNeedsContract",
+            "This task setup is still missing {{items}}.",
+            { items: taskWorkflowCoverage.missingSetup.join(", ") }
+          )
+          : taskWorkflowCoverage.isOptimization
+            ? tr(
+              "context.taskWorkflowOptimizationReady",
+              "This optimization task has a usable baseline / metric contract."
+            )
+            : taskWorkflowCoverage.isRoot
+              ? tr("context.taskWorkflowRootReady", "This root task has a usable goal / evidence contract.")
+              : tr("context.taskWorkflowLeanReady", "Keep subtasks lean unless more workflow structure adds clarity.");
 
     return (
       <section className={classNames(surfaceClass, "p-4")}>
@@ -1766,25 +1817,28 @@ export function ContextModal({
           <div className={classNames("rounded-xl border px-3 py-3", "glass-panel")}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
-                <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.taskWorkflow", "Workflow scaffold")}</div>
+                <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.taskWorkflow", "Workflow preset")}</div>
                 <div className={classNames("mt-1 text-xs", mutedTextClass)}>{selectedTaskScaffold.description}</div>
+                <div className={classNames("mt-1 text-xs", subtleTextClass)}>{tr("context.taskWorkflowPresetHint", "Presets only seed notes and checklist. They do not change task lifecycle.")}</div>
               </div>
               <div className="grid gap-2 sm:w-[15rem]">
                 <select value={taskScaffoldId} onChange={(event) => setTaskScaffoldId(event.target.value as TaskWorkflowScaffoldId)} className={inputClass}>
-                  {[
-                    ["lean", tr("context.taskScaffoldLean", "Lean task")],
-                    ["root", tr("context.taskScaffoldRoot", "Root task")],
-                    ["planner", tr("context.taskScaffoldPlanner", "Planner")],
-                    ["reviewer", tr("context.taskScaffoldReviewer", "Reviewer")],
-                    ["debugger", tr("context.taskScaffoldDebugger", "Debugger")],
-                    ["release", tr("context.taskScaffoldRelease", "Release")],
-                    ["optimization", tr("context.taskScaffoldOptimization", "Optimization")],
-                  ].map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
+                  <optgroup label={tr("context.taskPresetFamilyLean", "Lean")}>
+                    <option value="lean">{tr("context.taskScaffoldLean", "Lean")}</option>
+                  </optgroup>
+                  <optgroup label={tr("context.taskPresetFamilyContract", "Contract-first")}>
+                    <option value="root">{tr("context.taskScaffoldRoot", "Root")}</option>
+                    <option value="planner">{tr("context.taskScaffoldPlanner", "Planner")}</option>
+                    <option value="reviewer">{tr("context.taskScaffoldReviewer", "Reviewer")}</option>
+                    <option value="debugger">{tr("context.taskScaffoldDebugger", "Debugger")}</option>
+                    <option value="release">{tr("context.taskScaffoldRelease", "Release")}</option>
+                  </optgroup>
+                  <optgroup label={tr("context.taskPresetFamilyOptimization", "Metric-first")}>
+                    <option value="optimization">{tr("context.taskScaffoldOptimization", "Optimization")}</option>
+                  </optgroup>
                 </select>
                 <button type="button" onClick={handleApplyTaskScaffold} disabled={syncBusy} className={buttonSecondaryClass}>
-                  {tr("context.applyScaffold", "Apply scaffold")}
+                  {tr("context.applyScaffold", "Apply preset")}
                 </button>
               </div>
             </div>
@@ -1799,6 +1853,11 @@ export function ContextModal({
                   <span className={workflowToneClass(taskWorkflowCoverage.hasSuccessCriteria)}>{tr("context.successCriteria", "Success criteria")}</span>
                   <span className={workflowToneClass(taskWorkflowCoverage.hasRequiredEvidence)}>{tr("context.requiredEvidence", "Required evidence")}</span>
                 </>
+              ) : null}
+              {taskWorkflowCoverage.isRelease && taskWorkflowCoverage.releaseCloseoutState ? (
+                <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", releaseSignalTone(taskWorkflowCoverage.releaseCloseoutState))}>
+                  {releaseSignalLabel(taskWorkflowCoverage.releaseCloseoutState)}
+                </span>
               ) : null}
               {taskWorkflowCoverage.isRoot ? (
                 <span className={workflowToneClass(taskWorkflowCoverage.hasOwner)}>{tr("context.owner", "Owner")}</span>
@@ -1824,9 +1883,15 @@ export function ContextModal({
 
             <div className={classNames(
               "mt-3 rounded-lg border px-3 py-2 text-xs",
-              taskWorkflowCoverage.needsContract || taskWorkflowCoverage.needsCloseout
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                : "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              taskWorkflowCoverage.isRelease
+                ? taskWorkflowCoverage.releaseCloseoutState === "ready"
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : taskWorkflowCoverage.releaseCloseoutState === "needs_closeout"
+                    ? "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                : taskWorkflowCoverage.needsContract || taskWorkflowCoverage.needsCloseout
+                  ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  : "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
             )}>
               {workflowSummary}
             </div>
