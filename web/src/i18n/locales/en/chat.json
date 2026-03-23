@@ -153,6 +153,7 @@
   "presentationSummaryLabel": "Summary",
   "presentationSummaryPlaceholder": "Optional summary shown in the slot preview",
   "presentationUrlRequired": "Enter a URL first.",
+  "presentationUrlInvalid": "This does not look like a valid URL. Try example.com or localhost:3000.",
   "presentationFileRequired": "Choose a file first.",
   "presentationPinSubmit": "Pin to slot",
   "presentationReplaceSubmit": "Save changes",

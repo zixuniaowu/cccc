@@ -153,6 +153,7 @@
   "presentationSummaryLabel": "摘要",
   "presentationSummaryPlaceholder": "可选，会显示在槽位预览里",
   "presentationUrlRequired": "请先输入 URL。",
+  "presentationUrlInvalid": "这看起来不像有效的 URL。可以试试 example.com 或 localhost:3000。",
   "presentationFileRequired": "请先选择文件。",
   "presentationPinSubmit": "固定到槽位",
   "presentationReplaceSubmit": "保存修改",

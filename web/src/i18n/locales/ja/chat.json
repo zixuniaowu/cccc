@@ -153,6 +153,7 @@
   "presentationSummaryLabel": "要約",
   "presentationSummaryPlaceholder": "任意。スロットのプレビューに表示されます",
   "presentationUrlRequired": "先に URL を入力してください。",
+  "presentationUrlInvalid": "有効な URL に見えません。example.com または localhost:3000 を試してください。",
   "presentationFileRequired": "先にファイルを選択してください。",
   "presentationPinSubmit": "このスロットに固定",
   "presentationReplaceSubmit": "変更を保存",

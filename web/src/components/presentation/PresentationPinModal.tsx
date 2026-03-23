@@ -4,6 +4,7 @@ import type { PresentationSlot, PresentationWorkspaceItem } from "../../types";
 import { fetchPresentationWorkspaceListing } from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { classNames } from "../../utils/classNames";
+import { isValidPresentationWebUrl, normalizePresentationUrlInput } from "../../utils/presentation";
 import { ModalFrame } from "../modals/ModalFrame";
 
 type PresentationPinModalProps = {
@@ -231,9 +232,18 @@ export function PresentationPinModal({
         setError(t("presentationUrlRequired", { defaultValue: "Enter a URL first." }));
         return;
       }
+      const normalizedUrl = normalizePresentationUrlInput(trimmedUrl);
+      if (!isValidPresentationWebUrl(normalizedUrl)) {
+        setError(
+          t("presentationUrlInvalid", {
+            defaultValue: "This does not look like a valid URL. Try example.com or localhost:3000.",
+          }),
+        );
+        return;
+      }
       await onSubmitUrl({
         slotId,
-        url: trimmedUrl,
+        url: normalizedUrl,
         title: String(title || "").trim(),
         summary: String(summary || "").trim(),
       });
