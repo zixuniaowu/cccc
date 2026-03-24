@@ -30,6 +30,7 @@ export function PresentationBrowserSurfacePanel({
     <ProjectedBrowserSurfacePanel
       isDark={isDark}
       refreshNonce={refreshNonce}
+      chromeMode="embedded"
       viewportClassName={viewportClassName}
       onFrameUpdate={onFrameUpdate}
       fallbackUrl={url}

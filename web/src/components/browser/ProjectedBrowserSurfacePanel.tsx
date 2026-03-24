@@ -17,6 +17,7 @@ export type ProjectedBrowserFrame = {
 type ProjectedBrowserSurfacePanelProps = {
   isDark: boolean;
   refreshNonce: number;
+  chromeMode?: "standalone" | "embedded";
   viewportClassName?: string;
   onFrameUpdate?: (frame: ProjectedBrowserFrame | null) => void;
   loadSession: () => Promise<ApiResponse<{ browser_surface: PresentationBrowserSurfaceState }>>;
@@ -121,6 +122,7 @@ function ProjectedBrowserExpandIcon({ expanded }: { expanded: boolean }) {
 export function ProjectedBrowserSurfacePanel({
   isDark,
   refreshNonce,
+  chromeMode = "standalone",
   viewportClassName,
   onFrameUpdate,
   loadSession,
@@ -564,18 +566,20 @@ export function ProjectedBrowserSurfacePanel({
                 : texts.starting}
         </span>
         <span className="min-w-0 flex-1 truncate">{sessionState.url || fallbackUrl || ""}</span>
-        <button
-          type="button"
-          onClick={() => setIsExpanded((value) => !value)}
-          className={classNames(
-            "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
-            isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
-          )}
-          aria-label={fullScreenLabel}
-          title={fullScreenLabel}
-        >
-          <ProjectedBrowserExpandIcon expanded={isExpanded} />
-        </button>
+        {chromeMode === "standalone" ? (
+          <button
+            type="button"
+            onClick={() => setIsExpanded((value) => !value)}
+            className={classNames(
+              "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+              isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+            )}
+            aria-label={fullScreenLabel}
+            title={fullScreenLabel}
+          >
+            <ProjectedBrowserExpandIcon expanded={isExpanded} />
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={handleBack}
