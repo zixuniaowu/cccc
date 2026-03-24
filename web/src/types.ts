@@ -616,12 +616,14 @@ export type GroupSpaceProviderAuthStatus = {
   provider: "notebooklm" | string;
   state: GroupSpaceProviderAuthState;
   phase?: string;
+  delivery?: "local_browser" | "projected_browser" | string;
   session_id?: string;
   started_at?: string;
   updated_at?: string;
   finished_at?: string;
   message?: string;
   error?: { code?: string; message?: string } | null;
+  projected_browser?: PresentationBrowserSurfaceState | null;
 };
 
 export type GroupSpaceLane = "work" | "memory" | string;

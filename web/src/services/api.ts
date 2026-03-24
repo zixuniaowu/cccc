@@ -2752,6 +2752,7 @@ export async function controlGroupSpaceProviderAuth(args: {
   action: "status" | "start" | "cancel" | "disconnect";
   timeoutSeconds?: number;
   forceReauth?: boolean;
+  projected?: boolean;
 }) {
   const provider = args.provider || "notebooklm";
   if (args.action === "status") {
@@ -2776,8 +2777,31 @@ export async function controlGroupSpaceProviderAuth(args: {
       action: args.action,
       timeout_seconds: Number(args.timeoutSeconds || 900),
       force_reauth: Boolean(args.forceReauth),
+      projected: Boolean(args.projected),
     }),
   });
+}
+
+export async function fetchGroupSpaceProviderAuthBrowserSession(
+  provider: string = "notebooklm",
+): Promise<ApiResponse<{ provider: string; browser_surface: PresentationBrowserSurfaceState }>> {
+  const resp = await controlGroupSpaceProviderAuth({ provider, action: "status" });
+  if (!resp.ok) {
+    return resp as ApiResponse<{ provider: string; browser_surface: PresentationBrowserSurfaceState }>;
+  }
+  return {
+    ok: true,
+    result: {
+      provider,
+      browser_surface: normalizePresentationBrowserSurfaceState(resp.result.auth?.projected_browser),
+    },
+  };
+}
+
+export function getGroupSpaceProviderAuthBrowserWebSocketUrl(provider: string = "notebooklm"): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const base = `${protocol}//${window.location.host}/api/v1/space/providers/${encodeURIComponent(provider)}/auth/browser_surface/ws`;
+  return withAuthToken(base);
 }
 
 export interface RegistryReconcileResult {

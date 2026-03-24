@@ -184,6 +184,8 @@ def handle_group_start(
 
     if started:
         try:
+            if str(group.doc.get("state") or "").strip() == "stopped":
+                group.doc["state"] = "active"
             group.doc["running"] = True
             group.save()
         except Exception:
@@ -249,6 +251,7 @@ def handle_group_stop(
     except Exception as e:
         return _error("group_stop_failed", str(e))
     try:
+        group.doc["state"] = "stopped"
         group.doc["running"] = False
         group.save()
     except Exception:

@@ -113,6 +113,7 @@ from .space.group_space_runtime import process_due_space_jobs
 from .space.group_space_sync import process_due_space_syncs
 from .space.group_space_store import get_space_provider_state
 from .group.presentation_browser_runtime import close_all_browser_surface_sessions
+from .space.notebooklm_auth_browser_runtime import close_all_notebooklm_auth_browser_sessions
 from .ops.template_ops import (
     group_create_from_template,
     group_template_export,
@@ -986,6 +987,10 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
     try:
         close_all_browser_surface_sessions()
+    except Exception:
+        pass
+    try:
+        close_all_notebooklm_auth_browser_sessions()
     except Exception:
         pass
 

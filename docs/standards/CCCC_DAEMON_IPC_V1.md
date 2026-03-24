@@ -3251,15 +3251,16 @@ Result:
 
 #### `group_space_provider_auth`
 
-Control provider auth flow (`status`/`start`/`cancel`) for backend-managed
+Control provider auth flow (`status`/`start`/`cancel`/`disconnect`) for backend-managed
 NotebookLM sign-in.
 
 Args:
 ```ts
 {
   provider?: "notebooklm"
-  action?: "status" | "start" | "cancel"
+  action?: "status" | "start" | "cancel" | "disconnect"
   timeout_seconds?: number
+  projected?: boolean // when true, expose sign-in through the projected browser surface instead of a daemon-host browser window
   by?: string // user-only
 }
 ```
@@ -3283,19 +3284,61 @@ Result:
     provider: "notebooklm"
     state: "idle" | "running" | "succeeded" | "failed" | "canceled"
     phase?: string
+    delivery?: "local_browser" | "projected_browser" | ""
     session_id?: string
     started_at?: string
     updated_at?: string
     finished_at?: string
     message?: string
     error?: { code: string; message: string } | Record<string, unknown>
+    projected_browser?: {
+      active: boolean
+      state: string
+      message?: string
+      error?: { code?: string; message?: string } | Record<string, unknown>
+      strategy?: string
+      url?: string
+      width?: number
+      height?: number
+      started_at?: string
+      updated_at?: string
+      last_frame_seq?: number
+      last_frame_at?: string
+      controller_attached?: boolean
+    }
   }
 }
 ```
 
 Notes:
-- `start` may open a browser on the daemon host for Google sign-in.
+- `start` may open a browser on the daemon host for Google sign-in when `projected` is false.
+- `start` SHOULD expose the sign-in flow through a projected browser surface when `projected=true`.
 - Provider write readiness remains gated by `auth_configured` and runtime mode.
+
+#### `space_provider_auth_browser_attach`
+
+Attach to the currently active projected provider-auth browser surface over a dedicated bidirectional NDJSON stream.
+
+Args:
+```ts
+{
+  provider: "notebooklm"
+  by?: string // user-only
+}
+```
+
+Handshake result:
+```ts
+{ provider: "notebooklm" }
+```
+
+Streaming mode:
+- After a successful handshake, the connection upgrades into the browser-surface stream described in §4.6.
+- The daemon emits `state` items when runtime/session status changes and `frame` items for captured browser frames.
+- The client MAY send browser-control commands (`navigate`, `back`, `refresh`, `click`, `scroll`, `key`, `text`, `resize`, `close`, `disconnect`).
+- At most one active controller MAY be attached at a time; a second attach attempt SHOULD fail with a busy-style error.
+- If no active projected auth browser exists, attach SHOULD fail with `browser_surface_not_found`.
+- If the underlying browser runtime is no longer active, attach SHOULD fail with `browser_surface_not_active`.
 
 ## 9. Appendix: Example Lines
 

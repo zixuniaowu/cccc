@@ -366,6 +366,7 @@ class GroupSpaceProviderAuthRequest(BaseModel):
     action: Literal["status", "start", "cancel", "disconnect"] = "status"
     timeout_seconds: int = 900
     force_reauth: bool = False
+    projected: bool = False
 
 
 class IMSetRequest(BaseModel):

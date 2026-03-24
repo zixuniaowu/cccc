@@ -2426,6 +2426,7 @@ def handle_group_space_provider_auth(args: Dict[str, Any]) -> DaemonResponse:
     action_raw = args.get("action")
     timeout_seconds = int(args.get("timeout_seconds") or 900)
     force_reauth = bool(args.get("force_reauth") is True)
+    projected = bool(args.get("projected") is True)
     if not _is_user_writer(by):
         return _error("space_permission_denied", "only user can run provider auth flow")
     try:
@@ -2437,6 +2438,7 @@ def handle_group_space_provider_auth(args: Dict[str, Any]) -> DaemonResponse:
             auth = start_notebooklm_auth_flow(
                 timeout_seconds=timeout_seconds,
                 force_reauth=force_reauth,
+                projected=projected,
             )
         elif action == "cancel":
             auth = cancel_notebooklm_auth_flow()
