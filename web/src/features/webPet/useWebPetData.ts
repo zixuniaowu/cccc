@@ -8,6 +8,7 @@ import type { PetPersonaPolicy } from "./petPersona";
 import type { PetPeerContext } from "./petPeerContext";
 import type { PanelData, PetReminder } from "./types";
 import { buildCompactMessageSummary } from "./messageSummary";
+import { getPetSnapshotHeadline } from "./petSnapshotText";
 
 export function shouldSurfaceReminder(
   reminder: PetReminder,
@@ -45,7 +46,26 @@ function localizeReminder(
       : reminder.agent;
 
   let summary = reminder.summary;
-  if (reminder.kind === "stalled_peer") {
+  if (reminder.kind === "actor_down") {
+    if (reminder.source.taskId) {
+      summary = tr(
+        "reminderSummary.actorDownTask",
+        "{{actor}} is stopped. Task {{taskId}} may be stuck; restart it.",
+        {
+          actor: agentLabel,
+          taskId: reminder.source.taskId,
+        },
+      );
+    } else {
+      summary = tr(
+        "reminderSummary.actorDownForeman",
+        "{{actor}} is stopped. Restart to restore coordination.",
+        {
+          actor: agentLabel,
+        },
+      );
+    }
+  } else if (reminder.kind === "stalled_peer") {
     summary = tr(
       "reminderSummary.stalledPeer",
       "{{actor}} has been idle for a while on {{taskId}}.",
@@ -55,7 +75,7 @@ function localizeReminder(
       },
     );
   } else if (policy.compactMessageEvents && (reminder.kind === "mention" || reminder.kind === "reply_required")) {
-    summary = buildCompactMessageSummary(reminder.kind, agentLabel);
+    summary = buildCompactMessageSummary(reminder.kind, agentLabel, tr);
   } else if (!summary.trim()) {
     if (reminder.kind === "mention") {
       summary = tr(
@@ -179,7 +199,7 @@ export function useWebPetData(input: {
       hint =
         localizedPanelData.actionItems[0]?.summary ||
         localizedPanelData.agents.find((agent) => agent.focus.trim())?.focus ||
-        petContext.snapshot.split("\n")[0]?.trim() ||
+        getPetSnapshotHeadline(petContext.snapshot, tr) ||
         localizedPanelData.teamName;
     }
 

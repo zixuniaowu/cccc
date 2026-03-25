@@ -1,10 +1,14 @@
 import unittest
+from pathlib import Path
 
 from cccc.ports.mcp.utils.help_markdown import (
+    build_help_markdown,
     _select_help_markdown,
     parse_help_markdown,
     update_actor_help_note,
 )
+
+_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "help_markdown_pet_roundtrip.md"
 
 
 class TestHelpMarkdownPet(unittest.TestCase):
@@ -79,6 +83,33 @@ Actor-only note.
         self.assertIn("Common guidance.", selected)
         self.assertIn("Actor-only note.", selected)
         self.assertIn("Pet-only persona.", selected)
+
+    def test_roundtrip_fixture_matches_expected_shape(self) -> None:
+        markdown = _FIXTURE.read_text(encoding="utf-8")
+
+        parsed = parse_help_markdown(markdown)
+        self.assertEqual(str(parsed.get("common") or ""), "Shared guidance.")
+        self.assertEqual(str(parsed.get("foreman") or ""), "Foreman note.")
+        self.assertEqual(str(parsed.get("peer") or ""), "Peer note.")
+        self.assertEqual(str(parsed.get("pet") or ""), "Pet note.")
+        actor_notes = parsed.get("actor_notes") if isinstance(parsed.get("actor_notes"), dict) else {}
+        self.assertEqual(str(actor_notes.get("peer-1") or ""), "Actor note.")
+        self.assertEqual(str(actor_notes.get("reviewer-1") or ""), "Reviewer note.")
+        self.assertEqual(
+            list(parsed.get("extra_tagged_blocks") or []),
+            ["## @role: observer\n\nObserver note."],
+        )
+
+        rebuilt = build_help_markdown(
+            common=str(parsed.get("common") or ""),
+            foreman=str(parsed.get("foreman") or ""),
+            peer=str(parsed.get("peer") or ""),
+            pet=str(parsed.get("pet") or ""),
+            actor_notes=actor_notes,
+            actor_order=["peer-1", "reviewer-1"],
+            extra_tagged_blocks=list(parsed.get("extra_tagged_blocks") or []),
+        )
+        self.assertEqual(rebuilt, markdown)
 
 
 if __name__ == "__main__":

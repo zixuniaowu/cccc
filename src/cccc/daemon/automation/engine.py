@@ -757,8 +757,8 @@ class AutomationManager:
                 continue
             # Check group state - gate automation by state
             state = get_group_state(group)
-            if state == "paused":
-                continue  # paused: all automation disabled
+            if state in ("paused", "stopped"):
+                continue  # paused/stopped: all automation disabled
             if state == "idle":
                 # idle: only run user-defined rules (Level 4);
                 # internal automation (Level 1-3) stays silent

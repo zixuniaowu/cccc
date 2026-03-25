@@ -35,4 +35,16 @@ describe("derivePetPersonaPolicy", () => {
     expect(policy.autoRestartActors).toBe(false);
     expect(policy.autoCompleteTasks).toBe(false);
   });
+
+  it("understands equivalent Japanese persona instructions", () => {
+    const policy = derivePetPersonaPolicy(`
+      低ノイズで簡潔に。
+      actorを自動再起動。
+      タスクを自動完了しない。
+    `);
+
+    expect(policy.compactMessageEvents).toBe(true);
+    expect(policy.autoRestartActors).toBe(true);
+    expect(policy.autoCompleteTasks).toBe(false);
+  });
 });

@@ -443,9 +443,13 @@ def _delete_group_dir(path: Path) -> None:
 
 
 def get_group_state(group: Group) -> str:
-    """Get the current group state (active/idle/paused)."""
+    """Get the current group state.
+
+    `stopped` is a durable lifecycle state written by `group_stop`. Unlike
+    `idle`/`paused`, callers should not assume runtimes still exist.
+    """
     state = str(group.doc.get("state") or "active").strip()
-    if state not in ("active", "idle", "paused"):
+    if state not in ("active", "idle", "paused", "stopped"):
         return "active"
     return state
 
@@ -457,6 +461,9 @@ def set_group_state(group: Group, *, state: str) -> Group:
     - active: Normal operation, all automation enabled
     - idle: Task completed; internal automation is muted while user-defined scheduled rules may still run
     - paused: User paused, all automation disabled
+
+    This helper intentionally does not accept `stopped`. Stopping a group has
+    runtime side effects and must go through the lifecycle stop path.
     
     State transitions:
     - active -> idle: Foreman judges task complete
@@ -466,7 +473,7 @@ def set_group_state(group: Group, *, state: str) -> Group:
     """
     s = state.strip().lower()
     if s not in ("active", "idle", "paused"):
-        raise ValueError(f"invalid state: {state} (must be active/idle/paused)")
+        raise ValueError(f"invalid state: {state} (must be active/idle/paused; use group_stop for stopped)")
     
     group.doc["state"] = s
     group.save()

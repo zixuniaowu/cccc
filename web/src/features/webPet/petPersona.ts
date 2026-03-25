@@ -31,6 +31,11 @@ export function derivePetPersonaPolicy(persona: string): PetPersonaPolicy {
     "低噪声",
     "简短",
     "只说状态",
+    "低ノイズ",
+    "簡潔",
+    "短く",
+    "要点だけ",
+    "状態だけ",
   ]);
 
   // Pet peer should inherit normal peer action surface by default.
@@ -44,6 +49,13 @@ export function derivePetPersonaPolicy(persona: string): PetPersonaPolicy {
     "允许自动重启",
     "自动重启 actor",
     "自动重启 actors",
+    "actor を自動再起動",
+    "actors を自動再起動",
+    "actorを自動再起動",
+    "actorsを自動再起動",
+    "自動で actor を再起動",
+    "自動で actorを再起動",
+    "自動再起動を許可",
   ]);
 
   const disableTaskAutoClose = includesAny(content, [
@@ -60,6 +72,15 @@ export function derivePetPersonaPolicy(persona: string): PetPersonaPolicy {
     "不要自动完成任务",
     "不要自动收口",
     "禁止自动收口",
+    "task を完了しない",
+    "taskを完了しない",
+    "task を閉じない",
+    "taskを閉じない",
+    "タスクを自動完了しない",
+    "タスクを自動で完了しない",
+    "タスクを自動クローズしない",
+    "タスクを自動で閉じない",
+    "自動収束しない",
   ]);
 
   return {

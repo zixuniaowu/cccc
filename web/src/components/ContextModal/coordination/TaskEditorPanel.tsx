@@ -4,11 +4,11 @@ import { formatFullTime, formatTime } from "../../../utils/time";
 import { classNames } from "../../../utils/classNames";
 import { type TaskWorkflowScaffoldId } from "../../../utils/taskWorkflow";
 import {
+  getWaitingOnOptions,
   statusTone,
   type ContextTranslator,
   type TaskDeleteInfo,
   type TaskDraft,
-  WAITING_ON_OPTIONS,
 } from "../model";
 import type { ContextModalUi } from "../ui";
 
@@ -112,6 +112,7 @@ export function TaskEditorPanel({
         : taskWorkflowCoverage.isRoot
           ? tr("context.taskWorkflowRootReady", "This root task has a usable goal / evidence contract.")
           : tr("context.taskWorkflowLeanReady", "Keep subtasks lean unless more workflow structure adds clarity.");
+  const waitingOnOptions = getWaitingOnOptions(tr);
 
   return (
     <section className={classNames(ui.surfaceClass, "p-4")}>
@@ -276,7 +277,7 @@ export function TaskEditorPanel({
               <label className="block text-sm">
                 <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", ui.mutedTextClass)}>{tr("context.waitingOn", "Waiting on")}</span>
                 <select value={taskDraft.waitingOn} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, waitingOn: event.target.value as TaskWaitingOn } : prev)} className={ui.inputClass}>
-                  {WAITING_ON_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  {waitingOnOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </label>
             </div>

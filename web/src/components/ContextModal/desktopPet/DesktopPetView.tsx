@@ -56,7 +56,9 @@ export function DesktopPetView({
         <div>
           <div className={classNames("flex items-center gap-2 text-lg font-semibold", "text-[var(--color-text-primary)]")}>
             {tr("context.desktopPetTitle", "Web Pet")}
-            <span className="rounded-md bg-cyan-500/15 px-2 py-0.5 text-xs font-semibold leading-none text-cyan-400">Beta</span>
+            <span className="rounded-md bg-cyan-500/15 px-2 py-0.5 text-xs font-semibold leading-none text-cyan-400">
+              {tr("context.betaBadge", "Beta")}
+            </span>
           </div>
           <div className={classNames("mt-1 text-sm", ui.subtleTextClass)}>
             {tr("context.desktopPetHint", "Show a floating web pet in the corner that reflects this team's status.")}

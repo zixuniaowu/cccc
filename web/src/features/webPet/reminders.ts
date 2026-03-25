@@ -78,6 +78,10 @@ function isLowSignalMessage(text: string): boolean {
     "okay",
     "收到",
     "了解",
+    "了解しました",
+    "承知しました",
+    "完了",
+    "完了しました",
   ].includes(normalized);
 }
 
@@ -125,6 +129,14 @@ function isWorkflowAdvancingSuggestion(text: string): boolean {
       "仅供同步",
       "for sync only",
       "no update",
+      "差分なし",
+      "追加なし",
+      "変更なし",
+      "共有のみ",
+      "同期のみ",
+      "参考まで",
+      "返信不要",
+      "対応不要",
     ].some((token) => normalized.includes(token))
   ) {
     return false;
@@ -156,6 +168,19 @@ function isWorkflowAdvancingSuggestion(text: string): boolean {
     "update",
     "check",
     "send",
+    "お願いします",
+    "確認してください",
+    "確認お願いします",
+    "確認",
+    "対応してください",
+    "対応",
+    "返信",
+    "返答",
+    "修正",
+    "送って",
+    "送信",
+    "進めて",
+    "進めてください",
   ].some((token) => normalized.includes(token));
 }
 
@@ -163,9 +188,12 @@ function stripSuggestionLead(text: string): string {
   let next = String(text || "").trim();
   if (!next) return "";
 
-  next = next.replace(/^有个增量更新[，,：:\s]*/u, "");
-  next = next.replace(/^有个补充说明[，,：:\s]*/u, "说明，");
-  next = next.replace(/^补充说明[，,：:\s]*/u, "说明，");
+  next = next.replace(/^有个增量更新[，,、：:\s]*/u, "");
+  next = next.replace(/^有个补充说明[，,、：:\s]*/u, "说明，");
+  next = next.replace(/^补充说明[，,、：:\s]*/u, "说明，");
+  next = next.replace(/^補足(?:です)?[，,、：:\s]*/u, "補足、");
+  next = next.replace(/^追加共享[，,、：:\s]*/u, "");
+  next = next.replace(/^追加共有[，,、：:\s]*/u, "");
   return trimTrailingSentencePunctuation(next);
 }
 
@@ -180,7 +208,11 @@ function buildSuggestionPreview(text: string): string {
 function shouldGenerateMentionSuggestion(text: string): boolean {
   const normalized = String(text || "").trim().toLowerCase();
   if (!normalized) return false;
-  if (normalized.includes("实现细节") || normalized.includes("implementation detail")) {
+  if (
+    normalized.includes("实现细节") ||
+    normalized.includes("implementation detail") ||
+    normalized.includes("実装詳細")
+  ) {
     return false;
   }
   return true;
@@ -218,16 +250,11 @@ function collectActorDownReminders(
     const shouldGuard = role === "foreman" || !!activeTaskId;
     if (!actorId || !enabled || actor.running || !shouldGuard) continue;
 
-    const summary =
-      role === "foreman"
-        ? `${title} 已停止，建议重启以恢复调度。`
-        : `${title} 已停止，当前任务 ${activeTaskId} 可能卡住，建议重启。`;
-
     reminders.push({
       id: `actor_down:${actorId}`,
       kind: "actor_down",
       priority: role === "foreman" ? ACTOR_DOWN_PRIORITY + 5 : ACTOR_DOWN_PRIORITY,
-      summary,
+      summary: "",
       agent: title,
       ephemeral: false,
       source: { actorId, taskId: activeTaskId || undefined },
@@ -269,7 +296,7 @@ export function createMentionReminder(
     id: `mention:${eventId}`,
     kind: "mention",
     priority: MENTION_PRIORITY,
-    summary: `${actor} 提到了你，需要你查看。`,
+    summary: "",
     suggestion: hasSuggestion ? suggestion : undefined,
     suggestionPreview: hasSuggestion ? buildSuggestionPreview(suggestion) : undefined,
     agent: actor,
@@ -325,7 +352,7 @@ function collectReplyRequiredReminders(
       id: `reply_required:${eventId}`,
       kind: "reply_required",
       priority: REPLY_REQUIRED_PRIORITY,
-      summary: `${actor} 在等你回复。`,
+      summary: "",
       suggestion: hasSuggestion ? suggestion : undefined,
       suggestionPreview: hasSuggestion ? buildSuggestionPreview(suggestion) : undefined,
       agent: actor,

@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { getReminderActionButtons } from "./reminderActions";
+import { formatPetSnapshot } from "./petSnapshotText";
 import type { PanelData, PetReminder, ReminderAction } from "./types";
 import type { PetPeerContext } from "./petPeerContext";
 
@@ -38,8 +39,16 @@ export function PetPanel({
   catSize = 80,
 }: PetPanelProps) {
   const { t } = useTranslation("webPet");
+  const tr = (
+    key: string,
+    fallback: string,
+    vars?: Record<string, unknown>,
+  ) => String(t(key, { defaultValue: fallback, ...(vars || {}) }));
   const counts = countAgentsByState(panelData);
   const actionableReminders = reminders.slice(0, 1);
+  const formattedSnapshot = petContext?.snapshot
+    ? formatPetSnapshot(petContext.snapshot, tr)
+    : "";
 
   // Panel opens horizontally beside the cat (not above).
   // "right" align = cat is on right side → panel opens to the LEFT of the cat.
@@ -148,13 +157,13 @@ export function PetPanel({
                 </div>
                 <span className="text-[10px] text-[var(--color-text-secondary)] opacity-70">
                   {petContext.source === "help"
-                    ? t("petPersonaSourceHelp", { defaultValue: "persona loaded" })
-                    : t("petPersonaSourceDefault", { defaultValue: "default seed" })}
+                    ? t("petPersonaSourceHelp", { defaultValue: "loaded from help" })
+                    : t("petPersonaSourceDefault", { defaultValue: "built-in default" })}
                 </span>
               </div>
-              {petContext.snapshot ? (
+              {formattedSnapshot ? (
                 <div className="mt-1 whitespace-pre-line text-xs leading-5 text-[var(--color-text-secondary)]">
-                  {petContext.snapshot}
+                  {formattedSnapshot}
                 </div>
               ) : null}
             </div>

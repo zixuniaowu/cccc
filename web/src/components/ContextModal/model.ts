@@ -54,12 +54,21 @@ export type ContextTranslator = (key: string, defaultValue: string, options?: Re
 export type TaskDeleteBlockReason = "" | "self_history" | "subtree_history";
 export type TaskDeleteInfo = { allowed: boolean; total: number; reason: TaskDeleteBlockReason };
 
-export const WAITING_ON_OPTIONS: Array<{ value: TaskWaitingOn; label: string }> = [
-  { value: "none", label: "None" },
-  { value: "user", label: "Waiting on user" },
-  { value: "actor", label: "Waiting on agent" },
-  { value: "external", label: "Waiting on external" },
-];
+export const WAITING_ON_VALUES: readonly TaskWaitingOn[] = [
+  "none",
+  "user",
+  "actor",
+  "external",
+] as const;
+
+export function getWaitingOnOptions(tr: ContextTranslator): Array<{ value: TaskWaitingOn; label: string }> {
+  return [
+    { value: "none", label: tr("context.none", "None") },
+    { value: "user", label: tr("context.waitingOnUser", "Waiting on user") },
+    { value: "actor", label: tr("context.waitingOnActor", "Waiting on agent") },
+    { value: "external", label: tr("context.waitingOnExternal", "Waiting on external") },
+  ];
+}
 
 export function resolvePetPersonaDraft(savedPetPersona: string): string {
   const saved = String(savedPetPersona || "").trim();
@@ -415,9 +424,9 @@ export function statusTone(status: string): string {
   return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30";
 }
 
-export function waitingLabel(value: string): string {
-  const match = WAITING_ON_OPTIONS.find((option) => option.value === value);
-  return match ? match.label : value || "None";
+export function waitingLabel(value: string, tr: ContextTranslator): string {
+  const match = getWaitingOnOptions(tr).find((option) => option.value === value);
+  return match ? match.label : value || tr("context.none", "None");
 }
 
 export function noteTimestamp(note: CoordinationNote): string {

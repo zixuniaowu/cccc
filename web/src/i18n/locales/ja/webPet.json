@@ -15,10 +15,16 @@
   "countWorking": "{{count}} 作業中",
   "countBusy": "{{count}} ビジー",
   "countNeedsYou": "{{count}} 対応が必要",
-  "petPeerLabel": "Pet Peer",
-  "petPersonaSourceHelp": "persona loaded",
-  "petPersonaSourceDefault": "default seed",
+  "petPeerLabel": "ペットピア",
+  "petPersonaSourceHelp": "ヘルプ読込済み",
+  "petPersonaSourceDefault": "内蔵既定",
   "noActionItems": "今すぐ対応が必要な項目はありません。",
+  "notice": {
+    "suggestionSent": "提案を送信しました",
+    "suggestionSendFailed": "提案の送信に失敗しました",
+    "restartRequested": "再起動を依頼しました",
+    "actorRestartFailed": "Actor の再起動に失敗しました"
+  },
   "kind": {
     "waiting_user": "ユーザー待ち",
     "reply_required": "要返信",
@@ -41,7 +47,17 @@
   "hintTaskWithAction": "{{done}}/{{total}} 完了、{{count}} 件対応待ち",
   "reminderSummary": {
     "mention": "{{actor}} があなたにメンションしました。",
+    "mentionCompact": "{{actor}} があなたを呼んでいます。",
     "replyRequired": "{{actor}} があなたの返信を待っています。",
-    "stalledPeer": "{{actor}} は {{taskId}} のまま長くアイドル状態です。"
+    "replyRequiredCompact": "{{actor}} が返信を待っています。",
+    "stalledPeer": "{{actor}} は {{taskId}} のまま長くアイドル状態です。",
+    "actorDownForeman": "{{actor}} は停止中です。調整を戻すには再起動してください。",
+    "actorDownTask": "{{actor}} は停止中です。{{taskId}} が詰まっている可能性があるので再起動してください。"
+  },
+  "snapshot": {
+    "group": "グループ: {{value}}",
+    "groupState": "グループ状態: {{value}}",
+    "tasks": "タスク: 合計={{total}}, 進行中={{active}}, 完了={{done}}, アーカイブ={{archived}}",
+    "agentSnapshot": "Agent スナップショット: {{value}}"
   }
 }

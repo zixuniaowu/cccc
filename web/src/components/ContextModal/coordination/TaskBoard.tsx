@@ -194,7 +194,7 @@ function TaskCard({
           )}
           {task.priority ? <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.priority}</span> : null}
           {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
-          {waiting && waiting !== "none" ? <span className={classNames("rounded-full px-2 py-0.5", "bg-violet-500/15 text-violet-600 dark:text-violet-400")}>{waitingLabel(waiting)}</span> : null}
+          {waiting && waiting !== "none" ? <span className={classNames("rounded-full px-2 py-0.5", "bg-violet-500/15 text-violet-600 dark:text-violet-400")}>{waitingLabel(waiting, tr)}</span> : null}
           {handoff ? <span className={classNames("rounded-full px-2 py-0.5", "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400")}>{tr("context.handoffTo", "Handoff →")} {handoff}</span> : null}
           {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs contract")}</span> : null}
           {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}

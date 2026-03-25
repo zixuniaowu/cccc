@@ -82,7 +82,7 @@ describe("projectPetReminders", () => {
       "group:g-demo:reply_required:evt-2",
       "group:g-demo:reply_required:evt-1",
     ]);
-    expect(reminders[0]?.summary).toBe("peer-reviewer 在等你回复。");
+    expect(reminders[0]?.summary).toBe("");
     expect(reminders[0]?.suggestion).toBe("请先处理 message:evt-2");
     expect(reminders[0]?.suggestionPreview).toBe("请先处理 message:evt-2");
   });
@@ -148,7 +148,7 @@ describe("projectPetReminders", () => {
     expect(reminders).toEqual([
       expect.objectContaining({
         kind: "actor_down",
-        summary: "Foreman 已停止，建议重启以恢复调度。",
+        summary: "",
         action: {
           type: "restart_actor",
           groupId: "g-demo",
@@ -175,7 +175,7 @@ describe("projectPetReminders", () => {
     expect(reminders).toEqual([
       expect.objectContaining({
         kind: "actor_down",
-        summary: "Peer Impl 1 已停止，当前任务 T301 可能卡住，建议重启。",
+        summary: "",
         action: {
           type: "restart_actor",
           groupId: "g-demo",
@@ -315,6 +315,44 @@ describe("projectPetReminders", () => {
             by: "claude-1",
             to: ["user"],
             text: "本轮 15 分钟对齐仍是 no-delta。recall 命中的稳定经验没有被新事实推翻。",
+          }),
+        ],
+      }),
+    );
+
+    expect(reminders).toEqual([]);
+  });
+
+  it("accepts Japanese actionable guidance and strips Japanese lead-in", () => {
+    const reminders = projectPetReminders(
+      makeInput({
+        events: [
+          makeChatEvent("evt-ja", {
+            by: "peer-reviewer",
+            to: ["user"],
+            text: "補足です、ユーザーへの返信内容を確認してください。",
+          }),
+        ],
+      }),
+    );
+
+    expect(reminders).toEqual([
+      expect.objectContaining({
+        kind: "mention",
+        suggestion: "補足、ユーザーへの返信内容を確認してください",
+        suggestionPreview: "補足、ユーザーへの返信内容を確認してください",
+      }),
+    ]);
+  });
+
+  it("drops Japanese sync-only chatter", () => {
+    const reminders = projectPetReminders(
+      makeInput({
+        events: [
+          makeChatEvent("evt-ja-sync", {
+            by: "peer-reviewer",
+            to: ["user"],
+            text: "差分なし、共有のみです。返信不要。",
           }),
         ],
       }),

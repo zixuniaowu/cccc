@@ -1,5 +1,12 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { buildHelpMarkdown, parseHelpMarkdown, updateActorHelpNote, updatePetHelpNote } from "./helpMarkdown";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const roundtripFixturePath = resolve(__dirname, "../../../tests/fixtures/help_markdown_pet_roundtrip.md");
 
 describe("helpMarkdown pet persona", () => {
   it("parses and rebuilds the pet block without dropping other sections", () => {
@@ -79,5 +86,32 @@ Old pet note.
 
     expect(parsed.pet).toBe("New pet note.");
     expect(parsed.actorNotes["peer-1"]).toBe("Actor note.");
+  });
+
+  it("matches the shared roundtrip fixture used by backend tests", () => {
+    const markdown = readFileSync(roundtripFixturePath, "utf8");
+    const parsed = parseHelpMarkdown(markdown);
+
+    expect(parsed.common).toBe("Shared guidance.");
+    expect(parsed.foreman).toBe("Foreman note.");
+    expect(parsed.peer).toBe("Peer note.");
+    expect(parsed.pet).toBe("Pet note.");
+    expect(parsed.actorNotes["peer-1"]).toBe("Actor note.");
+    expect(parsed.actorNotes["reviewer-1"]).toBe("Reviewer note.");
+    expect(parsed.extraTaggedBlocks).toEqual([
+      "## @role: observer\n\nObserver note.",
+    ]);
+
+    const rebuilt = buildHelpMarkdown({
+      common: parsed.common,
+      foreman: parsed.foreman,
+      peer: parsed.peer,
+      pet: parsed.pet,
+      actorNotes: parsed.actorNotes,
+      actorOrder: ["peer-1", "reviewer-1"],
+      extraTaggedBlocks: parsed.extraTaggedBlocks,
+    });
+
+    expect(rebuilt).toBe(markdown);
   });
 });

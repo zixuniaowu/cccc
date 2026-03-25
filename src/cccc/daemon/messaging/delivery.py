@@ -108,11 +108,12 @@ def should_deliver_message(group: Group, kind: str) -> bool:
         - active: All messages delivered
         - idle: chat.message + system.notify delivered (no auto state transition here)
         - paused: All messages blocked (inbox only)
+        - stopped: All messages blocked (no actor runtime delivery)
     """
     state = get_group_state(group)
     
-    if state == "paused":
-        # Paused: block all PTY delivery
+    if state in ("paused", "stopped"):
+        # Paused/stopped: block all PTY delivery
         return False
     
     if state == "idle":

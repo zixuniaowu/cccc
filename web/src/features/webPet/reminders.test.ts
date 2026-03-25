@@ -72,7 +72,7 @@ describe("projectPetReminders", () => {
     expect(projectPetReminders(input)).toEqual([
       expect.objectContaining({
         kind: "reply_required",
-        summary: "foreman-1 在等你回复。",
+        summary: "",
         suggestion: "请先回一下用户这条消息",
         action: {
           type: "send_suggestion",
@@ -108,7 +108,7 @@ describe("projectPetReminders", () => {
     expect(projectPetReminders(input)).toEqual([
       expect.objectContaining({
         kind: "mention",
-        summary: "peer-2 提到了你，需要你查看。",
+        summary: "",
         suggestion: "请先确认这个任务该怎么推进",
         action: {
           type: "send_suggestion",
@@ -201,5 +201,40 @@ describe("projectPetReminders", () => {
     };
 
     expect(projectPetReminders(input)).toEqual([]);
+  });
+
+  it("understands Japanese actionable mentions", () => {
+    const reminder = createMentionReminder("g-1", {
+      eventId: "evt-ja",
+      kind: "chat.message",
+      by: "peer-2",
+      text: "この内容を確認してください",
+      to: ["@user"],
+      replyRequired: false,
+      acked: false,
+      replied: false,
+    });
+
+    expect(reminder).toEqual(
+      expect.objectContaining({
+        kind: "mention",
+        suggestion: "この内容を確認してください",
+      }),
+    );
+  });
+
+  it("drops Japanese sync-only chatter", () => {
+    const reminder = createMentionReminder("g-1", {
+      eventId: "evt-ja-sync",
+      kind: "chat.message",
+      by: "peer-2",
+      text: "差分なし、共有のみです。返信不要。",
+      to: ["@user"],
+      replyRequired: false,
+      acked: false,
+      replied: false,
+    });
+
+    expect(reminder).toBeNull();
   });
 });

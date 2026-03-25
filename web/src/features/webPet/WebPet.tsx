@@ -21,6 +21,7 @@ import { usePetPeerContext } from "./petPeerContext";
 import { WEB_PET_BUBBLE_SIZE, WEB_PET_VIEWPORT_MARGIN } from "./constants";
 import type { ReminderAction } from "./types";
 import type { Actor, GroupContext, GroupDoc, GroupSettings, LedgerEvent } from "../../types";
+import i18n from "../../i18n";
 
 const lastKnownDesktopPetEnabledByGroup: Record<string, boolean> = {};
 const BACKGROUND_REFRESH_MS = 30_000;
@@ -33,6 +34,10 @@ type RemotePetGroupState = {
   groupSettings: GroupSettings | null;
   events: LedgerEvent[];
 };
+
+function tPet(key: string, fallback: string, vars?: Record<string, unknown>): string {
+  return String(i18n.t(`webPet:${key}`, { defaultValue: fallback, ...(vars || {}) }));
+}
 
 function handleReminderAction(action: ReminderAction) {
   switch (action.type) {
@@ -90,10 +95,13 @@ function handleReminderAction(action: ReminderAction) {
           return;
         }
         useUIStore.getState().showNotice({
-          message: "Suggestion sent",
+          message: tPet("notice.suggestionSent", "Suggestion sent"),
         });
       }).catch((error) => {
-        const message = error instanceof Error ? error.message : "suggestion send failed";
+        const message =
+          error instanceof Error
+            ? error.message
+            : tPet("notice.suggestionSendFailed", "Failed to send suggestion");
         useUIStore.getState().showError(message);
       });
       break;
@@ -107,10 +115,13 @@ function handleReminderAction(action: ReminderAction) {
         void useGroupStore.getState().refreshActors(action.groupId, { includeUnread: false });
         void useGroupStore.getState().refreshGroups();
         useUIStore.getState().showNotice({
-          message: "Restart requested",
+          message: tPet("notice.restartRequested", "Restart requested"),
         });
       }).catch((error) => {
-        const message = error instanceof Error ? error.message : "actor restart failed";
+        const message =
+          error instanceof Error
+            ? error.message
+            : tPet("notice.actorRestartFailed", "Failed to restart actor");
         useUIStore.getState().showError(message);
       });
       break;
