@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useGroupStore, useModalStore, useUIStore } from "../../stores";
+import { useGroupStore, useUIStore } from "../../stores";
 import { getWebPetPosition, useWebPetStore } from "../../stores/useWebPetStore";
 import {
-  contextSync,
   fetchActors,
   fetchContext,
   fetchGroup,
@@ -16,7 +15,6 @@ import { PetReminderBubble } from "./PetReminderBubble";
 import { PetPanel } from "./PetPanel";
 import { WebPetBubble } from "./WebPetBubble";
 import { useWebPetData } from "./useWebPetData";
-import { usePetPeerActions } from "./usePetPeerActions";
 import { usePetPeerContext } from "./petPeerContext";
 import { WEB_PET_BUBBLE_SIZE, WEB_PET_VIEWPORT_MARGIN } from "./constants";
 import type { ReminderAction } from "./types";
@@ -41,30 +39,6 @@ function tPet(key: string, fallback: string, vars?: Record<string, unknown>): st
 
 function handleReminderAction(action: ReminderAction) {
   switch (action.type) {
-    case "open_chat":
-      useUIStore.getState().setActiveTab("chat");
-      useGroupStore.getState().setSelectedGroupId(action.groupId);
-      void useGroupStore.getState().openChatWindow(action.groupId, action.eventId);
-      break;
-    case "open_task":
-      useGroupStore.getState().setSelectedGroupId(action.groupId);
-      useWebPetStore.getState().setPendingIntent({
-        kind: "task",
-        taskId: action.taskId,
-      });
-      useModalStore.getState().openModal("context");
-      break;
-    case "open_panel":
-      useGroupStore.getState().setSelectedGroupId(action.groupId);
-      if (useWebPetStore.getState().panelOpenGroupId !== action.groupId) {
-        useWebPetStore.getState().togglePanel(action.groupId);
-      }
-      break;
-    case "complete_task":
-      void contextSync(action.groupId, [
-        { op: "task.move", task_id: action.taskId, status: "done" },
-      ]);
-      break;
     case "send_suggestion": {
       const text = String(action.text || "").trim();
       if (!text) return;
@@ -251,15 +225,6 @@ export function WebPet({
     }
     return Boolean(lastKnownDesktopPetEnabledByGroup[gid]);
   })();
-
-  usePetPeerActions({
-    enabled: desktopPetEnabled,
-    groupId,
-    groupState,
-    actors,
-    groupContext,
-    policy: petContext.policy,
-  });
 
   const closePanel = useCallback(() => {
     if (panelOpen) togglePanel(groupId);

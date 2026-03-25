@@ -46,17 +46,15 @@ function hasActivity(agent: AgentState): boolean {
 export function aggregateWebPetState(input: AggregateInput): AggregateOutput {
   const {
     groupContext,
-    events,
     sseStatus,
     groupState = "",
     teamName = "Team",
-    groupId = "",
   } = input;
+  void input.events;
+  void input.groupId;
 
   const context = groupContext ?? {};
   const agentStates: AgentState[] = context.agent_states ?? [];
-
-  const actionItems: PanelData["actionItems"] = [];
 
   // When group is inactive, treat all agents as idle
   const groupInactive = groupState === "paused" || groupState === "idle" || groupState === "stopped";
@@ -115,7 +113,6 @@ export function aggregateWebPetState(input: AggregateInput): AggregateOutput {
     panelData: {
       teamName,
       agents,
-      actionItems,
       connection: {
         connected,
         message: connectionMessage,

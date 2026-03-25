@@ -6,8 +6,6 @@ import type { PetPersonaPolicy } from "./petPersona";
 function makePolicy(overrides: Partial<PetPersonaPolicy> = {}): PetPersonaPolicy {
   return {
     compactMessageEvents: true,
-    autoRestartActors: true,
-    autoCompleteTasks: true,
     ...overrides,
   };
 }
@@ -22,19 +20,17 @@ function makeReminder(overrides: Partial<PetReminder> = {}): PetReminder {
     source: { eventId: "evt-1" },
     fingerprint: "group:g-1:mention:evt-1",
     action: {
-      type: "open_chat",
+      type: "send_suggestion",
       groupId: "g-1",
-      eventId: "evt-1",
+      text: "我来处理这条。",
+      to: ["peer"],
+      replyTo: "evt-1",
     },
     ...overrides,
   };
 }
 
 describe("shouldSurfaceReminder", () => {
-  it("hides generic open_chat mention reminders for low-noise persona", () => {
-    expect(shouldSurfaceReminder(makeReminder(), makePolicy())).toBe(false);
-  });
-
   it("keeps actionable send_suggestion reminders for low-noise persona", () => {
     expect(
       shouldSurfaceReminder(
@@ -69,28 +65,17 @@ describe("shouldSurfaceReminder", () => {
     ).toBe(true);
   });
 
-  it("hides non-suggestion reminders even for low-noise persona", () => {
+  it("hides malformed send_suggestion reminders", () => {
     expect(
       shouldSurfaceReminder(
         makeReminder({
-          id: "waiting_user:T1",
-          kind: "waiting_user",
           action: {
-            type: "open_task",
+            type: "send_suggestion",
             groupId: "g-1",
-            taskId: "T1",
+            text: "",
           },
         }),
         makePolicy(),
-      ),
-    ).toBe(false);
-  });
-
-  it("still hides generic open_chat reminders when persona is not low-noise", () => {
-    expect(
-      shouldSurfaceReminder(
-        makeReminder(),
-        makePolicy({ compactMessageEvents: false }),
       ),
     ).toBe(false);
   });

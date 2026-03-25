@@ -2,19 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createMentionReminder, projectPetReminders, type ProjectPetRemindersInput } from "./reminders";
 
 describe("projectPetReminders", () => {
-  it("does not emit stalled_peer reminders", () => {
+  it("does not emit idle-only peer reminders", () => {
     const input: ProjectPetRemindersInput = {
       groupId: "g-1",
-      waitingUser: [],
-      tasks: [
-        {
-          taskId: "T288",
-          title: "Follow up the blocked task",
-          assignee: "peer-1",
-          waitingOn: "",
-          status: "active",
-        },
-      ],
       actors: [
         {
           actorId: "peer-1",
@@ -32,16 +22,6 @@ describe("projectPetReminders", () => {
   it("does not emit waiting_user reminders", () => {
     const input: ProjectPetRemindersInput = {
       groupId: "g-1",
-      waitingUser: [],
-      tasks: [
-        {
-          taskId: "T100",
-          title: "Need user input",
-          assignee: "peer-1",
-          waitingOn: "user",
-          status: "active",
-        },
-      ],
       actors: [],
       events: [],
     };
@@ -52,8 +32,6 @@ describe("projectPetReminders", () => {
   it("emits reply_required reminders from chat messages", () => {
     const input: ProjectPetRemindersInput = {
       groupId: "g-1",
-      waitingUser: [],
-      tasks: [],
       actors: [],
       events: [
         {
@@ -88,8 +66,6 @@ describe("projectPetReminders", () => {
   it("emits mention reminders from chat messages", () => {
     const input: ProjectPetRemindersInput = {
       groupId: "g-1",
-      waitingUser: [],
-      tasks: [],
       actors: [],
       events: [
         {
@@ -160,8 +136,6 @@ describe("projectPetReminders", () => {
   it("ignores low-signal status messages for reminders", () => {
     const input: ProjectPetRemindersInput = {
       groupId: "g-1",
-      waitingUser: [],
-      tasks: [],
       actors: [],
       events: [
         {
@@ -183,8 +157,6 @@ describe("projectPetReminders", () => {
   it("drops internal control reply-required messages", () => {
     const input: ProjectPetRemindersInput = {
       groupId: "g-1",
-      waitingUser: [],
-      tasks: [],
       actors: [],
       events: [
         {

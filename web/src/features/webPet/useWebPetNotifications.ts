@@ -4,8 +4,6 @@ import {
   projectPetReminders,
   type ReminderActorInput,
   type ReminderEventInput,
-  type ReminderTaskInput,
-  type ReminderWaitingUserInput,
   type PetReminder,
 } from "./reminders";
 import {
@@ -52,55 +50,6 @@ function mapReminderEvent(event: LedgerEvent | null | undefined): ReminderEventI
     acked: !!userStatus?.acked,
     replied: !!userStatus?.replied,
   };
-}
-
-function mapReminderTasks(groupContext: GroupContext | null): ReminderTaskInput[] {
-  const tasks: ReminderTaskInput[] = [];
-
-  for (const task of groupContext?.coordination?.tasks ?? []) {
-    const taskId = String(task.id || "").trim();
-    if (!taskId) continue;
-
-    tasks.push({
-      taskId,
-      title: String(task.title || "").trim(),
-      assignee: String(task.assignee || "").trim() || undefined,
-      waitingOn: String(task.waiting_on || "").trim(),
-      status: String(task.status || "").trim(),
-    });
-  }
-
-  return tasks;
-}
-
-function mapWaitingUser(groupContext: GroupContext | null): ReminderWaitingUserInput[] {
-  const waitingUser = groupContext?.attention?.waiting_user;
-  if (!Array.isArray(waitingUser)) return [];
-
-  const entries: ReminderWaitingUserInput[] = [];
-
-  for (const entry of waitingUser) {
-    if (typeof entry === "string") {
-      const label = entry.trim();
-      if (!label) continue;
-      entries.push({
-        label,
-      });
-      continue;
-    }
-
-    const taskId = String(entry.id || "").trim() || undefined;
-    const label = String(entry.title || taskId || "").trim();
-    if (!label) continue;
-
-    entries.push({
-      taskId,
-      label,
-      agent: String(entry.assignee || "").trim() || undefined,
-    });
-  }
-
-  return entries;
 }
 
 function mapReminderActors(
@@ -176,8 +125,6 @@ export function useWebPetNotifications(input: {
   const reminderInput = useMemo(
     () => ({
       groupId,
-      waitingUser: mapWaitingUser(groupContext),
-      tasks: mapReminderTasks(groupContext),
       actors: groupState === "active" ? mapReminderActors(actors, groupContext) : [],
       events: events
         .map((event) => mapReminderEvent(event))

@@ -108,13 +108,6 @@ function localizePanelData(
     teamName:
       panelData.teamName.trim() ||
       tr("teamFallback", "Team"),
-    actionItems: panelData.actionItems.map((item) => ({
-      ...item,
-      agent:
-        item.agent === "system"
-          ? tr("systemAgent", "System")
-          : item.agent,
-    })),
     connection: {
       ...panelData.connection,
       message: localizeConnectionMessage(sseStatus, tr),
@@ -183,21 +176,13 @@ export function useWebPetData(input: {
       localizedPanelData.taskProgress.total > 0
     ) {
       const { done, total } = localizedPanelData.taskProgress;
-      const needsYouCount = localizedPanelData.actionItems.length;
-      hint = needsYouCount > 0
-        ? tr(
-            "hintTaskWithAction",
-            "{{done}}/{{total}} done, {{count}} need you",
-            { done, total, count: needsYouCount },
-          )
-        : tr(
-            "hintTaskProgress",
-            "{{done}}/{{total}} tasks done",
-            { done, total },
-          );
+      hint = tr(
+        "hintTaskProgress",
+        "{{done}}/{{total}} tasks done",
+        { done, total },
+      );
     } else {
       hint =
-        localizedPanelData.actionItems[0]?.summary ||
         localizedPanelData.agents.find((agent) => agent.focus.trim())?.focus ||
         getPetSnapshotHeadline(petContext.snapshot, tr) ||
         localizedPanelData.teamName;

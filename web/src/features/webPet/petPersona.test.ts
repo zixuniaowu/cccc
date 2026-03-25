@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { derivePetPersonaPolicy } from "./petPersona";
 
 describe("derivePetPersonaPolicy", () => {
-  it("defaults to manual actor restart and task auto-close", () => {
+  it("defaults to low-noise display policy only", () => {
     const policy = derivePetPersonaPolicy("");
 
-    expect(policy.autoRestartActors).toBe(false);
-    expect(policy.autoCompleteTasks).toBe(true);
+    expect(policy).toEqual({
+      compactMessageEvents: true,
+    });
   });
 
   it("keeps low-noise display flags from persona text", () => {
@@ -15,25 +16,15 @@ describe("derivePetPersonaPolicy", () => {
     ).toBe(true);
   });
 
-  it("detects actor recovery and task auto-close policies from persona text", () => {
+  it("ignores auto-action wording in persona text", () => {
     const policy = derivePetPersonaPolicy(`
       允许自动重启 actor。
       允许自动收口 task。
     `);
 
-    expect(policy.autoRestartActors).toBe(true);
-    expect(policy.autoCompleteTasks).toBe(true);
-  });
-
-  it("allows persona text to explicitly disable automatic actions", () => {
-    const policy = derivePetPersonaPolicy(`
-      保持低噪声。
-      不要自动重启。
-      不要自动收口。
-    `);
-
-    expect(policy.autoRestartActors).toBe(false);
-    expect(policy.autoCompleteTasks).toBe(false);
+    expect(policy).toEqual({
+      compactMessageEvents: false,
+    });
   });
 
   it("understands equivalent Japanese persona instructions", () => {

@@ -1,7 +1,7 @@
 import type { PetReminder, ReminderAction } from "./types";
 
 export interface ReminderActionButton {
-  labelKey: "send" | "view" | "restart";
+  labelKey: "send" | "restart";
   fallback: string;
   action: ReminderAction;
 }
@@ -29,11 +29,5 @@ export function getReminderActionButtons(
     ];
   }
 
-  return [
-    {
-      labelKey: "view",
-      fallback: "View",
-      action: reminder.action,
-    },
-  ];
+  return [];
 }

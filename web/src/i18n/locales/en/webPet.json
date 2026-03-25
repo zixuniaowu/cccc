@@ -14,7 +14,6 @@
   },
   "countWorking": "{{count}} working",
   "countBusy": "{{count}} busy",
-  "countNeedsYou": "{{count}} needs you",
   "petPeerLabel": "Pet Peer",
   "petPersonaSourceHelp": "loaded from help",
   "petPersonaSourceDefault": "built-in default",
@@ -26,25 +25,19 @@
     "actorRestartFailed": "Failed to restart actor"
   },
   "kind": {
-    "waiting_user": "waiting user",
     "reply_required": "reply required",
-    "stalled_peer": "stalled peer",
     "actor_down": "actor down",
     "mention": "mention"
   },
   "action": {
     "send": "Send",
-    "complete": "Done",
-    "view": "View",
     "restart": "Restart",
-    "reply": "Reply",
     "dismiss": "Dismiss"
   },
   "suggestionLabel": "Suggestion",
   "taskProgress": "{{done}}/{{total}} done",
   "taskActive": "{{count}} active",
   "hintTaskProgress": "{{done}}/{{total}} tasks done",
-  "hintTaskWithAction": "{{done}}/{{total}} done, {{count}} need you",
   "reminderSummary": {
     "mention": "{{actor}} mentioned you.",
     "mentionCompact": "{{actor}} mentioned you.",

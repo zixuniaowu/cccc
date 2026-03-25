@@ -26,25 +26,19 @@
     "actorRestartFailed": "重启 actor 失败"
   },
   "kind": {
-    "waiting_user": "等待用户",
     "reply_required": "等待回复",
-    "stalled_peer": "协作停滞",
     "actor_down": "实例停止",
     "mention": "提及"
   },
   "action": {
     "send": "发送",
-    "complete": "完成",
-    "view": "查看",
     "restart": "重启",
-    "reply": "回复",
     "dismiss": "忽略"
   },
   "suggestionLabel": "建议",
   "taskProgress": "{{done}}/{{total}} 已完成",
   "taskActive": "{{count}} 进行中",
   "hintTaskProgress": "{{done}}/{{total}} 任务已完成",
-  "hintTaskWithAction": "{{done}}/{{total}} 已完成，{{count}} 个等你处理",
   "reminderSummary": {
     "mention": "{{actor}} 提到了你。",
     "mentionCompact": "{{actor}} 提到了你。",

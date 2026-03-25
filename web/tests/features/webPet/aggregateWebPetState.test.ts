@@ -26,7 +26,6 @@ describe("aggregateWebPetState", () => {
   it("returns napping when no activity", () => {
     const result = aggregateWebPetState(makeInput());
     expect(result.catState).toBe("napping");
-    expect(result.panelData.actionItems).toHaveLength(0);
   });
 
   it("returns working when single agent is active", () => {
@@ -67,7 +66,6 @@ describe("aggregateWebPetState", () => {
     };
     const result = aggregateWebPetState(makeInput({ groupContext: context }));
     expect(result.catState).toBe("napping");
-    expect(result.panelData.actionItems).toHaveLength(0);
   });
 
   it("does not promote reply_required events into pet state", () => {
@@ -89,7 +87,6 @@ describe("aggregateWebPetState", () => {
     ];
     const result = aggregateWebPetState(makeInput({ events }));
     expect(result.catState).toBe("napping");
-    expect(result.panelData.actionItems).toHaveLength(0);
   });
 
   it("returns napping when group is paused (overrides everything)", () => {
@@ -128,7 +125,6 @@ describe("aggregateWebPetState", () => {
     ];
     const result = aggregateWebPetState(makeInput({ events }));
     expect(result.catState).toBe("napping");
-    expect(result.panelData.actionItems).toHaveLength(0);
   });
 
   it("focus-only agents are not considered active", () => {
@@ -165,7 +161,7 @@ describe("aggregateWebPetState", () => {
       agent_states: [],
     };
     const result = aggregateWebPetState(makeInput({ groupContext: context }));
-    expect(result.panelData.actionItems).toHaveLength(0);
+    expect(result.panelData.agents).toHaveLength(0);
   });
 
   it("does not populate waiting_user actions in the panel", () => {
@@ -176,10 +172,10 @@ describe("aggregateWebPetState", () => {
       agent_states: [],
     };
     const result = aggregateWebPetState(makeInput({ groupContext: context, groupId: "g_abc" }));
-    expect(result.panelData.actionItems).toHaveLength(0);
+    expect(result.panelData.agents).toHaveLength(0);
   });
 
-  it("keeps actionItems empty even when reply_required events exist", () => {
+  it("ignores reply_required events for panel content", () => {
     const events: LedgerEvent[] = [
       {
         id: "evt1",
@@ -192,7 +188,7 @@ describe("aggregateWebPetState", () => {
       },
     ];
     const result = aggregateWebPetState(makeInput({ events, groupId: "g_xyz" }));
-    expect(result.panelData.actionItems).toEqual([]);
+    expect(result.panelData.agents).toHaveLength(0);
   });
 
   it("populates taskProgress from tasks_summary excluding archived", () => {

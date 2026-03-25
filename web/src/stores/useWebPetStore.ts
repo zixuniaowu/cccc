@@ -9,17 +9,11 @@ type WebPetPosition = {
   y: number;
 };
 
-export type PetIntent =
-  | { kind: "task"; taskId: string }
-  | null;
-
 interface WebPetState {
   panelOpenGroupId: string | null;
   positions: Record<string, WebPetPosition>;
-  pendingIntent: PetIntent;
   togglePanel: (groupId: string) => void;
   setPosition: (groupId: string, position: WebPetPosition) => void;
-  setPendingIntent: (intent: PetIntent) => void;
 }
 
 const POSITION_STORAGE_KEY = "cccc-web-pet-positions";
@@ -113,7 +107,6 @@ function persistPositions(positions: Record<string, WebPetPosition>): void {
 export const useWebPetStore = create<WebPetState>((set) => ({
   panelOpenGroupId: null,
   positions: loadStoredPositions(),
-  pendingIntent: null,
   togglePanel: (groupId) =>
     set((state) => ({
       panelOpenGroupId:
@@ -134,7 +127,6 @@ export const useWebPetStore = create<WebPetState>((set) => ({
       return { positions };
     });
   },
-  setPendingIntent: (intent) => set({ pendingIntent: intent }),
 }));
 
 export function getWebPetPosition(

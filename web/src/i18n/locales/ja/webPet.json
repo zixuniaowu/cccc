@@ -26,25 +26,19 @@
     "actorRestartFailed": "Actor の再起動に失敗しました"
   },
   "kind": {
-    "waiting_user": "ユーザー待ち",
     "reply_required": "要返信",
-    "stalled_peer": "停滞中",
     "actor_down": "停止中",
     "mention": "メンション"
   },
   "action": {
     "send": "送信",
-    "complete": "完了",
-    "view": "表示",
     "restart": "再起動",
-    "reply": "返信",
     "dismiss": "閉じる"
   },
   "suggestionLabel": "提案",
   "taskProgress": "{{done}}/{{total}} 完了",
   "taskActive": "{{count}} 進行中",
   "hintTaskProgress": "{{done}}/{{total}} タスク完了",
-  "hintTaskWithAction": "{{done}}/{{total}} 完了、{{count}} 件対応待ち",
   "reminderSummary": {
     "mention": "{{actor}} があなたにメンションしました。",
     "mentionCompact": "{{actor}} があなたを呼んでいます。",

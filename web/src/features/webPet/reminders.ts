@@ -9,12 +9,6 @@ export interface ReminderTaskInput {
   status?: string;
 }
 
-export interface ReminderWaitingUserInput {
-  taskId?: string;
-  label: string;
-  agent?: string;
-}
-
 export interface ReminderActorInput {
   actorId: string;
   role?: string;
@@ -38,8 +32,6 @@ export interface ReminderEventInput {
 
 export interface ProjectPetRemindersInput {
   groupId: string;
-  waitingUser: ReminderWaitingUserInput[];
-  tasks: ReminderTaskInput[];
   actors: ReminderActorInput[];
   events: ReminderEventInput[];
 }
@@ -226,15 +218,6 @@ function buildFingerprint(
   return `group:${groupId}:${kind}:${stableSourceId}`;
 }
 
-function collectWaitingUserReminders(
-  input: ProjectPetRemindersInput,
-  startIndex: number
-): ReminderDraft[] {
-  void input;
-  void startIndex;
-  return [];
-}
-
 function collectActorDownReminders(
   input: ProjectPetRemindersInput,
   startIndex: number,
@@ -404,26 +387,24 @@ function dedupeAndSortReminders(reminders: ReminderDraft[]): PetReminder[] {
 export function projectPetReminders(
   input: ProjectPetRemindersInput
 ): PetReminder[] {
-  const waitingUserReminders = collectWaitingUserReminders(input, 0);
   const actorDownReminders = collectActorDownReminders(
     input,
-    waitingUserReminders.length
+    0
   );
   const mentionReminders = collectMentionReminders(
     input,
-    waitingUserReminders.length + actorDownReminders.length
+    actorDownReminders.length
   );
   const stalledPeerReminders = collectStalledPeerReminders(
     input,
-    waitingUserReminders.length + actorDownReminders.length + mentionReminders.length
+    actorDownReminders.length + mentionReminders.length
   );
   const replyRequiredReminders = collectReplyRequiredReminders(
     input,
-    waitingUserReminders.length + actorDownReminders.length + mentionReminders.length + stalledPeerReminders.length
+    actorDownReminders.length + mentionReminders.length + stalledPeerReminders.length
   );
 
   return dedupeAndSortReminders([
-    ...waitingUserReminders,
     ...actorDownReminders,
     ...mentionReminders,
     ...stalledPeerReminders,

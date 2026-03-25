@@ -99,8 +99,6 @@ export function ContextModal({
   onUpdateSettings,
 }: ContextModalProps) {
   const { t } = useTranslation("modals");
-  const pendingIntent = useWebPetStore((state) => state.pendingIntent);
-  const setPendingIntent = useWebPetStore((state) => state.setPendingIntent);
   const tr = useCallback((key: string, fallback: string, vars?: Record<string, unknown>) =>
     String(t(key as never, { defaultValue: fallback, ...(vars || {}) } as never)), [t]);
 
@@ -562,30 +560,6 @@ export function ContextModal({
     setSyncError("");
     setActiveView("coordination");
   }, [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    if (pendingIntent?.kind !== "task") return;
-
-    const task = taskMap.get(pendingIntent.taskId);
-    if (task) {
-      setActiveView("coordination");
-      setTaskFilter("all");
-      setAssigneeFilter("__all__");
-      setTaskQuery("");
-      selectTask(task);
-    }
-
-    const rafId = window.requestAnimationFrame(() => {
-      document
-        .getElementById(`context-task-${pendingIntent.taskId}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-
-    setPendingIntent(null);
-
-    return () => window.cancelAnimationFrame(rafId);
-  }, [isOpen, pendingIntent, selectTask, setPendingIntent, taskMap]);
 
   const closeTaskEditor = useCallback(() => {
     if (!confirmDiscardTaskChanges()) return;

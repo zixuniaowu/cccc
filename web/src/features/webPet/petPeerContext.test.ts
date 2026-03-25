@@ -15,7 +15,7 @@ describe("petPeerContext", () => {
     expect(context.help).toContain("## Pet Persona");
     expect(context.prompt).toContain("You are the group's independent pet peer.");
     expect(context.snapshot).toContain("Group: Demo Team");
-    expect(context.policy.autoRestartActors).toBe(true);
+    expect(context.policy.compactMessageEvents).toBe(true);
   });
 
   it("falls back to default source when persona is empty", () => {

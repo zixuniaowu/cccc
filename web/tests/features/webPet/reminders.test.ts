@@ -11,8 +11,6 @@ import {
 function makeInput(overrides: Partial<ProjectPetRemindersInput> = {}): ProjectPetRemindersInput {
   return {
     groupId: "g-demo",
-    waitingUser: [],
-    tasks: [],
     actors: [],
     events: [],
     ...overrides,
@@ -46,8 +44,6 @@ describe("projectPetReminders", () => {
   it("does not project waiting_user from attention entries", () => {
     const reminders = projectPetReminders(
       makeInput({
-        waitingUser: [{ taskId: "T249", label: "Need user confirmation" }],
-        tasks: [{ taskId: "T249", title: "Need user confirmation" }],
       }),
     );
 
@@ -57,10 +53,6 @@ describe("projectPetReminders", () => {
   it("does not fall back to coordination tasks for waiting_user", () => {
     const reminders = projectPetReminders(
       makeInput({
-        tasks: [
-          { taskId: "T250", title: "Wait for approval", waitingOn: "user", status: "active" },
-          { taskId: "T251", title: "Done already", waitingOn: "user", status: "done" },
-        ],
       }),
     );
 
@@ -280,8 +272,6 @@ describe("projectPetReminders", () => {
   it("only keeps actionable message suggestions", () => {
     const reminders = projectPetReminders(
       makeInput({
-        waitingUser: [{ taskId: "T249", label: "Need approval" }],
-        tasks: [{ taskId: "T249", title: "Need approval" }],
         actors: [makeActor("peer-impl-2", { running: true, idleSeconds: 601, activeTaskId: "T249" })],
         events: [makeChatEvent("evt-1", { replyRequired: true })],
       }),

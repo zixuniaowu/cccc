@@ -14,41 +14,12 @@ export interface AgentSummary {
   focus: string;
 }
 
-export interface ActionItem {
-  id: string;
-  kind?: "waiting_user" | "reply_required";
-  agent: string;
-  summary: string;
-  action?: ReminderAction;
-}
-
 export type ReminderKind =
-  | "waiting_user"
   | "reply_required"
-  | "stalled_peer"
   | "actor_down"
   | "mention";
 
 export type ReminderAction =
-  | {
-      type: "open_chat";
-      groupId: string;
-      eventId: string;
-    }
-  | {
-      type: "open_task";
-      groupId: string;
-      taskId: string;
-    }
-  | {
-      type: "open_panel";
-      groupId: string;
-    }
-  | {
-      type: "complete_task";
-      groupId: string;
-      taskId: string;
-    }
   | {
       type: "send_suggestion";
       groupId: string;
@@ -88,7 +59,6 @@ export interface ConnectionStatus {
 export interface PanelData {
   teamName: string;
   agents: AgentSummary[];
-  actionItems: ActionItem[];
   connection: ConnectionStatus;
   taskProgress?: {
     total: number;
