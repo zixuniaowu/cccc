@@ -1,12 +1,11 @@
 // Web Pet type definitions
 
-export type CatState = "napping" | "working" | "busy" | "needs_you";
+export type CatState = "napping" | "working" | "busy";
 
 export const CAT_STATES: readonly CatState[] = [
   "napping",
   "working",
   "busy",
-  "needs_you",
 ] as const;
 
 export interface AgentSummary {
@@ -17,6 +16,7 @@ export interface AgentSummary {
 
 export interface ActionItem {
   id: string;
+  kind?: "waiting_user" | "reply_required";
   agent: string;
   summary: string;
   action?: ReminderAction;
@@ -26,6 +26,7 @@ export type ReminderKind =
   | "waiting_user"
   | "reply_required"
   | "stalled_peer"
+  | "actor_down"
   | "mention";
 
 export type ReminderAction =
@@ -47,6 +48,18 @@ export type ReminderAction =
       type: "complete_task";
       groupId: string;
       taskId: string;
+    }
+  | {
+      type: "send_suggestion";
+      groupId: string;
+      text: string;
+      to?: string[];
+      replyTo?: string;
+    }
+  | {
+      type: "restart_actor";
+      groupId: string;
+      actorId: string;
     };
 
 export interface PetReminder {
@@ -54,6 +67,8 @@ export interface PetReminder {
   kind: ReminderKind;
   priority: number;
   summary: string;
+  suggestion?: string;
+  suggestionPreview?: string;
   agent: string;
   ephemeral?: boolean;
   source: {

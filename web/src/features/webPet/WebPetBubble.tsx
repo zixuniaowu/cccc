@@ -5,6 +5,8 @@ import type { CatState, PetReaction } from "./types";
 import { WEB_PET_BUBBLE_SIZE } from "./constants";
 
 interface WebPetBubbleProps {
+  groupId: string;
+  stackIndex?: number;
   state: CatState;
   hint: string;
   reaction: PetReaction;
@@ -13,6 +15,8 @@ interface WebPetBubbleProps {
 }
 
 export function WebPetBubble({
+  groupId,
+  stackIndex = 0,
   state,
   hint,
   reaction,
@@ -20,7 +24,7 @@ export function WebPetBubble({
   onTogglePanel,
 }: WebPetBubbleProps) {
   const { t } = useTranslation("webPet");
-  const { isDragging, handlers } = useWebPetDrag();
+  const { isDragging, handlers } = useWebPetDrag(groupId, stackIndex);
 
   return (
     <div
@@ -35,7 +39,7 @@ export function WebPetBubble({
       }}
       role="button"
       tabIndex={0}
-      aria-controls="web-pet-panel"
+      aria-controls={`web-pet-panel-${groupId}`}
       aria-expanded={panelOpen}
       aria-label={
         hint

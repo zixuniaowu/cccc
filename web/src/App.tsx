@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useMemo } from "react";
 import { DropOverlay } from "./components/DropOverlay";
 const AppModals = lazy(() => import("./components/AppModals").then((m) => ({ default: m.AppModals })));
+const WebPet = lazy(() => import("./features/webPet/WebPet").then((m) => ({ default: m.WebPet })));
 import { AppBackground } from "./components/app/AppBackground";
 import { AppFeedback } from "./components/app/AppFeedback";
 import { AppShell } from "./components/app/AppShell";
@@ -17,7 +18,6 @@ import { useViewportHeight } from "./hooks/useViewportHeight";
 import { useAppChrome } from "./hooks/useAppChrome";
 import { useAppGroupLifecycle } from "./hooks/useAppGroupLifecycle";
 import { useAppTabState } from "./hooks/useAppTabState";
-import { WebPet } from "./features/webPet/WebPet";
 import { getEffectiveComposerDestGroupId } from "./stores/useComposerStore";
 import { getChatSession } from "./stores/useUIStore";
 import {
@@ -376,7 +376,11 @@ export default function App() {
         onTouchEnd={handleTouchEnd}
       />
 
-      <WebPet />
+      {selectedGroupId ? (
+        <Suspense fallback={null}>
+          <WebPet key={selectedGroupId} groupId={selectedGroupId} />
+        </Suspense>
+      ) : null}
 
       <AppFeedback
         isDark={isDark}

@@ -1,24 +1,16 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { FloatingPortal } from "@floating-ui/react";
 import { useTranslation } from 'react-i18next';
-
-import {
-    useFloating,
-    autoUpdate,
-    offset,
-    flip,
-    shift,
-    useHover,
-    useInteractions,
-    useDismiss,
-    FloatingPortal,
-} from "@floating-ui/react";
 import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, EventAttachment, PresentationMessageRef } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
-import { MarkdownRenderer } from "./MarkdownRenderer";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
 import { ImageIcon, FileIcon, CloseIcon } from "./Icons";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
+
+const LazyMarkdownRenderer = lazy(() =>
+    import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
+);
 
 const RUNTIME_LOGO_BASE = import.meta.env.BASE_URL;
 const RUNTIME_LOGO: Record<string, string> = {
@@ -53,6 +45,31 @@ function formatEventLine(ev: LedgerEvent): string {
         return String(msg.text || "");
     }
     return "";
+}
+
+function mayContainMarkdown(text: string): boolean {
+    const value = String(text || "");
+    if (!value.trim()) return false;
+    return /(```|`[^`\n]+`|\[[^\]]+\]\([^)]+\)|^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\s*>\s)/m.test(value);
+}
+
+function PlainMessageText({
+    text,
+    className,
+}: {
+    text: string;
+    className?: string;
+}) {
+    return (
+        <div
+            className={classNames(
+                "break-words whitespace-pre-wrap [overflow-wrap:anywhere]",
+                className
+            )}
+        >
+            {text}
+        </div>
+    );
 }
 
 async function copyText(value: string): Promise<boolean> {
@@ -287,6 +304,7 @@ export interface MessageBubbleProps {
     onReply: () => void;
     onShowRecipients: () => void;
     onCopyLink?: (eventId: string) => void;
+    onCopyContent?: (ev: LedgerEvent) => void;
     onRelay?: (ev: LedgerEvent) => void;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
     onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
@@ -305,6 +323,7 @@ export const MessageBubble = memo(function MessageBubble({
     onReply,
     onShowRecipients,
     onCopyLink,
+    onCopyContent: _onCopyContent,
     onRelay,
     onOpenSource,
     onOpenPresentationRef,
@@ -314,7 +333,6 @@ export const MessageBubble = memo(function MessageBubble({
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
 
-    // Floating UI for agent-state tooltip
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
     const [copiedMessageText, setCopiedMessageText] = useState(false);
 
@@ -325,38 +343,6 @@ export const MessageBubble = memo(function MessageBubble({
         return true;
     }, [ev.by, isUserMessage]);
 
-    const { refs: floatingRefs, floatingStyles, context } = useFloating({
-        open: isAgentStateOpen && canShowAgentState,
-        onOpenChange: setIsAgentStateOpen,
-        placement: "bottom-start",
-        middleware: [
-            offset(10),
-            flip({ fallbackPlacements: ["top-start", "bottom-end", "top-end"] }),
-            shift({ padding: 10 }),
-        ],
-        whileElementsMounted: autoUpdate,
-    });
-
-    const setAgentStateReference = useCallback(
-        (node: HTMLElement | null) => {
-            floatingRefs.setReference(node);
-        },
-        [floatingRefs]
-    );
-
-    const setAgentStateFloating = useCallback(
-        (node: HTMLElement | null) => {
-            floatingRefs.setFloating(node);
-        },
-        [floatingRefs]
-    );
-
-    const hover = useHover(context, {
-        delay: { open: 100, close: 150 },
-        enabled: canShowAgentState,
-    });
-    const dismiss = useDismiss(context);
-    const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss]);
     const { t } = useTranslation('chat');
     const agentStateText = String(agentState?.hot?.focus || "").trim();
     const agentStateDisplay = agentStateText || t('noAgentStateYet');
@@ -393,6 +379,7 @@ export const MessageBubble = memo(function MessageBubble({
         }))
         .filter((a) => a.path.startsWith("state/blobs/"));
     const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
+    const shouldRenderMarkdown = useMemo(() => mayContainMarkdown(messageText), [messageText]);
     const copyableMessageText = useMemo(
         () =>
             buildMessageCopyText({
@@ -525,7 +512,7 @@ export const MessageBubble = memo(function MessageBubble({
     return (
         <div
             className={classNames(
-                "flex gap-2 sm:gap-3 group",
+                "relative flex gap-2 sm:gap-3 group",
                 isUserMessage
                     ? "flex-col items-end sm:items-start sm:flex-row-reverse"
                     : "flex-col items-start sm:flex-row",
@@ -533,22 +520,85 @@ export const MessageBubble = memo(function MessageBubble({
             )}
         >
             {/* Desktop Avatar (Hidden on mobile) */}
-            <div
-                className={classNames(
-                    "hidden sm:flex flex-shrink-0 w-8 h-8 rounded-full items-center justify-center text-xs font-bold shadow-sm mt-1 overflow-hidden",
-                    isUserMessage
-                        ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
-                        : isDark
-                            ? "bg-slate-700 text-slate-200"
-                            : "bg-white border border-gray-200 text-gray-700",
-                    !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
-                )}
-                ref={setAgentStateReference}
-                {...getReferenceProps()}
-            >
-                {senderLogoSrc
-                    ? <img src={senderLogoSrc} alt="" className="w-full h-full object-cover" />
-                    : isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
+            <div className="relative hidden sm:block">
+                <div
+                    className={classNames(
+                        "flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-bold shadow-sm mt-1",
+                        isUserMessage
+                            ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
+                            : isDark
+                                ? "bg-slate-700 text-slate-200"
+                                : "bg-white border border-gray-200 text-gray-700",
+                        !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : "",
+                        canShowAgentState ? "cursor-help" : ""
+                    )}
+                    onMouseEnter={canShowAgentState ? () => setIsAgentStateOpen(true) : undefined}
+                    onMouseLeave={canShowAgentState ? () => setIsAgentStateOpen(false) : undefined}
+                    onFocus={canShowAgentState ? () => setIsAgentStateOpen(true) : undefined}
+                    onBlur={canShowAgentState ? () => setIsAgentStateOpen(false) : undefined}
+                    tabIndex={canShowAgentState ? 0 : undefined}
+                    aria-label={canShowAgentState ? t('agentStateTooltipLabel', { defaultValue: 'View agent state' }) : undefined}
+                >
+                    {senderLogoSrc
+                        ? <img src={senderLogoSrc} alt="" className="w-full h-full object-cover" />
+                        : isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
+                </div>
+
+                {isAgentStateOpen && canShowAgentState ? (
+                    <div
+                        className={classNames(
+                            "absolute left-0 top-full z-20 mt-2 w-[min(360px,calc(100vw-32px))] rounded-2xl px-3 py-2 shadow-2xl",
+                            "glass-modal text-[var(--color-text-primary)]"
+                        )}
+                        role="status"
+                    >
+                        <div className="flex items-center gap-2">
+                            <div className="text-xs font-semibold text-[var(--color-text-primary)]">
+                                {senderDisplayName}
+                            </div>
+                            {agentState?.updated_at ? (
+                                <div
+                                    className={classNames(
+                                        "ml-auto text-xs tabular-nums",
+                                        "text-[var(--color-text-tertiary)]"
+                                    )}
+                                    title={formatFullTime(agentState.updated_at)}
+                                >
+                                    {t('updated', { time: formatTime(agentState.updated_at) })}
+                                </div>
+                            ) : null}
+                        </div>
+                        <div className="mt-1 text-xs whitespace-pre-wrap text-[var(--color-text-secondary)]">
+                            {agentStateDisplay}
+                        </div>
+                        {(stateTask || blockerCount > 0 || stateNext || stateChanged) ? (
+                            <div className="mt-2 space-y-1">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                    {stateTask ? (
+                                        <span className="text-[11px] px-2 py-0.5 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
+                                            {t("taskShort", { id: stateTask })}
+                                        </span>
+                                    ) : null}
+                                    {blockerCount > 0 ? (
+                                        <span className="text-[11px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-300">
+                                            {t("blockersShort", { count: blockerCount })}
+                                        </span>
+                                    ) : null}
+                                </div>
+                                {stateNext ? (
+                                    <div className="text-[11px] text-[var(--color-text-tertiary)]">
+                                        {t("nextShort", { value: stateNext })}
+                                    </div>
+                                ) : null}
+                                {stateChanged ? (
+                                    <div className={classNames("text-[11px]", "text-[var(--color-text-tertiary)]")}>
+                                        {t("changedShort", { value: stateChanged })}
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : null}
+                    </div>
+                ) : null}
             </div>
 
             {/* Message Content */}
@@ -735,12 +785,28 @@ export const MessageBubble = memo(function MessageBubble({
                     ) : null}
 
                     {/* Text Content */}
-                    <MarkdownRenderer
-                        content={messageText}
-                        isDark={isDark}
-                        invertText={isUserMessage}
-                        className="break-words [overflow-wrap:anywhere] max-w-full"
-                    />
+                    {shouldRenderMarkdown ? (
+                        <Suspense
+                            fallback={
+                                <PlainMessageText
+                                    text={messageText}
+                                    className="max-w-full"
+                                />
+                            }
+                        >
+                            <LazyMarkdownRenderer
+                                content={messageText}
+                                isDark={isDark}
+                                invertText={isUserMessage}
+                                className="break-words [overflow-wrap:anywhere] max-w-full"
+                            />
+                        </Suspense>
+                    ) : (
+                        <PlainMessageText
+                            text={messageText}
+                            className="max-w-full"
+                        />
+                    )}
 
                     {/* Attachments */}
                     {blobAttachments.length > 0 && blobGroupId && (() => {
@@ -1024,70 +1090,6 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 </div>
             </div>
-
-            {isAgentStateOpen && canShowAgentState && (
-                <FloatingPortal>
-                    <div
-                        ref={setAgentStateFloating}
-                        style={floatingStyles}
-                        {...getFloatingProps()}
-                        className={classNames(
-                            "glass-modal z-tooltip w-[min(360px,calc(100vw-32px))] px-3 py-2 text-[var(--color-text-primary)]"
-                        )}
-                        role="status"
-                    >
-                        <div className="flex items-center gap-2">
-                            <div
-                                className="text-xs font-semibold text-[var(--color-text-primary)]"
-                            >
-                                {senderDisplayName}
-                            </div>
-                            {agentState?.updated_at ? (
-                                <div
-                                    className={classNames(
-                                        "ml-auto text-xs tabular-nums",
-                                        "text-[var(--color-text-tertiary)]"
-                                    )}
-                                    title={formatFullTime(agentState.updated_at)}
-                                >
-                                    {t('updated', { time: formatTime(agentState.updated_at) })}
-                                </div>
-                            ) : null}
-                        </div>
-                        <div
-                            className="mt-1 text-xs whitespace-pre-wrap text-[var(--color-text-secondary)]"
-                        >
-                            {agentStateDisplay}
-                        </div>
-                        {(stateTask || blockerCount > 0 || stateNext || stateChanged) ? (
-                            <div className="mt-2 space-y-1">
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                    {stateTask ? (
-                                        <span className="text-[11px] px-2 py-0.5 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
-                                            {t("taskShort", { id: stateTask })}
-                                        </span>
-                                    ) : null}
-                                    {blockerCount > 0 ? (
-                                        <span className="text-[11px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-300">
-                                            {t("blockersShort", { count: blockerCount })}
-                                        </span>
-                                    ) : null}
-                                </div>
-                                {stateNext ? (
-                                    <div className="text-[11px] text-[var(--color-text-tertiary)]">
-                                        {t("nextShort", { value: stateNext })}
-                                    </div>
-                                ) : null}
-                                {stateChanged ? (
-                                    <div className={classNames("text-[11px]", "text-[var(--color-text-tertiary)]")}>
-                                        {t("changedShort", { value: stateChanged })}
-                                    </div>
-                                ) : null}
-                            </div>
-                        ) : null}
-                    </div>
-                </FloatingPortal>
-            )}
         </div>
     );
 }, (prevProps, nextProps) => {

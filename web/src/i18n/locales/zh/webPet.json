@@ -15,18 +15,26 @@
   "countWorking": "{{count}} 工作中",
   "countBusy": "{{count}} 忙碌",
   "countNeedsYou": "{{count}} 需要你",
+  "petPeerLabel": "Pet Peer",
+  "petPersonaSourceHelp": "已载入 persona",
+  "petPersonaSourceDefault": "默认种子",
   "noActionItems": "当前没有待处理事项。",
   "kind": {
     "waiting_user": "等待用户",
     "reply_required": "等待回复",
     "stalled_peer": "协作停滞",
+    "actor_down": "实例停止",
     "mention": "提及"
   },
   "action": {
+    "send": "发送",
     "complete": "完成",
     "view": "查看",
-    "reply": "回复"
+    "restart": "重启",
+    "reply": "回复",
+    "dismiss": "忽略"
   },
+  "suggestionLabel": "建议",
   "taskProgress": "{{done}}/{{total}} 已完成",
   "taskActive": "{{count}} 进行中",
   "hintTaskProgress": "{{done}}/{{total}} 任务已完成",

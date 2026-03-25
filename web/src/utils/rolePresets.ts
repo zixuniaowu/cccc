@@ -527,3 +527,8 @@ export function getRolePresetApplyState(currentDraft: string, presetContent: str
   if (current === next) return "no_change";
   return "confirm_replace";
 }
+
+export function getDefaultPetPersonaSeed(): string {
+  // Web Pet currently reuses the coordinator preset as the lowest-noise seed.
+  return String(getRolePresetById("coordinator")?.content || "").trim();
+}

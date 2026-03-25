@@ -15,18 +15,26 @@
   "countWorking": "{{count}} 作業中",
   "countBusy": "{{count}} ビジー",
   "countNeedsYou": "{{count}} 対応が必要",
+  "petPeerLabel": "Pet Peer",
+  "petPersonaSourceHelp": "persona loaded",
+  "petPersonaSourceDefault": "default seed",
   "noActionItems": "今すぐ対応が必要な項目はありません。",
   "kind": {
     "waiting_user": "ユーザー待ち",
     "reply_required": "要返信",
     "stalled_peer": "停滞中",
+    "actor_down": "停止中",
     "mention": "メンション"
   },
   "action": {
+    "send": "送信",
     "complete": "完了",
     "view": "表示",
-    "reply": "返信"
+    "restart": "再起動",
+    "reply": "返信",
+    "dismiss": "閉じる"
   },
+  "suggestionLabel": "提案",
   "taskProgress": "{{done}}/{{total}} 完了",
   "taskActive": "{{count}} 進行中",
   "hintTaskProgress": "{{done}}/{{total}} タスク完了",

@@ -15,18 +15,26 @@
   "countWorking": "{{count}} working",
   "countBusy": "{{count}} busy",
   "countNeedsYou": "{{count}} needs you",
+  "petPeerLabel": "Pet Peer",
+  "petPersonaSourceHelp": "persona loaded",
+  "petPersonaSourceDefault": "default seed",
   "noActionItems": "No action items right now.",
   "kind": {
     "waiting_user": "waiting user",
     "reply_required": "reply required",
     "stalled_peer": "stalled peer",
+    "actor_down": "actor down",
     "mention": "mention"
   },
   "action": {
+    "send": "Send",
     "complete": "Done",
     "view": "View",
-    "reply": "Reply"
+    "restart": "Restart",
+    "reply": "Reply",
+    "dismiss": "Dismiss"
   },
+  "suggestionLabel": "Suggestion",
   "taskProgress": "{{done}}/{{total}} done",
   "taskActive": "{{count}} active",
   "hintTaskProgress": "{{done}}/{{total}} tasks done",

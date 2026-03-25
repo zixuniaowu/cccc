@@ -180,13 +180,6 @@ export function createCatEngine(options: CatEngineOptions): CatEngine {
           ctx.fillRect(44, 14 + bounce, 3, 5);
         }
         break;
-      case "needs_you":
-        ctx.fillRect(24, 18 + bounce, 6, 6);
-        ctx.fillRect(34, 18 + bounce, 6, 6);
-        ctx.fillStyle = "#FFF";
-        ctx.fillRect(26, 19 + bounce, 3, 3);
-        ctx.fillRect(36, 19 + bounce, 3, 3);
-        break;
     }
 
     // State-specific details
@@ -202,19 +195,6 @@ export function createCatEngine(options: CatEngineOptions): CatEngine {
         ctx.fillRect(36, 46 + bounce + (2 - pawOffset), 8, 4);
         break;
       }
-      case "needs_you":
-        ctx.fillStyle = "#FFF";
-        ctx.fillRect(44, 6, 14, 14);
-        ctx.fillStyle = "#000";
-        ctx.fillRect(44, 4, 14, 2);
-        ctx.fillRect(44, 20, 14, 2);
-        ctx.fillRect(42, 6, 2, 14);
-        ctx.fillRect(58, 6, 2, 14);
-        ctx.fillRect(46, 20, 4, 4);
-        ctx.fillStyle = "#FF0000";
-        ctx.fillRect(50, 8, 2, 6);
-        ctx.fillRect(50, 16, 2, 2);
-        break;
     }
 
     // Tail

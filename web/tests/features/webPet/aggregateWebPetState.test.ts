@@ -50,7 +50,7 @@ describe("aggregateWebPetState", () => {
     expect(result.panelData.agents.every((a) => a.state === "busy")).toBe(true);
   });
 
-  it("returns needs_you when waiting_user tasks exist", () => {
+  it("does not surface waiting_user tasks as pet action items", () => {
     const context: GroupContext = {
       attention: {
         waiting_user: [
@@ -66,12 +66,11 @@ describe("aggregateWebPetState", () => {
       agent_states: [],
     };
     const result = aggregateWebPetState(makeInput({ groupContext: context }));
-    expect(result.catState).toBe("needs_you");
-    expect(result.panelData.actionItems.length).toBeGreaterThan(0);
-    expect(result.panelData.actionItems[0].id).toBe("T100_waiting_on_user");
+    expect(result.catState).toBe("napping");
+    expect(result.panelData.actionItems).toHaveLength(0);
   });
 
-  it("returns needs_you when reply_required events exist", () => {
+  it("does not promote reply_required events into pet state", () => {
     const events: LedgerEvent[] = [
       {
         id: "evt1",
@@ -89,8 +88,8 @@ describe("aggregateWebPetState", () => {
       },
     ];
     const result = aggregateWebPetState(makeInput({ events }));
-    expect(result.catState).toBe("needs_you");
-    expect(result.panelData.actionItems[0].agent).toBe("peer-reviewer");
+    expect(result.catState).toBe("napping");
+    expect(result.panelData.actionItems).toHaveLength(0);
   });
 
   it("returns napping when group is paused (overrides everything)", () => {
@@ -152,7 +151,7 @@ describe("aggregateWebPetState", () => {
     expect(connected.panelData.connection.connected).toBe(true);
   });
 
-  it("limits action items to top 3", () => {
+  it("does not project waiting_user action items into the panel", () => {
     const context: GroupContext = {
       coordination: {
         tasks: Array.from({ length: 5 }, (_, i) => ({
@@ -166,10 +165,10 @@ describe("aggregateWebPetState", () => {
       agent_states: [],
     };
     const result = aggregateWebPetState(makeInput({ groupContext: context }));
-    expect(result.panelData.actionItems).toHaveLength(3);
+    expect(result.panelData.actionItems).toHaveLength(0);
   });
 
-  it("populates action on waiting_user action items", () => {
+  it("does not populate waiting_user actions in the panel", () => {
     const context: GroupContext = {
       attention: {
         waiting_user: [{ id: "T1", title: "Review PR", assignee: "peer-impl-1" }],
@@ -177,14 +176,10 @@ describe("aggregateWebPetState", () => {
       agent_states: [],
     };
     const result = aggregateWebPetState(makeInput({ groupContext: context, groupId: "g_abc" }));
-    expect(result.panelData.actionItems[0].action).toEqual({
-      type: "open_task",
-      groupId: "g_abc",
-      taskId: "T1",
-    });
+    expect(result.panelData.actionItems).toHaveLength(0);
   });
 
-  it("populates action on reply_required action items", () => {
+  it("keeps actionItems empty even when reply_required events exist", () => {
     const events: LedgerEvent[] = [
       {
         id: "evt1",
@@ -197,11 +192,7 @@ describe("aggregateWebPetState", () => {
       },
     ];
     const result = aggregateWebPetState(makeInput({ events, groupId: "g_xyz" }));
-    expect(result.panelData.actionItems[0].action).toEqual({
-      type: "open_chat",
-      groupId: "g_xyz",
-      eventId: "evt1",
-    });
+    expect(result.panelData.actionItems).toEqual([]);
   });
 
   it("populates taskProgress from tasks_summary excluding archived", () => {

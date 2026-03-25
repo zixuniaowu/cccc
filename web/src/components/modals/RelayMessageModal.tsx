@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Actor, ChatMessageData, GroupMeta, LedgerEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
@@ -37,9 +37,10 @@ export function RelayMessageModal({
 
   const [dstGroupId, setDstGroupId] = useState(() => defaultDstGroupId);
   const [dstActors, setDstActors] = useState<Actor[]>([]);
-  const [dstActorsBusy, setDstActorsBusy] = useState(() => !!defaultDstGroupId);
+  const [dstActorsLoadingFor, setDstActorsLoadingFor] = useState(() => defaultDstGroupId);
   const [note, setNote] = useState("");
   const [toTokens, setToTokens] = useState<string[]>(["@all"]);
+  const actorsRequestEpochRef = useRef(0);
 
   const srcEventId = srcEvent?.id ? String(srcEvent.id) : "";
   const srcBy = srcEvent?.by ? String(srcEvent.by) : "";
@@ -53,11 +54,13 @@ export function RelayMessageModal({
     if (!isOpen) return;
     const gid = String(dstGroupId || "").trim();
     if (!gid) return;
+    const epoch = actorsRequestEpochRef.current + 1;
+    actorsRequestEpochRef.current = epoch;
     let cancelled = false;
     void api
       .fetchActors(gid, false)
       .then((resp) => {
-        if (cancelled) return;
+        if (cancelled || actorsRequestEpochRef.current !== epoch) return;
         if (!resp.ok) {
           setDstActors([]);
           return;
@@ -65,13 +68,15 @@ export function RelayMessageModal({
         setDstActors(resp.result.actors || []);
       })
       .finally(() => {
-        if (cancelled) return;
-        setDstActorsBusy(false);
+        if (cancelled || actorsRequestEpochRef.current !== epoch) return;
+        setDstActorsLoadingFor("");
       });
     return () => {
       cancelled = true;
     };
   }, [dstGroupId, isOpen]);
+
+  const dstActorsBusy = !!dstGroupId && dstActorsLoadingFor === dstGroupId;
 
   const availableTokens = useMemo(() => {
     const base = ["@all", "@foreman", "@peers"];
@@ -146,7 +151,7 @@ export function RelayMessageModal({
                     const gid = e.target.value;
                     setDstGroupId(gid);
                     setDstActors([]);
-                    setDstActorsBusy(true);
+                    setDstActorsLoadingFor(gid);
                   }}
                   className="w-full rounded-xl px-3 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
                   disabled={busy || dstGroups.length === 0}

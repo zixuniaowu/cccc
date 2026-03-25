@@ -1,47 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { getReminderActionButtons } from "./reminderActions";
 import type { PetReminder, ReminderAction } from "./types";
-
-const AUTO_HIDE_MS = 6000;
 
 interface PetReminderBubbleProps {
   reminder: PetReminder | null;
   onDismiss: (fingerprint: string) => void;
   onAction?: (action: ReminderAction) => void;
-}
-
-function getActionButtons(
-  reminder: PetReminder,
-  t: (key: string, opts?: Record<string, unknown>) => string,
-): { label: string; action: ReminderAction }[] {
-  const buttons: { label: string; action: ReminderAction }[] = [];
-
-  if (reminder.kind === "waiting_user" && reminder.source.taskId) {
-    buttons.push({
-      label: String(t("action.complete", { defaultValue: "Done" })),
-      action: {
-        type: "complete_task",
-        groupId: reminder.action.groupId,
-        taskId: reminder.source.taskId,
-      },
-    });
-    buttons.push({
-      label: String(t("action.view", { defaultValue: "View" })),
-      action: reminder.action,
-    });
-  } else if (reminder.kind === "reply_required") {
-    buttons.push({
-      label: String(t("action.reply", { defaultValue: "Reply" })),
-      action: reminder.action,
-    });
-  } else {
-    buttons.push({
-      label: String(t("action.view", { defaultValue: "View" })),
-      action: reminder.action,
-    });
-  }
-
-  return buttons;
 }
 
 export function PetReminderBubble({
@@ -50,45 +15,19 @@ export function PetReminderBubble({
   onAction,
 }: PetReminderBubbleProps) {
   const { t } = useTranslation("webPet");
-  const autoHideTimeoutRef = useRef<number | null>(null);
-
-  const clearAutoHideTimer = useCallback(() => {
-    if (autoHideTimeoutRef.current === null) return;
-    window.clearTimeout(autoHideTimeoutRef.current);
-    autoHideTimeoutRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    clearAutoHideTimer();
-
-    if (!reminder) {
-      return;
-    }
-
-    autoHideTimeoutRef.current = window.setTimeout(() => {
-      autoHideTimeoutRef.current = null;
-      onDismiss(reminder.fingerprint);
-    }, AUTO_HIDE_MS);
-
-    return () => {
-      clearAutoHideTimer();
-    };
-  }, [clearAutoHideTimer, onDismiss, reminder]);
 
   const handleDismiss = useCallback(() => {
     if (!reminder) return;
-    clearAutoHideTimer();
     onDismiss(reminder.fingerprint);
-  }, [clearAutoHideTimer, onDismiss, reminder]);
+  }, [onDismiss, reminder]);
 
   const handleButtonAction = useCallback(
     (action: ReminderAction) => {
       if (!reminder) return;
-      clearAutoHideTimer();
       onAction?.(action);
       onDismiss(reminder.fingerprint);
     },
-    [clearAutoHideTimer, onAction, onDismiss, reminder],
+    [onAction, onDismiss, reminder],
   );
 
   const displayAgent = reminder?.agent === "system"
@@ -97,13 +36,24 @@ export function PetReminderBubble({
 
   const label = useMemo(() => {
     if (!reminder) return "";
+    if (reminder.kind === "mention" || reminder.kind === "reply_required") {
+      return reminder.summary;
+    }
     return reminder.agent === "system"
       ? reminder.summary
       : `${displayAgent}: ${reminder.summary}`;
   }, [displayAgent, reminder]);
 
   const actionButtons = useMemo(
-    () => (reminder ? getActionButtons(reminder, t) : []),
+    () =>
+      reminder
+        ? getReminderActionButtons(reminder).map((button) => ({
+            label: String(
+              t(`action.${button.labelKey}`, { defaultValue: button.fallback }),
+            ),
+            action: button.action,
+          }))
+        : [],
     [reminder, t],
   );
 
@@ -116,6 +66,10 @@ export function PetReminderBubble({
       defaultValue: reminder.kind.replace(/_/g, " "),
     }),
   );
+  const suggestion = String(reminder.suggestion || "").trim();
+  const suggestionPreview = String(reminder.suggestionPreview || "").trim();
+  const bodyText = suggestionPreview || suggestion || label;
+  const showMeta = !suggestion && !suggestionPreview;
 
   return (
     <div
@@ -152,14 +106,16 @@ export function PetReminderBubble({
         </button>
         <div className="pr-8">
           <div className="min-w-0">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-              {kindLabel}
-            </div>
+            {showMeta ? (
+              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
+                {kindLabel}
+              </div>
+            ) : null}
             <div
-              className="mt-1 text-sm leading-5 text-[var(--color-text-primary)]"
-              title={label}
+              className={`${showMeta ? "mt-1" : ""} text-sm leading-5 text-[var(--color-text-primary)]`}
+              title={bodyText}
             >
-              {label}
+              {bodyText}
             </div>
             <div className="mt-1.5 flex gap-1.5">
               {actionButtons.map((btn) => (
@@ -179,6 +135,22 @@ export function PetReminderBubble({
                   {btn.label}
                 </button>
               ))}
+              {suggestion ? (
+                <button
+                  type="button"
+                  className="rounded-md bg-white/5 px-2 py-0.5 text-xs font-medium text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)] active:bg-white/15"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleDismiss();
+                  }}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                >
+                  {t("action.dismiss", { defaultValue: "Dismiss" })}
+                </button>
+              ) : null}
             </div>
           </div>
         </div>

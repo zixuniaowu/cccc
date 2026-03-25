@@ -1,9 +1,14 @@
 import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import type { PanelData, ReminderAction } from "./types";
+import { getReminderActionButtons } from "./reminderActions";
+import type { PanelData, PetReminder, ReminderAction } from "./types";
+import type { PetPeerContext } from "./petPeerContext";
 
 interface PetPanelProps {
   panelData: PanelData;
+  petContext?: PetPeerContext;
+  reminders: PetReminder[];
+  panelId?: string;
   /** Panel opens on this side of the cat */
   align?: "left" | "right";
   onClose?: () => void;
@@ -16,17 +21,25 @@ function countAgentsByState(panelData: PanelData) {
     (counts, agent) => {
       if (agent.state === "working") counts.working += 1;
       if (agent.state === "busy") counts.busy += 1;
-      if (agent.state === "needs_you") counts.needsYou += 1;
       return counts;
     },
-    { working: 0, busy: 0, needsYou: 0 },
+    { working: 0, busy: 0 },
   );
 }
 
-export function PetPanel({ panelData, align = "left", onClose, onAction, catSize = 80 }: PetPanelProps) {
+export function PetPanel({
+  panelData,
+  petContext,
+  reminders,
+  panelId = "web-pet-panel",
+  align = "left",
+  onClose,
+  onAction,
+  catSize = 80,
+}: PetPanelProps) {
   const { t } = useTranslation("webPet");
   const counts = countAgentsByState(panelData);
-  const actionItems = panelData.actionItems.slice(0, 3);
+  const actionableReminders = reminders.slice(0, 1);
 
   // Panel opens horizontally beside the cat (not above).
   // "right" align = cat is on right side → panel opens to the LEFT of the cat.
@@ -41,7 +54,7 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
 
   return (
     <section
-      id="web-pet-panel"
+      id={panelId}
       className="glass-modal pointer-events-auto z-[1100] w-[min(320px,calc(100vw-24px))] rounded-2xl border border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-2xl"
       style={{
         position: "absolute",
@@ -123,23 +136,47 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
                 count: counts.busy,
               })}
             </span>
-            <span className={countPillClass}>
-              {t("countNeedsYou", {
-                defaultValue: "{{count}} needs you",
-                count: counts.needsYou,
-              })}
-            </span>
           </div>
         </div>
 
         <div className="overflow-y-auto px-4 py-3">
-          {actionItems.length > 0 ? (
+          {petContext?.prompt ? (
+            <div className="mb-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 backdrop-blur-sm dark:border-white/5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
+                  {t("petPeerLabel", { defaultValue: "Pet Peer" })}
+                </div>
+                <span className="text-[10px] text-[var(--color-text-secondary)] opacity-70">
+                  {petContext.source === "help"
+                    ? t("petPersonaSourceHelp", { defaultValue: "persona loaded" })
+                    : t("petPersonaSourceDefault", { defaultValue: "default seed" })}
+                </span>
+              </div>
+              {petContext.snapshot ? (
+                <div className="mt-1 whitespace-pre-line text-xs leading-5 text-[var(--color-text-secondary)]">
+                  {petContext.snapshot}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {actionableReminders.length > 0 ? (
             <div className="space-y-2">
-              {actionItems.map((item) => {
-                const clickable = !!(item.action && onAction);
+              {actionableReminders.map((reminder) => {
+                const actionButtons = getReminderActionButtons(reminder);
+                const clickable =
+                  actionButtons.length > 0 && !!onAction;
+                const suggestion = String(reminder.suggestion || "").trim();
+                const suggestionPreview = String(reminder.suggestionPreview || "").trim();
+                const bodyText = suggestionPreview || suggestion || reminder.summary;
+                const showMeta = !suggestion && !suggestionPreview;
+                const kindLabel = String(
+                  t(`kind.${reminder.kind}`, {
+                    defaultValue: reminder.kind.replace(/_/g, " "),
+                  }),
+                );
                 return (
                   <div
-                    key={item.id}
+                    key={reminder.id}
                     role={clickable ? "button" : undefined}
                     tabIndex={clickable ? 0 : undefined}
                     className={`rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 backdrop-blur-sm dark:border-white/5 ${
@@ -147,35 +184,59 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
                         ? "cursor-pointer transition hover:border-white/20 hover:bg-white/10 active:scale-[0.98]"
                         : ""
                     }`}
-                    title={item.summary}
-                    onClick={clickable ? () => onAction(item.action!) : undefined}
+                    title={reminder.summary}
+                    onClick={
+                      clickable
+                        ? () => onAction(actionButtons[0]!.action)
+                        : undefined
+                    }
                     onKeyDown={
                       clickable
                         ? (e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
-                              onAction(item.action!);
+                              onAction(actionButtons[0]!.action);
                             }
                           }
                         : undefined
                     }
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-                        {item.agent}
-                      </div>
-                      {clickable ? (
+                    {showMeta ? (
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
+                          {reminder.agent}
+                        </div>
                         <span className="text-[10px] text-[var(--color-text-secondary)] opacity-60">
-                          {item.action!.type === "open_task"
-                            ? t("action.view", { defaultValue: "View" })
-                            : t("action.reply", { defaultValue: "Reply" })}
-                          {" →"}
+                          {kindLabel}
                         </span>
-                      ) : null}
+                      </div>
+                    ) : null}
+                    <div className={`${showMeta ? "mt-1" : ""} text-sm leading-5 text-[var(--color-text-primary)]`}>
+                      {bodyText}
                     </div>
-                    <div className="mt-1 text-sm leading-5 text-[var(--color-text-primary)]">
-                      {item.summary}
-                    </div>
+                    {clickable ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {actionButtons.map((button) => (
+                          <button
+                            key={`${reminder.id}:${button.labelKey}`}
+                            type="button"
+                            className="rounded-md bg-white/10 px-2 py-0.5 text-xs font-medium text-[var(--color-text-primary)] transition hover:bg-white/20 active:bg-white/25"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              onAction(button.action);
+                            }}
+                            onPointerDown={(event) => {
+                              event.stopPropagation();
+                            }}
+                          >
+                            {t(`action.${button.labelKey}`, {
+                              defaultValue: button.fallback,
+                            })}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

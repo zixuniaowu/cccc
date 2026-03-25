@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createMentionReminder,
   projectPetReminders,
   type ProjectPetRemindersInput,
   type ReminderActorInput,
@@ -32,7 +33,7 @@ function makeChatEvent(eventId: string, overrides: Partial<ReminderEventInput> =
     eventId,
     kind: "chat.message",
     by: "peer-reviewer",
-    text: `message:${eventId}`,
+    text: `请先处理 message:${eventId}`,
     to: [],
     replyRequired: false,
     acked: false,
@@ -42,7 +43,7 @@ function makeChatEvent(eventId: string, overrides: Partial<ReminderEventInput> =
 }
 
 describe("projectPetReminders", () => {
-  it("projects waiting_user from attention entries", () => {
+  it("does not project waiting_user from attention entries", () => {
     const reminders = projectPetReminders(
       makeInput({
         waitingUser: [{ taskId: "T249", label: "Need user confirmation" }],
@@ -50,23 +51,10 @@ describe("projectPetReminders", () => {
       }),
     );
 
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]).toMatchObject({
-      kind: "waiting_user",
-      priority: 100,
-      source: { taskId: "T249" },
-      fingerprint: "group:g-demo:waiting_user:T249",
-      action: {
-        type: "open_task",
-        groupId: "g-demo",
-        taskId: "T249",
-      },
-      ephemeral: false,
-      agent: "system",
-    });
+    expect(reminders).toEqual([]);
   });
 
-  it("falls back to coordination tasks for waiting_user", () => {
+  it("does not fall back to coordination tasks for waiting_user", () => {
     const reminders = projectPetReminders(
       makeInput({
         tasks: [
@@ -76,13 +64,7 @@ describe("projectPetReminders", () => {
       }),
     );
 
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]?.source.taskId).toBe("T250");
-    expect(reminders[0]?.action).toEqual({
-      type: "open_task",
-      groupId: "g-demo",
-      taskId: "T250",
-    });
+    expect(reminders).toEqual([]);
   });
 
   it("projects reply_required reminders per stable event id", () => {
@@ -100,6 +82,18 @@ describe("projectPetReminders", () => {
       "group:g-demo:reply_required:evt-2",
       "group:g-demo:reply_required:evt-1",
     ]);
+    expect(reminders[0]?.summary).toBe("peer-reviewer 在等你回复。");
+    expect(reminders[0]?.suggestion).toBe("请先处理 message:evt-2");
+    expect(reminders[0]?.suggestionPreview).toBe("请先处理 message:evt-2");
+  });
+
+  it("drops mention reminders without a clear workflow suggestion", () => {
+    const reminder = createMentionReminder(
+      "g-demo",
+      makeChatEvent("evt-1", { by: "claude-1", text: "很长很长的实现细节", to: ["user"] }),
+    );
+
+    expect(reminder).toBeNull();
   });
 
   it("ignores acked or replied reply_required events", () => {
@@ -115,7 +109,7 @@ describe("projectPetReminders", () => {
     expect(reminders).toHaveLength(0);
   });
 
-  it("projects stalled_peer only for running actors with an active task", () => {
+  it("replaces stopped stalled peers with actor_down reminders", () => {
     const reminders = projectPetReminders(
       makeInput({
         actors: [
@@ -126,34 +120,164 @@ describe("projectPetReminders", () => {
       }),
     );
 
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]).toMatchObject({
-      kind: "stalled_peer",
-      priority: 70,
-      source: { actorId: "peer-impl-2", taskId: "T249" },
-      fingerprint: "group:g-demo:stalled_peer:peer-impl-2:T249",
-      action: {
-        type: "open_panel",
-        groupId: "g-demo",
-      },
-      agent: "peer-impl-2",
-    });
+    expect(reminders).toEqual([
+      expect.objectContaining({
+        kind: "actor_down",
+        action: {
+          type: "restart_actor",
+          groupId: "g-demo",
+          actorId: "peer-impl-1",
+        },
+      }),
+    ]);
   });
 
-  it("does not project mention reminders for agent-to-user messages (visible in chat)", () => {
+  it("projects actor_down reminders for a stopped foreman", () => {
+    const reminders = projectPetReminders(
+      makeInput({
+        actors: [
+          makeActor("foreman-1", {
+            role: "foreman",
+            title: "Foreman",
+            running: false,
+          }),
+        ],
+      }),
+    );
+
+    expect(reminders).toEqual([
+      expect.objectContaining({
+        kind: "actor_down",
+        summary: "Foreman 已停止，建议重启以恢复调度。",
+        action: {
+          type: "restart_actor",
+          groupId: "g-demo",
+          actorId: "foreman-1",
+        },
+      }),
+    ]);
+  });
+
+  it("projects actor_down reminders for a stopped peer with active task", () => {
+    const reminders = projectPetReminders(
+      makeInput({
+        actors: [
+          makeActor("peer-impl-1", {
+            role: "peer",
+            title: "Peer Impl 1",
+            running: false,
+            activeTaskId: "T301",
+          }),
+        ],
+      }),
+    );
+
+    expect(reminders).toEqual([
+      expect.objectContaining({
+        kind: "actor_down",
+        summary: "Peer Impl 1 已停止，当前任务 T301 可能卡住，建议重启。",
+        action: {
+          type: "restart_actor",
+          groupId: "g-demo",
+          actorId: "peer-impl-1",
+        },
+      }),
+    ]);
+  });
+
+  it("does not project actor_down reminders for running or disabled actors", () => {
+    const reminders = projectPetReminders(
+      makeInput({
+        actors: [
+          makeActor("foreman-1", {
+            role: "foreman",
+            title: "Foreman",
+            running: true,
+          }),
+          makeActor("peer-impl-1", {
+            role: "peer",
+            title: "Peer Impl 1",
+            running: false,
+            enabled: false,
+            activeTaskId: "T301",
+          }),
+          makeActor("peer-impl-2", {
+            role: "peer",
+            title: "Peer Impl 2",
+            running: false,
+          }),
+        ],
+      }),
+    );
+
+    expect(reminders).toEqual([]);
+  });
+
+  it("projects mention reminders with sendable suggestions for agent-to-user messages", () => {
     const reminders = projectPetReminders(
       makeInput({
         events: [
-          makeChatEvent("evt-1", { by: "peer-reviewer", text: "Need you here", to: ["user"] }),
+          makeChatEvent("evt-1", { by: "peer-reviewer", text: "Please review this patch", to: ["user"] }),
           makeChatEvent("evt-2", { by: "user", text: "self mention", to: ["user"] }),
         ],
       }),
     );
 
-    expect(reminders).toHaveLength(0);
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]?.kind).toBe("mention");
+    expect(reminders[0]?.suggestion).toBe("Please review this patch");
+    expect(reminders[0]?.action).toEqual({
+      type: "send_suggestion",
+      groupId: "g-demo",
+      text: "Please review this patch",
+      to: ["peer-reviewer"],
+      replyTo: "evt-1",
+    });
   });
 
-  it("sorts reminders by priority descending (mention disabled)", () => {
+  it("strips leading meta phrases from suggestion text", () => {
+    const reminders = projectPetReminders(
+      makeInput({
+        events: [
+          makeChatEvent("evt-3", {
+            by: "peer-reviewer",
+            to: ["user"],
+            text: "有个增量更新，请先回复用户，代码侧已经过了。",
+          }),
+        ],
+      }),
+    );
+
+    expect(reminders[0]?.suggestion).toBe("请先回复用户，代码侧已经过了");
+    expect(reminders[0]?.suggestionPreview).toBe("请先回复用户，代码侧已经过了");
+  });
+
+  it("keeps full suggestion text in send action while truncating display preview", () => {
+    const reminders = projectPetReminders(
+      makeInput({
+        events: [
+          makeChatEvent("evt-4", {
+            by: "peer-reviewer",
+            to: ["user"],
+            text: "有个补充说明，这条已经不是口头判断了，补丁、测试和验证结论都齐了，只差发给用户，顺手把后续同步和回归结论也一起补掉。",
+          }),
+        ],
+      }),
+    );
+
+    expect(reminders[0]?.suggestion).toBe("说明，这条已经不是口头判断了，补丁、测试和验证结论都齐了，只差发给用户，顺手把后续同步和回归结论也一起补掉");
+    expect(reminders[0]?.suggestionPreview).toMatch(/…$/);
+    expect(reminders[0]?.suggestionPreview?.length).toBeLessThan(reminders[0]?.suggestion?.length || 0);
+    expect(reminders[0]?.action).toEqual({
+      type: "send_suggestion",
+      groupId: "g-demo",
+      text: "说明，这条已经不是口头判断了，补丁、测试和验证结论都齐了，只差发给用户，顺手把后续同步和回归结论也一起补掉",
+      to: ["peer-reviewer"],
+      replyTo: "evt-4",
+    });
+  });
+
+  it("only keeps actionable message suggestions", () => {
     const reminders = projectPetReminders(
       makeInput({
         waitingUser: [{ taskId: "T249", label: "Need approval" }],
@@ -164,45 +288,38 @@ describe("projectPetReminders", () => {
     );
 
     expect(reminders.map((item) => item.kind)).toEqual([
-      "waiting_user",
       "reply_required",
-      "stalled_peer",
     ]);
   });
 
-  it("dedupes reminders by fingerprint", () => {
+  it("dedupes actionable reminders by fingerprint", () => {
     const reminders = projectPetReminders(
       makeInput({
-        waitingUser: [
-          { taskId: "T249", label: "Need approval" },
-          { taskId: "T249", label: "Need approval" },
+        events: [
+          makeChatEvent("evt-1", { replyRequired: true }),
+          makeChatEvent("evt-1", { replyRequired: true }),
         ],
       }),
     );
 
     expect(reminders.map((item) => item.fingerprint)).toEqual([
-      "group:g-demo:waiting_user:T249",
+      "group:g-demo:reply_required:evt-1",
     ]);
   });
 
-  it("hashes waiting_user fallback strings when task id is absent", () => {
+  it("drops no-delta coordination chatter even when it mentions the user", () => {
     const reminders = projectPetReminders(
       makeInput({
-        waitingUser: [
-          { label: "Need final approval" },
-          { label: "Need final approval" },
+        events: [
+          makeChatEvent("evt-9", {
+            by: "claude-1",
+            to: ["user"],
+            text: "本轮 15 分钟对齐仍是 no-delta。recall 命中的稳定经验没有被新事实推翻。",
+          }),
         ],
       }),
     );
 
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]?.fingerprint).toMatch(
-      /^group:g-demo:waiting_user:hash:[a-z0-9]+$/,
-    );
-    expect(reminders[0]?.action).toEqual({
-      type: "open_panel",
-      groupId: "g-demo",
-    });
-    expect(reminders[0]?.source.taskId).toBeUndefined();
+    expect(reminders).toEqual([]);
   });
 });

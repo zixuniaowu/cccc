@@ -6,6 +6,7 @@ import { beginContextRequest, isLatestContextRequest } from "../stores/useGroupS
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
 import type { Actor, ChatMessageData, GroupContext } from "../types";
+import { runReconnectCatchup, scheduleContextSummaryCatchup } from "./sseCatchup";
 import {
   isContextSyncEvent,
   isChatReadEvent,
@@ -26,6 +27,7 @@ import {
   getAckRecipientIdsForEvent,
 } from "../utils/ledgerEventHandlers";
 import { getPresentationMessageRefs, getPresentationRefStatus } from "../utils/presentationRefs";
+import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 
 // Re-export for backward compatibility
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
@@ -52,7 +54,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const setGroupContext = useGroupStore((s) => s.setGroupContext);
   const refreshActors = useGroupStore((s) => s.refreshActors);
   const refreshPresentation = useGroupStore((s) => s.refreshPresentation);
-  const scheduleActorUnreadRefresh = useGroupStore((s) => s.scheduleActorUnreadRefresh);
 
   const incrementChatUnread = useUIStore((s) => s.incrementChatUnread);
   const setSSEStatus = useUIStore((s) => s.setSSEStatus);
@@ -69,6 +70,16 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   useEffect(() => {
     selectedGroupIdRef.current = selectedGroupId;
   }, [selectedGroupId]);
+
+  function getNotifyTargetActorId(ev: unknown): string {
+    if (ev === null || typeof ev !== "object") return "";
+    const kind = String((ev as { kind?: unknown }).kind || "").trim();
+    if (kind !== "system.notify") return "";
+    const data = (ev as { data?: unknown }).data;
+    if (!data || typeof data !== "object") return "";
+    const targetActorId = String((data as { target_actor_id?: unknown }).target_actor_id || "").trim();
+    return targetActorId && targetActorId !== "user" ? targetActorId : "";
+  }
 
   async function fetchContext(groupId: string, opts?: FetchContextOptions) {
     if (opts?.fresh && contextRefreshTimerRef.current) {
@@ -99,39 +110,22 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     const bucket = store.chatByGroup[groupId];
     const currentEvents = Array.isArray(bucket?.events) ? bucket.events : [];
     const fetchedEvents = Array.isArray(resp.result.events) ? resp.result.events : [];
-    const fetchedById = new Map(
-      fetchedEvents
-        .filter((event) => !!event?.id)
-        .map((event) => [String(event.id), event] as const)
-    );
-    const currentIds = new Set(currentEvents.map((event) => String(event.id || "")).filter(Boolean));
-
-    const reconciled = currentEvents.map((event) => {
-      const eventId = String(event.id || "");
-      return eventId && fetchedById.has(eventId) ? fetchedById.get(eventId)! : event;
-    });
-    const missingEvents = fetchedEvents.filter((event) => {
-      const eventId = String(event.id || "");
-      return !eventId || !currentIds.has(eventId);
-    });
-    const nextEvents = [...reconciled, ...missingEvents];
+    const nextEvents = mergeLedgerEvents(currentEvents, fetchedEvents, MAX_RECONCILED_EVENTS);
 
     store.setEvents(
-      nextEvents.length > MAX_RECONCILED_EVENTS
-        ? nextEvents.slice(nextEvents.length - MAX_RECONCILED_EVENTS)
-        : nextEvents,
+      nextEvents,
       groupId
     );
     store.setHasMoreHistory(!!resp.result.has_more, groupId);
   }
 
   async function resyncAfterReconnect(groupId: string) {
-    await Promise.allSettled([
-      reconcileLedgerTail(groupId),
-      refreshActors(groupId, { includeUnread: false }),
-      fetchContext(groupId, { fresh: true, detail: "summary" }),
-    ]);
-    scheduleActorUnreadRefresh(groupId, 800);
+    await runReconnectCatchup(groupId, {
+      invalidateContextRead: api.invalidateContextRead,
+      reconcileLedgerTail,
+      refreshActors,
+      fetchContextSummary: fetchContext,
+    });
   }
 
   function connectStream(groupId: string) {
@@ -184,12 +178,15 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
         // Context sync - debounced refresh
         if (isContextSyncEvent(ev)) {
-          api.invalidateContextRead(groupId);
-          if (contextRefreshTimerRef.current) window.clearTimeout(contextRefreshTimerRef.current);
-          contextRefreshTimerRef.current = window.setTimeout(() => {
-            contextRefreshTimerRef.current = null;
-            void fetchContext(groupId, { fresh: true, detail: "summary" });
-          }, 150);
+          contextRefreshTimerRef.current = scheduleContextSummaryCatchup(groupId, {
+            invalidateContextRead: api.invalidateContextRead,
+            existingTimer: contextRefreshTimerRef.current,
+            clearTimer: window.clearTimeout,
+            setTimer: (cb, delayMs) => window.setTimeout(cb, delayMs),
+            fetchContextSummary: (gid, opts) => {
+              void fetchContext(gid, opts);
+            },
+          });
           return;
         }
 
@@ -232,7 +229,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           if (data) {
             updateReadStatus(data.eventId, data.actorId, groupId);
           }
-          scheduleActorUnreadRefresh(groupId, 400);
           return;
         }
 
@@ -300,11 +296,17 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           incrementChatUnread(groupId);
         }
 
+        const notifyTargetActorId = getNotifyTargetActorId(ev);
         const actorRefreshMode = getActorRefreshMode(ev);
-        if (actorRefreshMode === "readonly") {
-          void refreshActors(groupId, { includeUnread: false });
+        if (notifyTargetActorId) {
+          // Hot-path optimization: most system.notify events already declare a
+          // single target actor, so we can update the unread badge locally
+          // instead of forcing a daemon round-trip for actor_list(unread=true).
+          incrementActorUnread([notifyTargetActorId]);
         } else if (actorRefreshMode === "unread") {
-          scheduleActorUnreadRefresh(groupId, 400);
+          void refreshActors(groupId, { includeUnread: true });
+        } else if (actorRefreshMode === "readonly") {
+          void refreshActors(groupId, { includeUnread: false });
         }
       } catch {
         /* ignore parse errors */

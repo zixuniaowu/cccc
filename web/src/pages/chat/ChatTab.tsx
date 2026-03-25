@@ -1,20 +1,29 @@
 // ChatTab is the main chat page component.
 // Refactored to use useChatTab hook for business logic, reducing prop drilling.
 
-import { useCallback, type MutableRefObject, type RefObject } from "react";
+import { lazy, Suspense, useCallback, type MutableRefObject, type RefObject } from "react";
 import { CompassIcon } from "../../components/Icons";
 import { Actor, GroupMeta, LedgerEvent, PresentationMessageRef } from "../../types";
-import { PresentationRail } from "../../components/presentation/PresentationRail";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
-import { SetupChecklist } from "./SetupChecklist";
 import { ChatComposer } from "./ChatComposer";
 import { useChatTab } from "../../hooks/useChatTab";
 import { useTranslation } from 'react-i18next';
 import { useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { getChatSession } from "../../stores/useUIStore";
 
+const PresentationRail = lazy(() =>
+  import("../../components/presentation/PresentationRail").then((module) => ({ default: module.PresentationRail }))
+);
+const SetupChecklist = lazy(() =>
+  import("./SetupChecklist").then((module) => ({ default: module.SetupChecklist }))
+);
+
 const EMPTY_PRESENTATION_ATTENTION: Record<string, boolean> = {};
+
+function ChatLazyFallback({ className }: { className?: string }) {
+  return <div className={classNames("min-h-0", className)} />;
+}
 
 export interface ChatTabProps {
   // UI configuration
@@ -134,6 +143,7 @@ export function ChatTab({
     // Actions
     sendMessage,
     copyMessageLink,
+    copyMessageText,
     startReply,
     showRecipients,
     relayMessage,
@@ -269,17 +279,19 @@ export function ChatTab({
               <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
                 {t('nextSteps')}
               </div>
-              <SetupChecklist
-                isDark={isDark}
-                selectedGroupId={selectedGroupId}
-                busy={busy}
-                needsScope={needsScope}
-                needsActors={needsActors}
-                needsStart={needsStart}
-                onAddAgent={addAgent}
-                onStartGroup={onStartGroup}
-                variant="compact"
-              />
+              <Suspense fallback={<ChatLazyFallback />}>
+                <SetupChecklist
+                  isDark={isDark}
+                  selectedGroupId={selectedGroupId}
+                  busy={busy}
+                  needsScope={needsScope}
+                  needsActors={needsActors}
+                  needsStart={needsStart}
+                  onAddAgent={addAgent}
+                  onStartGroup={onStartGroup}
+                  variant="compact"
+                />
+              </Suspense>
             </div>
           </div>
         )}
@@ -450,17 +462,19 @@ export function ChatTab({
                           {t('noMessagesYet')}
                         </div>
                       ) : (
-                        <SetupChecklist
-                          isDark={isDark}
-                          selectedGroupId={selectedGroupId}
-                          busy={busy}
-                          needsScope={needsScope}
-                          needsActors={needsActors}
-                          needsStart={needsStart}
-                          onAddAgent={addAgent}
-                          onStartGroup={onStartGroup}
-                          variant="full"
-                        />
+                        <Suspense fallback={<ChatLazyFallback className="mt-4" />}>
+                          <SetupChecklist
+                            isDark={isDark}
+                            selectedGroupId={selectedGroupId}
+                            busy={busy}
+                            needsScope={needsScope}
+                            needsActors={needsActors}
+                            needsStart={needsStart}
+                            onAddAgent={addAgent}
+                            onStartGroup={onStartGroup}
+                            variant="full"
+                          />
+                        </Suspense>
                       )}
                     </div>
                   </div>
@@ -482,12 +496,13 @@ export function ChatTab({
                   scrollRef={scrollRef}
                   onReply={startReply}
                   onShowRecipients={showRecipients}
-                onCopyLink={copyMessageLink}
-                onRelay={relayMessage}
-                onOpenSource={openSourceMessage}
-                onOpenPresentationRef={openPresentationRef}
-                showScrollButton={showScrollButton}
-                onScrollButtonClick={handleScrollButtonClick}
+                  onCopyLink={copyMessageLink}
+                  onCopyContent={copyMessageText}
+                  onRelay={relayMessage}
+                  onOpenSource={openSourceMessage}
+                  onOpenPresentationRef={openPresentationRef}
+                  showScrollButton={showScrollButton}
+                  onScrollButtonClick={handleScrollButtonClick}
                   chatUnreadCount={chatUnreadCount}
                   onScrollChange={handleScrollChange}
                   onScrollSnapshot={handleScrollSnapshot}
@@ -500,30 +515,34 @@ export function ChatTab({
           ) : null}
 
           {!isSmallScreen ? (
-            <PresentationRail
-              mode="dock"
-              presentation={groupPresentation}
-              isDark={isDark}
-              readOnly={readOnly}
-              isOpen={presentationDockOpen}
-              onOpenChange={setPresentationDockOpen}
-              attentionSlots={presentationAttention}
-              onOpenSlot={openPresentationSlot}
-              onPinSlot={pinPresentationSlot}
-            />
-          ) : null}
-
-          {isSmallScreen && mobileSurface === "presentation" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
+            <Suspense fallback={<ChatLazyFallback className="w-0" />}>
               <PresentationRail
-                mode="panel"
+                mode="dock"
                 presentation={groupPresentation}
                 isDark={isDark}
                 readOnly={readOnly}
+                isOpen={presentationDockOpen}
+                onOpenChange={setPresentationDockOpen}
                 attentionSlots={presentationAttention}
                 onOpenSlot={openPresentationSlot}
                 onPinSlot={pinPresentationSlot}
               />
+            </Suspense>
+          ) : null}
+
+          {isSmallScreen && mobileSurface === "presentation" ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
+                <PresentationRail
+                  mode="panel"
+                  presentation={groupPresentation}
+                  isDark={isDark}
+                  readOnly={readOnly}
+                  attentionSlots={presentationAttention}
+                  onOpenSlot={openPresentationSlot}
+                  onPinSlot={pinPresentationSlot}
+                />
+              </Suspense>
             </div>
           ) : null}
         </div>

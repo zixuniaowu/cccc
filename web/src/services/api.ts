@@ -247,6 +247,10 @@ function groupPromptsRequestKey(groupId: string): string {
   return `group-prompts:${String(groupId || "").trim()}`;
 }
 
+function petPeerContextRequestKey(groupId: string, fresh: boolean): string {
+  return `pet-peer-context:${String(groupId || "").trim()}:${fresh ? "fresh" : "default"}`;
+}
+
 function pingRequestKey(includeHome: boolean): string {
   return includeHome ? "ping:include-home" : "ping:default";
 }
@@ -1234,6 +1238,15 @@ export type GroupPromptsResponse = {
   help: GroupPromptInfo;
 };
 
+export type PetPeerContextResponse = {
+  persona: string;
+  help: string;
+  prompt: string;
+  snapshot: string;
+  source: "help" | "default";
+  help_prompt: GroupPromptInfo;
+};
+
 export type PromptUpdateOptions = {
   editorMode?: "structured" | "raw";
   changedBlocks?: string[];
@@ -1244,6 +1257,21 @@ export async function fetchGroupPrompts(groupId: string) {
   return reuseSharedReadRequest(
     groupPromptsRequestKey(gid),
     () => apiJson<GroupPromptsResponse>(`/api/v1/groups/${encodeURIComponent(gid)}/prompts`)
+  );
+}
+
+export async function fetchPetPeerContext(groupId: string, opts?: { fresh?: boolean }) {
+  const gid = String(groupId || "").trim();
+  const fresh = !!opts?.fresh;
+  const params = new URLSearchParams();
+  if (fresh) params.set("fresh", "1");
+  const suffix = params.toString();
+  return reuseSharedReadRequest(
+    petPeerContextRequestKey(gid, fresh),
+    () =>
+      apiJson<PetPeerContextResponse>(
+        `/api/v1/groups/${encodeURIComponent(gid)}/pet-context${suffix ? `?${suffix}` : ""}`
+      )
   );
 }
 

@@ -22,6 +22,7 @@ export interface VirtualMessageListProps {
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
+  onCopyContent?: (ev: LedgerEvent) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
@@ -57,6 +58,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onReply,
   onShowRecipients,
   onCopyLink,
+  onCopyContent,
   onRelay,
   onOpenSource,
   onOpenPresentationRef,
@@ -87,6 +89,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   messagesRef.current = messages;
 
   const prevMessageCountRef = useRef(messages.length);
+  const prevTailMessageIdRef = useRef<string>(messages[messages.length - 1]?.id ? String(messages[messages.length - 1]?.id) : "");
   const isAtBottomRef = useRef(true);
   const didInitialScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<number | null>(null);
@@ -392,6 +395,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
     scrollTokenRef.current += 1;
     prevMessageCountRef.current = 0;
+    prevTailMessageIdRef.current = "";
     isAtBottomRef.current = true;
     didInitialScrollRef.current = false;
     topLoadArmedRef.current = true;
@@ -412,12 +416,24 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   }, [resetKey, cancelScheduledScroll, onScrollSnapshot, virtualizer]);
 
   useEffect(() => {
-    prevMessageCountRef.current = messages.length;
+    const prevCount = prevMessageCountRef.current;
+    const prevTailId = prevTailMessageIdRef.current;
+    const nextTailId = messages[messages.length - 1]?.id ? String(messages[messages.length - 1]?.id) : "";
 
-    // Scroll to bottom on any messages change while at bottom.
-    // Watches `messages` reference (not just length) so that loadGroup replacements
-    // with the same count still trigger re-positioning.
-    if (messages.length > 0 && isAtBottomRef.current) {
+    // Only auto-follow when the tail actually advances while the user is still
+    // considered at the bottom. Re-renders, re-measurement, or same-size list
+    // replacements should not steal scroll when the user is trying to read up.
+    const appendedAtTail =
+      messages.length > 0 &&
+      (
+        messages.length > prevCount ||
+        (nextTailId !== "" && nextTailId !== prevTailId)
+      );
+
+    prevMessageCountRef.current = messages.length;
+    prevTailMessageIdRef.current = nextTailId;
+
+    if (appendedAtTail && isAtBottomRef.current) {
       scheduleScrollToBottom({ requireAtBottom: true });
     }
   }, [messages, scheduleScrollToBottom]);
@@ -619,6 +635,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                       }
                     }}
                     onCopyLink={onCopyLink}
+                    onCopyContent={onCopyContent}
                     onRelay={onRelay}
                     onOpenSource={onOpenSource}
                     onOpenPresentationRef={onOpenPresentationRef}
