@@ -1472,6 +1472,66 @@ class TestGroupSpaceOps(unittest.TestCase):
             cleanup_stub()
             cleanup()
 
+    def test_space_artifact_async_generate_skips_notify_when_group_has_no_actor_recipient(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            gid = self._create_group("space-generate-no-recipient")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_gen_no_recipient",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            with patch(
+                "cccc.daemon.space.group_space_ops.provider_generate_artifact",
+                return_value={"task_id": "task_notify_none", "status": "pending"},
+            ), patch(
+                "cccc.daemon.space.group_space_ops.provider_wait_artifact",
+                return_value={"task_id": "task_notify_none", "status": "completed"},
+            ):
+                generated, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "action": "generate",
+                        "kind": "report",
+                        "wait": False,
+                        "save_to_space": False,
+                        "by": "user",
+                    },
+                )
+                self.assertTrue(generated.ok, getattr(generated, "error", None))
+
+            matched_notify = False
+            for _ in range(20):
+                group = load_group(gid)
+                self.assertIsNotNone(group)
+                assert group is not None
+                matched_notify = any(
+                    isinstance(ev, dict) and str(ev.get("kind") or "") == "system.notify"
+                    for ev in iter_events(group.ledger_path)
+                )
+                if matched_notify:
+                    break
+                time.sleep(0.05)
+            self.assertFalse(matched_notify, "did not expect async artifact notify without actor recipients")
+        finally:
+            cleanup_stub()
+            cleanup()
+
     def test_space_artifact_async_generate_returns_quickly_when_provider_generate_is_slow(self) -> None:
         _, cleanup = self._with_home()
         cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")

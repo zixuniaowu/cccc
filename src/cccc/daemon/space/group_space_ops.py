@@ -891,6 +891,23 @@ def _emit_artifact_async_notify(
         group = load_group(group_id)
         if group is None:
             return
+        target_actor_id = _notify_target_from_by(by)
+        if target_actor_id:
+            actors = [
+                item
+                for item in group.doc.get("actors", [])
+                if isinstance(item, dict) and str(item.get("id") or "").strip() == target_actor_id
+            ]
+            if not actors:
+                return
+        else:
+            actors = [
+                item
+                for item in group.doc.get("actors", [])
+                if isinstance(item, dict) and str(item.get("id") or "").strip() not in {"", "user"}
+            ]
+            if not actors:
+                return
         title = "Group Space artifact ready" if ok else "Group Space artifact failed"
         recommended_next_action = _artifact_notify_recommended_action(ok=ok, output_path=output_path)
         completion_guidance = _artifact_completion_guidance(ok=ok, output_path=output_path)
@@ -922,7 +939,7 @@ def _emit_artifact_async_notify(
             priority=("normal" if ok else "high"),
             title=title,
             message=message,
-            target_actor_id=_notify_target_from_by(by),
+            target_actor_id=target_actor_id,
             requires_ack=False,
             context=context,
         )
