@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ....daemon.server import call_daemon, get_daemon_endpoint
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
 from ..schemas import (
@@ -24,73 +21,9 @@ from ..schemas import (
     require_group,
 )
 
-logger = logging.getLogger("cccc.web.messaging")
-
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
     group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
-
-    async def _ensure_daemon_ready() -> None:
-        ep = get_daemon_endpoint()
-        transport = str(ep.get("transport") or "").strip().lower()
-        try:
-            if transport == "tcp":
-                host = str(ep.get("host") or "127.0.0.1").strip() or "127.0.0.1"
-                port = int(ep.get("port") or 0)
-                if port <= 0:
-                    raise RuntimeError("invalid daemon tcp endpoint")
-                reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=0.05)
-            else:
-                path = str(ep.get("path") or "").strip()
-                if not path:
-                    raise RuntimeError("missing daemon socket path")
-                reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(path), timeout=0.05)
-            writer.close()
-            await writer.wait_closed()
-            return
-        except Exception:
-            pass
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "daemon_unavailable",
-                "message": "ccccd unavailable",
-                "details": {"endpoint": ep},
-            },
-        )
-
-    def _submit_daemon_request(req: Dict[str, Any]) -> None:
-        try:
-            resp = call_daemon(req)
-            if not bool(resp.get("ok")):
-                err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
-                logger.warning(
-                    "async message submit failed op=%s code=%s message=%s",
-                    str(req.get("op") or ""),
-                    str(err.get("code") or ""),
-                    str(err.get("message") or ""),
-                )
-        except Exception as exc:
-            logger.warning("async message submit exception op=%s err=%s", str(req.get("op") or ""), exc)
-
-    async def _submit_daemon_request_async(req: Dict[str, Any]) -> None:
-        await asyncio.to_thread(_submit_daemon_request, req)
-
-    def _dispatch_daemon_request(req: Dict[str, Any]) -> None:
-        asyncio.create_task(_submit_daemon_request_async(req))
-
-    def _accepted_result(*, group_id: str, client_id: str) -> Dict[str, Any]:
-        return {
-            "ok": True,
-            "result": {
-                "accepted": True,
-                "queued": True,
-                "group_id": str(group_id or "").strip(),
-                "client_id": str(client_id or "").strip(),
-                "event": None,
-                "ack_event": None,
-            },
-        }
 
     def _parse_refs_json(raw: str) -> list[dict[str, Any]]:
         text = str(raw or "").strip()
@@ -110,25 +43,24 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @group_router.post("/send")
     async def send(group_id: str, req: SendRequest) -> Dict[str, Any]:
-        await _ensure_daemon_ready()
-        daemon_req = {
-            "op": "send",
-            "args": {
-                "group_id": group_id,
-                "text": req.text,
-                "by": req.by,
-                "to": list(req.to),
-                "path": req.path,
-                "priority": req.priority,
-                "reply_required": _normalize_reply_required(req.reply_required),
-                "src_group_id": req.src_group_id,
-                "src_event_id": req.src_event_id,
-                "client_id": req.client_id,
-                "refs": list(req.refs),
-            },
-        }
-        _dispatch_daemon_request(daemon_req)
-        return _accepted_result(group_id=group_id, client_id=req.client_id)
+        return await ctx.daemon(
+            {
+                "op": "send",
+                "args": {
+                    "group_id": group_id,
+                    "text": req.text,
+                    "by": req.by,
+                    "to": list(req.to),
+                    "path": req.path,
+                    "priority": req.priority,
+                    "reply_required": _normalize_reply_required(req.reply_required),
+                    "src_group_id": req.src_group_id,
+                    "src_event_id": req.src_event_id,
+                    "client_id": req.client_id,
+                    "refs": list(req.refs),
+                },
+            }
+        )
 
     @group_router.post("/send_cross_group")
     async def send_cross_group(request: Request, group_id: str, req: SendCrossGroupRequest) -> Dict[str, Any]:
@@ -155,23 +87,22 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @group_router.post("/reply")
     async def reply(group_id: str, req: ReplyRequest) -> Dict[str, Any]:
-        await _ensure_daemon_ready()
-        daemon_req = {
-            "op": "reply",
-            "args": {
-                "group_id": group_id,
-                "text": req.text,
-                "by": req.by,
-                "to": list(req.to),
-                "reply_to": req.reply_to,
-                "priority": req.priority,
-                "reply_required": _normalize_reply_required(req.reply_required),
-                "client_id": req.client_id,
-                "refs": list(req.refs),
-            },
-        }
-        _dispatch_daemon_request(daemon_req)
-        return _accepted_result(group_id=group_id, client_id=req.client_id)
+        return await ctx.daemon(
+            {
+                "op": "reply",
+                "args": {
+                    "group_id": group_id,
+                    "text": req.text,
+                    "by": req.by,
+                    "to": list(req.to),
+                    "reply_to": req.reply_to,
+                    "priority": req.priority,
+                    "reply_required": _normalize_reply_required(req.reply_required),
+                    "client_id": req.client_id,
+                    "refs": list(req.refs),
+                },
+            }
+        )
 
     @group_router.post("/events/{event_id}/ack")
     async def chat_ack(group_id: str, event_id: str, req: UserAckRequest) -> Dict[str, Any]:
@@ -273,24 +204,23 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=400, detail={"code": "invalid_priority", "message": "priority must be 'normal' or 'attention'"})
         refs = _parse_refs_json(refs_json)
 
-        await _ensure_daemon_ready()
-        daemon_req = {
-            "op": "send",
-            "args": {
-                "group_id": group_id,
-                "text": msg_text,
-                "by": by,
-                "to": canonical_to,
-                "path": path,
-                "attachments": attachments,
-                "priority": prio,
-                "reply_required": _normalize_reply_required(reply_required),
-                "client_id": str(client_id or "").strip(),
-                "refs": refs,
-            },
-        }
-        _dispatch_daemon_request(daemon_req)
-        return _accepted_result(group_id=group_id, client_id=str(client_id or "").strip())
+        return await ctx.daemon(
+            {
+                "op": "send",
+                "args": {
+                    "group_id": group_id,
+                    "text": msg_text,
+                    "by": by,
+                    "to": canonical_to,
+                    "path": path,
+                    "attachments": attachments,
+                    "priority": prio,
+                    "reply_required": _normalize_reply_required(reply_required),
+                    "client_id": str(client_id or "").strip(),
+                    "refs": refs,
+                },
+            }
+        )
 
     @group_router.post("/reply_upload")
     async def reply_upload(
@@ -369,24 +299,23 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=400, detail={"code": "invalid_priority", "message": "priority must be 'normal' or 'attention'"})
         refs = _parse_refs_json(refs_json)
 
-        await _ensure_daemon_ready()
-        daemon_req = {
-            "op": "reply",
-            "args": {
-                "group_id": group_id,
-                "text": msg_text,
-                "by": by,
-                "to": canonical_to,
-                "reply_to": reply_to_id,
-                "attachments": attachments,
-                "priority": prio,
-                "reply_required": _normalize_reply_required(reply_required),
-                "client_id": str(client_id or "").strip(),
-                "refs": refs,
-            },
-        }
-        _dispatch_daemon_request(daemon_req)
-        return _accepted_result(group_id=group_id, client_id=str(client_id or "").strip())
+        return await ctx.daemon(
+            {
+                "op": "reply",
+                "args": {
+                    "group_id": group_id,
+                    "text": msg_text,
+                    "by": by,
+                    "to": canonical_to,
+                    "reply_to": reply_to_id,
+                    "attachments": attachments,
+                    "priority": prio,
+                    "reply_required": _normalize_reply_required(reply_required),
+                    "client_id": str(client_id or "").strip(),
+                    "refs": refs,
+                },
+            }
+        )
 
     @group_router.get("/blobs/{blob_name}")
     async def blob_download(group_id: str, blob_name: str) -> FileResponse:
