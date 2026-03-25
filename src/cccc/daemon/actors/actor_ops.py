@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.actors import find_actor, get_effective_role, list_actors
+from ...kernel.actors import find_actor
 from ...kernel.group import load_group
+from ...kernel.query_projections import get_actor_list_projection
 from .private_env_ops import mask_private_env_value
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -29,12 +30,11 @@ def handle_actor_list(
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
-    actors = list_actors(group)
+    actors = get_actor_list_projection(group)
     for actor in actors:
         aid = str(actor.get("id") or "")
         if not aid:
             continue
-        actor["role"] = get_effective_role(group, aid)
         runner_kind = str(actor.get("runner") or "pty").strip()
         effective_runner = effective_runner_kind(runner_kind)
         if effective_runner == "headless":
@@ -50,10 +50,9 @@ def handle_actor_list(
         if effective_runner != runner_kind:
             actor["runner_effective"] = effective_runner
     if include_unread:
-        from ...kernel.inbox import batch_unread_counts
+        from ...kernel.inbox import get_indexed_unread_counts
 
-        actor_ids = [str(a.get("id") or "") for a in actors if a.get("id")]
-        counts = batch_unread_counts(group, actor_ids=actor_ids)
+        counts = get_indexed_unread_counts(group, actors=actors)
         for actor in actors:
             aid = str(actor.get("id") or "")
             if aid:

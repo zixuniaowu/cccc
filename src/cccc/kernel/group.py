@@ -16,6 +16,7 @@ import yaml  # type: ignore
 from ..paths import ensure_home
 from ..util.fs import atomic_write_text
 from ..util.time import utc_now_iso
+from .ledger_segments import ensure_ledger_layout
 from .registry import Registry
 from .scope import ScopeIdentity
 
@@ -83,6 +84,7 @@ class Group:
 
     @property
     def ledger_path(self) -> Path:
+        ensure_ledger_layout(self.path)
         return self.path / "ledger.jsonl"
 
     def save(self) -> None:
@@ -101,6 +103,7 @@ def load_group(group_id: str) -> Optional[Group]:
         doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         if not isinstance(doc, dict):
             return None
+        ensure_ledger_layout(gp)
         return Group(group_id=group_id, path=gp, doc=doc)
     except Exception:
         return None
@@ -118,7 +121,7 @@ def create_group(reg: Registry, *, title: str, topic: str = "") -> Group:
     (gp / "context").mkdir(parents=True, exist_ok=True)
     (gp / "scopes").mkdir(parents=True, exist_ok=True)
     (gp / "state").mkdir(parents=True, exist_ok=True)
-    (gp / "ledger.jsonl").touch(exist_ok=True)
+    ensure_ledger_layout(gp)
 
     group_doc: Dict[str, Any] = {
         "v": 1,

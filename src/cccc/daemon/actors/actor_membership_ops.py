@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import list_actors, remove_actor
+from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
@@ -48,6 +49,11 @@ def handle_actor_remove(
         delete_actor_private_env(group.group_id, actor_id)
     except Exception as e:
         return _error("actor_remove_failed", str(e))
+
+    try:
+        ContextStorage(group).bump_version_state(actors_changed=True)
+    except Exception:
+        pass
 
     try:
         any_enabled = any(

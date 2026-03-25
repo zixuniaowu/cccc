@@ -13,7 +13,6 @@ Storage: ~/.cccc/groups/<group_id>/context/
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -24,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from .group import Group
+from ..util.fs import atomic_write_json, read_json
 
 
 class TaskStatus(str, Enum):
@@ -273,50 +273,132 @@ class ContextStorage:
     def _agents_path(self) -> Path:
         return self.context_dir / "agents.yaml"
 
+    def _version_state_path(self) -> Path:
+        return self.context_dir / "version_state.json"
+
+    def _summary_snapshot_path(self) -> Path:
+        return self.context_dir / "summary_snapshot.json"
+
+    def _default_version_state(self) -> Dict[str, int]:
+        has_context = self._context_path().exists()
+        has_agents = self._agents_path().exists()
+        has_tasks = self.tasks_dir.exists() and any(self.tasks_dir.glob("T*.yaml"))
+        # Bootstrap existing groups into a non-empty baseline so versioning starts stable.
+        initial_rev = 1 if (has_context or has_agents or has_tasks) else 0
+        return {
+            "global_rev": initial_rev,
+            "context_rev": 1 if has_context else 0,
+            "tasks_rev": 1 if has_tasks else 0,
+            "agents_rev": 1 if has_agents else 0,
+            "actors_rev": 0,
+        }
+
+    def load_version_state(self) -> Dict[str, int]:
+        path = self._version_state_path()
+        raw = read_json(path)
+        if not raw:
+            return self._default_version_state()
+
+        def _coerce_rev(key: str, fallback: int) -> int:
+            try:
+                value = int(raw.get(key, fallback))
+            except Exception:
+                value = fallback
+            return max(0, value)
+
+        fallback = self._default_version_state()
+        return {
+            "global_rev": _coerce_rev("global_rev", fallback["global_rev"]),
+            "context_rev": _coerce_rev("context_rev", fallback["context_rev"]),
+            "tasks_rev": _coerce_rev("tasks_rev", fallback["tasks_rev"]),
+            "agents_rev": _coerce_rev("agents_rev", fallback["agents_rev"]),
+            "actors_rev": _coerce_rev("actors_rev", fallback["actors_rev"]),
+        }
+
+    def save_version_state(self, state: Dict[str, Any]) -> Dict[str, int]:
+        self._ensure_dirs()
+        current = self.load_version_state()
+        next_state = {
+            "global_rev": max(0, int(state.get("global_rev", current["global_rev"]))),
+            "context_rev": max(0, int(state.get("context_rev", current["context_rev"]))),
+            "tasks_rev": max(0, int(state.get("tasks_rev", current["tasks_rev"]))),
+            "agents_rev": max(0, int(state.get("agents_rev", current["agents_rev"]))),
+            "actors_rev": max(0, int(state.get("actors_rev", current["actors_rev"]))),
+        }
+        atomic_write_json(self._version_state_path(), next_state, indent=2)
+        return next_state
+
+    def bump_version_state(
+        self,
+        *,
+        context_changed: bool = False,
+        tasks_changed: bool = False,
+        agents_changed: bool = False,
+        actors_changed: bool = False,
+    ) -> Dict[str, int]:
+        state = self.load_version_state()
+        if not any((context_changed, tasks_changed, agents_changed, actors_changed)):
+            return state
+        if context_changed:
+            state["context_rev"] += 1
+        if tasks_changed:
+            state["tasks_rev"] += 1
+        if agents_changed:
+            state["agents_rev"] += 1
+        if actors_changed:
+            state["actors_rev"] += 1
+        state["global_rev"] += 1
+        return self.save_version_state(state)
+
+    def summary_basis(self) -> Dict[str, int]:
+        state = self.load_version_state()
+        return {
+            "context_rev": state["context_rev"],
+            "tasks_rev": state["tasks_rev"],
+            "agents_rev": state["agents_rev"],
+            "actors_rev": state["actors_rev"],
+        }
+
+    def load_summary_snapshot(self) -> Dict[str, Any]:
+        path = self._summary_snapshot_path()
+        raw = read_json(path)
+        if not isinstance(raw, dict):
+            return {}
+        basis = raw.get("basis")
+        result = raw.get("result")
+        if not isinstance(basis, dict) or not isinstance(result, dict):
+            return {}
+        return {
+            "schema": int(raw.get("schema", 1) or 1),
+            "basis": {
+                "context_rev": max(0, int(basis.get("context_rev", 0) or 0)),
+                "tasks_rev": max(0, int(basis.get("tasks_rev", 0) or 0)),
+                "agents_rev": max(0, int(basis.get("agents_rev", 0) or 0)),
+                "actors_rev": max(0, int(basis.get("actors_rev", 0) or 0)),
+            },
+            "version": str(raw.get("version") or "").strip(),
+            "result": result,
+            "built_at": str(raw.get("built_at") or "").strip(),
+        }
+
+    def save_summary_snapshot(self, *, basis: Dict[str, Any], version: str, result: Dict[str, Any]) -> None:
+        self._ensure_dirs()
+        snapshot = {
+            "schema": 1,
+            "basis": {
+                "context_rev": max(0, int(basis.get("context_rev", 0) or 0)),
+                "tasks_rev": max(0, int(basis.get("tasks_rev", 0) or 0)),
+                "agents_rev": max(0, int(basis.get("agents_rev", 0) or 0)),
+                "actors_rev": max(0, int(basis.get("actors_rev", 0) or 0)),
+            },
+            "version": str(version or "").strip(),
+            "result": result,
+            "built_at": _utc_now_iso(),
+        }
+        atomic_write_json(self._summary_snapshot_path(), snapshot, indent=2)
+
     def compute_version(self) -> str:
-        def _jsonable(obj: Any) -> Any:
-            if obj is None or isinstance(obj, (str, int, float, bool)):
-                return obj
-            if isinstance(obj, datetime):
-                return obj.isoformat()
-            if isinstance(obj, list):
-                return [_jsonable(x) for x in obj]
-            if isinstance(obj, dict):
-                return {str(k): _jsonable(v) for k, v in obj.items()}
-            return str(obj)
-
-        h = hashlib.sha256()
-        ctx_path = self._context_path()
-        if self._context_raw is not None:
-            h.update(json.dumps(_jsonable(self._context_raw), sort_keys=True).encode())
-        elif ctx_path.exists():
-            try:
-                h.update(json.dumps(_jsonable(yaml.safe_load(ctx_path.read_text(encoding="utf-8"))), sort_keys=True).encode())
-            except Exception:
-                h.update(b"null")
-
-        if self.tasks_dir.exists():
-            for task_file in sorted(self.tasks_dir.glob("T*.yaml")):
-                h.update(task_file.name.encode("utf-8"))
-                if task_file.name in self._tasks_raw:
-                    data = self._tasks_raw[task_file.name]
-                else:
-                    try:
-                        data = yaml.safe_load(task_file.read_text(encoding="utf-8"))
-                    except Exception:
-                        data = None
-                h.update(json.dumps(_jsonable(data), sort_keys=True).encode())
-
-        agents_path = self._agents_path()
-        if self._agents_raw is not None:
-            h.update(json.dumps(_jsonable(self._agents_raw), sort_keys=True).encode())
-        elif agents_path.exists():
-            try:
-                h.update(json.dumps(_jsonable(yaml.safe_load(agents_path.read_text(encoding="utf-8"))), sort_keys=True).encode())
-            except Exception:
-                h.update(b"null")
-
-        return h.hexdigest()[:12]
+        return f"ctxv:{self.load_version_state()['global_rev']}"
 
     def _default_meta(self) -> Dict[str, Any]:
         return {
@@ -695,6 +777,7 @@ class ContextStorage:
             agent.warm.what_changed = ""
             agent.updated_at = _utc_now_iso()
             self.save_agents(agents_state)
+            self.bump_version_state(agents_changed=True)
             return True
         return False
 
@@ -708,4 +791,5 @@ class ContextStorage:
         if len(agents_state.agents) == before:
             return False
         self.save_agents(agents_state)
+        self.bump_version_state(agents_changed=True)
         return True

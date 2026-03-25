@@ -682,6 +682,7 @@ class AutomationManager:
     
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._memory_auto_in_flight: set[str] = set()
 
     def on_resume(self, group: Group) -> None:
         """Reset automation timers on resume (idle/paused -> active).
@@ -2007,6 +2008,7 @@ class AutomationManager:
 
         now = datetime.now(timezone.utc)
         should_run = False
+        group_id = str(group.group_id or "").strip()
         with self._lock:
             state = _load_state(group)
             memory_auto = state.get("memory_auto")
@@ -2025,46 +2027,55 @@ class AutomationManager:
             elapsed_ok = True
             if min_interval_seconds > 0 and last_run_dt is not None:
                 elapsed_ok = (now - last_run_dt).total_seconds() >= float(min_interval_seconds)
-            should_run = (pending >= int(min_new_messages)) and bool(elapsed_ok)
+            should_run = (pending >= int(min_new_messages)) and bool(elapsed_ok) and (group_id not in self._memory_auto_in_flight)
             if should_run:
                 memory_auto["pending_messages"] = 0
                 memory_auto["last_run_at"] = utc_now_iso()
+                if group_id:
+                    self._memory_auto_in_flight.add(group_id)
             _save_state(group, state)
 
         if not should_run:
             return
 
-        try:
-            from ..memory.memory_ops import run_auto_conversation_memory_cycle
+        def _run_memory_auto() -> None:
+            try:
+                from ..memory.memory_ops import run_auto_conversation_memory_cycle
 
-            result = run_auto_conversation_memory_cycle(
-                group_id=group.group_id,
-                actor_id="system",
-                max_messages=max_messages,
-                context_window_tokens=cwt,
-                reserve_tokens=reserve,
-                keep_recent_tokens=keep_recent,
-                signal_pack_token_budget=signal_pack_budget,
-            )
-            status = str(result.get("status") or "")
-            with self._lock:
-                state = _load_state(group)
-                memory_auto = state.get("memory_auto")
-                if not isinstance(memory_auto, dict):
-                    memory_auto = {}
-                    state["memory_auto"] = memory_auto
-                memory_auto["last_result"] = result
-                memory_auto["last_result_at"] = utc_now_iso()
-                if status == "written":
-                    memory_auto["last_written_at"] = utc_now_iso()
-                _save_state(group, state)
-        except Exception as e:
-            with self._lock:
-                state = _load_state(group)
-                memory_auto = state.get("memory_auto")
-                if not isinstance(memory_auto, dict):
-                    memory_auto = {}
-                    state["memory_auto"] = memory_auto
-                memory_auto["last_error_at"] = utc_now_iso()
-                memory_auto["last_error"] = str(e)
-                _save_state(group, state)
+                result = run_auto_conversation_memory_cycle(
+                    group_id=group.group_id,
+                    actor_id="system",
+                    max_messages=max_messages,
+                    context_window_tokens=cwt,
+                    reserve_tokens=reserve,
+                    keep_recent_tokens=keep_recent,
+                    signal_pack_token_budget=signal_pack_budget,
+                )
+                status = str(result.get("status") or "")
+                with self._lock:
+                    state = _load_state(group)
+                    memory_auto = state.get("memory_auto")
+                    if not isinstance(memory_auto, dict):
+                        memory_auto = {}
+                        state["memory_auto"] = memory_auto
+                    memory_auto["last_result"] = result
+                    memory_auto["last_result_at"] = utc_now_iso()
+                    if status == "written":
+                        memory_auto["last_written_at"] = utc_now_iso()
+                    _save_state(group, state)
+            except Exception as e:
+                with self._lock:
+                    state = _load_state(group)
+                    memory_auto = state.get("memory_auto")
+                    if not isinstance(memory_auto, dict):
+                        memory_auto = {}
+                        state["memory_auto"] = memory_auto
+                    memory_auto["last_error_at"] = utc_now_iso()
+                    memory_auto["last_error"] = str(e)
+                    _save_state(group, state)
+            finally:
+                if group_id:
+                    with self._lock:
+                        self._memory_auto_in_flight.discard(group_id)
+
+        threading.Thread(target=_run_memory_auto, name=f"cccc-memory-auto-{group_id or 'group'}", daemon=True).start()

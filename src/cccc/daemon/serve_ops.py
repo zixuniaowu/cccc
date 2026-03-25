@@ -6,7 +6,7 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 _LOG = logging.getLogger("cccc.daemon.serve_ops")
 _LOOP_ERROR_LAST_TS: Dict[str, float] = {}
@@ -71,6 +71,16 @@ def start_automation_thread(
     return t
 
 
+def start_request_execution_thread(
+    *,
+    request_queue: Any,
+    name: str = "cccc-request-worker",
+) -> threading.Thread:
+    t = threading.Thread(target=request_queue.run_forever, name=str(name or "cccc-request-worker"), daemon=True)
+    t.start()
+    return t
+
+
 def start_space_jobs_thread(
     *,
     stop_event: threading.Event,
@@ -95,16 +105,35 @@ def start_space_sync_thread(
     *,
     stop_event: threading.Event,
     tick_space_sync: Callable[[], Any],
+    drain_space_sync_runs: Optional[Callable[[int], int]] = None,
+    wake_event: Optional[threading.Event] = None,
     interval_seconds: float = 30.0,
 ) -> threading.Thread:
     def _space_sync_loop() -> None:
         interval = max(5.0, float(interval_seconds or 30.0))
+        next_periodic = 0.0
         while not stop_event.is_set():
+            processed = 0
+            if drain_space_sync_runs is not None:
+                try:
+                    processed = int(drain_space_sync_runs(4) or 0)
+                except Exception as e:
+                    _log_loop_error("drain_space_sync_runs failed", e)
             try:
-                tick_space_sync()
+                now = time.time()
+                if now >= next_periodic:
+                    tick_space_sync()
+                    next_periodic = now + interval
             except Exception as e:
                 _log_loop_error("tick_space_sync failed", e)
-            stop_event.wait(interval)
+            if processed > 0:
+                continue
+            timeout = max(0.2, next_periodic - time.time())
+            if wake_event is not None:
+                wake_event.wait(timeout)
+                wake_event.clear()
+            else:
+                stop_event.wait(timeout)
 
     t = threading.Thread(target=_space_sync_loop, name="cccc-space-sync", daemon=True)
     t.start()

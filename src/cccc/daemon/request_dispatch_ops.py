@@ -92,9 +92,10 @@ class RequestDispatchDeps:
     daemon_request_factory: Type[DaemonRequest]
     coerce_bool_default_false: Callable[[Any], bool]
     normalize_attachments: Callable[..., list[dict[str, Any]]]
-    auto_wake_recipients: Callable[..., None]
+    auto_wake_recipients: Callable[..., list[str]]
     automation_on_new_message: Callable[[Any], None]
     clear_pending_system_notifies_chat: Callable[[str, set[str]], None]
+    enqueue_group_space_sync_run: Callable[..., dict[str, Any]]
     error_factory: Callable[[str, str], DaemonResponse]
 
 
@@ -173,7 +174,11 @@ def dispatch_request(
     if presentation_browser_resp is not None:
         return presentation_browser_resp, False
 
-    group_space_resp = try_handle_group_space_op(op, args)
+    group_space_resp = try_handle_group_space_op(
+        op,
+        args,
+        enqueue_group_space_sync_run=deps.enqueue_group_space_sync_run,
+    )
     if group_space_resp is not None:
         return group_space_resp, False
 

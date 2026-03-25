@@ -2211,6 +2211,123 @@ class TestGroupSpaceOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_space_sync_work_lane_defers_to_executor_when_available(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.space.group_space_ops import handle_group_space_sync
+
+            gid = self._create_group("space-sync-executor")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_exec_1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            queued: list[dict[str, object]] = []
+            with patch(
+                "cccc.daemon.space.group_space_ops.mark_group_space_sync_pending",
+                return_value={"ok": True, "state": "pending", "remote_space_id": "nb_exec_1"},
+            ) as pending_mock, patch(
+                "cccc.daemon.space.group_space_ops.sync_group_space_files",
+            ) as sync_mock:
+                resp = handle_group_space_sync(
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "action": "run",
+                        "force": True,
+                        "by": "user",
+                    },
+                    enqueue_group_space_sync_run=lambda **kwargs: queued.append(kwargs) or {
+                        "accepted": True,
+                        "queued": True,
+                        "reason": "queued",
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "force": True,
+                    },
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            pending_mock.assert_called_once_with(gid, provider="notebooklm", remote_space_id="nb_exec_1")
+            sync_mock.assert_not_called()
+            self.assertEqual(
+                queued,
+                [{"group_id": gid, "provider": "notebooklm", "force": True, "by": "user"}],
+            )
+            result = resp.result if isinstance(resp.result, dict) else {}
+            sync_result = result.get("sync_result") if isinstance(result.get("sync_result"), dict) else {}
+            self.assertEqual(bool(sync_result.get("deferred")), True)
+            self.assertEqual(bool(sync_result.get("queued")), True)
+        finally:
+            cleanup()
+
+    def test_group_space_sync_work_lane_enqueue_rejection_restores_previous_state(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.space.group_space_ops import handle_group_space_sync
+            from cccc.daemon.space.group_space_sync import read_group_space_sync_state
+
+            gid = self._create_group("space-sync-enqueue-reject")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_exec_reject",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            original_state = read_group_space_sync_state(gid)
+
+            resp = handle_group_space_sync(
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "run",
+                    "force": True,
+                    "by": "user",
+                },
+                enqueue_group_space_sync_run=lambda **kwargs: {
+                    "accepted": False,
+                    "code": "queue_rejected",
+                    "message": "executor rejected request",
+                    "group_id": kwargs.get("group_id"),
+                },
+            )
+
+            self.assertFalse(resp.ok)
+            self.assertEqual(str(resp.error.code), "queue_rejected")
+            restored_state = read_group_space_sync_state(gid)
+            self.assertEqual(
+                str(restored_state.get("remote_space_id") or ""),
+                str(original_state.get("remote_space_id") or ""),
+            )
+            self.assertEqual(
+                str(restored_state.get("state") or ""),
+                str(original_state.get("state") or ""),
+            )
+            self.assertEqual(
+                bool(restored_state.get("available")),
+                bool(original_state.get("available")),
+            )
+        finally:
+            cleanup()
+
     def test_notebooklm_auth_verification_works_inside_running_event_loop(self) -> None:
         from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 

@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Optional, Sequence
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import add_actor, find_actor, generate_actor_id, get_effective_role, remove_actor
+from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.inbox import set_cursor
 from ...kernel.ledger import append_event
@@ -260,6 +261,11 @@ def handle_actor_add(
                 raise RuntimeError("failed to store env_private")
     except Exception as e:
         return _error("actor_add_failed", str(e))
+
+    try:
+        ContextStorage(group).bump_version_state(actors_changed=True)
+    except Exception:
+        pass
 
     event = append_event(
         group.ledger_path,

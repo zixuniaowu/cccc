@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class TestContextV2Ops(unittest.TestCase):
@@ -40,6 +41,9 @@ class TestContextV2Ops(unittest.TestCase):
 
     def _context(self, gid: str):
         return self._call("context_get", {"group_id": gid})
+
+    def _summary_context(self, gid: str):
+        return self._call("context_get", {"group_id": gid, "detail": "summary"})
 
     def _tasks(self, gid: str):
         return self._call("task_list", {"group_id": gid})
@@ -97,6 +101,225 @@ class TestContextV2Ops(unittest.TestCase):
             self.assertEqual(brief["current_focus"], "Board-first B3 rollout")
             self.assertEqual(brief["constraints"], ["No backward-compat ballast", "Keep bootstrap lean"])
             self.assertIn("coordination + agent_state", brief["project_brief"])
+        finally:
+            cleanup()
+
+    def test_summary_context_hit_skips_rebuild_work_on_second_read(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            ok_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "ops": [
+                        {"op": "coordination.brief.update", "objective": "Ship snapshot"},
+                        {"op": "task.create", "title": "T1", "outcome": "G1"},
+                    ],
+                },
+            )
+            self.assertTrue(ok_resp.ok, getattr(ok_resp, "error", None))
+
+            from cccc.daemon.context.context_ops import _rebuild_summary_snapshot
+
+            from cccc.kernel.context import ContextStorage
+
+            _rebuild_summary_snapshot(gid)
+
+            original_list_tasks = ContextStorage.list_tasks
+            original_load_agents = ContextStorage.load_agents
+            original_load_context = ContextStorage.load_context
+            original_compute_version = ContextStorage.compute_version
+
+            with (
+                patch.object(ContextStorage, "list_tasks", autospec=True, side_effect=original_list_tasks) as mock_list_tasks,
+                patch.object(ContextStorage, "load_agents", autospec=True, side_effect=original_load_agents) as mock_load_agents,
+                patch.object(ContextStorage, "load_context", autospec=True, side_effect=original_load_context) as mock_load_context,
+                patch.object(ContextStorage, "compute_version", autospec=True, side_effect=original_compute_version) as mock_compute_version,
+            ):
+                first, _ = self._summary_context(gid)
+                self.assertTrue(first.ok, getattr(first, "error", None))
+                first_counts = (
+                    mock_list_tasks.call_count,
+                    mock_load_agents.call_count,
+                    mock_load_context.call_count,
+                    mock_compute_version.call_count,
+                )
+                self.assertEqual(first_counts, (0, 0, 0, 0))
+
+                second, _ = self._summary_context(gid)
+                self.assertTrue(second.ok, getattr(second, "error", None))
+                self.assertEqual(second.result["version"], first.result["version"])
+                self.assertEqual(
+                    (
+                        mock_list_tasks.call_count,
+                        mock_load_agents.call_count,
+                        mock_load_context.call_count,
+                        mock_compute_version.call_count,
+                    ),
+                    first_counts,
+                )
+        finally:
+            cleanup()
+
+    def test_summary_context_rebuilds_after_context_sync(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            seed_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "ops": [{"op": "coordination.brief.update", "objective": "Initial"}],
+                },
+            )
+            self.assertTrue(seed_resp.ok, getattr(seed_resp, "error", None))
+
+            from cccc.daemon.context.context_ops import _rebuild_summary_snapshot
+
+            from cccc.kernel.context import ContextStorage
+
+            _rebuild_summary_snapshot(gid)
+
+            original_list_tasks = ContextStorage.list_tasks
+            original_load_agents = ContextStorage.load_agents
+            original_load_context = ContextStorage.load_context
+            original_compute_version = ContextStorage.compute_version
+
+            with (
+                patch.object(ContextStorage, "list_tasks", autospec=True, side_effect=original_list_tasks) as mock_list_tasks,
+                patch.object(ContextStorage, "load_agents", autospec=True, side_effect=original_load_agents) as mock_load_agents,
+                patch.object(ContextStorage, "load_context", autospec=True, side_effect=original_load_context) as mock_load_context,
+                patch.object(ContextStorage, "compute_version", autospec=True, side_effect=original_compute_version) as mock_compute_version,
+                patch("cccc.daemon.context.context_ops._schedule_summary_snapshot_rebuild", return_value=True) as mock_schedule,
+            ):
+                first, _ = self._summary_context(gid)
+                self.assertTrue(first.ok, getattr(first, "error", None))
+                hit_counts = (
+                    mock_list_tasks.call_count,
+                    mock_load_agents.call_count,
+                    mock_load_context.call_count,
+                    mock_compute_version.call_count,
+                )
+
+                sync_resp, _ = self._call(
+                    "context_sync",
+                    {
+                        "group_id": gid,
+                        "by": "user",
+                        "ops": [{"op": "coordination.brief.update", "objective": "Updated"}],
+                    },
+                )
+                self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
+                counts_after_sync = (
+                    mock_list_tasks.call_count,
+                    mock_load_agents.call_count,
+                    mock_load_context.call_count,
+                    mock_compute_version.call_count,
+                )
+
+                stale, _ = self._summary_context(gid)
+                self.assertTrue(stale.ok, getattr(stale, "error", None))
+                self.assertEqual(stale.result["version"], first.result["version"])
+                self.assertEqual(((stale.result or {}).get("meta") or {}).get("summary_snapshot", {}).get("state"), "stale")
+                rebuilt_counts = (
+                    mock_list_tasks.call_count,
+                    mock_load_agents.call_count,
+                    mock_load_context.call_count,
+                    mock_compute_version.call_count,
+                )
+                self.assertEqual(
+                    rebuilt_counts,
+                    counts_after_sync,
+                )
+                mock_schedule.assert_called_once_with(gid)
+        finally:
+            cleanup()
+
+    def test_summary_context_miss_returns_empty_snapshot_and_schedules_rebuild(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+
+            from cccc.kernel.context import ContextStorage
+
+            original_list_tasks = ContextStorage.list_tasks
+            original_load_agents = ContextStorage.load_agents
+            original_load_context = ContextStorage.load_context
+
+            with (
+                patch.object(ContextStorage, "list_tasks", autospec=True, side_effect=original_list_tasks) as mock_list_tasks,
+                patch.object(ContextStorage, "load_agents", autospec=True, side_effect=original_load_agents) as mock_load_agents,
+                patch.object(ContextStorage, "load_context", autospec=True, side_effect=original_load_context) as mock_load_context,
+                patch("cccc.daemon.context.context_ops._schedule_summary_snapshot_rebuild", return_value=True) as mock_schedule,
+            ):
+                summary, _ = self._summary_context(gid)
+                self.assertTrue(summary.ok, getattr(summary, "error", None))
+                self.assertEqual((summary.result or {}).get("coordination", {}).get("tasks"), [])
+                self.assertEqual((summary.result or {}).get("agent_states"), [])
+                self.assertEqual(((summary.result or {}).get("meta") or {}).get("summary_snapshot", {}).get("state"), "missing")
+                self.assertEqual(mock_list_tasks.call_count, 0)
+                self.assertEqual(mock_load_agents.call_count, 0)
+                self.assertEqual(mock_load_context.call_count, 0)
+                mock_schedule.assert_called_once_with(gid)
+        finally:
+            cleanup()
+
+    def test_rebuild_summary_snapshot_retries_until_basis_and_version_stabilize(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            sync_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "ops": [{"op": "coordination.brief.update", "objective": "Stable snapshot"}],
+                },
+            )
+            self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
+
+            from cccc.daemon.context.context_ops import _rebuild_summary_snapshot
+            from cccc.kernel.context import ContextStorage
+
+            stable_basis = {"context_rev": 1, "tasks_rev": 0, "agents_rev": 0, "actors_rev": 0}
+            newer_basis = {"context_rev": 2, "tasks_rev": 0, "agents_rev": 0, "actors_rev": 0}
+
+            original_load_context = ContextStorage.load_context
+            original_list_tasks = ContextStorage.list_tasks
+            original_load_agents = ContextStorage.load_agents
+            original_compute_version = ContextStorage.compute_version
+
+            with (
+                patch.object(ContextStorage, "load_context", autospec=True, side_effect=original_load_context) as mock_load_context,
+                patch.object(ContextStorage, "list_tasks", autospec=True, side_effect=original_list_tasks) as mock_list_tasks,
+                patch.object(ContextStorage, "load_agents", autospec=True, side_effect=original_load_agents) as mock_load_agents,
+                patch.object(
+                    ContextStorage,
+                    "summary_basis",
+                    autospec=True,
+                    side_effect=[stable_basis, newer_basis, newer_basis, newer_basis],
+                ),
+                patch.object(
+                    ContextStorage,
+                    "compute_version",
+                    autospec=True,
+                    side_effect=["ctxv:1", "ctxv:2", "ctxv:2", "ctxv:2", "ctxv:2", "ctxv:2"],
+                ),
+                patch.object(ContextStorage, "save_summary_snapshot", autospec=True) as mock_save,
+            ):
+                _rebuild_summary_snapshot(gid)
+
+            self.assertGreaterEqual(mock_load_context.call_count, 2)
+            self.assertGreaterEqual(mock_list_tasks.call_count, 2)
+            self.assertGreaterEqual(mock_load_agents.call_count, 2)
+            mock_save.assert_called_once()
+            _, kwargs = mock_save.call_args
+            self.assertEqual(kwargs["basis"], newer_basis)
+            self.assertEqual(kwargs["version"], "ctxv:2")
+            self.assertEqual(str(kwargs["result"].get("version") or ""), "ctxv:2")
         finally:
             cleanup()
 

@@ -637,6 +637,12 @@ def group_template_import_replace(args: Dict[str, Any]) -> DaemonResponse:
     except Exception:
         pass
 
+    if removed or added or updated or existing_ids != template_ids:
+        try:
+            storage.bump_version_state(actors_changed=True)
+        except Exception:
+            pass
+
     return DaemonResponse(
         ok=True,
         result={

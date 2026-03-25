@@ -51,16 +51,14 @@ class TestWebActorRoutesCache(unittest.TestCase):
             call_lock = threading.Lock()
             barrier = threading.Barrier(3)
 
-            def fake_call_daemon(req: dict):
+            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
                 nonlocal actor_list_calls
-                if str(req.get("op") or "") == "actor_list":
-                    with call_lock:
-                        actor_list_calls += 1
-                    time.sleep(0.12)
-                    return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer 1"}]}}
-                return {"ok": True, "result": {}}
+                with call_lock:
+                    actor_list_calls += 1
+                time.sleep(0.12)
+                return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer 1"}]}}
 
-            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+            with patch("cccc.ports.web.routes.actors._read_actor_list_local", side_effect=fake_read_actor_list_local):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors"
 
@@ -91,14 +89,12 @@ class TestWebActorRoutesCache(unittest.TestCase):
             group_id = self._create_group()
             actor_list_calls = 0
 
-            def fake_call_daemon(req: dict):
+            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
                 nonlocal actor_list_calls
-                if str(req.get("op") or "") == "actor_list":
-                    actor_list_calls += 1
-                    return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer 1"}]}}
-                return {"ok": True, "result": {}}
+                actor_list_calls += 1
+                return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer 1"}]}}
 
-            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+            with patch("cccc.ports.web.routes.actors._read_actor_list_local", side_effect=fake_read_actor_list_local):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors"
                     first = client.get(path)
@@ -118,22 +114,22 @@ class TestWebActorRoutesCache(unittest.TestCase):
             actor_list_lock = threading.Lock()
             first_read_release = threading.Event()
 
-            def fake_call_daemon(req: dict):
+            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
                 nonlocal actor_list_calls
-                op = str(req.get("op") or "")
-                if op == "actor_list":
-                    with actor_list_lock:
-                        actor_list_calls += 1
-                        current = actor_list_calls
-                    if current == 1:
-                        first_read_release.wait(timeout=2)
-                        return {"ok": True, "result": {"actors": [{"id": "peer-stale"}]}}
-                    return {"ok": True, "result": {"actors": [{"id": "peer-fresh"}]}}
-                if op == "actor_update":
+                with actor_list_lock:
+                    actor_list_calls += 1
+                    current = actor_list_calls
+                if current == 1:
+                    first_read_release.wait(timeout=2)
+                    return {"ok": True, "result": {"actors": [{"id": "peer-stale"}]}}
+                return {"ok": True, "result": {"actors": [{"id": "peer-fresh"}]}}
+
+            def fake_call_daemon(req: dict):
+                if str(req.get("op") or "") == "actor_update":
                     return {"ok": True, "result": {"actor": {"id": "peer-1"}}}
                 return {"ok": True, "result": {}}
 
-            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+            with patch("cccc.ports.web.routes.actors._read_actor_list_local", side_effect=fake_read_actor_list_local), patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors"
                     update_path = f"/api/v1/groups/{group_id}/actors/peer-1"
@@ -167,22 +163,22 @@ class TestWebActorRoutesCache(unittest.TestCase):
             actor_list_lock = threading.Lock()
             first_read_release = threading.Event()
 
-            def fake_call_daemon(req: dict):
+            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
                 nonlocal actor_list_calls
-                op = str(req.get("op") or "")
-                if op == "actor_list":
-                    with actor_list_lock:
-                        actor_list_calls += 1
-                        current = actor_list_calls
-                    if current == 1:
-                        first_read_release.wait(timeout=2)
-                        return {"ok": True, "result": {"actors": [{"id": "peer-stale", "running": False}]}}
-                    return {"ok": True, "result": {"actors": [{"id": "peer-fresh", "running": True}]}}
-                if op == "group_start":
+                with actor_list_lock:
+                    actor_list_calls += 1
+                    current = actor_list_calls
+                if current == 1:
+                    first_read_release.wait(timeout=2)
+                    return {"ok": True, "result": {"actors": [{"id": "peer-stale", "running": False}]}}
+                return {"ok": True, "result": {"actors": [{"id": "peer-fresh", "running": True}]}}
+
+            def fake_call_daemon(req: dict):
+                if str(req.get("op") or "") == "group_start":
                     return {"ok": True, "result": {}}
                 return {"ok": True, "result": {}}
 
-            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+            with patch("cccc.ports.web.routes.actors._read_actor_list_local", side_effect=fake_read_actor_list_local), patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors"
                     start_path = f"/api/v1/groups/{group_id}/start?by=user"

@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -60,6 +61,8 @@ _CURATED_SPACE_SYNC_PREFIXES = (
 logger = logging.getLogger(__name__)
 _CONTEXT_DETAIL_FULL = "full"
 _CONTEXT_DETAIL_SUMMARY = "summary"
+_SUMMARY_REBUILD_LOCK = threading.Lock()
+_SUMMARY_REBUILD_IN_FLIGHT: Set[str] = set()
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -694,6 +697,110 @@ def _build_context_summary_result(
     }
 
 
+def _with_summary_snapshot_meta(result: Dict[str, Any], *, state: str) -> Dict[str, Any]:
+    out = dict(result)
+    meta = dict(out.get("meta")) if isinstance(out.get("meta"), dict) else {}
+    snapshot_meta = dict(meta.get("summary_snapshot")) if isinstance(meta.get("summary_snapshot"), dict) else {}
+    snapshot_meta["state"] = str(state or "").strip() or "hit"
+    meta["summary_snapshot"] = snapshot_meta
+    out["meta"] = meta
+    return out
+
+
+def _empty_context_summary_result(storage: ContextStorage) -> Dict[str, Any]:
+    return {
+        "version": storage.compute_version(),
+        "coordination": {
+            "brief": _coordination_brief_to_dict(CoordinationBrief()),
+            "tasks": [],
+        },
+        "agent_states": [],
+        "attention": {},
+        "tasks_summary": _tasks_summary([], attention={}),
+        "meta": {},
+    }
+
+
+def _rebuild_summary_snapshot(group_id: str, *, max_attempts: int = 3) -> bool:
+    storage = _get_storage(group_id)
+    if storage is None:
+        return False
+    attempts = max(1, int(max_attempts or 1))
+    last_result: Optional[Dict[str, Any]] = None
+    last_basis: Optional[Dict[str, Any]] = None
+    last_version = ""
+    for _ in range(attempts):
+        before_basis = storage.summary_basis()
+        before_version = storage.compute_version()
+        context = storage.load_context()
+        tasks = storage.list_tasks()
+        agents_state = _filter_agents_to_group(storage, storage.load_agents())
+        ordered_agents = _sort_agents_for_group(storage, agents_state)
+        attention = _attention_projection(tasks)
+        result = _build_context_summary_result(
+            storage=storage,
+            context=context,
+            tasks=tasks,
+            ordered_agents=ordered_agents,
+            attention=attention,
+        )
+        after_basis = storage.summary_basis()
+        after_version = storage.compute_version()
+        last_result = result
+        last_basis = after_basis
+        last_version = after_version
+        if before_basis == after_basis and before_version == after_version:
+            storage.save_summary_snapshot(
+                basis=after_basis,
+                version=after_version,
+                result=_with_summary_snapshot_meta(result, state="hit"),
+            )
+            return True
+    if last_result is not None and last_basis is not None:
+        storage.save_summary_snapshot(
+            basis=last_basis,
+            version=last_version,
+            result=_with_summary_snapshot_meta(last_result, state="hit"),
+        )
+        return True
+    return False
+
+
+def _schedule_summary_snapshot_rebuild(group_id: str) -> bool:
+    gid = str(group_id or "").strip()
+    if not gid:
+        return False
+    with _SUMMARY_REBUILD_LOCK:
+        if gid in _SUMMARY_REBUILD_IN_FLIGHT:
+            return False
+        _SUMMARY_REBUILD_IN_FLIGHT.add(gid)
+
+    def _run() -> None:
+        try:
+            _rebuild_summary_snapshot(gid)
+        except Exception:
+            logger.exception("summary_snapshot_rebuild_failed group_id=%s", gid)
+        finally:
+            with _SUMMARY_REBUILD_LOCK:
+                _SUMMARY_REBUILD_IN_FLIGHT.discard(gid)
+
+    threading.Thread(target=_run, name=f"cccc-summary-{gid}", daemon=True).start()
+    return True
+
+
+def _get_summary_context_fast(storage: ContextStorage, *, group_id: str) -> Dict[str, Any]:
+    snapshot = storage.load_summary_snapshot()
+    basis = storage.summary_basis()
+    snapshot_basis = snapshot.get("basis") if isinstance(snapshot.get("basis"), dict) else {}
+    snapshot_result = snapshot.get("result") if isinstance(snapshot.get("result"), dict) else {}
+    if snapshot_result and snapshot_basis == basis:
+        return _with_summary_snapshot_meta(snapshot_result, state="hit")
+    if snapshot_result:
+        _schedule_summary_snapshot_rebuild(group_id)
+        return _with_summary_snapshot_meta(snapshot_result, state="stale")
+    _schedule_summary_snapshot_rebuild(group_id)
+    return _with_summary_snapshot_meta(_empty_context_summary_result(storage), state="missing")
+
 def _sync_agents_mind_context_runtime(storage: ContextStorage, agents_state: AgentsData) -> None:
     state = _load_automation_state(storage)
     actors = state.get("actors")
@@ -733,21 +840,14 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     if storage is None:
         return _error("group_not_found", f"group not found: {group_id}")
 
+    if detail == _CONTEXT_DETAIL_SUMMARY:
+        return DaemonResponse(ok=True, result=_get_summary_context_fast(storage, group_id=group_id))
+
     context = storage.load_context()
     tasks = storage.list_tasks()
     agents_state = _filter_agents_to_group(storage, storage.load_agents())
     ordered_agents = _sort_agents_for_group(storage, agents_state)
     attention = _attention_projection(tasks)
-    if detail == _CONTEXT_DETAIL_SUMMARY:
-        result = _build_context_summary_result(
-            storage=storage,
-            context=context,
-            tasks=tasks,
-            ordered_agents=ordered_agents,
-            attention=attention,
-        )
-        return DaemonResponse(ok=True, result=result)
-
     board = _board_projection(tasks)
     result = _build_context_full_result(
         storage=storage,
@@ -793,6 +893,8 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     dirty_task_ids: List[str] = []
     deleted_task_ids: List[str] = []
     changes: List[Dict[str, Any]] = []
+    tasks_changed = False
+    agents_changed = False
 
     def _mark_change(index: int, op_name: str, detail: str) -> None:
         changes.append({"index": index, "op": op_name, "detail": detail})
@@ -912,6 +1014,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 task.updated_at = _utc_now_iso()
                 tasks_by_id[task.id] = task
                 dirty_task_ids.append(task.id)
+                tasks_changed = True
                 _mark_change(idx, op_name, f"Created task {task.id}: {task.title}")
                 continue
 
@@ -988,6 +1091,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     task.updated_at = _utc_now_iso()
                     if task.id not in dirty_task_ids:
                         dirty_task_ids.append(task.id)
+                    tasks_changed = True
                     _mark_change(idx, op_name, f"Updated task {task.id}")
                 continue
 
@@ -1011,6 +1115,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 task.updated_at = _utc_now_iso()
                 if task.id not in dirty_task_ids:
                     dirty_task_ids.append(task.id)
+                tasks_changed = True
                 _mark_change(idx, op_name, f"Moved task {task.id} to {new_status.value}")
 
                 assignee_id = str(task.assignee or "").strip()
@@ -1041,6 +1146,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     if auto_changed:
                         agent.updated_at = _utc_now_iso()
                         agents_dirty = True
+                        agents_changed = True
                         _mark_change(idx, "agent_state.autosync", f"Auto-synced agent {assignee_id} from {task.id}")
 
                 if not dry_run:
@@ -1110,6 +1216,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 task.updated_at = _utc_now_iso()
                 if task.id not in dirty_task_ids:
                     dirty_task_ids.append(task.id)
+                tasks_changed = True
                 _mark_change(idx, op_name, f"Restored task {task.id}")
                 continue
 
@@ -1145,12 +1252,14 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                         agent.warm = warm
                         agent.updated_at = _utc_now_iso()
                         agents_dirty = True
+                        agents_changed = True
 
                 for delete_task in delete_targets:
                     tasks_by_id.pop(delete_task.id, None)
                     if delete_task.id in dirty_task_ids:
                         dirty_task_ids.remove(delete_task.id)
                     deleted_task_ids.append(delete_task.id)
+                tasks_changed = True
                 if len(delete_targets) == 1:
                     _mark_change(idx, op_name, f"Deleted task {task_id}")
                 else:
@@ -1231,6 +1340,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     agent.warm = warm
                     agent.updated_at = _utc_now_iso()
                     agents_dirty = True
+                    agents_changed = True
                     _mark_change(idx, op_name, f"Updated agent state {actor_id}")
                 continue
 
@@ -1246,6 +1356,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 agent.warm = AgentStateWarm()
                 agent.updated_at = _utc_now_iso()
                 agents_dirty = True
+                agents_changed = True
                 _mark_change(idx, op_name, f"Cleared agent state {actor_id}")
                 continue
 
@@ -1331,6 +1442,12 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
             if agents_dirty:
                 storage.save_agents(agents_state)
                 _sync_agents_mind_context_runtime(storage, agents_state)
+            if context_dirty or tasks_changed or agents_changed:
+                storage.bump_version_state(
+                    context_changed=context_dirty,
+                    tasks_changed=tasks_changed,
+                    agents_changed=agents_changed,
+                )
 
         version = storage.compute_version() if not dry_run else current_version
 

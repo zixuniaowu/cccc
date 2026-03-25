@@ -7,6 +7,7 @@ import os
 import socket
 import signal
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -15,7 +16,7 @@ logger = logging.getLogger("cccc.daemon.server")
 
 from .. import __version__
 from ..contracts.v1 import DaemonError, DaemonRequest, DaemonResponse
-from ..kernel.group import load_group
+from ..kernel.group import get_group_state, load_group
 from ..kernel.actors import find_actor, find_foreman, update_actor, get_effective_role
 from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.ledger_retention import compact as compact_ledger
@@ -43,7 +44,7 @@ from .mcp_install import (
     is_mcp_installed as runtime_is_mcp_installed,
     ensure_mcp_installed as runtime_ensure_mcp_installed,
 )
-from .client_ops import send_daemon_request
+from .client_ops import DaemonClientError, send_daemon_request
 from .im.im_bridge_ops import (
     stop_im_bridges_for_group as im_stop_group,
     stop_all_im_bridges as im_stop_all,
@@ -87,11 +88,13 @@ from .messaging.delivery import (
     render_delivery_text,
     deliver_message_with_preamble,
     flush_pending_messages,
+    request_flush_pending_messages,
     tick_delivery,
     clear_preamble_sent,
     THROTTLE,
 )
 from .messaging.chat_support_ops import auto_wake_recipients, normalize_attachments
+from .ops.execution_queues import DaemonRequestExecutionQueue, GroupSpaceSyncRunQueue
 from .ops.socket_special_ops import try_handle_socket_special_op
 from .ops.socket_accept_ops import handle_incoming_connection
 from .actors.actor_runtime_ops import start_actor_process as runtime_start_actor_process
@@ -99,6 +102,7 @@ from .actors.runner_ops import stop_actor as runner_stop_actor
 from .request_dispatch_ops import RequestDispatchDeps, dispatch_request
 from .serve_ops import (
     start_automation_thread,
+    start_request_execution_thread,
     start_space_jobs_thread,
     start_space_sync_thread,
     start_actor_activity_thread,
@@ -110,7 +114,7 @@ from .serve_ops import (
 )
 from .space.group_space_memory_sync import process_due_memory_space_syncs
 from .space.group_space_runtime import process_due_space_jobs
-from .space.group_space_sync import process_due_space_syncs
+from .space.group_space_sync import process_due_space_syncs, sync_group_space_files
 from .space.group_space_store import get_space_provider_state
 from .group.presentation_browser_runtime import close_all_browser_surface_sessions
 from .space.notebooklm_auth_browser_runtime import close_all_notebooklm_auth_browser_sessions
@@ -127,6 +131,26 @@ _OBSERVABILITY_HOME: Optional[Path] = None
 _AUTO_WAKE_LOCK = threading.Lock()
 _AUTO_WAKE_IN_PROGRESS: set[tuple[str, str]] = set()
 _REQUEST_DISPATCH_DEPS: Optional[RequestDispatchDeps] = None
+_DAEMON_CLIENT_WARNING_WINDOW_S = 5.0
+_DAEMON_CLIENT_WARN_LOCK = threading.Lock()
+_DAEMON_CLIENT_WARN_SEEN: Dict[tuple[str, str, str], float] = {}
+_SPACE_SYNC_RUN_QUEUE: Optional[GroupSpaceSyncRunQueue] = None
+_REQUEST_FAST_QUEUE_OPS = {"send", "reply", "chat_ack"}
+
+
+def _should_log_daemon_client_warning(*, op: str, phase: str, reason: str) -> bool:
+    key = (
+        str(op or "").strip() or "unknown",
+        str(phase or "").strip() or "unknown",
+        str(reason or "").strip() or "unknown",
+    )
+    now = time.monotonic()
+    with _DAEMON_CLIENT_WARN_LOCK:
+        last_at = float(_DAEMON_CLIENT_WARN_SEEN.get(key) or 0.0)
+        if last_at > 0.0 and (now - last_at) < float(_DAEMON_CLIENT_WARNING_WINDOW_S):
+            return False
+        _DAEMON_CLIENT_WARN_SEEN[key] = now
+        return True
 
 
 def _get_observability() -> Dict[str, Any]:
@@ -201,6 +225,26 @@ def _effective_runner_kind(runner_kind: str) -> str:
     """
     rk = str(runner_kind or "").strip().lower() or "pty"
     return "headless" if rk == "headless" else "pty"
+
+
+def _request_queue_for(
+    req: Any,
+    *,
+    fast_queue: DaemonRequestExecutionQueue,
+    slow_queue: DaemonRequestExecutionQueue,
+) -> DaemonRequestExecutionQueue:
+    op = str(getattr(req, "op", "") or "").strip()
+    if op in _REQUEST_FAST_QUEUE_OPS:
+        args = getattr(req, "args", None)
+        group_id = str(args.get("group_id") or "").strip() if isinstance(args, dict) else ""
+        if group_id:
+            group = load_group(group_id)
+            if group is not None:
+                state_at_accept = get_group_state(group)
+                if isinstance(args, dict):
+                    args["__group_state_at_accept"] = state_at_accept
+        return fast_queue
+    return slow_queue
 
 
 def _can_read_terminal_transcript(group: Any, *, by: str, target_actor_id: str) -> bool:
@@ -734,6 +778,10 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
             start_actor_process=_start_actor_process,
             update_actor=update_actor,
             runner_stop_actor=runner_stop_actor,
+            request_flush_pending_messages=lambda wake_group, actor_id: request_flush_pending_messages(
+                wake_group,
+                actor_id=actor_id,
+            ),
             logger=logger,
             auto_wake_lock=_AUTO_WAKE_LOCK,
             auto_wake_in_progress=_AUTO_WAKE_IN_PROGRESS,
@@ -743,6 +791,7 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
             group_id,
             notify_kinds=notify_kinds,
         ),
+        enqueue_group_space_sync_run=lambda **kwargs: _enqueue_group_space_sync_run(**kwargs),
         error_factory=_error,
     )
     return _REQUEST_DISPATCH_DEPS
@@ -752,7 +801,25 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
     return dispatch_request(req, deps=_request_dispatch_deps(), recurse=handle_request)
 
 
+def _enqueue_group_space_sync_run(*, group_id: str, provider: str, force: bool, by: str) -> Dict[str, Any]:
+    queue = _SPACE_SYNC_RUN_QUEUE
+    if queue is None:
+        return {
+            "accepted": False,
+            "queued": False,
+            "code": "space_sync_executor_unavailable",
+            "message": "space sync executor unavailable",
+        }
+    return queue.submit(
+        group_id=group_id,
+        provider=provider,
+        force=force,
+        by=by,
+    )
+
+
 def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
+    global _SPACE_SYNC_RUN_QUEUE
     p = paths or default_paths()
     p.daemon_dir.mkdir(parents=True, exist_ok=True)
 
@@ -822,6 +889,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         pass
 
     stop_event = threading.Event()
+    _SPACE_SYNC_RUN_QUEUE = GroupSpaceSyncRunQueue()
 
     # Best-effort: enable in-process event streaming for SDKs (daemon-owned only).
     try:
@@ -882,9 +950,32 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         if int(memory_result.get("queued") or 0) > 0:
             logger.debug("group_space_memory_sync_queued=%s", int(memory_result.get("queued") or 0))
 
+    def _run_manual_space_sync(task: Any) -> None:
+        result = sync_group_space_files(
+            task.group_id,
+            provider=task.provider,
+            force=bool(task.force),
+            by=str(task.by or "user"),
+        )
+        if int(result.get("processed") or 0) > 0 or not bool(result.get("ok", True)):
+            logger.debug(
+                "group_space_sync_manual group=%s provider=%s ok=%s converged=%s skipped=%s",
+                task.group_id,
+                task.provider,
+                bool(result.get("ok")),
+                bool(result.get("converged")),
+                bool(result.get("skipped")),
+            )
+
     start_space_sync_thread(
         stop_event=stop_event,
         tick_space_sync=_tick_space_sync,
+        drain_space_sync_runs=lambda limit: _SPACE_SYNC_RUN_QUEUE.drain(
+            limit=limit,
+            runner=_run_manual_space_sync,
+            logger=logger,
+        ),
+        wake_event=_SPACE_SYNC_RUN_QUEUE.wake_event,
         interval_seconds=30.0,
     )
 
@@ -933,6 +1024,25 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             maybe_autostart_enabled_im_bridges=_maybe_autostart_enabled_im_bridges,
         )
 
+        request_queue = DaemonRequestExecutionQueue(
+            stop_event=stop_event,
+            handle_request=handle_request,
+            send_json=_send_json,
+            dump_response=_dump_response,
+            logger=logger,
+            on_should_exit=stop_event.set,
+        )
+        fast_request_queue = DaemonRequestExecutionQueue(
+            stop_event=stop_event,
+            handle_request=handle_request,
+            send_json=_send_json,
+            dump_response=_dump_response,
+            logger=logger,
+            on_should_exit=stop_event.set,
+        )
+        start_request_execution_thread(request_queue=request_queue, name="cccc-request-worker-slow")
+        start_request_execution_thread(request_queue=fast_request_queue, name="cccc-request-worker-fast")
+
         should_exit = False
         while not should_exit and not stop_event.is_set():
             try:
@@ -980,6 +1090,11 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                     ),
                 ),
                 handle_request=handle_request,
+                schedule_request=lambda req, conn: _request_queue_for(
+                    req,
+                    fast_queue=fast_request_queue,
+                    slow_queue=request_queue,
+                ).submit(conn=conn, req=req),
                 logger=logger,
             )
             if should_exit:
@@ -993,6 +1108,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         close_all_notebooklm_auth_browser_sessions()
     except Exception:
         pass
+    _SPACE_SYNC_RUN_QUEUE = None
 
     cleanup_after_stop(
         stop_event=stop_event,
@@ -1030,8 +1146,49 @@ def call_daemon(req: Dict[str, Any], *, paths: Optional[DaemonPaths] = None, tim
         )
         resp = DaemonResponse.model_validate(obj)
         return resp.model_dump()
-    except Exception:
-        return DaemonResponse(ok=False, error=DaemonError(code="daemon_unavailable", message="daemon unavailable")).model_dump()
+    except DaemonClientError as exc:
+        details = exc.details()
+        op_name = str(details.get("op", request.op) or request.op).strip()
+        if op_name in {"ping", "shutdown", "observability_get", "debug_snapshot"}:
+            logger.debug(
+                "daemon transport failure op=%s phase=%s reason=%s transport=%s details=%s",
+                op_name,
+                details.get("phase", "unknown"),
+                details.get("reason", "unknown"),
+                details.get("transport", "unknown"),
+                details,
+            )
+        elif _should_log_daemon_client_warning(
+            op=op_name,
+            phase=str(details.get("phase") or "unknown"),
+            reason=str(details.get("reason") or "unknown"),
+        ):
+            logger.warning(
+                "daemon transport failure op=%s phase=%s reason=%s transport=%s details=%s",
+                op_name,
+                details.get("phase", "unknown"),
+                details.get("reason", "unknown"),
+                details.get("transport", "unknown"),
+                details,
+            )
+        return DaemonResponse(
+            ok=False,
+            error=DaemonError(code="daemon_unavailable", message="daemon unavailable", details=details),
+        ).model_dump()
+    except Exception as exc:
+        details = {
+            "phase": "client",
+            "reason": "unexpected",
+            "op": request.op,
+            "timeout_s": float(timeout_s or 0.0),
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+        logger.warning("daemon client unexpected failure op=%s details=%s", request.op, details)
+        return DaemonResponse(
+            ok=False,
+            error=DaemonError(code="daemon_unavailable", message="daemon unavailable", details=details),
+        ).model_dump()
 
 
 def read_pid(paths: Optional[DaemonPaths] = None) -> int:
