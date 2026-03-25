@@ -191,7 +191,7 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 | actor_add | yes | yes | no |
 | actor_start | yes | yes (any) | no |
 | actor_stop | yes | yes (any) | yes (self) |
-| actor_restart | yes | yes (any) | yes (self) |
+| actor_restart | yes | yes (any) | yes (any) |
 | actor_remove | yes | yes (self) | yes (self) |
 
 ### Attachments

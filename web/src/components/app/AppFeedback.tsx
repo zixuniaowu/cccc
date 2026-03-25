@@ -64,7 +64,7 @@ export function AppFeedback({
       {notice ? (
         <div
           className={classNames(
-            "pointer-events-auto flex w-full max-w-xl items-start gap-3 rounded-2xl px-4 py-3 text-sm shadow-2xl glass-modal animate-slide-up",
+            "pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-2xl px-4 py-3 text-sm shadow-2xl glass-modal animate-slide-up",
             isDark ? "border-white/10 text-slate-200" : "border-black/10 text-gray-800"
           )}
           role="status"
