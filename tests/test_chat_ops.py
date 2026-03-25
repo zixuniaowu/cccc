@@ -43,6 +43,42 @@ class TestChatOps(unittest.TestCase):
             )
         )
 
+    def test_wake_group_on_human_message_skips_execution_time_idle_when_accept_was_active(self) -> None:
+        from cccc.daemon.messaging.chat_ops import _wake_group_on_human_message
+
+        group = object()
+        with patch("cccc.daemon.messaging.chat_ops.get_group_state", return_value="idle"), patch(
+            "cccc.daemon.messaging.chat_ops.find_actor", return_value=None
+        ), patch("cccc.daemon.messaging.chat_ops.set_group_state") as set_state:
+            out = _wake_group_on_human_message(
+                group,
+                by="user",
+                state_at_accept="active",
+                automation_on_resume=lambda _group: None,
+                clear_pending_system_notifies=lambda _group_id, _kinds: None,
+            )
+
+        self.assertIs(out, group)
+        set_state.assert_not_called()
+
+    def test_wake_group_on_human_message_wakes_when_accept_was_idle(self) -> None:
+        from cccc.daemon.messaging.chat_ops import _wake_group_on_human_message
+
+        fake_group = type("G", (), {"group_id": "g1"})()
+        with patch("cccc.daemon.messaging.chat_ops.get_group_state", return_value="idle"), patch(
+            "cccc.daemon.messaging.chat_ops.find_actor", return_value=None
+        ), patch("cccc.daemon.messaging.chat_ops.set_group_state", return_value=fake_group) as set_state:
+            out = _wake_group_on_human_message(
+                fake_group,
+                by="user",
+                state_at_accept="idle",
+                automation_on_resume=lambda _group: None,
+                clear_pending_system_notifies=lambda _group_id, _kinds: None,
+            )
+
+        self.assertIs(out, fake_group)
+        set_state.assert_called_once_with(fake_group, state="active")
+
     def test_attention_reply_still_writes_chat_ack(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -421,7 +457,9 @@ class TestChatOps(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            with patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as send_queue:
+            with patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as send_queue, patch(
+                "cccc.daemon.messaging.chat_ops.request_flush_pending_messages"
+            ) as send_flush:
                 send_resp, _ = self._call(
                     "send",
                     {
@@ -434,6 +472,7 @@ class TestChatOps(unittest.TestCase):
                 )
             self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
             send_queue.assert_called_once()
+            send_flush.assert_called_once_with(unittest.mock.ANY, actor_id="peer1")
             send_delivery_text = str(send_queue.call_args.kwargs.get("text") or "")
             self.assertIn("[cccc] References:", send_delivery_text)
             self.assertIn("P2 (slot-2) · PDF p.12 — Revenue deck", send_delivery_text)
@@ -447,7 +486,9 @@ class TestChatOps(unittest.TestCase):
             reply_to = str(send_event.get("id") or "").strip()
             self.assertTrue(reply_to)
 
-            with patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as reply_queue:
+            with patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as reply_queue, patch(
+                "cccc.daemon.messaging.chat_ops.request_flush_pending_messages"
+            ) as reply_flush, patch("cccc.daemon.messaging.chat_ops.flush_pending_messages") as reply_sync_flush:
                 reply_resp, _ = self._call(
                     "reply",
                     {
@@ -461,6 +502,8 @@ class TestChatOps(unittest.TestCase):
                 )
             self.assertTrue(reply_resp.ok, getattr(reply_resp, "error", None))
             reply_queue.assert_called_once()
+            reply_flush.assert_called_once_with(unittest.mock.ANY, actor_id="peer1")
+            reply_sync_flush.assert_not_called()
             reply_delivery_text = str(reply_queue.call_args.kwargs.get("text") or "")
             self.assertIn("[cccc] References:", reply_delivery_text)
             self.assertIn("P2 (slot-2) · PDF p.12 — Revenue deck", reply_delivery_text)
