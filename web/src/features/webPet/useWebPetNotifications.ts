@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Actor, GroupContext, LedgerEvent } from "../../types";
-import {
-  projectPetReminders,
-  type ReminderActorInput,
-  type ReminderEventInput,
-  type PetReminder,
-} from "./reminders";
+import type { GroupContext, LedgerEvent } from "../../types";
+import type { PetReminder } from "./types";
 import {
   createMentionReaction,
   createTaskReactionSnapshot,
@@ -14,8 +9,10 @@ import {
   type TaskReactionSnapshotMap,
 } from "./reactions";
 
-const SNOOZE_MS = 60 * 1000;
+const SUGGESTION_SNOOZE_MS = 60 * 1000;
+const GUARDIAN_SNOOZE_MS = 15 * 60 * 1000;
 const DISMISS_COOLDOWN_MS = 3_000;
+const SNOOZE_STORAGE_KEY_PREFIX = "cccc:web-pet:snoozed:";
 
 export interface UseWebPetNotificationsResult {
   reminders: PetReminder[];
@@ -28,60 +25,6 @@ function getLatestEvent(events: LedgerEvent[]): LedgerEvent | null {
   return events.length > 0 ? events[events.length - 1] ?? null : null;
 }
 
-function mapReminderEvent(event: LedgerEvent | null | undefined): ReminderEventInput | null {
-  if (!event) return null;
-
-  const eventId = String(event.id || "").trim();
-  if (!eventId) return null;
-
-  const data = event.data as Record<string, unknown> | undefined;
-  const userStatus = event._obligation_status?.user;
-  const to = Array.isArray(data?.to)
-    ? data.to.map((entry) => String(entry || "").trim()).filter(Boolean)
-    : [];
-
-  return {
-    eventId,
-    kind: String(event.kind || "").trim(),
-    by: String(event.by || "").trim(),
-    text: String(data?.text || "").trim(),
-    to,
-    replyRequired: !!userStatus?.reply_required,
-    acked: !!userStatus?.acked,
-    replied: !!userStatus?.replied,
-  };
-}
-
-function mapReminderActors(
-  actors: Actor[],
-  groupContext: GroupContext | null,
-): ReminderActorInput[] {
-  const activeTaskByActor = new Map(
-    (groupContext?.agent_states ?? []).map((agentState) => [
-      String(agentState.id || "").trim(),
-      String(agentState.hot?.active_task_id || "").trim(),
-    ]),
-  );
-
-  const reminderActors: ReminderActorInput[] = [];
-
-  for (const actor of actors) {
-    const actorId = String(actor.id || "").trim();
-    if (!actorId) continue;
-
-    reminderActors.push({
-      actorId,
-      role: String(actor.role || "").trim() || undefined,
-      title: String(actor.title || "").trim() || undefined,
-      enabled: actor.enabled !== false,
-      running: !!actor.running,
-      idleSeconds: Number(actor.idle_seconds || 0),
-      activeTaskId: activeTaskByActor.get(actorId) || undefined,
-    });
-  }
-
-  return reminderActors;
-}
 
 function filterExpiredSnoozes(
   snoozedUntil: Record<string, number>,
@@ -96,46 +39,103 @@ function filterExpiredSnoozes(
   return next;
 }
 
+function getSnoozeStorageKey(groupId: string): string {
+  return `${SNOOZE_STORAGE_KEY_PREFIX}${String(groupId || "").trim()}`;
+}
+
+function loadPersistedSnoozes(groupId: string, now: number): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  const key = getSnoozeStorageKey(groupId);
+  if (!key.trim()) return {};
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const next: Record<string, number> = {};
+    for (const [fingerprint, value] of Object.entries(parsed || {})) {
+      const expiresAt = Number(value || 0);
+      if (fingerprint.trim() && Number.isFinite(expiresAt) && expiresAt > now) {
+        next[fingerprint] = expiresAt;
+      }
+    }
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+function persistSnoozes(groupId: string, snoozes: Record<string, number>): void {
+  if (typeof window === "undefined") return;
+  const key = getSnoozeStorageKey(groupId);
+  if (!key.trim()) return;
+  try {
+    if (Object.keys(snoozes).length === 0) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+    window.localStorage.setItem(key, JSON.stringify(snoozes));
+  } catch {
+    // Ignore storage failures; snoozes still work in-memory.
+  }
+}
+
+function getReminderSnoozeMs(reminder: PetReminder | undefined): number {
+  if (!reminder) return SUGGESTION_SNOOZE_MS;
+  if (reminder.action.type === "restart_actor" || reminder.kind === "actor_down") {
+    return GUARDIAN_SNOOZE_MS;
+  }
+  return SUGGESTION_SNOOZE_MS;
+}
+
+function getInitialNotificationState(groupId: string): {
+  now: number;
+  snoozedUntil: Record<string, number>;
+} {
+  const now = Date.now();
+  return {
+    now,
+    snoozedUntil: loadPersistedSnoozes(groupId, now),
+  };
+}
+
 export function useWebPetNotifications(input: {
   groupId: string;
   groupState?: string;
   groupContext: GroupContext | null;
-  actors: Actor[];
   events: LedgerEvent[];
+  decisions?: PetReminder[];
 }): UseWebPetNotificationsResult {
   const groupId = String(input.groupId || "").trim();
   const groupState = String(input.groupState || "").trim().toLowerCase();
   const groupContext = input.groupContext;
-  const actors = input.actors;
   const events = input.events;
+  const initialState = useMemo(() => getInitialNotificationState(groupId), [groupId]);
 
   const [ephemeralReminder, setEphemeralReminder] = useState<PetReminder | null>(null);
   const [reaction, setReaction] = useState<PetReaction | null>(null);
-  const [nowTick, setNowTick] = useState(0);
-  const [snoozedUntilSnapshot, setSnoozedUntilSnapshot] = useState<Record<string, number>>({});
+  const [nowTick, setNowTick] = useState(() => initialState.now);
+  const [snoozedUntilSnapshot, setSnoozedUntilSnapshot] = useState<Record<string, number>>(
+    () => initialState.snoozedUntil,
+  );
   const [dismissCooldownUntil, setDismissCooldownUntil] = useState(0);
 
   const lastProcessedEventIdRef = useRef("");
   const didHydrateTaskSnapshotRef = useRef(false);
   const previousTaskSnapshotRef = useRef<TaskReactionSnapshotMap>({});
-  const snoozedUntilRef = useRef<Record<string, number>>({});
+  const snoozedUntilRef = useRef<Record<string, number>>(initialState.snoozedUntil);
   const dismissCooldownUntilRef = useRef(0);
   const dismissCooldownTimerRef = useRef<number | null>(null);
 
-  const reminderInput = useMemo(
-    () => ({
-      groupId,
-      actors: groupState === "active" ? mapReminderActors(actors, groupContext) : [],
-      events: events
-        .map((event) => mapReminderEvent(event))
-        .filter((event): event is ReminderEventInput => event !== null),
-    }),
-    [actors, events, groupContext, groupId, groupState],
-  );
-
   const projected = useMemo(
-    () => projectPetReminders(reminderInput),
-    [reminderInput],
+    () => {
+      if (groupState !== "active") return [];
+      return Array.isArray(input.decisions) ? input.decisions : [];
+    },
+    [groupState, input.decisions],
+  );
+  const reminderByFingerprint = useMemo(
+    () => new Map(projected.map((reminder) => [reminder.fingerprint, reminder])),
+    [projected],
   );
 
   const reminders = useMemo(() => {
@@ -163,12 +163,13 @@ export function useWebPetNotifications(input: {
         snoozedUntilRef.current,
         Date.now(),
       );
+      persistSnoozes(groupId, snoozedUntilRef.current);
       setSnoozedUntilSnapshot(snoozedUntilRef.current);
       setNowTick(Date.now());
     }, delay + 10);
 
     return () => window.clearTimeout(timeout);
-  }, [nowTick]);
+  }, [groupId, nowTick]);
 
   const activeReminder = useMemo(() => {
     if (ephemeralReminder) return ephemeralReminder;
@@ -249,10 +250,13 @@ export function useWebPetNotifications(input: {
     if (!normalized) return;
 
     const now = Date.now();
+    const reminder = reminderByFingerprint.get(normalized);
+    const snoozeMs = getReminderSnoozeMs(reminder);
     snoozedUntilRef.current = {
       ...snoozedUntilRef.current,
-      [normalized]: now + SNOOZE_MS,
+      [normalized]: now + snoozeMs,
     };
+    persistSnoozes(groupId, snoozedUntilRef.current);
     dismissCooldownUntilRef.current = now + DISMISS_COOLDOWN_MS;
     setDismissCooldownUntil(dismissCooldownUntilRef.current);
     setSnoozedUntilSnapshot(snoozedUntilRef.current);
@@ -275,7 +279,7 @@ export function useWebPetNotifications(input: {
       setDismissCooldownUntil(0);
       setNowTick(Date.now());
     }, DISMISS_COOLDOWN_MS + 10);
-  }, []);
+  }, [groupId, reminderByFingerprint]);
 
   return {
     reminders,

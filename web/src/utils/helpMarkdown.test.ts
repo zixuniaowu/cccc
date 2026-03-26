@@ -70,6 +70,17 @@ Old actor note.
     expect(parsed.actorNotes["peer-1"]).toBe("New actor note.");
   });
 
+  it("treats malformed inline actor note text as body instead of actor id suffix", () => {
+    const markdown = `
+## @actor: peer-1 first line
+second line
+`.trim();
+
+    const parsed = parseHelpMarkdown(markdown);
+
+    expect(parsed.actorNotes["peer-1"]).toBe("first line\nsecond line");
+  });
+
   it("updates the pet block without dropping actor notes", () => {
     const markdown = `
 ## @actor: peer-1

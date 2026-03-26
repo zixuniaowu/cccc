@@ -32,9 +32,10 @@ from ....kernel.prompt_files import (
     resolve_active_scope_root,
     write_group_prompt_file,
 )
-from ....kernel.system_prompt import render_role_system_prompt
-from ...mcp.utils.help_markdown import _select_help_markdown, parse_help_markdown
+from ....kernel.pet_prompt import build_pet_prompt_parts, load_pet_help_markdown
+from ...mcp.utils.help_markdown import parse_help_markdown
 from ....kernel.access_tokens import list_access_tokens
+from ....kernel.pet_decisions import load_pet_decisions
 from ....util.conv import coerce_bool
 from ....util.fs import atomic_write_text
 from ....util.process import pid_is_alive
@@ -147,75 +148,17 @@ async def invalidate_context_read(group_id: str, *, detail: Optional[str] = None
                 _CONTEXT_GENERATION[key] = 1
 
 
-def _pet_context_snapshot_text(group: Any, context_payload: Dict[str, Any]) -> str:
-    parts: list[str] = []
-    title = str(group.doc.get("title") or group.group_id or "").strip() or "unknown-group"
-    state = str(group.doc.get("state") or "").strip() or "unknown"
-    parts.append(f"Group: {title}")
-    parts.append(f"Group State: {state}")
-
-    tasks_summary = context_payload.get("tasks_summary") if isinstance(context_payload.get("tasks_summary"), dict) else {}
-    if tasks_summary:
-        parts.append(
-            "Tasks: total={total}, active={active}, done={done}, archived={archived}".format(
-                total=int(tasks_summary.get("total") or 0),
-                active=int(tasks_summary.get("active") or 0),
-                done=int(tasks_summary.get("done") or 0),
-                archived=int(tasks_summary.get("archived") or 0),
-            )
-        )
-
-    agent_states = context_payload.get("agent_states") if isinstance(context_payload.get("agent_states"), list) else []
-    snapshots: list[str] = []
-    for item in agent_states[:6]:
-        if not isinstance(item, dict):
-            continue
-        agent_id = str(item.get("id") or "").strip()
-        hot = item.get("hot") if isinstance(item.get("hot"), dict) else {}
-        active_task_id = str(hot.get("active_task_id") or "").strip()
-        focus = str(hot.get("focus") or "").strip()
-        if not agent_id:
-            continue
-        if active_task_id and focus:
-            snapshots.append(f"{agent_id}: {active_task_id} | {focus}")
-        elif active_task_id:
-            snapshots.append(f"{agent_id}: {active_task_id}")
-        elif focus:
-            snapshots.append(f"{agent_id}: {focus}")
-        else:
-            snapshots.append(agent_id)
-    if snapshots:
-        parts.append(f"Agent Snapshot: {' ; '.join(snapshots)}")
-
-    return "\n".join(parts)
-
-
 def _build_pet_context_payload(group: Any, help_prompt: Dict[str, Any], context_payload: Dict[str, Any]) -> Dict[str, Any]:
     help_content = str(help_prompt.get("content") or "")
     parsed = parse_help_markdown(help_content)
-    persona = str(parsed.get("pet") or "").strip()
-    selected_help = _select_help_markdown(help_content, role="peer", actor_id=None, include_pet=True)
-    snapshot = _pet_context_snapshot_text(group, context_payload)
-    prompt = "\n\n".join(
-        [
-            render_role_system_prompt(
-                group=group,
-                actor_id="pet-peer",
-                role="peer",
-                runtime_name="web-pet",
-                runner="headless",
-            ).strip(),
-            "Pet-Specific Help:\n" + str(selected_help or "").strip(),
-            "Pet Persona:\n" + (persona or "(default pet peer persona)"),
-            "Runtime Snapshot:\n" + snapshot,
-        ]
-    ).strip()
+    parts = build_pet_prompt_parts(group, help_markdown=help_content, context_payload=context_payload)
     return {
-        "persona": persona,
-        "help": selected_help,
-        "prompt": prompt,
-        "snapshot": snapshot,
-        "source": "help" if persona else "default",
+        "persona": str(parsed.get("pet") or "").strip(),
+        "help": str(parts.get("help") or ""),
+        "prompt": str(parts.get("prompt") or ""),
+        "snapshot": str(parts.get("snapshot") or ""),
+        "decisions": load_pet_decisions(group),
+        "source": str(parts.get("source") or "default"),
     }
 
 
@@ -1173,13 +1116,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             pf = read_group_prompt_file(group, HELP_FILENAME)
             if pf.found and isinstance(pf.content, str) and pf.content.strip():
                 return {"kind": "help", "source": "home", "filename": HELP_FILENAME, "path": pf.path, "content": str(pf.content)}
-            return {
-                "kind": "help",
-                "source": "builtin",
-                "filename": HELP_FILENAME,
-                "path": pf.path,
-                "content": str(load_builtin_help_markdown() or ""),
-            }
+            return {"kind": "help", "source": "builtin", "filename": HELP_FILENAME, "path": pf.path, "content": load_pet_help_markdown(group)}
 
         if fresh:
             await invalidate_context_read(group_id, detail="summary")

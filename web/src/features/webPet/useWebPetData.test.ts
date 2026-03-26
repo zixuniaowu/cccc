@@ -13,12 +13,12 @@ function makePolicy(overrides: Partial<PetPersonaPolicy> = {}): PetPersonaPolicy
 function makeReminder(overrides: Partial<PetReminder> = {}): PetReminder {
   return {
     id: "mention:evt-1",
-    kind: "mention",
+    kind: "suggestion",
     priority: 70,
-    summary: "peer 提到了你，需要你查看。",
+    summary: "peer 给了一个可直接发送的建议。",
     agent: "peer",
-    source: { eventId: "evt-1" },
-    fingerprint: "group:g-1:mention:evt-1",
+    source: { eventId: "evt-1", suggestionKind: "mention" },
+    fingerprint: "group:g-1:suggestion:mention:evt-1",
     action: {
       type: "send_suggestion",
       groupId: "g-1",

@@ -14,7 +14,7 @@ import {
 import { getEffectiveComposerDestGroupId } from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
-import type { Actor, LedgerEvent, ChatMessageData, MessageRef } from "../types";
+import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment } from "../types";
 import * as api from "../services/api";
 
 interface UseChatTabOptions {
@@ -419,6 +419,14 @@ export function useChatTab({
     // Optimistic: enqueue to outbox immediately for same-group sends.
     // If the request fails, we remove the pending entry and restore the composer.
     if (!isCrossGroup) {
+      const optimisticAttachments: OptimisticAttachment[] = composerFilesSnapshot.map((file) => ({
+        kind: "file",
+        path: "",
+        title: String(file.name || "file"),
+        bytes: Number(file.size || 0),
+        mime_type: String(file.type || ""),
+        local_preview_url: String(URL.createObjectURL(file)),
+      }));
       const optimisticEvent: LedgerEvent = {
         id: localId,
         kind: "chat.message",
@@ -435,9 +443,7 @@ export function useChatTab({
           quote_text: replyTargetSnapshot?.text || undefined,
           refs: refsSnapshot,
           format: "plain",
-          // Keep optimistic events schema-compatible with real ledger events.
-          // Attachment previews should only render after the server returns blob paths.
-          attachments: [],
+          attachments: optimisticAttachments,
           _optimistic: true,
         } as LedgerEvent["data"],
       };

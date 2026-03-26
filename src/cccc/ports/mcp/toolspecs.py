@@ -147,6 +147,18 @@ MCP_TOOLS = [
         ),
     },
     {
+        "name": "cccc_pet_decisions",
+        "description": "Pet-only decision surface: action=get|replace|clear. The pet actor should write structured Web Pet decisions here instead of sending reminder-like chat messages.",
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_ACTOR,
+                "action": {"type": "string", "enum": ["get", "replace", "clear"], "default": "get"},
+                "decisions": {"type": "array", "items": {"type": "object"}},
+            }
+        ),
+    },
+    {
         "name": "cccc_file",
         "description": "File operations: action=send(path,text,...) or action=blob_path(rel_path).",
         "inputSchema": _obj(

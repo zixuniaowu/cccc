@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useMemo } from "react";
+import React, { lazy, Suspense, useEffect, useMemo } from "react";
 import { DropOverlay } from "./components/DropOverlay";
 const AppModals = lazy(() => import("./components/AppModals").then((m) => ({ default: m.AppModals })));
 const WebPet = lazy(() => import("./features/webPet/WebPet").then((m) => ({ default: m.WebPet })));
@@ -27,6 +27,7 @@ import {
   useComposerStore,
   useFormStore,
 } from "./stores";
+import { useChatOutboxStore } from "./stores/chatOutboxStore";
 import type { ChatMessageData, LedgerEvent } from "./types";
 
 // ============ Main App Component ============
@@ -96,6 +97,7 @@ export default function App() {
   } = useComposerStore();
 
   const { setNewActorRole, setEditGroupTitle, setEditGroupTopic, setDirSuggestions } = useFormStore();
+  const clearAllOutbox = useChatOutboxStore((state) => state.clearAll);
 
   // Actor actions hook
   const {
@@ -117,6 +119,15 @@ export default function App() {
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [_mentionFilter, setMentionFilter] = React.useState("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
+
+  useEffect(() => {
+    const handlePageHide = () => clearAllOutbox();
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      clearAllOutbox();
+    };
+  }, [clearAllOutbox]);
 
   const {
     composerRef,

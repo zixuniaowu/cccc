@@ -1,13 +1,10 @@
 import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { getReminderActionButtons } from "./reminderActions";
-import { formatPetSnapshot } from "./petSnapshotText";
 import type { PanelData, PetReminder, ReminderAction } from "./types";
-import type { PetPeerContext } from "./petPeerContext";
 
 interface PetPanelProps {
   panelData: PanelData;
-  petContext?: PetPeerContext;
   reminders: PetReminder[];
   panelId?: string;
   /** Panel opens on this side of the cat */
@@ -30,7 +27,6 @@ function countAgentsByState(panelData: PanelData) {
 
 export function PetPanel({
   panelData,
-  petContext,
   reminders,
   panelId = "web-pet-panel",
   align = "left",
@@ -39,16 +35,8 @@ export function PetPanel({
   catSize = 80,
 }: PetPanelProps) {
   const { t } = useTranslation("webPet");
-  const tr = (
-    key: string,
-    fallback: string,
-    vars?: Record<string, unknown>,
-  ) => String(t(key, { defaultValue: fallback, ...(vars || {}) }));
   const counts = countAgentsByState(panelData);
   const actionableReminders = reminders.slice(0, 1);
-  const formattedSnapshot = petContext?.snapshot
-    ? formatPetSnapshot(petContext.snapshot, tr)
-    : "";
 
   // Panel opens horizontally beside the cat (not above).
   // "right" align = cat is on right side → panel opens to the LEFT of the cat.
@@ -149,25 +137,6 @@ export function PetPanel({
         </div>
 
         <div className="overflow-y-auto px-4 py-3">
-          {petContext?.prompt ? (
-            <div className="mb-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 backdrop-blur-sm dark:border-white/5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-                  {t("petPeerLabel", { defaultValue: "Pet Peer" })}
-                </div>
-                <span className="text-[10px] text-[var(--color-text-secondary)] opacity-70">
-                  {petContext.source === "help"
-                    ? t("petPersonaSourceHelp", { defaultValue: "loaded from help" })
-                    : t("petPersonaSourceDefault", { defaultValue: "built-in default" })}
-                </span>
-              </div>
-              {formattedSnapshot ? (
-                <div className="mt-1 whitespace-pre-line text-xs leading-5 text-[var(--color-text-secondary)]">
-                  {formattedSnapshot}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
           {actionableReminders.length > 0 ? (
             <div className="space-y-2">
               {actionableReminders.map((reminder) => {

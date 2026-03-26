@@ -1,7 +1,7 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FloatingPortal } from "@floating-ui/react";
 import { useTranslation } from 'react-i18next';
-import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, EventAttachment, PresentationMessageRef } from "../types";
+import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
@@ -308,6 +308,7 @@ export interface MessageBubbleProps {
     onRelay?: (ev: LedgerEvent) => void;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
     onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+    onLayoutChange?: () => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -327,6 +328,7 @@ export const MessageBubble = memo(function MessageBubble({
     onRelay,
     onOpenSource,
     onOpenPresentationRef,
+    onLayoutChange,
 }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
     const isOptimistic = !!(ev.data as Record<string, unknown> | undefined)?._optimistic;
@@ -335,6 +337,7 @@ export const MessageBubble = memo(function MessageBubble({
 
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
     const [copiedMessageText, setCopiedMessageText] = useState(false);
+    const rootRef = useRef<HTMLDivElement | null>(null);
 
     const canShowAgentState = useMemo(() => {
         if (isUserMessage) return false;
@@ -367,17 +370,18 @@ export const MessageBubble = memo(function MessageBubble({
         return raw.map((t) => String(t || "").trim()).filter((t) => t);
     }, [msgData?.dst_to]);
     const hasDestination = !!dstGroupId;
-    const rawAttachments: EventAttachment[] = Array.isArray(msgData?.attachments) ? msgData.attachments : [];
+    const rawAttachments: MessageAttachment[] = Array.isArray(msgData?.attachments) ? msgData.attachments : [];
     const blobAttachments = rawAttachments
-        .filter((a): a is EventAttachment => a != null && typeof a === "object")
+        .filter((a): a is MessageAttachment => a != null && typeof a === "object")
         .map((a) => ({
             kind: String(a.kind || "file"),
             path: String(a.path || ""),
             title: String(a.title || ""),
             bytes: Number(a.bytes || 0),
             mime_type: String(a.mime_type || ""),
+            local_preview_url: "local_preview_url" in a ? String(a.local_preview_url || "") : "",
         }))
-        .filter((a) => a.path.startsWith("state/blobs/"));
+        .filter((a) => a.path.startsWith("state/blobs/") || a.local_preview_url.startsWith("blob:"));
     const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
     const shouldRenderMarkdown = useMemo(() => mayContainMarkdown(messageText), [messageText]);
     const copyableMessageText = useMemo(
@@ -386,7 +390,10 @@ export const MessageBubble = memo(function MessageBubble({
                 quoteText,
                 messageText,
                 presentationRefs,
-                attachments: blobAttachments,
+                attachments: blobAttachments.map((attachment) => ({
+                    title: attachment.title,
+                    path: attachment.path || attachment.local_preview_url,
+                })),
             }),
         [blobAttachments, messageText, presentationRefs, quoteText]
     );
@@ -502,6 +509,25 @@ export const MessageBubble = memo(function MessageBubble({
         return () => window.clearTimeout(timer);
     }, [copiedMessageText]);
 
+    useEffect(() => {
+        const el = rootRef.current;
+        if (!el || typeof ResizeObserver === "undefined" || !onLayoutChange) return undefined;
+
+        let rafId: number | null = null;
+        const observer = new ResizeObserver(() => {
+            if (rafId != null) window.cancelAnimationFrame(rafId);
+            rafId = window.requestAnimationFrame(() => {
+                rafId = null;
+                onLayoutChange();
+            });
+        });
+        observer.observe(el);
+        return () => {
+            observer.disconnect();
+            if (rafId != null) window.cancelAnimationFrame(rafId);
+        };
+    }, [onLayoutChange]);
+
     const handleCopyMessageText = useCallback(async () => {
         const ok = await copyText(copyableMessageText);
         if (ok) {
@@ -511,8 +537,9 @@ export const MessageBubble = memo(function MessageBubble({
 
     return (
         <div
+            ref={rootRef}
             className={classNames(
-                "relative flex gap-2 sm:gap-3 group",
+                "relative flex w-full min-w-0 gap-2 sm:gap-3 group",
                 isUserMessage
                     ? "flex-col items-end sm:items-start sm:flex-row-reverse"
                     : "flex-col items-start sm:flex-row",
@@ -604,7 +631,7 @@ export const MessageBubble = memo(function MessageBubble({
             {/* Message Content */}
             <div
                 className={classNames(
-                    "flex flex-col w-full sm:w-auto sm:max-w-[75%] min-w-0",
+                    "flex min-w-0 flex-col w-full md:w-auto md:max-w-[82%] xl:max-w-[75%]",
                     isUserMessage ? "items-end" : "items-start"
                 )}
             >
@@ -688,7 +715,7 @@ export const MessageBubble = memo(function MessageBubble({
 
                 {/* Bubble wrapper (allows badge to overflow) */}
                 <div
-                    className="relative max-w-[85vw] sm:max-w-full min-w-0"
+                    className="relative w-full max-w-full min-w-0 md:w-auto"
                     style={isAttention ? { minWidth: "min(8.5rem, 85vw)" } : undefined}
                 >
                     {isAttention && (
@@ -824,11 +851,11 @@ export const MessageBubble = memo(function MessageBubble({
                                         {imageAttachments.map((a, i) => {
                                             const parts = a.path.split("/");
                                             const blobName = parts[parts.length - 1] || "";
-                                            const href = `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
-                                            const label = a.title || blobName;
+                                            const href = a.local_preview_url || `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
+                                            const label = a.title || blobName || "image";
                                             return (
                                                 <ImagePreview
-                                                    key={`img-${blobName}:${i}`}
+                                                    key={`img-${blobName || "local"}:${i}`}
                                                     href={href}
                                                     alt={label}
                                                     isUserMessage={isUserMessage}
@@ -844,7 +871,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         {fileAttachments.map((a, i) => {
                                             const parts = a.path.split("/");
                                             const blobName = parts[parts.length - 1] || "";
-                                            const href = `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
+                                            const href = a.local_preview_url || `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
                                             const label = a.title || blobName || "file";
                                             return (
                                                 <a

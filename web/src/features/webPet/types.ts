@@ -15,9 +15,9 @@ export interface AgentSummary {
 }
 
 export type ReminderKind =
-  | "reply_required"
+  | "suggestion"
   | "actor_down"
-  | "mention";
+  ;
 
 export type ReminderAction =
   | {
@@ -46,6 +46,9 @@ export interface PetReminder {
     eventId?: string;
     taskId?: string;
     actorId?: string;
+    actorRole?: string;
+    errorReason?: string;
+    suggestionKind?: "mention" | "reply_required";
   };
   fingerprint: string;
   action: ReminderAction;

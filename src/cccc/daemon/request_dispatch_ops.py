@@ -26,6 +26,7 @@ from .group.group_state_ops import try_handle_group_state_op
 from .group.group_lifecycle_ops import try_handle_group_lifecycle_op
 from .automation.automation_ops import try_handle_group_automation_op
 from .group.group_settings_ops import try_handle_group_settings_op
+from .pet.pet_decision_ops import try_handle_pet_decision_op
 from .group.presentation_ops import try_handle_presentation_op
 from .group.presentation_browser_ops import try_handle_presentation_browser_op
 from .space.group_space_ops import try_handle_group_space_op
@@ -162,9 +163,20 @@ def dispatch_request(
     if group_core_resp is not None:
         return group_core_resp, False
 
-    group_settings_resp = try_handle_group_settings_op(op, args)
+    group_settings_resp = try_handle_group_settings_op(
+        op,
+        args,
+        effective_runner_kind=deps.effective_runner_kind,
+        start_actor_process=deps.start_actor_process,
+        remove_headless_state=deps.remove_headless_state,
+        remove_pty_state_if_pid=deps.remove_pty_state_if_pid,
+    )
     if group_settings_resp is not None:
         return group_settings_resp, False
+
+    pet_decision_resp = try_handle_pet_decision_op(op, args)
+    if pet_decision_resp is not None:
+        return pet_decision_resp, False
 
     presentation_resp = try_handle_presentation_op(op, args)
     if presentation_resp is not None:

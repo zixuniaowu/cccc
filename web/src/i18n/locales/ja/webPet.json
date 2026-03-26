@@ -14,25 +14,20 @@
   },
   "countWorking": "{{count}} 作業中",
   "countBusy": "{{count}} ビジー",
-  "countNeedsYou": "{{count}} 対応が必要",
-  "petPeerLabel": "ペットピア",
-  "petPersonaSourceHelp": "ヘルプ読込済み",
-  "petPersonaSourceDefault": "内蔵既定",
-  "noActionItems": "今すぐ対応が必要な項目はありません。",
-  "notice": {
-    "suggestionSent": "提案を送信しました",
-    "suggestionSendFailed": "提案の送信に失敗しました",
-    "restartRequested": "再起動を依頼しました",
-    "actorRestartFailed": "Actor の再起動に失敗しました"
-  },
+  "petPeerLabel": "Pet Peer",
+  "petPersonaSourceHelp": "persona loaded",
+  "petPersonaSourceDefault": "default seed",
+  "noActionItems": "今は提案も異常もありません。",
   "kind": {
-    "reply_required": "要返信",
+    "suggestion": "提案",
     "actor_down": "停止中",
     "mention": "メンション"
   },
   "action": {
     "send": "送信",
     "restart": "再起動",
+    "restartPeer": "peer を再起動",
+    "restartForeman": "foreman を再起動",
     "dismiss": "閉じる"
   },
   "suggestionLabel": "提案",
@@ -40,18 +35,7 @@
   "taskActive": "{{count}} 進行中",
   "hintTaskProgress": "{{done}}/{{total}} タスク完了",
   "reminderSummary": {
-    "mention": "{{actor}} があなたにメンションしました。",
-    "mentionCompact": "{{actor}} があなたを呼んでいます。",
-    "replyRequired": "{{actor}} があなたの返信を待っています。",
-    "replyRequiredCompact": "{{actor}} が返信を待っています。",
-    "stalledPeer": "{{actor}} は {{taskId}} のまま長くアイドル状態です。",
-    "actorDownForeman": "{{actor}} は停止中です。調整を戻すには再起動してください。",
-    "actorDownTask": "{{actor}} は停止中です。{{taskId}} が詰まっている可能性があるので再起動してください。"
-  },
-  "snapshot": {
-    "group": "グループ: {{value}}",
-    "groupState": "グループ状態: {{value}}",
-    "tasks": "タスク: 合計={{total}}, 進行中={{active}}, 完了={{done}}, アーカイブ={{archived}}",
-    "agentSnapshot": "Agent スナップショット: {{value}}"
+    "mention": "{{actor}} がそのまま送れる提案を出しました。",
+    "replyRequired": "{{actor}} がそのまま返せる返信案を出しました。"
   }
 }

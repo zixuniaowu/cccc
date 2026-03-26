@@ -1,7 +1,7 @@
 import type { PetReminder, ReminderAction } from "./types";
 
 export interface ReminderActionButton {
-  labelKey: "send" | "restart";
+  labelKey: "send" | "restart" | "restartPeer" | "restartForeman";
   fallback: string;
   action: ReminderAction;
 }
@@ -20,10 +20,16 @@ export function getReminderActionButtons(
   }
 
   if (reminder.action.type === "restart_actor") {
+    const actorRole = String(reminder.source.actorRole || "").trim().toLowerCase();
     return [
       {
-        labelKey: "restart",
-        fallback: "Restart",
+        labelKey: actorRole === "foreman" ? "restartForeman" : actorRole ? "restartPeer" : "restart",
+        fallback:
+          actorRole === "foreman"
+            ? "Restart foreman"
+            : actorRole
+              ? "Restart peer"
+              : "Restart",
         action: reminder.action,
       },
     ];

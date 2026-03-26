@@ -123,7 +123,6 @@ export function WebPet({
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const selectedGroupDoc = useGroupStore((state) => state.groupDoc);
   const selectedGroupSettings = useGroupStore((state) => state.groupSettings);
-  const selectedActors = useGroupStore((state) => state.actors);
   const selectedGroupContext = useGroupStore((state) => state.groupContext);
   const selectedEvents = useGroupStore((state) =>
     state.selectedGroupId === groupId ? state.chatByGroup[groupId]?.events || state.events : EMPTY_EVENTS,
@@ -138,17 +137,14 @@ export function WebPet({
   const isSelectedGroup = String(selectedGroupId || "").trim() === String(groupId || "").trim();
   const groupDoc = isSelectedGroup ? selectedGroupDoc : remoteState.groupDoc;
   const groupSettings = isSelectedGroup ? selectedGroupSettings : remoteState.groupSettings;
-  const actors = isSelectedGroup ? selectedActors : remoteState.actors;
   const groupContext = isSelectedGroup ? selectedGroupContext : remoteState.groupContext;
   const events = isSelectedGroup ? selectedEvents : remoteState.events;
-  const groupState = groupDoc?.state ?? "";
   const petContext = usePetPeerContext({ groupId });
   const { catState, panelData, hint, reminders, activeReminder, dismissReminder, reaction } =
     useWebPetData({
       groupId,
       groupDoc,
       groupContext,
-      actors,
       events,
       petContext,
     });
@@ -285,7 +281,6 @@ export function WebPet({
         {panelOpen ? (
           <PetPanel
             panelData={panelData}
-            petContext={petContext}
             reminders={reminders}
             align={panelAlign}
             onClose={closePanel}

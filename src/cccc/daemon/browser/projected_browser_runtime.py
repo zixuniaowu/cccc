@@ -122,7 +122,7 @@ class _VirtualDisplay:
 
 
 def _start_virtual_display(*, width: int, height: int) -> _VirtualDisplay | None:
-    if os.name == "nt" or sys.platform == "darwin":
+    if os.name == "nt":
         return None
     binary = shutil.which("Xvfb")
     if not binary:

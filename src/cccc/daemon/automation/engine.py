@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from ...contracts.v1 import AutomationRule, AutomationRuleSet, SystemNotifyData
-from ...kernel.actors import list_actors, find_foreman
+from ...kernel.actors import find_foreman, list_visible_actors
 from ...kernel.agent_state_hygiene import evaluate_agent_state_hygiene, sync_mind_context_runtime_state
 from ...kernel.context import ContextStorage
 from ...kernel.group import Group, load_group, get_group_state, set_group_state
@@ -201,7 +201,7 @@ def _render_snippet(text: str, *, context: Dict[str, str]) -> str:
 
 def _actor_display_names(group: Group) -> str:
     names: List[str] = []
-    for a in list_actors(group):
+    for a in list_visible_actors(group):
         if not isinstance(a, dict):
             continue
         if not coerce_bool(a.get("enabled"), default=True):
@@ -709,7 +709,7 @@ class AutomationManager:
                 st_rule["last_fired_at"] = now
                 st_rule["last_error_at"] = ""
                 st_rule["last_error"] = ""
-            for actor in list_actors(group):
+            for actor in list_visible_actors(group):
                 if not isinstance(actor, dict):
                     continue
                 aid = str(actor.get("id") or "").strip()
@@ -757,8 +757,8 @@ class AutomationManager:
                 continue
             # Check group state - gate automation by state
             state = get_group_state(group)
-            if state in ("paused", "stopped"):
-                continue  # paused/stopped: all automation disabled
+            if state == "paused":
+                continue  # paused: all automation disabled
             if state == "idle":
                 # idle: only run user-defined rules (Level 4);
                 # internal automation (Level 1-3) stays silent
@@ -807,7 +807,7 @@ class AutomationManager:
         try:
             roster = [
                 a
-                for a in list_actors(group)
+                for a in list_visible_actors(group)
                 if isinstance(a, dict)
                 and str(a.get("id") or "").strip()
                 and coerce_bool(a.get("enabled"), default=True)
@@ -1059,7 +1059,7 @@ class AutomationManager:
 
         with self._lock:
             state = _load_state(group)
-            for actor in list_actors(group):
+            for actor in list_visible_actors(group):
                 if not isinstance(actor, dict):
                     continue
                 aid = str(actor.get("id") or "").strip()
@@ -1164,7 +1164,7 @@ class AutomationManager:
         with self._lock:
             state = _load_state(group)
             resume_dt = parse_utc_iso(str(state.get("resume_at") or "")) if state.get("resume_at") else None
-            for actor in list_actors(group):
+            for actor in list_visible_actors(group):
                 if not isinstance(actor, dict):
                     continue
                 aid = str(actor.get("id") or "").strip()
@@ -1349,7 +1349,7 @@ class AutomationManager:
         return False, msg
 
     def _resolve_actor_control_targets(self, group: Group, targets: List[str]) -> List[str]:
-        actors = list_actors(group)
+        actors = list_visible_actors(group)
         actor_ids: List[str] = []
         for actor in actors:
             if not isinstance(actor, dict):
@@ -1459,7 +1459,7 @@ class AutomationManager:
 
         # Snapshot roster once.
         roster: Dict[str, Dict[str, Any]] = {}
-        for a in list_actors(group):
+        for a in list_visible_actors(group):
             if not isinstance(a, dict):
                 continue
             aid = str(a.get("id") or "").strip()
@@ -1757,7 +1757,7 @@ class AutomationManager:
 
         # Snapshot currently running actors (we only track "work volume" while running).
         running: list[tuple[str, str, str]] = []  # (actor_id, runner_kind, session_key)
-        for actor in list_actors(group):
+        for actor in list_visible_actors(group):
             if not isinstance(actor, dict):
                 continue
             aid = str(actor.get("id") or "").strip()

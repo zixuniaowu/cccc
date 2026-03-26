@@ -27,6 +27,7 @@ from .delivery import (
     queue_chat_message,
     request_flush_pending_messages,
 )
+from ..pet.review_scheduler import request_pet_review
 
 logger = logging.getLogger("cccc.daemon.server")
 
@@ -488,6 +489,15 @@ def handle_send(
         automation_on_new_message(group)
     except Exception:
         pass
+    try:
+        request_pet_review(
+            group.group_id,
+            reason="chat_message",
+            source_event_id=event_id,
+            immediate=reply_required,
+        )
+    except Exception:
+        pass
 
     return DaemonResponse(ok=True, result={"event": event})
 
@@ -537,6 +547,7 @@ def handle_reply(
     original, existing_ack = find_event_with_chat_ack(group, event_id=reply_to, actor_id=by)
     if original is None:
         return _error("event_not_found", f"event not found: {reply_to}")
+    target_event_id = str(original.get("id") or "").strip()
     original_data = original.get("data") if isinstance(original.get("data"), dict) else {}
     quote_text = _quote_text_from_message_data(original_data, max_len=100)
     original_source_platform = str(original_data.get("source_platform") or "").strip()
@@ -595,7 +606,7 @@ def handle_reply(
             priority=priority,
             reply_required=reply_required,
             to=to,
-            reply_to=reply_to,
+            reply_to=target_event_id or reply_to,
             quote_text=quote_text,
             refs=refs,
             attachments=attachments,
@@ -615,7 +626,6 @@ def handle_reply(
             original_priority = str(original_data.get("priority") or "normal").strip()
             if by and by != original_by and original_priority == "attention":
                 if is_message_for_actor(group, actor_id=by, event=original):
-                    target_event_id = str(original.get("id") or "").strip()
                     if target_event_id and not existing_ack:
                         ack_event = append_event(
                             group.ledger_path,
@@ -660,7 +670,7 @@ def handle_reply(
                 by=by,
                 to=effective_to,
                 text=delivery_text,
-                reply_to=reply_to,
+                reply_to=target_event_id or reply_to,
                 quote_text=quote_text,
                 ts=event_ts,
             )
@@ -677,6 +687,15 @@ def handle_reply(
 
     try:
         automation_on_new_message(group)
+    except Exception:
+        pass
+    try:
+        request_pet_review(
+            group.group_id,
+            reason="chat_reply",
+            source_event_id=event_id,
+            immediate=True,
+        )
     except Exception:
         pass
 

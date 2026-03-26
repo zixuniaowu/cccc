@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List
+
+from ..util.fs import atomic_write_json, read_json
+
+if TYPE_CHECKING:
+    from .group import Group
+
+_SCHEMA = 1
+
+
+def pet_decisions_path(group: Group) -> Path:
+    return group.path / "state" / "pet_decisions.json"
+
+
+def _normalize_action(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    action_type = str(raw.get("type") or "").strip()
+    out: Dict[str, Any] = {"type": action_type}
+    if action_type == "restart_actor":
+        out["group_id"] = str(raw.get("group_id") or "").strip()
+        out["actor_id"] = str(raw.get("actor_id") or "").strip()
+        return out
+    if action_type == "send_suggestion":
+        out["group_id"] = str(raw.get("group_id") or "").strip()
+        out["text"] = str(raw.get("text") or "").strip()
+        if isinstance(raw.get("to"), list):
+            out["to"] = [str(item or "").strip() for item in raw.get("to") if str(item or "").strip()]
+        reply_to = str(raw.get("reply_to") or "").strip()
+        if reply_to:
+            out["reply_to"] = reply_to
+        return out
+    return {}
+
+
+def _normalize_source(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for key in ("event_id", "task_id", "actor_id", "actor_role", "error_reason", "suggestion_kind"):
+        value = str(raw.get(key) or "").strip()
+        if value:
+            out[key] = value
+    return out
+
+
+def _normalize_decision(raw: Any) -> Dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    decision_id = str(raw.get("id") or "").strip()
+    fingerprint = str(raw.get("fingerprint") or "").strip()
+    kind = str(raw.get("kind") or "").strip()
+    summary = str(raw.get("summary") or "").strip()
+    action = _normalize_action(raw.get("action"))
+    action_type = str(action.get("type") or "").strip()
+    if not decision_id or not fingerprint or not kind or not summary or not action_type:
+        return None
+    out: Dict[str, Any] = {
+        "id": decision_id,
+        "kind": kind,
+        "priority": int(raw.get("priority") or 0),
+        "summary": summary,
+        "agent": str(raw.get("agent") or "").strip(),
+        "fingerprint": fingerprint,
+        "action": action,
+        "source": _normalize_source(raw.get("source")),
+        "updated_at": str(raw.get("updated_at") or "").strip(),
+    }
+    suggestion = str(raw.get("suggestion") or "").strip()
+    if suggestion:
+        out["suggestion"] = suggestion
+    suggestion_preview = str(raw.get("suggestion_preview") or "").strip()
+    if suggestion_preview:
+        out["suggestion_preview"] = suggestion_preview
+    if bool(raw.get("ephemeral")):
+        out["ephemeral"] = True
+    return out
+
+
+def load_pet_decisions(group: Group) -> List[Dict[str, Any]]:
+    raw = read_json(pet_decisions_path(group))
+    if not isinstance(raw, dict):
+        return []
+    items = raw.get("decisions")
+    if not isinstance(items, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in items:
+        normalized = _normalize_decision(item)
+        if normalized is not None:
+            out.append(normalized)
+    return out
+
+
+def replace_pet_decisions(group: Group, *, decisions: List[Dict[str, Any]], actor_id: str) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for item in decisions:
+        normalized_item = _normalize_decision(item)
+        if normalized_item is not None:
+            normalized.append(normalized_item)
+    atomic_write_json(
+        pet_decisions_path(group),
+        {
+            "schema": _SCHEMA,
+            "by": str(actor_id or "").strip(),
+            "decisions": normalized,
+        },
+        indent=2,
+    )
+    return normalized
+
+
+def clear_pet_decisions(group: Group, *, actor_id: str) -> None:
+    atomic_write_json(
+        pet_decisions_path(group),
+        {
+            "schema": _SCHEMA,
+            "by": str(actor_id or "").strip(),
+            "decisions": [],
+        },
+        indent=2,
+    )

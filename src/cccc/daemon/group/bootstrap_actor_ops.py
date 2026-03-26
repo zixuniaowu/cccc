@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Optional
 
 from ...kernel.actors import list_actors
 from ...kernel.group import load_group
+from ...kernel.pet_actor import sync_pet_actor
 from ...util.conv import coerce_bool
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -59,6 +60,11 @@ def autostart_running_groups(
             except Exception:
                 pass
             continue
+
+        try:
+            sync_pet_actor(group)
+        except Exception as e:
+            logger.warning("Pet actor sync failed for %s: %s", group_id, e)
 
         for actor in list_actors(group):
             if not isinstance(actor, dict):

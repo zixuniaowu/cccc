@@ -149,6 +149,62 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_reply_accepts_unique_short_event_id_prefix(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "chat-short-reply", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "enabled": False,
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            send, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["peer1"],
+                    "text": "original message",
+                },
+            )
+            self.assertTrue(send.ok, getattr(send, "error", None))
+            sent_event = (send.result or {}).get("event") if isinstance(send.result, dict) else {}
+            self.assertIsInstance(sent_event, dict)
+            assert isinstance(sent_event, dict)
+            sent_event_id = str(sent_event.get("id") or "").strip()
+            self.assertGreaterEqual(len(sent_event_id), 8)
+
+            reply, _ = self._call(
+                "reply",
+                {
+                    "group_id": group_id,
+                    "by": "peer1",
+                    "reply_to": sent_event_id[:8],
+                    "text": "reply via short id",
+                },
+            )
+            self.assertTrue(reply.ok, getattr(reply, "error", None))
+            reply_event = (reply.result or {}).get("event") if isinstance(reply.result, dict) else {}
+            self.assertIsInstance(reply_event, dict)
+            assert isinstance(reply_event, dict)
+            data = reply_event.get("data") if isinstance(reply_event.get("data"), dict) else {}
+            self.assertEqual(str(data.get("reply_to") or ""), sent_event_id)
+        finally:
+            cleanup()
+
     def test_reply_preserves_im_source_identity_and_mentions(self) -> None:
         _, cleanup = self._with_home()
         try:

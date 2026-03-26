@@ -9,11 +9,13 @@ from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import list_actors, update_actor
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
+from ...kernel.pet_actor import sync_pet_actor
 from ...kernel.permissions import require_group_permission
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 from ..actors.actor_profile_runtime import resolve_linked_actor_before_start
+from ..pet.review_scheduler import cancel_pet_review, request_pet_review
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -57,6 +59,7 @@ def handle_group_start(
         )
     try:
         require_group_permission(group, by=by, action="group.start")
+        sync_pet_actor(group)
         actors = list_actors(group)
         start_specs: list[tuple[str, Path, list[str], dict[str, str], Dict[str, Any], str]] = []
         for actor in actors:
@@ -194,6 +197,15 @@ def handle_group_start(
 
     data: Dict[str, Any] = {"started": started}
     event = append_event(group.ledger_path, kind="group.start", group_id=group.group_id, scope_key="", by=by, data=data)
+    try:
+        request_pet_review(
+            group.group_id,
+            reason="group_start",
+            source_event_id=str(event.get("id") or "").strip(),
+            immediate=True,
+        )
+    except Exception:
+        pass
     result: Dict[str, Any] = {"group_id": group.group_id, "started": started, "event": event}
     return DaemonResponse(ok=True, result=result)
 
@@ -256,6 +268,7 @@ def handle_group_stop(
         group.save()
     except Exception:
         pass
+    cancel_pet_review(group.group_id)
     event = append_event(group.ledger_path, kind="group.stop", group_id=group.group_id, scope_key="", by=by, data={"stopped": stopped})
     return DaemonResponse(ok=True, result={"group_id": group.group_id, "stopped": stopped, "event": event})
 

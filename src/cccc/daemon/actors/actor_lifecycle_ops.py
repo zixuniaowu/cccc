@@ -14,6 +14,7 @@ from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 from .actor_profile_runtime import ActorProfileAccessDeniedError, resolve_linked_actor_before_start
+from ..pet.review_scheduler import request_pet_review
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -146,6 +147,15 @@ def handle_actor_stop(
 
     from ...kernel.events import publish_event
     publish_event("actor.stop", {"group_id": group.group_id, "actor_id": actor_id})
+    try:
+        request_pet_review(
+            group.group_id,
+            reason="actor_stop",
+            source_event_id=str(event.get("id") or "").strip(),
+            immediate=True,
+        )
+    except Exception:
+        pass
 
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 
@@ -327,6 +337,15 @@ def handle_actor_restart(
 
     from ...kernel.events import publish_event
     publish_event("actor.restart", {"group_id": group.group_id, "actor_id": actor_id})
+    try:
+        request_pet_review(
+            group.group_id,
+            reason="actor_restart",
+            source_event_id=str(event.get("id") or "").strip(),
+            immediate=True,
+        )
+    except Exception:
+        pass
 
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 

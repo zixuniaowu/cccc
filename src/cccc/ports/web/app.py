@@ -129,6 +129,15 @@ def _request_token(request: Request) -> str:
     return _request_token_parts(request)[0]
 
 
+def _message_submit_mode() -> str:
+    raw = str(os.environ.get("CCCC_WEB_MESSAGE_SUBMIT_MODE") or "").strip().lower()
+    if raw in ("sync", "async"):
+        return raw
+    if str(os.environ.get("PYTEST_CURRENT_TEST") or "").strip():
+        return "sync"
+    return "async"
+
+
 def _resolve_principal(request: Request) -> Principal:
     token = _request_token(request)
     if not token:
@@ -441,6 +450,7 @@ def create_app() -> FastAPI:
         daemon=_daemon,
         cached_json=_cached_json,
         apply_web_logging=_apply_web_logging,
+        message_submit_mode=_message_submit_mode(),
     )
 
     register_base_routes(app, ctx=route_ctx)

@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 
 _HELP_ROLE_HEADER_RE = re.compile(r"^##\s*@role:\s*(\w+)\s*$", re.IGNORECASE)
-_HELP_ACTOR_HEADER_RE = re.compile(r"^##\s*@actor:\s*(.+?)\s*$", re.IGNORECASE)
+_HELP_ACTOR_HEADER_RE = re.compile(r"^##\s*@actor:\s*(\S+)(?:\s+(.*\S))?\s*$", re.IGNORECASE)
 _HELP_PET_HEADER_RE = re.compile(r"^##\s*@pet\s*:?\s*$", re.IGNORECASE)
 _HELP_H2_RE = re.compile(r"^##(?!#)\s+.*$")
 _HELP_LEGACY_ROLE_SECTION_RE = re.compile(r"^##\s+Role Notes\s*$", re.IGNORECASE)
@@ -47,11 +47,14 @@ def _parse_tagged_section(section: str) -> Optional[dict[str, str]]:
     actor_match = _HELP_ACTOR_HEADER_RE.match(header)
     if actor_match:
         actor_id = str(actor_match.group(1) or "").strip()
+        inline_body = str(actor_match.group(2) or "").strip()
+        body_lines = [inline_body] if inline_body else []
+        body_lines.extend(lines[1:])
         return {
             "kind": "actor" if actor_id else "extra",
             "key": f"actor:{actor_id}" if actor_id else "actor:",
             "raw": _trim_block(normalized),
-            "body": _trim_block("\n".join(lines[1:])),
+            "body": _trim_block("\n".join(body_lines)),
         }
     if _HELP_PET_HEADER_RE.match(header):
         return {

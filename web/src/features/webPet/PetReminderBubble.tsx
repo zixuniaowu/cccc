@@ -36,7 +36,7 @@ export function PetReminderBubble({
 
   const label = useMemo(() => {
     if (!reminder) return "";
-    if (reminder.kind === "mention" || reminder.kind === "reply_required") {
+    if (reminder.kind === "suggestion") {
       return reminder.summary;
     }
     return reminder.agent === "system"

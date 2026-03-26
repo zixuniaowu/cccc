@@ -48,6 +48,17 @@ Old actor note.
         self.assertEqual(str(parsed.get("pet") or ""), "Keep the Web Pet low-noise.")
         self.assertEqual(str(actor_notes.get("peer-1") or ""), "New actor note.")
 
+    def test_parse_help_markdown_recovers_inline_actor_note_text(self) -> None:
+        markdown = """
+## @actor: peer-1 first line
+second line
+""".strip()
+
+        parsed = parse_help_markdown(markdown)
+        actor_notes = parsed.get("actor_notes") if isinstance(parsed.get("actor_notes"), dict) else {}
+
+        self.assertEqual(str(actor_notes.get("peer-1") or ""), "first line\nsecond line")
+
     def test_select_help_markdown_hides_pet_block_from_actor_playbooks(self) -> None:
         markdown = """
 Common guidance.

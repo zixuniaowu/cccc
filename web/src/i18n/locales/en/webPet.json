@@ -15,23 +15,19 @@
   "countWorking": "{{count}} working",
   "countBusy": "{{count}} busy",
   "petPeerLabel": "Pet Peer",
-  "petPersonaSourceHelp": "loaded from help",
-  "petPersonaSourceDefault": "built-in default",
-  "noActionItems": "No action items right now.",
-  "notice": {
-    "suggestionSent": "Suggestion sent",
-    "suggestionSendFailed": "Failed to send suggestion",
-    "restartRequested": "Restart requested",
-    "actorRestartFailed": "Failed to restart actor"
-  },
+  "petPersonaSourceHelp": "persona loaded",
+  "petPersonaSourceDefault": "default seed",
+  "noActionItems": "No suggestions or issues right now.",
   "kind": {
-    "reply_required": "reply required",
+    "suggestion": "suggestion",
     "actor_down": "actor down",
     "mention": "mention"
   },
   "action": {
     "send": "Send",
     "restart": "Restart",
+    "restartPeer": "Restart peer",
+    "restartForeman": "Restart foreman",
     "dismiss": "Dismiss"
   },
   "suggestionLabel": "Suggestion",
@@ -39,18 +35,7 @@
   "taskActive": "{{count}} active",
   "hintTaskProgress": "{{done}}/{{total}} tasks done",
   "reminderSummary": {
-    "mention": "{{actor}} mentioned you.",
-    "mentionCompact": "{{actor}} mentioned you.",
-    "replyRequired": "{{actor}} is waiting for your reply.",
-    "replyRequiredCompact": "{{actor}} needs your reply.",
-    "stalledPeer": "{{actor}} has been idle for a while on {{taskId}}.",
-    "actorDownForeman": "{{actor}} is stopped. Restart to restore coordination.",
-    "actorDownTask": "{{actor}} is stopped. Task {{taskId}} may be stuck; restart it."
-  },
-  "snapshot": {
-    "group": "Group: {{value}}",
-    "groupState": "Group State: {{value}}",
-    "tasks": "Tasks: total={{total}}, active={{active}}, done={{done}}, archived={{archived}}",
-    "agentSnapshot": "Agent Snapshot: {{value}}"
+    "mention": "{{actor}} provided a suggestion you can send directly.",
+    "replyRequired": "{{actor}} provided a reply suggestion you can send directly."
   }
 }

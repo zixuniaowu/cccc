@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 from .context import ContextStorage
 from ..util.fs import atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
-from .actors import find_actor, get_effective_role, list_actors
+from .actors import find_actor, get_effective_role, is_internal_actor, list_actors
 from .group import Group
 from .ledger_index import has_chat_ack_indexed, lookup_event_by_id, lookup_events_by_ids, search_event_ids_indexed
 from .ledger_segments import iter_source_lines, list_ledger_sources
@@ -772,6 +772,8 @@ def is_message_for_actor(
               If None, will be computed via get_effective_role().
     """
     kind = str(event.get("kind") or "")
+    actor = find_actor(group, actor_id)
+    actor_internal = isinstance(actor, dict) and is_internal_actor(actor)
 
     # system.notify: check target_actor_id
     if kind == "system.notify":
@@ -779,6 +781,8 @@ def is_message_for_actor(
         if not isinstance(data, dict):
             return False
         target = str(data.get("target_actor_id") or "").strip()
+        if actor_internal:
+            return bool(target) and target == actor_id
         # Empty target = broadcast to everyone
         if not target:
             return True
@@ -787,6 +791,8 @@ def is_message_for_actor(
     # chat.message: check the "to" field
     targets = _message_targets(event)
 
+    # Internal actors observe normal chat routing but still require explicit
+    # targeting for system.notify to avoid picking up background noise.
     # Empty targets = broadcast (everyone can see)
     if not targets:
         return True
@@ -1004,23 +1010,56 @@ def latest_unread_event(
     return last
 
 
-def find_event(group: Group, event_id: str) -> Optional[Dict[str, Any]]:
-    """Find an event by event_id."""
-    wanted = event_id.strip()
+def resolve_event_id(group: Group, event_id: str) -> str:
+    """Resolve an event id from an exact id or a unique id prefix."""
+    wanted = str(event_id or "").strip()
     if not wanted:
-        return None
+        return ""
+
     event = lookup_event_by_id(group.ledger_path, wanted)
+    if event is not None:
+        return str(event.get("id") or "").strip()
+
+    exact_match = ""
+    prefix_match = ""
+    prefix_ambiguous = False
+    for ev in iter_events_reverse(group.ledger_path):
+        candidate = str(ev.get("id") or "").strip()
+        if not candidate:
+            continue
+        if candidate == wanted:
+            exact_match = candidate
+            break
+        if candidate.startswith(wanted):
+            if not prefix_match:
+                prefix_match = candidate
+            elif prefix_match != candidate:
+                prefix_ambiguous = True
+                break
+    if exact_match:
+        return exact_match
+    if prefix_match and not prefix_ambiguous:
+        return prefix_match
+    return ""
+
+
+def find_event(group: Group, event_id: str) -> Optional[Dict[str, Any]]:
+    """Find an event by exact id or a unique id prefix."""
+    resolved = resolve_event_id(group, event_id)
+    if not resolved:
+        return None
+    event = lookup_event_by_id(group.ledger_path, resolved)
     if event is not None:
         return event
     for ev in iter_events_reverse(group.ledger_path):
-        if str(ev.get("id") or "") == wanted:
+        if str(ev.get("id") or "").strip() == resolved:
             return ev
     return None
 
 
 def find_event_with_chat_ack(group: Group, *, event_id: str, actor_id: str) -> Tuple[Optional[Dict[str, Any]], bool]:
     """Find an event and whether a matching chat.ack already exists."""
-    wanted = str(event_id or "").strip()
+    wanted = resolve_event_id(group, event_id)
     actor = str(actor_id or "").strip()
     if not wanted:
         return None, False

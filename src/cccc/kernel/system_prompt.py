@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ..util.conv import coerce_bool
-from .actors import get_effective_role, list_actors
+from .actors import get_effective_role, is_pet_actor, list_visible_actors
 from .group import Group
 from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
 
@@ -32,7 +32,7 @@ def render_role_system_prompt(
     topic = str(group.doc.get("topic") or "").strip()
 
     # Count actors
-    actors = list_actors(group)
+    actors = list_visible_actors(group)
     enabled_actor_ids: List[str] = []
     for a in actors:
         if not isinstance(a, dict) or not coerce_bool(a.get("enabled"), default=True):
@@ -168,6 +168,10 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     - Ops playbook lives in MCP: see cccc_help
     """
     actor_id = str(actor.get("id") or "").strip()
+    if is_pet_actor(actor):
+        from .pet_prompt import render_pet_system_prompt
+
+        return render_pet_system_prompt(group, actor=actor)
     role = get_effective_role(group, actor_id)
     runner = str(actor.get("runner") or "pty").strip()
     runtime_name = str(actor.get("runtime") or "").strip()

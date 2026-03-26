@@ -19,7 +19,7 @@ type TaggedSection = {
 
 const H2_RE = /^##(?!#)\s+.*$/;
 const ROLE_TAG_RE = /^##\s*@role:\s*(\w+)\s*$/i;
-const ACTOR_TAG_RE = /^##\s*@actor:\s*(.+?)\s*$/i;
+const ACTOR_TAG_RE = /^##\s*@actor:\s*(\S+)(?:\s+(.*\S))?\s*$/i;
 const PET_TAG_RE = /^##\s*@pet\s*:?\s*$/i;
 const LEGACY_ROLE_SECTION_RE = /^##\s+Role Notes\s*$/i;
 const H3_RE = /^###\s+(.+?)\s*$/;
@@ -62,11 +62,14 @@ function parseTaggedSection(section: string): TaggedSection | null {
   const actorMatch = header.match(ACTOR_TAG_RE);
   if (actorMatch) {
     const actorId = String(actorMatch[1] || "").trim();
+    const inlineBody = String(actorMatch[2] || "").trim();
+    const bodyLines = lines.slice(1);
+    const body = trimBlock([inlineBody, ...bodyLines].filter(Boolean).join("\n"));
     return {
       kind: actorId ? "actor" : "extra",
       key: actorId ? `actor:${actorId}` : "actor:",
       raw: trimBlock(normalized),
-      body: trimBlock(lines.slice(1).join("\n")),
+      body,
     };
   }
   if (PET_TAG_RE.test(header)) {

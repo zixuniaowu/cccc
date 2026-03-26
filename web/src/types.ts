@@ -22,7 +22,7 @@ export type GroupDoc = {
   state?: "active" | "idle" | "paused";
 };
 
-// Event attachment metadata
+// Server-backed attachment metadata carried by canonical ledger events.
 export type EventAttachment = {
   kind?: string;
   path?: string;
@@ -30,6 +30,18 @@ export type EventAttachment = {
   bytes?: number;
   mime_type?: string;
 };
+
+// Local-only preview attachment used by optimistic messages before upload confirmation.
+export type OptimisticAttachment = {
+  kind?: string;
+  path?: string;
+  title?: string;
+  bytes?: number;
+  mime_type?: string;
+  local_preview_url: string;
+};
+
+export type MessageAttachment = EventAttachment | OptimisticAttachment;
 
 export type MessageRef = {
   kind?: string;
@@ -77,7 +89,7 @@ export type ChatMessageData = {
   dst_group_id?: string;
   dst_to?: string[];
   refs?: MessageRef[];
-  attachments?: EventAttachment[];
+  attachments?: MessageAttachment[];
 };
 
 export type ObligationStatus = {

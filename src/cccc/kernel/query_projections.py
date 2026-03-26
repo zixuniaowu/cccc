@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 from ..paths import ensure_home
 from ..util.fs import atomic_write_json, read_json
-from .actors import get_effective_role, list_actors
+from .actors import get_effective_role, list_actors, list_visible_actors
 from .context import ContextStorage
 from .group import Group, load_group
 from .registry import Registry, load_registry
@@ -137,7 +137,7 @@ def get_actor_list_projection(group: Group) -> List[Dict[str, Any]]:
         return [dict(item) for item in snapshot.get("result", {}).get("actors", []) if isinstance(item, dict)]
 
     actors_out: List[Dict[str, Any]] = []
-    for actor in list_actors(group):
+    for actor in list_visible_actors(group):
         if not isinstance(actor, dict):
             continue
         aid = str(actor.get("id") or "").strip()

@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.messaging import get_default_send_to
+from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor, sync_pet_actor
 from ...kernel.permissions import require_group_permission
 from ...kernel.terminal_transcript import apply_terminal_transcript_patch, get_terminal_transcript_settings
+from ..pet.pet_runtime_ops import (
+    is_pet_actor_running,
+    pet_runtime_changed,
+    restore_pet_actor_doc,
+    stop_pet_actor_runtime,
+)
+from ..pet.review_scheduler import cancel_pet_review, request_pet_review
 from ...util.conv import coerce_bool
 
 
@@ -29,7 +37,14 @@ def _safe_int(value: Any, *, default: int, min_value: int = 0, max_value: Option
     return out
 
 
-def handle_group_settings_update(args: Dict[str, Any]) -> DaemonResponse:
+def handle_group_settings_update(
+    args: Dict[str, Any],
+    *,
+    effective_runner_kind: Callable[[str], str],
+    start_actor_process: Callable[..., dict[str, Any]],
+    remove_headless_state: Callable[[str, str], None],
+    remove_pty_state_if_pid: Callable[..., None],
+) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "user").strip()
     patch = args.get("patch") if isinstance(args.get("patch"), dict) else {}
@@ -79,6 +94,7 @@ def handle_group_settings_update(args: Dict[str, Any]) -> DaemonResponse:
             )
     try:
         require_group_permission(group, by=by, action="group.settings_update")
+        pet_review_after_save = False
 
         messaging_patch = {k: v for k, v in patch.items() if k in messaging_keys}
         if messaging_patch:
@@ -116,13 +132,89 @@ def handle_group_settings_update(args: Dict[str, Any]) -> DaemonResponse:
         features_patch = {k: v for k, v in patch.items() if k in feature_keys}
         if features_patch:
             features = group.doc.get("features") if isinstance(group.doc.get("features"), dict) else {}
+            pet_actor_before = get_pet_actor(group) if "desktop_pet_enabled" in features_patch else None
+            pet_actor_before_doc = dict(pet_actor_before) if isinstance(pet_actor_before, dict) else None
+            pet_was_running = is_pet_actor_running(
+                group,
+                actor=pet_actor_before,
+                effective_runner_kind=effective_runner_kind,
+            ) if "desktop_pet_enabled" in features_patch else False
+            desktop_pet_enabled_before = coerce_bool(features.get("desktop_pet_enabled"), default=False)
             if "panorama_enabled" in features_patch:
                 features["panorama_enabled"] = coerce_bool(features_patch["panorama_enabled"], default=False)
             if "desktop_pet_enabled" in features_patch:
                 features["desktop_pet_enabled"] = coerce_bool(features_patch["desktop_pet_enabled"], default=False)
             group.doc["features"] = features
+            if "desktop_pet_enabled" in features_patch:
+                try:
+                    desired_enabled = coerce_bool(features_patch["desktop_pet_enabled"], default=False)
+                    if not desired_enabled and isinstance(pet_actor_before, dict):
+                        stop_pet_actor_runtime(
+                            group,
+                            actor=pet_actor_before,
+                            by=by,
+                            effective_runner_kind=effective_runner_kind,
+                            remove_headless_state=remove_headless_state,
+                            remove_pty_state_if_pid=remove_pty_state_if_pid,
+                            emit_event=pet_was_running,
+                        )
+                        cancel_pet_review(group.group_id)
+                        sync_pet_actor(group)
+                    else:
+                        sync_pet_actor(group)
+                        pet_actor_after = get_pet_actor(group)
+                        if coerce_bool(group.doc.get("running"), default=False) and isinstance(pet_actor_after, dict):
+                            config_changed = pet_runtime_changed(pet_actor_before_doc, pet_actor_after)
+                            if pet_was_running and config_changed:
+                                stop_pet_actor_runtime(
+                                    group,
+                                    actor=pet_actor_before_doc,
+                                    by=by,
+                                    effective_runner_kind=effective_runner_kind,
+                                    remove_headless_state=remove_headless_state,
+                                    remove_pty_state_if_pid=remove_pty_state_if_pid,
+                                    emit_event=True,
+                                )
+                            should_start = (not pet_was_running) or config_changed
+                            if should_start:
+                                start_result = start_actor_process(
+                                    group,
+                                    PET_ACTOR_ID,
+                                    command=list(pet_actor_after.get("command") or []),
+                                    env=dict(pet_actor_after.get("env") or {}),
+                                    runner=str(pet_actor_after.get("runner") or "pty"),
+                                    runtime=str(pet_actor_after.get("runtime") or "codex"),
+                                    by=by,
+                                )
+                                if not bool(start_result.get("success")):
+                                    raise RuntimeError(str(start_result.get("error") or "failed to start pet actor"))
+                            pet_review_after_save = True
+                except Exception:
+                    features["desktop_pet_enabled"] = desktop_pet_enabled_before
+                    group.doc["features"] = features
+                    restored_actor = restore_pet_actor_doc(group, pet_actor_before_doc)
+                    if desktop_pet_enabled_before and pet_was_running and isinstance(restored_actor, dict):
+                        restart_result = start_actor_process(
+                            group,
+                            PET_ACTOR_ID,
+                            command=list(restored_actor.get("command") or []),
+                            env=dict(restored_actor.get("env") or {}),
+                            runner=str(restored_actor.get("runner") or "pty"),
+                            runtime=str(restored_actor.get("runtime") or "codex"),
+                            by=by,
+                        )
+                        if not bool(restart_result.get("success")):
+                            raise RuntimeError(
+                                f"pet start failed and rollback restart failed: {restart_result.get('error') or 'unknown error'}"
+                            )
+                    raise
 
         group.save()
+        if pet_review_after_save:
+            try:
+                request_pet_review(group.group_id, reason="pet_enabled", immediate=True)
+            except Exception:
+                pass
     except Exception as e:
         return _error("group_settings_update_failed", str(e))
 
@@ -198,7 +290,21 @@ def handle_group_settings_update(args: Dict[str, Any]) -> DaemonResponse:
     return DaemonResponse(ok=True, result={"group_id": group.group_id, "settings": settings, "event": event})
 
 
-def try_handle_group_settings_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
+def try_handle_group_settings_op(
+    op: str,
+    args: Dict[str, Any],
+    *,
+    effective_runner_kind: Callable[[str], str],
+    start_actor_process: Callable[..., dict[str, Any]],
+    remove_headless_state: Callable[[str, str], None],
+    remove_pty_state_if_pid: Callable[..., None],
+) -> Optional[DaemonResponse]:
     if op == "group_settings_update":
-        return handle_group_settings_update(args)
+        return handle_group_settings_update(
+            args,
+            effective_runner_kind=effective_runner_kind,
+            start_actor_process=start_actor_process,
+            remove_headless_state=remove_headless_state,
+            remove_pty_state_if_pid=remove_pty_state_if_pid,
+        )
     return None
