@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml  # type: ignore
 
@@ -326,6 +327,55 @@ automation:
                 assert group is not None
                 snapshot_path = Path(group.path) / "context" / "summary_snapshot.json"
                 self.assertTrue(snapshot_path.exists())
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+    def test_import_replace_schedules_summary_snapshot_rebuild_on_reorder(self) -> None:
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                group_id = self._create_group_with_scope(td, title="template-reorder")
+
+                add_peer1, _ = self._call(
+                    "actor_add",
+                    {"group_id": group_id, "actor_id": "peer1", "runtime": "codex", "runner": "pty", "by": "user"},
+                )
+                self.assertTrue(add_peer1.ok, getattr(add_peer1, "error", None))
+                add_peer2, _ = self._call(
+                    "actor_add",
+                    {"group_id": group_id, "actor_id": "peer2", "runtime": "codex", "runner": "pty", "by": "user"},
+                )
+                self.assertTrue(add_peer2.ok, getattr(add_peer2, "error", None))
+
+                template = """
+kind: cccc.group_template
+v: 1
+actors:
+  - id: peer2
+    title: Peer 2
+    runtime: codex
+  - id: peer1
+    title: Peer 1
+    runtime: codex
+prompts: {}
+automation:
+  rules: []
+  snippets: {}
+"""
+                with patch(
+                    "cccc.daemon.ops.template_ops._schedule_summary_snapshot_rebuild",
+                    return_value=True,
+                ) as mock_schedule:
+                    import_resp, _ = self._call(
+                        "group_template_import_replace",
+                        {"group_id": group_id, "by": "user", "confirm": group_id, "template": template},
+                    )
+                self.assertTrue(import_resp.ok, getattr(import_resp, "error", None))
+                mock_schedule.assert_called_once_with(group_id)
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

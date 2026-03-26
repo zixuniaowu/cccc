@@ -35,6 +35,7 @@ from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 from ..actors.actor_profile_runtime import actor_profile_ref
 from ..actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
+from ..context.context_ops import _schedule_summary_snapshot_rebuild
 from ..messaging.delivery import THROTTLE, clear_preamble_sent
 
 
@@ -640,6 +641,7 @@ def group_template_import_replace(args: Dict[str, Any]) -> DaemonResponse:
     if removed or added or updated or existing_ids != template_ids:
         try:
             storage.bump_version_state(actors_changed=True)
+            _schedule_summary_snapshot_rebuild(group.group_id)
         except Exception:
             pass
 

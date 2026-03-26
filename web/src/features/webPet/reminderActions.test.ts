@@ -80,4 +80,31 @@ describe("getReminderActionButtons", () => {
       },
     ]);
   });
+
+  it("returns ask foreman button for task proposals", () => {
+    const reminder: PetReminder = {
+      id: "task-proposal:T315",
+      kind: "suggestion",
+      priority: 85,
+      summary: "建议让 foreman 把 T315 从 planned 推进到 active。",
+      agent: "pet-peer",
+      source: { taskId: "T315" },
+      fingerprint: "group:g-1:suggestion:task-proposal:T315",
+      action: {
+        type: "task_proposal",
+        groupId: "g-1",
+        operation: "move",
+        taskId: "T315",
+        status: "active",
+      },
+    };
+
+    expect(getReminderActionButtons(reminder)).toEqual([
+      {
+        labelKey: "askForeman",
+        fallback: "Ask foreman",
+        action: reminder.action,
+      },
+    ]);
+  });
 });

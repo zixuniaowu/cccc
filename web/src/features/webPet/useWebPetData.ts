@@ -17,6 +17,10 @@ export function shouldSurfaceReminder(
   if (reminder.action.type === "restart_actor") {
     return !!reminder.action.groupId && !!reminder.action.actorId;
   }
+  if (reminder.action.type === "task_proposal") {
+    return !!reminder.action.groupId &&
+      (!!reminder.action.text?.trim() || !!reminder.summary.trim());
+  }
   return reminder.action.type === "send_suggestion" &&
     (!!reminder.suggestion?.trim() || !!reminder.action.text?.trim());
 }

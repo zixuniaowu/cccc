@@ -48,4 +48,41 @@ describe("petPeerContext", () => {
     expect(context.decisions).toEqual([]);
     expect(context.prompt).toBe("");
   });
+
+  it("maps task proposal decisions for foreman handoff", () => {
+    const context = buildPetPeerContext({
+      decisions: [
+        {
+          id: "dec-task-1",
+          kind: "suggestion",
+          priority: 88,
+          summary: "建议让 foreman 推进 T315。",
+          agent: "pet-peer",
+          fingerprint: "group:g-1:suggestion:task-proposal:T315",
+          source: {
+            task_id: "T315",
+          },
+          action: {
+            type: "task_proposal",
+            group_id: "g-1",
+            operation: "move",
+            task_id: "T315",
+            status: "active",
+          },
+        },
+      ],
+      persona: "Keep low-noise.",
+      help: "",
+      prompt: "",
+      snapshot: "",
+      source: "default",
+    });
+
+    expect(context.decisions[0]?.action.type).toBe("task_proposal");
+    if (context.decisions[0]?.action.type === "task_proposal") {
+      expect(context.decisions[0].action.operation).toBe("move");
+      expect(context.decisions[0].action.taskId).toBe("T315");
+      expect(context.decisions[0].action.status).toBe("active");
+    }
+  });
 });

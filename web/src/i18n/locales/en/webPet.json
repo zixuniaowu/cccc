@@ -25,10 +25,19 @@
   },
   "action": {
     "send": "Send",
+    "askForeman": "Ask foreman",
     "restart": "Restart",
     "restartPeer": "Restart peer",
     "restartForeman": "Restart foreman",
     "dismiss": "Dismiss"
+  },
+  "notice": {
+    "suggestionSent": "Suggestion sent",
+    "suggestionSendFailed": "Failed to send suggestion",
+    "restartRequested": "Restart requested",
+    "actorRestartFailed": "Failed to restart actor",
+    "taskProposalSent": "Task proposal sent to foreman",
+    "taskProposalSendFailed": "Failed to send task proposal"
   },
   "suggestionLabel": "Suggestion",
   "taskProgress": "{{done}}/{{total}} done",
@@ -37,5 +46,16 @@
   "reminderSummary": {
     "mention": "{{actor}} provided a suggestion you can send directly.",
     "replyRequired": "{{actor}} provided a reply suggestion you can send directly."
+  },
+  "snapshot": {
+    "group": "Group: {{value}}",
+    "groupState": "Group State: {{value}}",
+    "tasks": "Tasks: total={{total}}, active={{active}}, done={{done}}, archived={{archived}}",
+    "agentSnapshot": "Agent Snapshot: {{value}}",
+    "blockedTasks": "Blocked Tasks: {{value}}",
+    "waitingUserTasks": "Waiting User Tasks: {{value}}",
+    "handoffTasks": "Handoff Tasks: {{value}}",
+    "plannedBacklog": "Planned Backlog: {{value}}",
+    "taskProposals": "Task Proposals: {{value}}"
   }
 }

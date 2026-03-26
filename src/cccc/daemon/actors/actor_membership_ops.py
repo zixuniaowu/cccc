@@ -13,6 +13,7 @@ from ...kernel.permissions import require_actor_permission
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
+from ..context.context_ops import _schedule_summary_snapshot_rebuild
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -52,6 +53,7 @@ def handle_actor_remove(
 
     try:
         ContextStorage(group).bump_version_state(actors_changed=True)
+        _schedule_summary_snapshot_rebuild(group.group_id)
     except Exception:
         pass
 

@@ -32,7 +32,7 @@ from ....kernel.prompt_files import (
     resolve_active_scope_root,
     write_group_prompt_file,
 )
-from ....kernel.pet_prompt import build_pet_prompt_parts, load_pet_help_markdown
+from ....kernel.pet_prompt import build_pet_prompt_parts, build_pet_snapshot_text, load_pet_help_markdown
 from ...mcp.utils.help_markdown import parse_help_markdown
 from ....kernel.access_tokens import list_access_tokens
 from ....kernel.pet_decisions import load_pet_decisions
@@ -148,18 +148,34 @@ async def invalidate_context_read(group_id: str, *, detail: Optional[str] = None
                 _CONTEXT_GENERATION[key] = 1
 
 
-def _build_pet_context_payload(group: Any, help_prompt: Dict[str, Any], context_payload: Dict[str, Any]) -> Dict[str, Any]:
+def _build_pet_context_payload(
+    group: Any,
+    help_prompt: Dict[str, Any],
+    context_payload: Dict[str, Any],
+    *,
+    verbose: bool = False,
+) -> Dict[str, Any]:
     help_content = str(help_prompt.get("content") or "")
-    parsed = parse_help_markdown(help_content)
-    parts = build_pet_prompt_parts(group, help_markdown=help_content, context_payload=context_payload)
-    return {
-        "persona": str(parsed.get("pet") or "").strip(),
-        "help": str(parts.get("help") or ""),
-        "prompt": str(parts.get("prompt") or ""),
-        "snapshot": str(parts.get("snapshot") or ""),
+    persona = str(help_prompt.get("persona") or "").strip()
+    source = str(help_prompt.get("pet_source") or "default").strip() or "default"
+    payload = {
+        "persona": persona,
+        "snapshot": build_pet_snapshot_text(group, context_payload),
         "decisions": load_pet_decisions(group),
-        "source": str(parts.get("source") or "default"),
+        "source": source,
     }
+    if not verbose:
+        return payload
+    parts = build_pet_prompt_parts(group, help_markdown=help_content, context_payload=context_payload)
+    payload.update(
+        {
+            "help": str(parts.get("help") or ""),
+            "prompt": str(parts.get("prompt") or ""),
+            "help_prompt": help_prompt,
+            "source": str(parts.get("source") or payload["source"]),
+        }
+    )
+    return payload
 
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
@@ -1106,7 +1122,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         }
 
     @group_router.get("/pet-context")
-    async def pet_context_get(group_id: str, fresh: bool = False) -> Dict[str, Any]:
+    async def pet_context_get(group_id: str, fresh: bool = False, verbose: bool = False) -> Dict[str, Any]:
         """Get the injected context payload for the independent pet peer."""
         group = load_group(group_id)
         if group is None:
@@ -1114,9 +1130,25 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         def _help_prompt() -> Dict[str, Any]:
             pf = read_group_prompt_file(group, HELP_FILENAME)
+            content = ""
+            prompt_source = "builtin"
             if pf.found and isinstance(pf.content, str) and pf.content.strip():
-                return {"kind": "help", "source": "home", "filename": HELP_FILENAME, "path": pf.path, "content": str(pf.content)}
-            return {"kind": "help", "source": "builtin", "filename": HELP_FILENAME, "path": pf.path, "content": load_pet_help_markdown(group)}
+                content = str(pf.content)
+                prompt_source = "home"
+            else:
+                content = load_pet_help_markdown(group)
+            parsed = parse_help_markdown(content)
+            persona = str(parsed.get("pet") or "").strip()
+            return {
+                "kind": "help",
+                "source": prompt_source,
+                "pet_source": "help" if persona else "default",
+                "prompt_source": prompt_source,
+                "filename": HELP_FILENAME,
+                "path": pf.path,
+                "content": content,
+                "persona": persona,
+            }
 
         if fresh:
             await invalidate_context_read(group_id, detail="summary")
@@ -1128,8 +1160,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return {
             "ok": True,
             "result": {
-                "help_prompt": help_prompt,
-                **_build_pet_context_payload(group, help_prompt, context_resp.get("result") if isinstance(context_resp.get("result"), dict) else {}),
+                **_build_pet_context_payload(
+                    group,
+                    help_prompt,
+                    context_resp.get("result") if isinstance(context_resp.get("result"), dict) else {},
+                    verbose=verbose,
+                ),
             },
         }
 

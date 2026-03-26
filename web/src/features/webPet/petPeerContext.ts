@@ -14,6 +14,15 @@ export type PetPeerContext = {
   source: "help" | "default";
 };
 
+function mapTaskProposalOperation(value: unknown): "create" | "update" | "move" | "handoff" | "archive" {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "create") return "create";
+  if (normalized === "move") return "move";
+  if (normalized === "handoff") return "handoff";
+  if (normalized === "archive") return "archive";
+  return "update";
+}
+
 function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[number]): PetReminder | null {
   const id = String(raw?.id || "").trim();
   const kind = String(raw?.kind || "").trim();
@@ -28,6 +37,17 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
           groupId: String(raw?.action?.group_id || "").trim(),
           actorId: String(raw?.action?.actor_id || "").trim(),
         }
+      : actionType === "task_proposal"
+        ? {
+            type: "task_proposal" as const,
+            groupId: String(raw?.action?.group_id || "").trim(),
+            operation: mapTaskProposalOperation(raw?.action?.operation),
+            taskId: String(raw?.action?.task_id || "").trim() || undefined,
+            title: String(raw?.action?.title || "").trim() || undefined,
+            status: String(raw?.action?.status || "").trim() || undefined,
+            assignee: String(raw?.action?.assignee || "").trim() || undefined,
+            text: String(raw?.action?.text || "").trim() || undefined,
+          }
       : {
           type: "send_suggestion" as const,
           groupId: String(raw?.action?.group_id || "").trim(),
@@ -40,6 +60,7 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
 
   if (action.type === "restart_actor" && (!action.groupId || !action.actorId)) return null;
   if (action.type === "send_suggestion" && !action.text) return null;
+  if (action.type === "task_proposal" && !action.groupId) return null;
 
   return {
     id,

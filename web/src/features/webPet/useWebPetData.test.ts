@@ -79,4 +79,22 @@ describe("shouldSurfaceReminder", () => {
       ),
     ).toBe(false);
   });
+
+  it("keeps task proposal reminders when they can be forwarded to foreman", () => {
+    expect(
+      shouldSurfaceReminder(
+        makeReminder({
+          summary: "建议把 T315 推进到 active。",
+          action: {
+            type: "task_proposal",
+            groupId: "g-1",
+            operation: "move",
+            taskId: "T315",
+            status: "active",
+          },
+        }),
+        makePolicy(),
+      ),
+    ).toBe(true);
+  });
 });

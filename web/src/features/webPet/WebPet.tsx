@@ -16,6 +16,7 @@ import { PetPanel } from "./PetPanel";
 import { WebPetBubble } from "./WebPetBubble";
 import { useWebPetData } from "./useWebPetData";
 import { usePetPeerContext } from "./petPeerContext";
+import { buildTaskProposalMessage } from "./taskProposal";
 import { WEB_PET_BUBBLE_SIZE, WEB_PET_VIEWPORT_MARGIN } from "./constants";
 import type { ReminderAction } from "./types";
 import type { Actor, GroupContext, GroupDoc, GroupSettings, LedgerEvent } from "../../types";
@@ -96,6 +97,35 @@ function handleReminderAction(action: ReminderAction) {
           error instanceof Error
             ? error.message
             : tPet("notice.actorRestartFailed", "Failed to restart actor");
+        useUIStore.getState().showError(message);
+      });
+      break;
+    }
+    case "task_proposal": {
+      const text = buildTaskProposalMessage(action);
+      if (!text.trim()) return;
+      const clientId = `pet_task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      void sendMessage(
+        action.groupId,
+        text,
+        ["@foreman"],
+        undefined,
+        "normal",
+        false,
+        clientId,
+      ).then((resp) => {
+        if (!resp.ok) {
+          useUIStore.getState().showError(`${resp.error.code}: ${resp.error.message}`);
+          return;
+        }
+        useUIStore.getState().showNotice({
+          message: tPet("notice.taskProposalSent", "Task proposal sent to foreman"),
+        });
+      }).catch((error) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : tPet("notice.taskProposalSendFailed", "Failed to send task proposal");
         useUIStore.getState().showError(message);
       });
       break;

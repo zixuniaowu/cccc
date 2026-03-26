@@ -12,6 +12,16 @@ function makeTranslator(prefix = "ja") {
         return `${prefix}:tasks:${vars?.total}/${vars?.active}/${vars?.done}/${vars?.archived}`;
       case "snapshot.agentSnapshot":
         return `${prefix}:agents:${String(vars?.value || "")}`;
+      case "snapshot.blockedTasks":
+        return `${prefix}:blocked:${String(vars?.value || "")}`;
+      case "snapshot.waitingUserTasks":
+        return `${prefix}:waiting-user:${String(vars?.value || "")}`;
+      case "snapshot.handoffTasks":
+        return `${prefix}:handoff:${String(vars?.value || "")}`;
+      case "snapshot.plannedBacklog":
+        return `${prefix}:planned:${String(vars?.value || "")}`;
+      case "snapshot.taskProposals":
+        return `${prefix}:proposals:${String(vars?.value || "")}`;
       default:
         return fallback;
     }
@@ -27,6 +37,11 @@ describe("petSnapshotText", () => {
         "Group State: active",
         "Tasks: total=12, active=3, done=5, archived=4",
         "Agent Snapshot: foreman: T1 | close loop",
+        "Blocked Tasks: T101:fix send latency @peer-debugger",
+        "Waiting User Tasks: T102:clarify launch scope",
+        "Handoff Tasks: T103:review pet reminders @foreman",
+        "Planned Backlog: T104:trim stale tasks",
+        "Task Proposals: T102:clarify launch scope is waiting on user ; T103:review pet reminders should be picked up by foreman",
       ].join("\n"),
       tr,
     );
@@ -37,6 +52,11 @@ describe("petSnapshotText", () => {
         "ja:state:active",
         "ja:tasks:12/3/5/4",
         "ja:agents:foreman: T1 | close loop",
+        "ja:blocked:T101:fix send latency @peer-debugger",
+        "ja:waiting-user:T102:clarify launch scope",
+        "ja:handoff:T103:review pet reminders @foreman",
+        "ja:planned:T104:trim stale tasks",
+        "ja:proposals:T102:clarify launch scope is waiting on user ; T103:review pet reminders should be picked up by foreman",
       ].join("\n"),
     );
   });

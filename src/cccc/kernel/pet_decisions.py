@@ -33,6 +33,25 @@ def _normalize_action(raw: Any) -> Dict[str, Any]:
         if reply_to:
             out["reply_to"] = reply_to
         return out
+    if action_type == "task_proposal":
+        out["group_id"] = str(raw.get("group_id") or "").strip()
+        out["operation"] = str(raw.get("operation") or "").strip().lower()
+        task_id = str(raw.get("task_id") or "").strip()
+        if task_id:
+            out["task_id"] = task_id
+        title = str(raw.get("title") or "").strip()
+        if title:
+            out["title"] = title
+        status = str(raw.get("status") or "").strip().lower()
+        if status:
+            out["status"] = status
+        assignee = str(raw.get("assignee") or "").strip()
+        if assignee:
+            out["assignee"] = assignee
+        text = str(raw.get("text") or "").strip()
+        if text:
+            out["text"] = text
+        return out
     return {}
 
 

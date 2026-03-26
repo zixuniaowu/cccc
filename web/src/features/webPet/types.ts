@@ -28,6 +28,16 @@ export type ReminderAction =
       replyTo?: string;
     }
   | {
+      type: "task_proposal";
+      groupId: string;
+      operation: "create" | "update" | "move" | "handoff" | "archive";
+      taskId?: string;
+      title?: string;
+      status?: string;
+      assignee?: string;
+      text?: string;
+    }
+  | {
       type: "restart_actor";
       groupId: string;
       actorId: string;

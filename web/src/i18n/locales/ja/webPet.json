@@ -25,10 +25,19 @@
   },
   "action": {
     "send": "送信",
+    "askForeman": "foreman に渡す",
     "restart": "再起動",
     "restartPeer": "peer を再起動",
     "restartForeman": "foreman を再起動",
     "dismiss": "閉じる"
+  },
+  "notice": {
+    "suggestionSent": "提案を送信しました",
+    "suggestionSendFailed": "提案の送信に失敗しました",
+    "restartRequested": "再起動を依頼しました",
+    "actorRestartFailed": "再起動に失敗しました",
+    "taskProposalSent": "タスク提案を foreman に送りました",
+    "taskProposalSendFailed": "タスク提案の送信に失敗しました"
   },
   "suggestionLabel": "提案",
   "taskProgress": "{{done}}/{{total}} 完了",
@@ -37,5 +46,16 @@
   "reminderSummary": {
     "mention": "{{actor}} がそのまま送れる提案を出しました。",
     "replyRequired": "{{actor}} がそのまま返せる返信案を出しました。"
+  },
+  "snapshot": {
+    "group": "グループ：{{value}}",
+    "groupState": "状態：{{value}}",
+    "tasks": "タスク：合計 {{total}}、進行中 {{active}}、完了 {{done}}、アーカイブ {{archived}}",
+    "agentSnapshot": "エージェント要約：{{value}}",
+    "blockedTasks": "ブロック中：{{value}}",
+    "waitingUserTasks": "ユーザー待ち：{{value}}",
+    "handoffTasks": "引き継ぎ待ち：{{value}}",
+    "plannedBacklog": "計画バックログ：{{value}}",
+    "taskProposals": "タスク提案候補：{{value}}"
   }
 }

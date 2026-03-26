@@ -6,6 +6,14 @@ type SnapshotTranslate = (
 
 const TASKS_PATTERN =
   /^Tasks:\s*total=(\d+),\s*active=(\d+),\s*done=(\d+),\s*archived=(\d+)$/i;
+const VALUE_LINE_PREFIXES: Array<{ prefix: string; key: string; fallback: string }> = [
+  { prefix: "Agent Snapshot: ", key: "snapshot.agentSnapshot", fallback: "Agent Snapshot: {{value}}" },
+  { prefix: "Blocked Tasks: ", key: "snapshot.blockedTasks", fallback: "Blocked Tasks: {{value}}" },
+  { prefix: "Waiting User Tasks: ", key: "snapshot.waitingUserTasks", fallback: "Waiting User Tasks: {{value}}" },
+  { prefix: "Handoff Tasks: ", key: "snapshot.handoffTasks", fallback: "Handoff Tasks: {{value}}" },
+  { prefix: "Planned Backlog: ", key: "snapshot.plannedBacklog", fallback: "Planned Backlog: {{value}}" },
+  { prefix: "Task Proposals: ", key: "snapshot.taskProposals", fallback: "Task Proposals: {{value}}" },
+];
 
 export function formatPetSnapshotLine(
   line: string,
@@ -40,10 +48,12 @@ export function formatPetSnapshotLine(
     );
   }
 
-  if (trimmed.startsWith("Agent Snapshot: ")) {
-    return tr("snapshot.agentSnapshot", "Agent Snapshot: {{value}}", {
-      value: trimmed.slice("Agent Snapshot: ".length).trim(),
-    });
+  for (const entry of VALUE_LINE_PREFIXES) {
+    if (trimmed.startsWith(entry.prefix)) {
+      return tr(entry.key, entry.fallback, {
+        value: trimmed.slice(entry.prefix.length).trim(),
+      });
+    }
   }
 
   return trimmed;

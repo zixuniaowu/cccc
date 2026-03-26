@@ -13,6 +13,7 @@ from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
 from ...kernel.runtime import get_runtime_command_with_flags
 from ...util.conv import coerce_bool
+from ..context.context_ops import _schedule_summary_snapshot_rebuild
 from .actor_profile_runtime import actor_profile_ref, apply_profile_link_to_actor
 from .actor_profile_store import ProfileResolver, get_actor_profile_by_ref, normalize_actor_profile_ref
 
@@ -264,6 +265,7 @@ def handle_actor_add(
 
     try:
         ContextStorage(group).bump_version_state(actors_changed=True)
+        _schedule_summary_snapshot_rebuild(group.group_id)
     except Exception:
         pass
 

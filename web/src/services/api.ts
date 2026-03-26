@@ -247,8 +247,8 @@ function groupPromptsRequestKey(groupId: string): string {
   return `group-prompts:${String(groupId || "").trim()}`;
 }
 
-function petPeerContextRequestKey(groupId: string, fresh: boolean): string {
-  return `pet-peer-context:${String(groupId || "").trim()}:${fresh ? "fresh" : "default"}`;
+function petPeerContextRequestKey(groupId: string, fresh: boolean, verbose: boolean): string {
+  return `pet-peer-context:${String(groupId || "").trim()}:${fresh ? "fresh" : "default"}:${verbose ? "verbose" : "lite"}`;
 }
 
 function pingRequestKey(includeHome: boolean): string {
@@ -1259,21 +1259,26 @@ export type PetPeerContextResponse = {
       suggestion_kind?: "mention" | "reply_required" | string | null;
     };
     action?: {
-      type?: "send_suggestion" | "restart_actor" | string;
+      type?: "send_suggestion" | "restart_actor" | "task_proposal" | string;
       group_id?: string | null;
       actor_id?: string | null;
       text?: string | null;
       to?: string[];
       reply_to?: string | null;
+      operation?: "create" | "update" | "move" | "handoff" | "archive" | string | null;
+      task_id?: string | null;
+      title?: string | null;
+      status?: string | null;
+      assignee?: string | null;
     };
     updated_at?: string | null;
   }>;
   persona: string;
-  help: string;
-  prompt: string;
+  help?: string;
+  prompt?: string;
   snapshot: string;
   source: "help" | "default";
-  help_prompt: GroupPromptInfo;
+  help_prompt?: GroupPromptInfo;
 };
 
 export type PromptUpdateOptions = {
@@ -1289,14 +1294,16 @@ export async function fetchGroupPrompts(groupId: string) {
   );
 }
 
-export async function fetchPetPeerContext(groupId: string, opts?: { fresh?: boolean }) {
+export async function fetchPetPeerContext(groupId: string, opts?: { fresh?: boolean; verbose?: boolean }) {
   const gid = String(groupId || "").trim();
   const fresh = !!opts?.fresh;
+  const verbose = !!opts?.verbose;
   const params = new URLSearchParams();
   if (fresh) params.set("fresh", "1");
+  if (verbose) params.set("verbose", "1");
   const suffix = params.toString();
   return reuseSharedReadRequest(
-    petPeerContextRequestKey(gid, fresh),
+    petPeerContextRequestKey(gid, fresh, verbose),
     () =>
       apiJson<PetPeerContextResponse>(
         `/api/v1/groups/${encodeURIComponent(gid)}/pet-context${suffix ? `?${suffix}` : ""}`

@@ -1248,17 +1248,8 @@ describe("api.fetchContext dedupe", () => {
           ok: true,
           result: {
             persona: "quiet",
-            help: "help",
-            prompt: "prompt",
             snapshot: "snapshot",
             source: "help",
-            help_prompt: {
-              kind: "help",
-              source: "builtin",
-              filename: "CCCC-HELP.md",
-              path: "/tmp/CCCC-HELP.md",
-              content: "help",
-            },
           },
         }),
     });

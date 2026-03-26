@@ -5,6 +5,8 @@ from typing import Any, Dict
 from .context import ContextStorage
 from .group import Group
 from .pet_actor import PET_ACTOR_ID
+from .pet_task_proposals import build_task_proposal_summary_lines
+from .pet_task_triage import build_task_triage_payload, join_task_briefs
 from .prompt_files import HELP_FILENAME, load_builtin_help_markdown, read_group_prompt_file
 from .system_prompt import render_role_system_prompt
 from ..ports.mcp.utils.help_markdown import _select_help_markdown, parse_help_markdown
@@ -57,6 +59,48 @@ def build_pet_snapshot_text(group: Any, context_payload: Dict[str, Any]) -> str:
     if snapshots:
         parts.append(f"Agent Snapshot: {' ; '.join(snapshots)}")
 
+    blocked_tasks = context_payload.get("blocked_tasks") if isinstance(context_payload.get("blocked_tasks"), list) else []
+    if blocked_tasks:
+        rendered = join_task_briefs(blocked_tasks)
+        if rendered:
+            parts.append(f"Blocked Tasks: {rendered}")
+
+    waiting_user_tasks = (
+        context_payload.get("waiting_user_tasks")
+        if isinstance(context_payload.get("waiting_user_tasks"), list)
+        else []
+    )
+    if waiting_user_tasks:
+        rendered = join_task_briefs(waiting_user_tasks)
+        if rendered:
+            parts.append(f"Waiting User Tasks: {rendered}")
+
+    handoff_tasks = context_payload.get("handoff_tasks") if isinstance(context_payload.get("handoff_tasks"), list) else []
+    if handoff_tasks:
+        rendered = join_task_briefs(handoff_tasks)
+        if rendered:
+            parts.append(f"Handoff Tasks: {rendered}")
+
+    planned_backlog_tasks = (
+        context_payload.get("planned_backlog_tasks")
+        if isinstance(context_payload.get("planned_backlog_tasks"), list)
+        else []
+    )
+    if planned_backlog_tasks:
+        rendered = join_task_briefs(planned_backlog_tasks)
+        if rendered:
+            parts.append(f"Planned Backlog: {rendered}")
+
+    task_proposal_candidates = (
+        context_payload.get("task_proposal_candidates")
+        if isinstance(context_payload.get("task_proposal_candidates"), list)
+        else []
+    )
+    if task_proposal_candidates:
+        rendered = " ; ".join(str(item or "").strip() for item in task_proposal_candidates[:2] if str(item or "").strip())
+        if rendered:
+            parts.append(f"Task Proposals: {rendered}")
+
     return "\n".join(parts)
 
 
@@ -74,6 +118,11 @@ def build_pet_prompt_parts(group: Group, *, help_markdown: str, context_payload:
             "- When there is no current actionable reminder, call cccc_pet_decisions with action=clear.",
             "- Do not emit low-signal status chatter, duplicate restarts, or reminder-like chat messages just to mirror state.",
             "- Judge from current evidence and context. Do not rely on fixed frontend keyword matching.",
+            "- For task-board management, prefer proposing a structured task_proposal for the foreman instead of mutating shared tasks yourself.",
+            "- When task pressure is high, prefer one high-value proposal over many noisy reminders.",
+            "- For task triage, prioritize: waiting_user > handoff > blocked > planned backlog cleanup.",
+            "- If Runtime Snapshot includes Task Proposals, treat them as high-signal candidate directions, then decide whether one is worth surfacing now.",
+            "- Unless there is an urgent runtime failure, emit at most one task_proposal per review.",
         ]
     )
     prompt = "\n\n".join(
@@ -112,14 +161,14 @@ def _load_pet_runtime_context(group: Group) -> Dict[str, Any]:
     done_count = 0
     archived_count = 0
     for task in tasks:
-        status = str(getattr(task, "status", "") or "").strip().lower()
+        status = str(getattr(getattr(task, "status", None), "value", getattr(task, "status", "")) or "").strip().lower()
         if status in {"done", "completed"}:
             done_count += 1
         elif status == "archived":
             archived_count += 1
         else:
             active_count += 1
-
+    task_triage = build_task_triage_payload(tasks, limit=3)
     agent_states = []
     for agent in list(getattr(agents, "agents", []) or []):
         agent_states.append(
@@ -140,6 +189,8 @@ def _load_pet_runtime_context(group: Group) -> Dict[str, Any]:
             "archived": archived_count,
         },
         "agent_states": agent_states,
+        "task_proposal_candidates": build_task_proposal_summary_lines(tasks, limit=2),
+        **task_triage,
     }
 
 

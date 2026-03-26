@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class TestActorLifecycleOps(unittest.TestCase):
@@ -171,6 +172,45 @@ class TestActorLifecycleOps(unittest.TestCase):
             self.assertIsInstance(group_doc, dict)
             assert isinstance(group_doc, dict)
             self.assertFalse(bool(group_doc.get("running")))
+        finally:
+            cleanup()
+
+    def test_actor_add_and_remove_schedule_summary_snapshot_rebuild(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "actor-summary-rebuild", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            with patch(
+                "cccc.daemon.actors.actor_add_ops._schedule_summary_snapshot_rebuild",
+                return_value=True,
+            ) as add_schedule:
+                add, _ = self._call(
+                    "actor_add",
+                    {
+                        "group_id": group_id,
+                        "actor_id": "peer1",
+                        "title": "Peer 1",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "by": "user",
+                    },
+                )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            add_schedule.assert_called_once_with(group_id)
+
+            with patch(
+                "cccc.daemon.actors.actor_membership_ops._schedule_summary_snapshot_rebuild",
+                return_value=True,
+            ) as remove_schedule:
+                remove, _ = self._call("actor_remove", {"group_id": group_id, "actor_id": "peer1", "by": "user"})
+            self.assertTrue(remove.ok, getattr(remove, "error", None))
+            remove_schedule.assert_called_once_with(group_id)
         finally:
             cleanup()
 

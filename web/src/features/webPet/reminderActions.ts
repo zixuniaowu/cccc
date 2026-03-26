@@ -1,7 +1,7 @@
 import type { PetReminder, ReminderAction } from "./types";
 
 export interface ReminderActionButton {
-  labelKey: "send" | "restart" | "restartPeer" | "restartForeman";
+  labelKey: "send" | "askForeman" | "restart" | "restartPeer" | "restartForeman";
   fallback: string;
   action: ReminderAction;
 }
@@ -30,6 +30,16 @@ export function getReminderActionButtons(
             : actorRole
               ? "Restart peer"
               : "Restart",
+        action: reminder.action,
+      },
+    ];
+  }
+
+  if (reminder.action.type === "task_proposal") {
+    return [
+      {
+        labelKey: "askForeman",
+        fallback: "Ask foreman",
         action: reminder.action,
       },
     ];
