@@ -4,7 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
-import { evaluateTaskWorkflow } from "../../../utils/taskWorkflow";
+import { evaluateTaskWorkflow, type TaskAttemptVerdict } from "../../../utils/taskWorkflow";
 import {
   statusTone,
   taskDisplaySummary,
@@ -60,6 +60,25 @@ interface TaskBoardProps {
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
 }
 
+function latestAttemptTone(verdict: TaskAttemptVerdict): string {
+  if (verdict === "keep") return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
+  if (verdict === "discard") return "bg-amber-500/15 text-amber-600 dark:text-amber-400";
+  if (verdict === "crash") return "bg-rose-500/15 text-rose-600 dark:text-rose-400";
+  return "glass-panel text-[var(--color-text-secondary)]";
+}
+
+function latestAttemptLabel(verdict: TaskAttemptVerdict, tr: ContextTranslator): string {
+  if (verdict === "keep") return tr("context.latestAttemptKeep", "Latest keep");
+  if (verdict === "discard") return tr("context.latestAttemptDiscard", "Latest discard");
+  if (verdict === "crash") return tr("context.latestAttemptCrash", "Latest crash");
+  if (verdict === "continue") return tr("context.latestAttemptContinue", "Latest continue");
+  return "";
+}
+
+function showMissingCurrentBest(workflow: ReturnType<typeof evaluateTaskWorkflow>): boolean {
+  return workflow.isOptimization && !workflow.needsContract && !workflow.hasCurrentBest;
+}
+
 function TaskGhostCard({
   task,
   tr,
@@ -75,10 +94,12 @@ function TaskGhostCard({
   const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
   const workflow = evaluateTaskWorkflow({
     parent_id: task.parent_id,
+    task_type: task.task_type,
     status: task.status,
     assignee: task.assignee,
     outcome: task.outcome,
     notes: task.notes,
+    checklist: task.checklist,
   });
 
   return (
@@ -97,7 +118,17 @@ function TaskGhostCard({
       <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
         {task.assignee ? <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.assignee}</span> : null}
         {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
-        {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs contract")}</span> : null}
+        {workflow.isOptimization && workflow.latestAttemptVerdict ? (
+          <span className={classNames("rounded-full px-2 py-0.5", latestAttemptTone(workflow.latestAttemptVerdict))}>
+            {latestAttemptLabel(workflow.latestAttemptVerdict, tr)}
+          </span>
+        ) : null}
+        {showMissingCurrentBest(workflow) ? (
+          <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/12 text-amber-700 dark:text-amber-300")}>
+            {tr("context.noCurrentBestYet", "No best yet")}
+          </span>
+        ) : null}
+        {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs requirements")}</span> : null}
         {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}
       </div>
     </div>
@@ -127,10 +158,12 @@ function TaskCard({
   const handoff = String(task.handoff_to || "").trim();
   const workflow = evaluateTaskWorkflow({
     parent_id: task.parent_id,
+    task_type: task.task_type,
     status: task.status,
     assignee: task.assignee,
     outcome: task.outcome,
     notes: task.notes,
+    checklist: task.checklist,
   });
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `task:${task.id}`,
@@ -196,7 +229,17 @@ function TaskCard({
           {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
           {waiting && waiting !== "none" ? <span className={classNames("rounded-full px-2 py-0.5", "bg-violet-500/15 text-violet-600 dark:text-violet-400")}>{waitingLabel(waiting, tr)}</span> : null}
           {handoff ? <span className={classNames("rounded-full px-2 py-0.5", "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400")}>{tr("context.handoffTo", "Handoff →")} {handoff}</span> : null}
-          {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs contract")}</span> : null}
+          {workflow.isOptimization && workflow.latestAttemptVerdict ? (
+            <span className={classNames("rounded-full px-2 py-0.5", latestAttemptTone(workflow.latestAttemptVerdict))}>
+              {latestAttemptLabel(workflow.latestAttemptVerdict, tr)}
+            </span>
+          ) : null}
+          {showMissingCurrentBest(workflow) ? (
+            <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/12 text-amber-700 dark:text-amber-300")}>
+              {tr("context.noCurrentBestYet", "No best yet")}
+            </span>
+          ) : null}
+          {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs requirements")}</span> : null}
           {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}
         </div>
 

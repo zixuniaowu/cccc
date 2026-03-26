@@ -29,11 +29,9 @@ import type {
   Task,
 } from "../../types";
 import {
-  TaskWorkflowScaffoldId,
   evaluateTaskWorkflow,
   getTaskDoneTransitionBlockers,
-  getTaskWorkflowScaffold,
-  recommendTaskWorkflowScaffold,
+  getTaskTypeDefinition,
 } from "../../utils/taskWorkflow";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
@@ -59,7 +57,6 @@ import {
   parseLineList,
   resolvePetPersonaDraft,
   petPersonaDraftDirty,
-  petPersonaDraftMatches,
   taskDisplaySummary,
   taskDraftDirty,
   taskDraftMatches,
@@ -116,7 +113,6 @@ export function ContextModal({
   const [taskEditorMode, setTaskEditorMode] = useState<"none" | "create" | "edit">("none");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
-  const [taskScaffoldId, setTaskScaffoldId] = useState<TaskWorkflowScaffoldId>("root");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [viewBusy, setViewBusy] = useState(false);
@@ -163,6 +159,7 @@ export function ContextModal({
   const taskWorkflowCoverage = useMemo(
     () => evaluateTaskWorkflow({
       parentId: taskDraft?.parentId,
+      taskType: taskDraft?.taskType,
       status: taskDraft?.status,
       assignee: taskDraft?.assignee,
       outcome: taskDraft?.outcome,
@@ -171,7 +168,10 @@ export function ContextModal({
     }),
     [taskDraft]
   );
-  const selectedTaskScaffold = useMemo(() => getTaskWorkflowScaffold(taskScaffoldId), [taskScaffoldId]);
+  const selectedTaskType = useMemo(
+    () => getTaskTypeDefinition(taskDraft?.taskType || "standard"),
+    [taskDraft?.taskType]
+  );
 
   const tasksSummary = useMemo(() => {
     const fallback = {
@@ -308,7 +308,6 @@ export function ContextModal({
     setTaskEditorMode("none");
     setSelectedTaskId("");
     setTaskDraft(null);
-    setTaskScaffoldId("root");
     setSyncError("");
     setEditingBrief(false);
     setProjectMd(null);
@@ -440,7 +439,6 @@ export function ContextModal({
     if (!taskDraft) {
       const nextDraft = taskToDraft(selectedTask);
       setTaskDraft(nextDraft);
-      setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
     }
   }, [selectedTaskId, selectedTask, taskDraft, taskEditorMode]);
 
@@ -476,7 +474,6 @@ export function ContextModal({
     const nextDraft = options?.draft ?? taskToDraft(task);
     setSelectedTaskId(task.id);
     setTaskDraft(nextDraft);
-    setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
     setTaskEditorMode("edit");
     setSyncError(options?.error || "");
     setActiveView("coordination");
@@ -492,9 +489,11 @@ export function ContextModal({
         : taskToDraft(task);
       const blockers = getTaskDoneTransitionBlockers({
         parentId: guardSource.parentId,
+        taskType: guardSource.taskType,
         assignee: guardSource.assignee,
         outcome: guardSource.outcome,
         notes: guardSource.notes,
+        checklist: guardSource.checklist,
       });
       if (blockers.length > 0) {
         openTaskEditorForTask(task, {
@@ -555,7 +554,6 @@ export function ContextModal({
     const nextDraft = taskToDraft(task);
     setSelectedTaskId(task.id);
     setTaskDraft(nextDraft);
-    setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
     setTaskEditorMode("edit");
     setSyncError("");
     setActiveView("coordination");
@@ -691,9 +689,11 @@ export function ContextModal({
     if (String(taskDraft.status || "").trim().toLowerCase() === "done") {
       const blockers = getTaskDoneTransitionBlockers({
         parentId: taskDraft.parentId,
+        taskType: taskDraft.taskType,
         assignee: taskDraft.assignee,
         outcome: taskDraft.outcome,
         notes: taskDraft.notes,
+        checklist: taskDraft.checklist,
       });
       if (blockers.length > 0) {
         setSyncError(formatDoneTransitionGuardMessage(blockers));
@@ -716,6 +716,7 @@ export function ContextModal({
           blocked_by: parseLineList(taskDraft.blockedBy),
           waiting_on: taskDraft.waitingOn,
           handoff_to: taskDraft.handoffTo.trim() || null,
+          task_type: taskDraft.taskType,
           notes: taskDraft.notes,
           checklist: parseChecklist(taskDraft.checklist, []),
         }]);
@@ -742,6 +743,7 @@ export function ContextModal({
         blocked_by: parseLineList(taskDraft.blockedBy),
         waiting_on: taskDraft.waitingOn,
         handoff_to: taskDraft.handoffTo.trim() || null,
+        task_type: taskDraft.taskType,
         notes: taskDraft.notes,
         checklist: parseChecklist(taskDraft.checklist, selectedTask.checklist),
       });
@@ -796,14 +798,12 @@ export function ContextModal({
   const handleResetTask = useCallback(() => {
     if (taskEditorMode === "create") {
       setTaskDraft(emptyTaskDraft("planned"));
-      setTaskScaffoldId("root");
       setSyncError("");
       return;
     }
     if (!selectedTask) return;
     const nextDraft = taskToDraft(selectedTask);
     setTaskDraft(nextDraft);
-    setTaskScaffoldId(recommendTaskWorkflowScaffold(nextDraft));
     setSyncError("");
   }, [selectedTask, taskEditorMode]);
 
@@ -812,7 +812,6 @@ export function ContextModal({
     setTaskEditorMode("create");
     setSelectedTaskId("");
     setTaskDraft(emptyTaskDraft(status));
-    setTaskScaffoldId("root");
     setSyncError("");
     setActiveView("coordination");
   }, [confirmDiscardTaskChanges]);
@@ -889,32 +888,6 @@ export function ContextModal({
       setActivityBusyKind(null);
     }
   }, [applyContextWriteback, decisionDraft, groupId, handoffDraft, tr]);
-
-  const handleApplyTaskScaffold = useCallback(() => {
-    if (!taskDraft) return;
-    const scaffold = selectedTaskScaffold;
-    const currentWorkflowText = [taskDraft.outcome, taskDraft.notes, taskDraft.checklist]
-      .map((item) => String(item || "").trim())
-      .join("\n")
-      .trim();
-    const nextWorkflowText = [scaffold.notes, scaffold.checklist].join("\n").trim();
-    if (currentWorkflowText && currentWorkflowText !== nextWorkflowText && typeof window !== "undefined") {
-      const confirmed = window.confirm(
-        tr(
-          "context.taskScaffoldConfirm",
-          "Apply this scaffold and replace the current outcome, notes, and checklist?"
-        )
-      );
-      if (!confirmed) return;
-    }
-    setTaskDraft((prev) => (prev ? {
-      ...prev,
-      outcome: "",
-      notes: scaffold.notes,
-      checklist: scaffold.checklist,
-    } : prev));
-    setSyncError("");
-  }, [selectedTaskScaffold, taskDraft, tr]);
 
   const handlePetPersonaChange = useCallback((value: string) => {
     setPetPersonaDraft(value);
@@ -1112,11 +1085,13 @@ export function ContextModal({
                       selectedTaskDeleteInfo={selectedTaskDeleteInfo}
                       selectedTaskDeleteHint={selectedTaskDeleteHint}
                       taskWorkflowCoverage={taskWorkflowCoverage}
-                      taskScaffoldId={taskScaffoldId}
-                      selectedTaskScaffold={selectedTaskScaffold}
+                      taskTypeId={taskDraft?.taskType || "standard"}
+                      selectedTaskType={selectedTaskType}
                       setTaskDraft={setTaskDraft}
-                      onTaskScaffoldIdChange={setTaskScaffoldId}
-                      onApplyTaskScaffold={handleApplyTaskScaffold}
+                      onTaskTypeChange={(nextTaskTypeId) => setTaskDraft((prev) => (prev ? {
+                        ...prev,
+                        taskType: nextTaskTypeId,
+                      } : prev))}
                       onResetTask={handleResetTask}
                       onClose={closeTaskEditor}
                       onDeleteSelectedTask={() => {

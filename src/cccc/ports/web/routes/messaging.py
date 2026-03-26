@@ -8,7 +8,6 @@ from fastapi.responses import FileResponse
 
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
-from ..message_submit import submit_message_request
 from ..schemas import (
     ReplyRequest,
     RouteContext,
@@ -24,7 +23,6 @@ from ..schemas import (
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
     group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
-    submit_mode = str(ctx.message_submit_mode or "async").strip().lower() or "async"
 
     def _parse_refs_json(raw: str) -> list[dict[str, Any]]:
         text = str(raw or "").strip()
@@ -54,14 +52,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     def _build_message_request(op: str, *, group_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
         return {"op": op, "args": {"group_id": group_id, **args}}
 
-    async def _submit_message(req: Dict[str, Any], *, group_id: str, client_id: str) -> Dict[str, Any]:
-        return await submit_message_request(
-            submit_mode=submit_mode,
-            daemon=ctx.daemon,
-            req=req,
-            group_id=group_id,
-            client_id=client_id,
-        )
+    async def _submit_message(req: Dict[str, Any]) -> Dict[str, Any]:
+        return await ctx.daemon(req)
 
     async def _store_upload_attachments(group: Any, files: list[UploadFile]) -> list[dict[str, Any]]:
         attachments: list[dict[str, Any]] = []
@@ -108,7 +100,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "refs": list(req.refs),
             },
         )
-        return await _submit_message(daemon_req, group_id=group_id, client_id=_normalize_client_id(req.client_id))
+        return await _submit_message(daemon_req)
 
     @group_router.post("/send_cross_group")
     async def send_cross_group(request: Request, group_id: str, req: SendCrossGroupRequest) -> Dict[str, Any]:
@@ -149,7 +141,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "refs": list(req.refs),
             },
         )
-        return await _submit_message(daemon_req, group_id=group_id, client_id=_normalize_client_id(req.client_id))
+        return await _submit_message(daemon_req)
 
     @group_router.post("/events/{event_id}/ack")
     async def chat_ack(group_id: str, event_id: str, req: UserAckRequest) -> Dict[str, Any]:
@@ -242,7 +234,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "refs": refs,
             },
         )
-        return await _submit_message(daemon_req, group_id=group_id, client_id=normalized_client_id)
+        return await _submit_message(daemon_req)
 
     @group_router.post("/reply_upload")
     async def reply_upload(
@@ -312,7 +304,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "refs": refs,
             },
         )
-        return await _submit_message(daemon_req, group_id=group_id, client_id=normalized_client_id)
+        return await _submit_message(daemon_req)
 
     @group_router.get("/blobs/{blob_name}")
     async def blob_download(group_id: str, blob_name: str) -> FileResponse:

@@ -2,8 +2,9 @@ import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskWaitingOn } from "../../../types";
 import { formatFullTime, formatTime } from "../../../utils/time";
 import { classNames } from "../../../utils/classNames";
-import { type TaskWorkflowScaffoldId } from "../../../utils/taskWorkflow";
+import { type TaskAttemptVerdict, type TaskTypeDefinition, type TaskWorkflowCoverage, type TaskTypeId } from "../../../utils/taskWorkflow";
 import {
+  alignTaskDraftTaskType,
   getWaitingOnOptions,
   statusTone,
   type ContextTranslator,
@@ -11,32 +12,6 @@ import {
   type TaskDraft,
 } from "../model";
 import type { ContextModalUi } from "../ui";
-
-interface WorkflowCoverage {
-  isRoot: boolean;
-  isOptimization: boolean;
-  needsContract: boolean;
-  needsCloseout: boolean;
-  hasGoal: boolean;
-  hasSuccessCriteria: boolean;
-  hasRequiredEvidence: boolean;
-  hasOwner: boolean;
-  hasBaseline: boolean;
-  hasPrimaryMetric: boolean;
-  hasVerifierBoundary: boolean;
-  hasOutcomeSummary: boolean;
-  hasCloseoutVerdict: boolean;
-  hasVerificationSummary: boolean;
-  hasAttemptDecision: boolean;
-  missingCloseout: string[];
-  missingSetup: string[];
-}
-
-interface TaskScaffold {
-  description: string;
-  notes: string;
-  checklist: string;
-}
 
 interface TaskEditorPanelProps {
   tr: ContextTranslator;
@@ -48,12 +23,11 @@ interface TaskEditorPanelProps {
   selectedTask: Task | null;
   selectedTaskDeleteInfo: TaskDeleteInfo;
   selectedTaskDeleteHint: string;
-  taskWorkflowCoverage: WorkflowCoverage;
-  taskScaffoldId: TaskWorkflowScaffoldId;
-  selectedTaskScaffold: TaskScaffold;
+  taskWorkflowCoverage: TaskWorkflowCoverage;
+  taskTypeId: TaskTypeId;
+  selectedTaskType: TaskTypeDefinition;
   setTaskDraft: Dispatch<SetStateAction<TaskDraft | null>>;
-  onTaskScaffoldIdChange: (value: TaskWorkflowScaffoldId) => void;
-  onApplyTaskScaffold: () => void;
+  onTaskTypeChange: (value: TaskTypeId) => void;
   onResetTask: () => void;
   onClose: () => void;
   onDeleteSelectedTask: () => void;
@@ -71,11 +45,10 @@ export function TaskEditorPanel({
   selectedTaskDeleteInfo,
   selectedTaskDeleteHint,
   taskWorkflowCoverage,
-  taskScaffoldId,
-  selectedTaskScaffold,
+  taskTypeId,
+  selectedTaskType,
   setTaskDraft,
-  onTaskScaffoldIdChange,
-  onApplyTaskScaffold,
+  onTaskTypeChange,
   onResetTask,
   onClose,
   onDeleteSelectedTask,
@@ -86,6 +59,16 @@ export function TaskEditorPanel({
   }
 
   const isCreate = taskEditorMode === "create";
+  const attemptToneClass = (verdict: TaskAttemptVerdict) => classNames(
+    "rounded-full px-2 py-0.5 text-[11px] font-medium",
+    verdict === "keep"
+      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+      : verdict === "discard"
+        ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+        : verdict === "crash"
+          ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+          : "glass-panel text-[var(--color-text-secondary)]"
+  );
   const workflowToneClass = (ok: boolean) => classNames(
     "rounded-full px-2 py-0.5 text-[11px] font-medium",
     ok
@@ -101,25 +84,72 @@ export function TaskEditorPanel({
     : taskWorkflowCoverage.needsContract
       ? tr(
         "context.taskWorkflowNeedsContract",
-        "This task contract is still missing {{items}}.",
+        "This task type is still missing {{items}}.",
         { items: taskWorkflowCoverage.missingSetup.join(", ") }
-      )
-      : taskWorkflowCoverage.isOptimization
-        ? tr(
-          "context.taskWorkflowOptimizationReady",
-          "This optimization task has a usable baseline / metric contract."
         )
-        : taskWorkflowCoverage.isRoot
-          ? tr("context.taskWorkflowRootReady", "This root task has a usable goal / evidence contract.")
-          : tr("context.taskWorkflowLeanReady", "Keep subtasks lean unless more workflow structure adds clarity.");
+      : taskWorkflowCoverage.isOptimization
+        ? (taskWorkflowCoverage.hasCurrentBest && taskWorkflowCoverage.hasFrontierNext
+          ? tr(
+            "context.taskWorkflowOptimizationReady",
+            "This optimization task has a usable metric setup, a current best, and a next frontier."
+          )
+          : taskWorkflowCoverage.hasCurrentBest
+            ? tr(
+              "context.taskWorkflowOptimizationBestReady",
+              "This optimization task has a usable metric setup and a current best."
+            )
+            : tr(
+              "context.taskWorkflowOptimizationContractReady",
+              "This optimization task has a usable baseline / metric setup."
+            ))
+        : taskWorkflowCoverage.taskTypeFamily === "standard"
+          ? tr("context.taskWorkflowStandardReady", "This standard task has the required goal / evidence structure.")
+          : tr("context.taskWorkflowFreeReady", "Keep this task lightweight unless more structure would improve control.");
+  const latestAttemptLabel = taskWorkflowCoverage.latestAttemptVerdict === "keep"
+    ? tr("context.latestAttemptKeep", "Latest keep")
+    : taskWorkflowCoverage.latestAttemptVerdict === "discard"
+      ? tr("context.latestAttemptDiscard", "Latest discard")
+      : taskWorkflowCoverage.latestAttemptVerdict === "crash"
+        ? tr("context.latestAttemptCrash", "Latest crash")
+        : taskWorkflowCoverage.latestAttemptVerdict === "continue"
+          ? tr("context.latestAttemptContinue", "Latest continue")
+          : "";
   const waitingOnOptions = getWaitingOnOptions(tr);
+  const taskTypeDescription = selectedTaskType.id === "free"
+    ? tr("context.taskTypeDescFree", "Keep it lightweight. Use this when extra structure would add more ceremony than control.")
+    : selectedTaskType.id === "standard"
+      ? tr("context.taskTypeDescStandard", "Use the normal closed-loop contract: goal, evidence, owner, and closeout.")
+      : tr("context.taskTypeDescOptimization", "For metric-sensitive work. Capture baseline, metric, verifier boundary, current best, and next frontier.");
+  const requirementItems = selectedTaskType.id === "free"
+    ? [tr("context.taskTypeReqFree", "Keep the task lightweight unless more structure improves control.")]
+    : selectedTaskType.id === "optimization"
+      ? [
+          tr("context.goal", "Goal"),
+          tr("context.successCriteria", "Success criteria"),
+          tr("context.requiredEvidence", "Required evidence"),
+          tr("context.owner", "Owner"),
+          tr("context.baseline", "Baseline"),
+          tr("context.primaryMetric", "Primary metric"),
+          tr("context.verifierBoundary", "Verifier boundary"),
+          tr("context.currentBest", "Current best"),
+          tr("context.frontierNext", "Frontier next"),
+          tr("context.attemptDecision", "Attempt decision"),
+        ]
+      : [
+          tr("context.goal", "Goal"),
+          tr("context.successCriteria", "Success criteria"),
+          tr("context.requiredEvidence", "Required evidence"),
+          tr("context.owner", "Owner"),
+          tr("context.closeoutVerdict", "Closeout verdict"),
+          tr("context.verificationSummary", "Verification summary"),
+        ];
 
   return (
     <section className={classNames(ui.surfaceClass, "p-4")}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{isCreate ? tr("context.newTask", "New task") : tr("context.taskDetails", "Task editor")}</div>
-          <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>{isCreate ? tr("context.newTaskHint", "Create a new shared task. Keep it lean, then apply a scaffold only when the workflow needs sharper control.") : (selectedTask?.id || "")}</div>
+          <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>{isCreate ? tr("context.newTaskHint", "Create a new shared task. Default root work to Standard and subtasks to Free unless more structure is useful.") : (selectedTask?.id || "")}</div>
         </div>
         <div className="flex items-center gap-2">
           {hasTaskUnsaved ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.unsaved", "Unsaved")}</span> : null}
@@ -139,42 +169,50 @@ export function TaskEditorPanel({
         <div className={classNames("rounded-xl border px-3 py-3", "glass-panel")}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0 flex-1">
-              <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.taskWorkflow", "Workflow scaffold")}</div>
-              <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>{selectedTaskScaffold.description}</div>
+              <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.taskWorkflow", "Task type")}</div>
+              <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>{taskTypeDescription}</div>
+              <div className="mt-3">
+                <div className={classNames("text-[11px] font-medium uppercase tracking-wide", ui.mutedTextClass)}>
+                  {tr("context.taskRequirements", "Requirements")}
+                </div>
+                <ul className={classNames("mt-1 space-y-1 text-xs", "text-[var(--color-text-secondary)]")}>
+                  {requirementItems.map((item) => (
+                    <li key={item} className="leading-5">{item}</li>
+                  ))}
+                </ul>
+              </div>
             </div>
 
             <div className="grid gap-2 sm:w-[15rem]">
-              <select value={taskScaffoldId} onChange={(event) => onTaskScaffoldIdChange(event.target.value as TaskWorkflowScaffoldId)} className={ui.inputClass}>
+              <select value={taskTypeId} onChange={(event) => onTaskTypeChange(event.target.value as TaskTypeId)} className={ui.inputClass}>
                 {[
-                  ["lean", tr("context.taskScaffoldLean", "Lean task")],
-                  ["root", tr("context.taskScaffoldRoot", "Root task")],
-                  ["planner", tr("context.taskScaffoldPlanner", "Planner")],
-                  ["reviewer", tr("context.taskScaffoldReviewer", "Reviewer")],
-                  ["debugger", tr("context.taskScaffoldDebugger", "Debugger")],
-                  ["release", tr("context.taskScaffoldRelease", "Release")],
-                  ["optimization", tr("context.taskScaffoldOptimization", "Optimization")],
+                  ["free", tr("context.taskTypeFree", "Free")],
+                  ["standard", tr("context.taskTypeStandard", "Standard")],
+                  ["optimization", tr("context.taskTypeOptimization", "Optimization")],
                 ].map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
               </select>
-              <button type="button" onClick={onApplyTaskScaffold} disabled={syncBusy} className={ui.buttonSecondaryClass}>
-                {tr("context.applyScaffold", "Apply scaffold")}
-              </button>
             </div>
           </div>
 
           <div className="mt-3 flex flex-wrap gap-1.5">
             <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", "glass-panel text-[var(--color-text-secondary)]")}>
-              {taskWorkflowCoverage.isRoot ? tr("context.rootTask", "Root task") : tr("context.subtask", "Subtask")}
+              {selectedTaskType.label}
             </span>
-            {taskWorkflowCoverage.isRoot || taskWorkflowCoverage.isOptimization ? (
+            <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", "glass-panel text-[var(--color-text-secondary)]")}>
+              {taskWorkflowCoverage.isRoot
+                ? tr("context.rootTask", "Root task")
+                : tr("context.subtask", "Subtask")}
+            </span>
+            {taskWorkflowCoverage.taskTypeFamily === "standard" || taskWorkflowCoverage.isOptimization ? (
               <>
                 <span className={workflowToneClass(taskWorkflowCoverage.hasGoal)}>{tr("context.goal", "Goal")}</span>
                 <span className={workflowToneClass(taskWorkflowCoverage.hasSuccessCriteria)}>{tr("context.successCriteria", "Success criteria")}</span>
                 <span className={workflowToneClass(taskWorkflowCoverage.hasRequiredEvidence)}>{tr("context.requiredEvidence", "Required evidence")}</span>
               </>
             ) : null}
-            {taskWorkflowCoverage.isRoot ? (
+            {taskWorkflowCoverage.taskTypeFamily === "standard" ? (
               <span className={workflowToneClass(taskWorkflowCoverage.hasOwner)}>{tr("context.owner", "Owner")}</span>
             ) : null}
             {taskWorkflowCoverage.isOptimization ? (
@@ -182,6 +220,8 @@ export function TaskEditorPanel({
                 <span className={workflowToneClass(taskWorkflowCoverage.hasBaseline)}>{tr("context.baseline", "Baseline")}</span>
                 <span className={workflowToneClass(taskWorkflowCoverage.hasPrimaryMetric)}>{tr("context.primaryMetric", "Primary metric")}</span>
                 <span className={workflowToneClass(taskWorkflowCoverage.hasVerifierBoundary)}>{tr("context.verifierBoundary", "Verifier boundary")}</span>
+                <span className={workflowToneClass(taskWorkflowCoverage.hasCurrentBest)}>{tr("context.currentBest", "Current best")}</span>
+                <span className={workflowToneClass(taskWorkflowCoverage.hasFrontierNext)}>{tr("context.frontierNext", "Frontier next")}</span>
               </>
             ) : null}
             {String(taskDraft.status || "").toLowerCase() === "done" ? (
@@ -204,6 +244,30 @@ export function TaskEditorPanel({
           )}>
             {workflowSummary}
           </div>
+          {taskWorkflowCoverage.isOptimization && (taskWorkflowCoverage.hasCurrentBest || taskWorkflowCoverage.hasFrontierNext || taskWorkflowCoverage.hasAttemptLog) ? (
+            <div className={classNames("mt-3 grid gap-2 rounded-lg border px-3 py-3 text-xs", "glass-card")}>
+              {taskWorkflowCoverage.hasCurrentBest ? (
+                <div>
+                  <div className={classNames("font-medium", ui.mutedTextClass)}>{tr("context.currentBest", "Current best")}</div>
+                  <div className={classNames("mt-1", "text-[var(--color-text-primary)]")}>{taskWorkflowCoverage.currentBestSummary}</div>
+                </div>
+              ) : null}
+              {taskWorkflowCoverage.hasFrontierNext ? (
+                <div>
+                  <div className={classNames("font-medium", ui.mutedTextClass)}>{tr("context.frontierNext", "Frontier next")}</div>
+                  <div className={classNames("mt-1", "text-[var(--color-text-primary)]")}>{taskWorkflowCoverage.frontierNextSummary}</div>
+                </div>
+              ) : null}
+              {taskWorkflowCoverage.hasAttemptLog ? (
+                <div className={classNames("flex flex-wrap items-center gap-2", (taskWorkflowCoverage.hasCurrentBest || taskWorkflowCoverage.hasFrontierNext) && "border-t pt-2")}>
+                  {latestAttemptLabel ? <span className={attemptToneClass(taskWorkflowCoverage.latestAttemptVerdict)}>{latestAttemptLabel}</span> : null}
+                  <span className={classNames("min-w-0 flex-1", ui.subtleTextClass)}>
+                    {taskWorkflowCoverage.latestAttemptSummary || tr("context.attemptLogPresent", "Attempt log recorded")}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <label className="block text-sm">
@@ -244,7 +308,7 @@ export function TaskEditorPanel({
           <label className="block text-sm">
             <div className="flex items-center justify-between gap-2">
               <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", ui.mutedTextClass)}>{tr("context.notes", "Notes")}</span>
-              <span className={classNames("mb-1 block text-[11px]", ui.mutedTextClass)}>{tr("context.notesHint", "Keep the task contract, evidence requirements, and closeout structure here.")}</span>
+              <span className={classNames("mb-1 block text-[11px]", ui.mutedTextClass)}>{tr("context.notesHint", "Use notes for the working record. The built-in requirements stay read-only above.")}</span>
             </div>
             <textarea value={taskDraft.notes} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, notes: event.target.value } : prev)} className={classNames(ui.textareaClass, "min-h-[220px]")} />
           </label>
@@ -261,7 +325,16 @@ export function TaskEditorPanel({
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-sm">
                 <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", ui.mutedTextClass)}>{tr("context.parentTask", "Parent task")}</span>
-                <input value={taskDraft.parentId} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, parentId: event.target.value } : prev)} className={ui.inputClass} placeholder={tr("context.rootTask", "Root task")} />
+                <input
+                  value={taskDraft.parentId}
+                  onChange={(event) => setTaskDraft((prev) => prev ? {
+                    ...prev,
+                    parentId: event.target.value,
+                    taskType: alignTaskDraftTaskType(prev.taskType, event.target.value, prev.parentId),
+                  } : prev)}
+                  className={ui.inputClass}
+                  placeholder={tr("context.rootTask", "Root task")}
+                />
               </label>
               <label className="block text-sm">
                 <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", ui.mutedTextClass)}>{tr("context.handoffTo", "Handoff to")}</span>
@@ -286,7 +359,7 @@ export function TaskEditorPanel({
 
         {isCreate ? (
           <div className={classNames("rounded-xl border px-3 py-3 text-xs", "glass-card text-[var(--color-text-muted)]")}>
-            {tr("context.newTaskHint", "Create a new shared task. Keep it lean, then apply a scaffold only when the workflow needs sharper control.")}
+            {tr("context.newTaskHint", "Create a new shared task. Default root work to Standard and subtasks to Free unless more structure is useful.")}
           </div>
         ) : selectedTask ? (
           <div className={classNames("grid gap-2 rounded-xl border px-3 py-3 text-xs sm:grid-cols-2", "glass-card text-[var(--color-text-muted)]")}>

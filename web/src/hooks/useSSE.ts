@@ -229,6 +229,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           if (data) {
             updateReadStatus(data.eventId, data.actorId, groupId);
           }
+          if (getActorRefreshMode(ev) === "unread") {
+            void refreshActors(groupId, { includeUnread: true });
+          }
           return;
         }
 

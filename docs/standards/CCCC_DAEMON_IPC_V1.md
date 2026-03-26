@@ -1925,6 +1925,9 @@ Result:
 }
 ```
 
+Notes:
+- Task objects returned in `coordination.tasks`, `board`, or `task_list` include `task_type`.
+
 #### `context_sync`
 
 Args:
@@ -2203,6 +2206,9 @@ Result:
 ```ts
 { tasks?: Array<Record<string, unknown>>; task?: Record<string, unknown> }
 ```
+
+Notes:
+- Returned task objects include `task_type`.
 
 `presence_get` has been removed. Agent state is returned in `context_get.result.agent_states`.
 

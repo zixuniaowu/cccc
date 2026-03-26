@@ -7,6 +7,7 @@ import { classNames } from "../utils/classNames";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
 import { ImageIcon, FileIcon, CloseIcon } from "./Icons";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
+import { isImageAttachment, isSvgAttachment } from "../utils/messageAttachments";
 
 const LazyMarkdownRenderer = lazy(() =>
     import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
@@ -135,17 +136,63 @@ function buildMessageCopyText({
 function ImagePreview({
     href,
     alt,
+    isSvg,
     isUserMessage,
     isDark,
 }: {
     href: string;
     alt: string;
+    isSvg: boolean;
     isUserMessage: boolean;
     isDark: boolean;
 }) {
     const [loadError, setLoadError] = useState(false);
     const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+    const [resolvedHref, setResolvedHref] = useState<string>(isSvg ? "" : href);
+    const [isResolvingSvg, setIsResolvingSvg] = useState<boolean>(isSvg);
     const { t } = useTranslation('chat');
+
+    useEffect(() => {
+        let cancelled = false;
+        let objectUrl = "";
+
+        setLoadError(false);
+        if (!isSvg || href.startsWith("blob:") || href.startsWith("data:")) {
+            setResolvedHref(href);
+            setIsResolvingSvg(false);
+            return undefined;
+        }
+
+        setResolvedHref("");
+        setIsResolvingSvg(true);
+
+        void (async () => {
+            try {
+                const resp = await fetch(href, { credentials: "same-origin" });
+                if (!resp.ok) {
+                    throw new Error(`svg_fetch_failed:${resp.status}`);
+                }
+                const blob = await resp.blob();
+                objectUrl = URL.createObjectURL(blob);
+                if (!cancelled) {
+                    setResolvedHref(objectUrl);
+                    setIsResolvingSvg(false);
+                }
+            } catch {
+                if (!cancelled) {
+                    setLoadError(true);
+                    setIsResolvingSvg(false);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+            if (objectUrl) {
+                URL.revokeObjectURL(objectUrl);
+            }
+        };
+    }, [href, isSvg]);
 
     useEffect(() => {
         if (!isLightboxOpen) {
@@ -189,18 +236,39 @@ function ImagePreview({
         <>
             <button
                 type="button"
-                className="group block max-w-full overflow-hidden rounded-lg"
+                className={classNames(
+                    "group overflow-hidden rounded-lg",
+                    isSvg ? "block" : "block max-w-full"
+                )}
                 onClick={() => setIsLightboxOpen(true)}
                 aria-label={t('openImagePreview', { name: alt })}
                 title={t('openImagePreview', { name: alt })}
+                disabled={isResolvingSvg}
+                style={isSvg ? { width: "12rem", maxWidth: "100%" } : undefined}
             >
-                <img
-                    src={href}
-                    alt={alt}
-                    className="max-w-full max-h-64 cursor-zoom-in object-contain rounded-lg transition-opacity group-hover:opacity-95 sm:max-h-80"
-                    loading="lazy"
-                    onError={() => setLoadError(true)}
-                />
+                {isResolvingSvg ? (
+                    <div
+                        className={classNames(
+                            "flex min-h-28 min-w-28 items-center justify-center rounded-lg border px-4 py-6 text-xs",
+                            isUserMessage
+                                ? "border-blue-500/50 bg-blue-700/30 text-blue-50"
+                                : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
+                        )}
+                    >
+                        {alt}
+                    </div>
+                ) : (
+                    <img
+                        src={resolvedHref}
+                        alt={alt}
+                        className={classNames(
+                            "cursor-zoom-in object-contain rounded-lg transition-opacity group-hover:opacity-95",
+                            isSvg ? "block h-auto w-full max-h-64 sm:max-h-80" : "max-w-full max-h-64 sm:max-h-80"
+                        )}
+                        loading="lazy"
+                        onError={() => setLoadError(true)}
+                    />
+                )}
             </button>
 
             {isLightboxOpen && (
@@ -278,7 +346,7 @@ function ImagePreview({
 
                             <div className="flex items-center justify-center overflow-auto p-4 sm:p-6">
                                 <img
-                                    src={href}
+                                    src={resolvedHref}
                                     alt={alt}
                                     className="max-h-[75vh] w-auto max-w-full rounded-xl object-contain"
                                 />
@@ -838,10 +906,10 @@ export const MessageBubble = memo(function MessageBubble({
                     {/* Attachments */}
                     {blobAttachments.length > 0 && blobGroupId && (() => {
                         const imageAttachments = blobAttachments.filter((a) =>
-                            a.mime_type.startsWith("image/")
+                            isImageAttachment(a)
                         );
                         const fileAttachments = blobAttachments.filter((a) =>
-                            !a.mime_type.startsWith("image/")
+                            !isImageAttachment(a)
                         );
                         return (
                             <>
@@ -854,13 +922,14 @@ export const MessageBubble = memo(function MessageBubble({
                                             const href = a.local_preview_url || `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
                                             const label = a.title || blobName || "image";
                                             return (
-                                                <ImagePreview
-                                                    key={`img-${blobName || "local"}:${i}`}
-                                                    href={href}
-                                                    alt={label}
-                                                    isUserMessage={isUserMessage}
-                                                    isDark={isDark}
-                                                />
+                                                    <ImagePreview
+                                                        key={`img-${blobName || "local"}:${i}`}
+                                                        href={href}
+                                                        alt={label}
+                                                        isSvg={isSvgAttachment(a)}
+                                                        isUserMessage={isUserMessage}
+                                                        isDark={isDark}
+                                                    />
                                             );
                                         })}
                                     </div>

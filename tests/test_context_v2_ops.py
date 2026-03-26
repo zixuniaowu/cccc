@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-
 class TestContextV2Ops(unittest.TestCase):
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
@@ -340,6 +339,185 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_task_type_round_trips_through_task_surfaces(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            create_resp, _ = self._sync(
+                gid,
+                [
+                    {
+                        "op": "task.create",
+                        "title": "Optimize cold start",
+                        "outcome": "Keep best branch visible",
+                        "task_type": "optimization",
+                        "notes": "Custom optimization note",
+                    }
+                ],
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+
+            task_list_resp, _ = self._tasks(gid)
+            self.assertTrue(task_list_resp.ok, getattr(task_list_resp, "error", None))
+            tasks = (task_list_resp.result or {}).get("tasks") if isinstance(task_list_resp.result, dict) else []
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["task_type"], "optimization")
+            task_id = tasks[0]["id"]
+
+            ctx_resp, _ = self._context(gid)
+            self.assertTrue(ctx_resp.ok, getattr(ctx_resp, "error", None))
+            ctx_tasks = (ctx_resp.result or {}).get("coordination", {}).get("tasks", [])
+            self.assertEqual(len(ctx_tasks), 1)
+            self.assertEqual(ctx_tasks[0]["task_type"], "optimization")
+
+            single_resp, _ = self._call("task_list", {"group_id": gid, "task_id": task_id})
+            self.assertTrue(single_resp.ok, getattr(single_resp, "error", None))
+            single_task = (single_resp.result or {}).get("task") if isinstance(single_resp.result, dict) else None
+            self.assertIsInstance(single_task, dict)
+            self.assertEqual(single_task["task_type"], "optimization")
+            self.assertEqual(single_task["notes"], "Custom optimization note")
+            self.assertEqual(single_task.get("checklist") or [], [])
+        finally:
+            cleanup()
+
+    def test_task_create_defaults_structural_task_type(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            root_resp, _ = self._sync(
+                gid,
+                [{"op": "task.create", "title": "Root task"}],
+            )
+            self.assertTrue(root_resp.ok, getattr(root_resp, "error", None))
+            root_task = self._tasks(gid)[0].result["tasks"][0]
+            self.assertEqual(root_task["task_type"], "standard")
+
+            child_resp, _ = self._sync(
+                gid,
+                [{"op": "task.create", "title": "Child task", "parent_id": root_task["id"]}],
+            )
+            self.assertTrue(child_resp.ok, getattr(child_resp, "error", None))
+            tasks = self._tasks(gid)[0].result["tasks"]
+            child_task = next(task for task in tasks if task["id"] != root_task["id"])
+            self.assertEqual(child_task["task_type"], "free")
+        finally:
+            cleanup()
+
+    def test_task_create_with_type_keeps_notes_and_checklist_plain_when_blank(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            create_resp, _ = self._sync(
+                gid,
+                [
+                    {
+                        "op": "task.create",
+                        "title": "Optimize runtime",
+                        "task_type": "optimization",
+                    }
+                ],
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+
+            task = self._tasks(gid)[0].result["tasks"][0]
+            self.assertEqual(task["task_type"], "optimization")
+            self.assertEqual(str(task.get("notes") or ""), "")
+            self.assertEqual(task.get("checklist") or [], [])
+        finally:
+            cleanup()
+
+    def test_task_create_with_type_preserves_explicit_notes_and_checklist(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            create_resp, _ = self._sync(
+                gid,
+                [
+                    {
+                        "op": "task.create",
+                        "title": "Ship release",
+                        "task_type": "standard",
+                        "notes": "Custom release framing",
+                        "checklist": [{"text": "Run smoke verification", "status": "pending"}],
+                    }
+                ],
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+
+            task = self._tasks(gid)[0].result["tasks"][0]
+            self.assertEqual(task["notes"], "Custom release framing")
+            self.assertEqual(task["task_type"], "standard")
+            checklist = task.get("checklist") or []
+            self.assertTrue(any(str(item.get("text") or "") == "Run smoke verification" for item in checklist))
+        finally:
+            cleanup()
+
+    def test_task_update_validates_task_type_and_does_not_realign_on_reparent(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            create_resp, _ = self._sync(
+                gid,
+                [{"op": "task.create", "title": "Ship release", "task_type": "standard"}],
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            task_id = self._tasks(gid)[0].result["tasks"][0]["id"]
+
+            update_resp, _ = self._sync(
+                gid,
+                [{"op": "task.update", "task_id": task_id, "task_type": "optimization"}],
+            )
+            self.assertTrue(update_resp.ok, getattr(update_resp, "error", None))
+            task = self._tasks(gid)[0].result["tasks"][0]
+            self.assertEqual(task["task_type"], "optimization")
+
+            invalid_null_resp, _ = self._sync(
+                gid,
+                [{"op": "task.update", "task_id": task_id, "task_type": None}],
+            )
+            self.assertFalse(invalid_null_resp.ok)
+            self.assertIn("task_type", str(invalid_null_resp.error.message).lower())
+
+            invalid_resp, _ = self._sync(
+                gid,
+                [{"op": "task.update", "task_id": task_id, "task_type": "invalid"}],
+            )
+            self.assertFalse(invalid_resp.ok)
+            self.assertIn("task_type", str(invalid_resp.error.message).lower())
+
+            root_resp, _ = self._sync(
+                gid,
+                [{"op": "task.create", "title": "Parent"}],
+            )
+            self.assertTrue(root_resp.ok, getattr(root_resp, "error", None))
+            parent_task = next(task for task in self._tasks(gid)[0].result["tasks"] if task["title"] == "Parent")
+
+            child_resp, _ = self._sync(
+                gid,
+                [{"op": "task.create", "title": "Child"}],
+            )
+            self.assertTrue(child_resp.ok, getattr(child_resp, "error", None))
+            child_task = next(task for task in self._tasks(gid)[0].result["tasks"] if task["title"] == "Child")
+            self.assertEqual(child_task["task_type"], "standard")
+
+            reparent_resp, _ = self._sync(
+                gid,
+                [{"op": "task.update", "task_id": child_task["id"], "parent_id": parent_task["id"]}],
+            )
+            self.assertTrue(reparent_resp.ok, getattr(reparent_resp, "error", None))
+            child_after_reparent = next(task for task in self._tasks(gid)[0].result["tasks"] if task["id"] == child_task["id"])
+            self.assertEqual(child_after_reparent["task_type"], "standard")
+
+            detach_resp, _ = self._sync(
+                gid,
+                [{"op": "task.update", "task_id": child_task["id"], "parent_id": None}],
+            )
+            self.assertTrue(detach_resp.ok, getattr(detach_resp, "error", None))
+            child_after_detach = next(task for task in self._tasks(gid)[0].result["tasks"] if task["id"] == child_task["id"])
+            self.assertEqual(child_after_detach["task_type"], "standard")
+        finally:
+            cleanup()
+
     def test_task_move_status_restore_and_invalid_status(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -364,6 +542,23 @@ class TestContextV2Ops(unittest.TestCase):
             bad_resp, _ = self._sync(gid, [{"op": "task.move", "task_id": task_id, "status": "pending"}])
             self.assertFalse(bad_resp.ok)
             self.assertIn("invalid task status", str(bad_resp.error.message).lower())
+        finally:
+            cleanup()
+
+    def test_task_move_rejects_patch_fields(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._sync(gid, [{"op": "task.create", "title": "T", "outcome": "G"}])
+            task_id = self._tasks(gid)[0].result["tasks"][0]["id"]
+
+            bad_resp, _ = self._sync(
+                gid,
+                [{"op": "task.move", "task_id": task_id, "status": "done", "outcome": "ship it"}],
+            )
+            self.assertFalse(bad_resp.ok)
+            self.assertIn("task.move only accepts task_id and status", str(bad_resp.error.message).lower())
+            self.assertIn("task.update", str(bad_resp.error.message).lower())
         finally:
             cleanup()
 

@@ -430,7 +430,6 @@ class RouteContext:
     daemon: Callable[..., Awaitable[Dict[str, Any]]]
     cached_json: Callable[..., Awaitable[Dict[str, Any]]]
     apply_web_logging: Callable[..., None]
-    message_submit_mode: str = "async"
 
 
 def _anonymous_principal() -> Any:

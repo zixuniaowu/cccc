@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from .group import Group
+from .task_types import normalize_task_type_id, resolve_task_type_id
 from ..util.fs import atomic_write_json, read_json
 
 
@@ -118,6 +119,7 @@ class Task:
         blocked_by: Optional[List[str]] = None,
         waiting_on: WaitingOn = WaitingOn.NONE,
         handoff_to: Optional[str] = None,
+        task_type: Optional[str] = None,
         notes: str = "",
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None,
@@ -134,6 +136,7 @@ class Task:
         self.blocked_by = blocked_by or []
         self.waiting_on = waiting_on
         self.handoff_to = handoff_to
+        self.task_type = resolve_task_type_id(task_type, parent_id)
         self.notes = notes
         self.created_at = created_at or _utc_now_iso()
         self.updated_at = updated_at
@@ -247,6 +250,10 @@ def _coerce_waiting_on(value: Any) -> WaitingOn:
         return WaitingOn(raw)
     except Exception:
         return WaitingOn.NONE
+
+
+def normalize_task_type(value: Any) -> Optional[str]:
+    return normalize_task_type_id(value)
 
 
 class ContextStorage:
@@ -542,6 +549,7 @@ class ContextStorage:
                 blocked_by=list(data.get("blocked_by") or []) if isinstance(data.get("blocked_by"), list) else [],
                 waiting_on=_coerce_waiting_on(data.get("waiting_on")),
                 handoff_to=str(data.get("handoff_to") or "") or None,
+                task_type=normalize_task_type(data.get("task_type")),
                 notes=str(data.get("notes") or ""),
                 created_at=str(data.get("created_at") or "") or _utc_now_iso(),
                 updated_at=str(data.get("updated_at") or "") or None,
@@ -564,6 +572,7 @@ class ContextStorage:
             "blocked_by": task.blocked_by,
             "waiting_on": task.waiting_on.value if isinstance(task.waiting_on, WaitingOn) else str(task.waiting_on),
             "handoff_to": task.handoff_to,
+            "task_type": normalize_task_type(task.task_type),
             "notes": task.notes,
             "created_at": task.created_at,
             "updated_at": task.updated_at,

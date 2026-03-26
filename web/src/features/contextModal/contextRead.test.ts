@@ -7,20 +7,20 @@ import {
 } from "./contextRead";
 
 describe("contextRead", () => {
-  it("opens modal data on the summary path without forcing fresh", async () => {
+  it("opens modal data on the full-detail path without forcing fresh", async () => {
     const fetchContext = vi.fn<ContextModalFetch>().mockResolvedValue(undefined);
 
     await openContextModalData(fetchContext, "g-1");
 
-    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "summary", fresh: undefined });
+    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "full", fresh: undefined });
   });
 
-  it("syncs modal data after writes on the summary path", async () => {
+  it("syncs modal data after writes on the full-detail path", async () => {
     const fetchContext = vi.fn<ContextModalFetch>().mockResolvedValue(undefined);
 
     await syncContextModalData(fetchContext, "g-1");
 
-    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "summary", fresh: undefined });
+    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "full", fresh: undefined });
   });
 
   it("reloads modal data on an explicit fresh full path", async () => {

@@ -33,7 +33,7 @@ logger = logging.getLogger("cccc.delivery")
 from ...contracts.v1 import SystemNotifyData
 from ...kernel.actors import find_actor, list_actors
 from ...kernel.group import Group, get_group_state, set_group_state
-from ...kernel.inbox import is_message_for_actor, set_cursor
+from ...kernel.inbox import get_cursor, is_message_for_actor, set_cursor
 from ...kernel.ledger import append_event
 from ...kernel.system_prompt import render_system_prompt
 from ...paths import ensure_home
@@ -896,7 +896,21 @@ def _finalize_delivery_success(
     if _get_auto_mark_on_delivery(group) and deliverable:
         last_msg = deliverable[-1]
         try:
-            set_cursor(group, aid, event_id=last_msg.event_id, ts=last_msg.ts)
+            prev_event_id, prev_ts = get_cursor(group, aid)
+            cursor = set_cursor(group, aid, event_id=last_msg.event_id, ts=last_msg.ts)
+            if (
+                str(cursor.get("event_id") or "") == str(last_msg.event_id or "")
+                and str(cursor.get("ts") or "") == str(last_msg.ts or "")
+                and (str(prev_event_id or "") != str(last_msg.event_id or "") or str(prev_ts or "") != str(last_msg.ts or ""))
+            ):
+                append_event(
+                    group.ledger_path,
+                    kind="chat.read",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by=aid,
+                    data={"actor_id": aid, "event_id": last_msg.event_id},
+                )
             logger.debug(f"[flush] {gid}/{aid} auto-marked {len(deliverable)} messages as read")
         except Exception as e:
             logger.warning(f"[flush] {gid}/{aid} auto-mark failed: {e}")

@@ -10,7 +10,7 @@ import type {
 } from "../../types";
 import { formatTime } from "../../utils/time";
 import { getDefaultPetPersonaSeed } from "../../utils/rolePresets";
-import { getTaskDisplaySummary } from "../../utils/taskWorkflow";
+import { getTaskDisplaySummary, resolveTaskType, type TaskTypeId } from "../../utils/taskWorkflow";
 
 export interface BriefDraft {
   objective: string;
@@ -24,6 +24,7 @@ export interface TaskDraft {
   title: string;
   outcome: string;
   status: string;
+  taskType: TaskTypeId;
   assignee: string;
   priority: string;
   parentId: string;
@@ -228,6 +229,15 @@ export function taskToDraft(task: Task): TaskDraft {
     title: taskTitle(task),
     outcome: taskOutcome(task),
     status: taskStatus(task),
+    taskType: resolveTaskType({
+      parent_id: task.parent_id,
+      task_type: task.task_type,
+      status: task.status,
+      assignee: task.assignee,
+      outcome: task.outcome,
+      notes: task.notes,
+      checklist: task.checklist,
+    }),
     assignee: String(task.assignee || ""),
     priority: String(task.priority || ""),
     parentId: String(task.parent_id || ""),
@@ -244,6 +254,7 @@ export function emptyTaskDraft(status: BoardStatus = "planned"): TaskDraft {
     title: "",
     outcome: "",
     status,
+    taskType: "standard",
     assignee: "",
     priority: "",
     parentId: "",
@@ -255,11 +266,25 @@ export function emptyTaskDraft(status: BoardStatus = "planned"): TaskDraft {
   };
 }
 
+export function alignTaskDraftTaskType(
+  taskType: TaskTypeId,
+  nextParentId: string | null | undefined,
+  previousParentId?: string | null | undefined,
+): TaskTypeId {
+  const hadParent = !!String(previousParentId || "").trim();
+  const hasParent = !!String(nextParentId || "").trim();
+  const previousDefault: TaskTypeId = hadParent ? "free" : "standard";
+  const nextDefault: TaskTypeId = hasParent ? "free" : "standard";
+  if (taskType === previousDefault) return nextDefault;
+  return taskType;
+}
+
 export function taskDraftDirty(draft: TaskDraft | null | undefined): boolean {
   if (!draft) return false;
   return !!(
     draft.title.trim()
     || draft.outcome.trim()
+    || draft.taskType !== "standard"
     || draft.assignee.trim()
     || draft.priority.trim()
     || draft.parentId.trim()
@@ -383,6 +408,7 @@ function coerceBoardTask(entry: TaskBoardEntry, taskMap: Map<string, Task>): Tas
       blocked_by: Array.isArray(entry.blocked_by) ? entry.blocked_by.map((item) => String(item)) : [],
       waiting_on: typeof entry.waiting_on === "string" ? entry.waiting_on : undefined,
       handoff_to: typeof entry.handoff_to === "string" ? entry.handoff_to : null,
+      task_type: typeof entry.task_type === "string" ? entry.task_type : null,
       notes: typeof entry.notes === "string" ? entry.notes : "",
       checklist: [],
       created_at: typeof entry.created_at === "string" ? entry.created_at : null,
@@ -461,6 +487,15 @@ export function taskDraftMatches(task: Task | null | undefined, draft: TaskDraft
     taskTitle(task) === draft.title
     && taskOutcome(task) === draft.outcome
     && taskStatus(task) === draft.status
+    && resolveTaskType({
+      parent_id: task.parent_id,
+      task_type: task.task_type,
+      status: task.status,
+      assignee: task.assignee,
+      outcome: task.outcome,
+      notes: task.notes,
+      checklist: task.checklist,
+    }) === draft.taskType
     && String(task.assignee || "") === draft.assignee
     && String(task.priority || "") === draft.priority
     && String(task.parent_id || "") === draft.parentId

@@ -266,6 +266,7 @@ const ACTOR_READONLY_REFRESH_EVENTS = new Set([
 ]);
 
 const ACTOR_UNREAD_REFRESH_EVENTS = new Set([
+  "chat.read",
   "system.notify",
 ]);
 

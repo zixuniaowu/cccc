@@ -41,7 +41,7 @@ class TestPetDecisionsOps(unittest.TestCase):
         }
 
     def test_replace_load_and_clear_pet_decisions(self) -> None:
-        from src.cccc.kernel.pet_decisions import (
+        from cccc.kernel.pet_decisions import (
             clear_pet_decisions,
             load_pet_decisions,
             replace_pet_decisions,
@@ -62,7 +62,7 @@ class TestPetDecisionsOps(unittest.TestCase):
             self.assertEqual(load_pet_decisions(group), [])
 
     def test_replace_filters_invalid_decisions(self) -> None:
-        from src.cccc.kernel.pet_decisions import load_pet_decisions, replace_pet_decisions
+        from cccc.kernel.pet_decisions import load_pet_decisions, replace_pet_decisions
 
         with tempfile.TemporaryDirectory() as tmp:
             group = _FakeGroup("g-demo", Path(tmp))

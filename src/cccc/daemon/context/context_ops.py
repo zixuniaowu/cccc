@@ -36,6 +36,7 @@ from ...kernel.context import (
     Task,
     TaskStatus,
     WaitingOn,
+    normalize_task_type,
     _utc_now_iso,
 )
 from ...kernel.actors import get_effective_role, list_actors
@@ -99,6 +100,13 @@ def _parse_checklist_status(value: Any) -> ChecklistStatus:
         raise ValueError(f"Invalid checklist status: {value}") from exc
 
 
+def _parse_task_type(value: Any) -> str:
+    normalized = normalize_task_type(value)
+    if normalized is None:
+        raise ValueError(f"Invalid task_type value: {value}")
+    return normalized
+
+
 def _normalize_text(value: Any, *, max_len: int = 4000) -> str:
     text = str(value or "").strip()
     if len(text) <= max_len:
@@ -149,7 +157,7 @@ def _get_storage(group_id: str) -> Optional[ContextStorage]:
 
 def _task_to_dict(task: Task) -> Dict[str, Any]:
     current_item = task.current_checklist_item
-    return {
+    result = {
         "id": task.id,
         "title": task.title,
         "outcome": task.outcome,
@@ -161,6 +169,7 @@ def _task_to_dict(task: Task) -> Dict[str, Any]:
         "blocked_by": list(task.blocked_by or []),
         "waiting_on": task.waiting_on.value if isinstance(task.waiting_on, WaitingOn) else str(task.waiting_on),
         "handoff_to": task.handoff_to,
+        "task_type": normalize_task_type(task.task_type),
         "notes": task.notes,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
@@ -184,10 +193,13 @@ def _task_to_dict(task: Task) -> Dict[str, Any]:
         "progress": task.progress,
         "is_root": task.is_root,
     }
+    if result.get("task_type") is None:
+        result.pop("task_type", None)
+    return result
 
 
 def _task_to_summary_dict(task: Task) -> Dict[str, Any]:
-    return {
+    result = {
         "id": task.id,
         "title": task.title,
         "parent_id": task.parent_id,
@@ -198,11 +210,15 @@ def _task_to_summary_dict(task: Task) -> Dict[str, Any]:
         "blocked_by": list(task.blocked_by or []),
         "waiting_on": task.waiting_on.value if isinstance(task.waiting_on, WaitingOn) else str(task.waiting_on),
         "handoff_to": task.handoff_to,
+        "task_type": normalize_task_type(task.task_type),
         "created_at": task.created_at,
         "updated_at": task.updated_at,
         "progress": task.progress,
         "is_root": task.is_root,
     }
+    if result.get("task_type") is None:
+        result.pop("task_type", None)
+    return result
 
 
 def _agent_state_to_dict(agent: AgentState) -> Dict[str, Any]:
@@ -996,6 +1012,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 parent_id = str(raw.get("parent_id") or "").strip() or None
                 if parent_id and parent_id not in tasks_by_id:
                     raise ValueError(f"op[{idx}] parent task not found: {parent_id}")
+                task_type = _parse_task_type(raw.get("task_type")) if "task_type" in raw else None
                 task = Task(
                     id=task_id,
                     title=title,
@@ -1008,6 +1025,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     blocked_by=_normalize_string_list(raw.get("blocked_by"), max_items=8, max_len=120),
                     waiting_on=_parse_waiting_on(raw.get("waiting_on")),
                     handoff_to=str(raw.get("handoff_to") or "").strip() or None,
+                    task_type=task_type,
                     notes=_normalize_text(raw.get("notes"), max_len=4000),
                     checklist=_normalize_checklist(raw.get("checklist")),
                 )
@@ -1075,6 +1093,11 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     if task.handoff_to != value:
                         task.handoff_to = value
                         updated = True
+                if "task_type" in raw:
+                    value = _parse_task_type(raw.get("task_type"))
+                    if task.task_type != value:
+                        task.task_type = value
+                        updated = True
                 if "notes" in raw:
                     value = _normalize_text(raw.get("notes"), max_len=4000)
                     if task.notes != value:
@@ -1100,6 +1123,17 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 task = tasks_by_id.get(task_id)
                 if task is None:
                     raise ValueError(f"Task not found: {task_id}")
+                unexpected_fields = sorted(
+                    key
+                    for key in raw.keys()
+                    if key not in {"op", "task_id", "status"}
+                )
+                if unexpected_fields:
+                    joined = ", ".join(unexpected_fields)
+                    raise ValueError(
+                        f"op[{idx}] task.move only accepts task_id and status; "
+                        f"use task.update for other fields: {joined}"
+                    )
                 perm_err = _check_permission(by, op_name, group_id, task=task)
                 if perm_err:
                     raise ValueError(perm_err)

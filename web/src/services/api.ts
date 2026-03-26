@@ -361,6 +361,7 @@ function normalizeTask(value: unknown): Task | null {
     blocked_by: asStringArray(record.blocked_by),
     waiting_on: asString(record.waiting_on).trim() || undefined,
     handoff_to: asOptionalString(record.handoff_to),
+    task_type: asOptionalString(record.task_type),
     notes: asString(record.notes),
     checklist,
     created_at: asOptionalString(record.created_at),
@@ -1780,6 +1781,7 @@ export async function addCoordinationNote(
 }
 
 export async function updateCoordinationTask(groupId: string, task: Task) {
+  const resolvedTaskType = String(task.task_type || "").trim() || (String(task.parent_id || "").trim() ? "free" : "standard");
   const updateOp: Record<string, unknown> = {
     op: "task.update",
     task_id: task.id,
@@ -1791,6 +1793,7 @@ export async function updateCoordinationTask(groupId: string, task: Task) {
     blocked_by: Array.isArray(task.blocked_by) ? task.blocked_by : [],
     waiting_on: String(task.waiting_on || "none"),
     handoff_to: task.handoff_to || null,
+    task_type: resolvedTaskType,
     notes: String(task.notes || ""),
     checklist: Array.isArray(task.checklist)
       ? task.checklist.map((item, index) => ({

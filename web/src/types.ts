@@ -350,6 +350,7 @@ export type Task = {
   blocked_by?: string[];
   waiting_on?: TaskWaitingOn | null;
   handoff_to?: string | null;
+  task_type?: string | null;
   notes?: string | null;
   created_at?: string | null;
   updated_at?: string | null;

@@ -24,14 +24,14 @@ export function openContextModalData(
   fetchContext: ContextModalFetch,
   groupId: string,
 ): Promise<void> {
-  return loadContextModalDetail(fetchContext, groupId, { detail: "summary" });
+  return loadContextModalDetail(fetchContext, groupId, { detail: "full" });
 }
 
 export function syncContextModalData(
   fetchContext: ContextModalFetch,
   groupId: string,
 ): Promise<void> {
-  return loadContextModalDetail(fetchContext, groupId, { detail: "summary" });
+  return loadContextModalDetail(fetchContext, groupId, { detail: "full" });
 }
 
 export function reloadContextModalData(
