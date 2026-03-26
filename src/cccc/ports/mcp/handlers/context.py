@@ -16,6 +16,26 @@ from ..common import MCPError, _call_daemon_or_raise
 from ..utils.help_markdown import parse_help_markdown, update_actor_help_note
 
 
+def _resolve_task_create_assignee(
+    *,
+    group_id: str,
+    actor_id: Optional[str],
+    arguments: Dict[str, Any],
+) -> Optional[str]:
+    if "assignee" in arguments:
+        return str(arguments.get("assignee") or "").strip() or None
+    actor = str(actor_id or "").strip()
+    if not actor or actor in {"system", "user"}:
+        return None
+    group = load_group(group_id)
+    if group is None:
+        return None
+    role = get_effective_role(group, actor)
+    if role == "peer":
+        return actor
+    return None
+
+
 def context_get(*, group_id: str, include_archived: bool = False) -> Dict[str, Any]:
     result = _call_daemon_or_raise({"op": "context_get", "args": {"group_id": group_id}})
     if include_archived:
@@ -602,13 +622,14 @@ def _handle_context_namespace(
             checklist_raw = arguments.get("checklist")
             blocked_by_raw = arguments.get("blocked_by")
             task_type = _resolve_task_type(arguments)
+            assignee = _resolve_task_create_assignee(group_id=gid, actor_id=by, arguments=arguments)
             return task_create_fn(
                 group_id=gid,
                 title=str(arguments.get("title") or ""),
                 outcome=str(arguments.get("outcome") or ""),
                 status=str(arguments.get("status") or "planned"),
                 parent_id=(str(arguments.get("parent_id") or "").strip() or None),
-                assignee=(str(arguments.get("assignee") or "").strip() or None),
+                assignee=assignee,
                 priority=(str(arguments.get("priority") or "").strip() or None),
                 blocked_by=list(blocked_by_raw) if isinstance(blocked_by_raw, list) else None,
                 waiting_on=(str(arguments.get("waiting_on") or "").strip() or None),

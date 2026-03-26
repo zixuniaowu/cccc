@@ -62,6 +62,7 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 - Add decisions and handoffs with `cccc_coordination(action="add_decision"|"add_handoff", ...)`.
 - Use `cccc_task` for shared work units; runtime todo stays private.
 - If a task needs a built-in work kind, set `type` on `cccc_task` (`free`, `standard`, or `optimization`). `type` is the durable task category; `notes` and `checklist` stay ordinary editable task content.
+- When a peer creates a task through `cccc_task(action="create")` and omits `assignee`, the wrapper defaults it to self. Pass `assignee=""` if you intentionally want an unassigned backlog card.
 - For task lifecycle changes, use `cccc_task(action="move", ...)` as the canonical path. `update` is for task fields; if `status` is included with `update`, the MCP wrapper also applies the matching move.
 - If you need to close a task with `outcome`, `notes`, `checklist`, or `type`, use `cccc_task(action="update", status=..., ...)` rather than `move`; `move` is status-only.
 

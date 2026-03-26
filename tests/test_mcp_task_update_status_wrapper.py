@@ -40,6 +40,92 @@ class TestMcpTaskUpdateStatusWrapper(unittest.TestCase):
         self.assertEqual(captured["ops_history"][0][0]["task_type"], "standard")
         self.assertEqual(captured["ops_history"][1][0]["task_type"], "free")
 
+    def test_task_create_defaults_peer_assignee_to_self(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import context as mcp_context
+
+        captured = {}
+
+        def _fake_context_sync(*, group_id, ops, dry_run=False, if_version=None, by=None):
+            captured["group_id"] = group_id
+            captured["ops"] = ops
+            captured["by"] = by
+            return {"ok": True}
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_self_actor_id", return_value="peer1"
+        ), patch.object(mcp_context, "load_group", return_value=object()), patch.object(
+            mcp_context, "get_effective_role", return_value="peer"
+        ), patch.object(mcp_context, "context_sync", side_effect=_fake_context_sync):
+            out = mcp_server.handle_tool_call(
+                "cccc_task",
+                {
+                    "action": "create",
+                    "title": "Peer-owned task",
+                },
+            )
+
+        self.assertTrue(bool(out.get("ok")))
+        self.assertEqual(captured.get("by"), "peer1")
+        self.assertEqual(captured["ops"][0]["assignee"], "peer1")
+
+    def test_task_create_respects_explicit_empty_assignee_for_peer(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import context as mcp_context
+
+        captured = {}
+
+        def _fake_context_sync(*, group_id, ops, dry_run=False, if_version=None, by=None):
+            captured["group_id"] = group_id
+            captured["ops"] = ops
+            captured["by"] = by
+            return {"ok": True}
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_self_actor_id", return_value="peer1"
+        ), patch.object(mcp_context, "load_group", return_value=object()), patch.object(
+            mcp_context, "get_effective_role", return_value="peer"
+        ), patch.object(mcp_context, "context_sync", side_effect=_fake_context_sync):
+            out = mcp_server.handle_tool_call(
+                "cccc_task",
+                {
+                    "action": "create",
+                    "title": "Shared backlog card",
+                    "assignee": "",
+                },
+            )
+
+        self.assertTrue(bool(out.get("ok")))
+        self.assertIsNone(captured["ops"][0]["assignee"])
+
+    def test_task_create_does_not_auto_assign_for_foreman(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import context as mcp_context
+
+        captured = {}
+
+        def _fake_context_sync(*, group_id, ops, dry_run=False, if_version=None, by=None):
+            captured["group_id"] = group_id
+            captured["ops"] = ops
+            captured["by"] = by
+            return {"ok": True}
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_self_actor_id", return_value="lead1"
+        ), patch.object(mcp_context, "load_group", return_value=object()), patch.object(
+            mcp_context, "get_effective_role", return_value="foreman"
+        ), patch.object(mcp_context, "context_sync", side_effect=_fake_context_sync):
+            out = mcp_server.handle_tool_call(
+                "cccc_task",
+                {
+                    "action": "create",
+                    "title": "Foreman backlog card",
+                },
+            )
+
+        self.assertTrue(bool(out.get("ok")))
+        self.assertIsNone(captured["ops"][0]["assignee"])
+
     def test_task_create_with_type_persists_task_type_without_hidden_seed(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp.handlers import context as mcp_context
