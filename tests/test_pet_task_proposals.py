@@ -29,7 +29,7 @@ def _task(
 
 
 class TestPetTaskProposals(unittest.TestCase):
-    def test_build_task_proposal_candidates_orders_by_triage_priority(self) -> None:
+    def test_build_task_proposal_candidates_keeps_only_highest_priority_item(self) -> None:
         tasks = [
             _task("T1", title="Need user scope", status="active", waiting_on="user"),
             _task("T2", title="Review handoff", status="active", handoff_to="foreman"),
@@ -40,14 +40,9 @@ class TestPetTaskProposals(unittest.TestCase):
 
         proposals = build_task_proposal_candidates(tasks)
 
-        self.assertEqual(
-            [item["reason"] for item in proposals],
-            ["waiting_user", "handoff", "blocked", "planned_backlog"],
-        )
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual([item["reason"] for item in proposals], ["waiting_user"])
         self.assertEqual(proposals[0]["action"]["task_id"], "T1")
-        self.assertEqual(proposals[1]["action"]["task_id"], "T2")
-        self.assertEqual(proposals[2]["action"]["task_id"], "T3")
-        self.assertEqual(proposals[3]["action"]["task_id"], "T4")
 
     def test_waiting_user_candidate_prefers_move_from_planned_to_active(self) -> None:
         proposal = build_task_proposal_candidates(
@@ -63,7 +58,8 @@ class TestPetTaskProposals(unittest.TestCase):
             [
                 _task("T20", title="Take over runtime fix", status="active", handoff_to="peer-debugger"),
                 _task("T21", title="Need external API back", status="active", waiting_on="external"),
-            ]
+            ],
+            limit=2,
         )
 
         self.assertEqual(proposals[0]["action"]["operation"], "handoff")
@@ -71,21 +67,36 @@ class TestPetTaskProposals(unittest.TestCase):
         self.assertEqual(proposals[1]["action"]["operation"], "update")
         self.assertEqual(proposals[1]["reason"], "blocked")
 
-    def test_build_task_proposal_summary_lines_limits_high_value_items(self) -> None:
+    def test_build_task_proposal_summary_lines_defaults_to_single_item(self) -> None:
         lines = build_task_proposal_summary_lines(
             [
                 _task("T1", title="Need user scope", status="active", waiting_on="user"),
                 _task("T2", title="Review handoff", status="active", handoff_to="foreman"),
                 _task("T3", title="Blocked on peer output", status="active", blocked_by=["T9"]),
             ],
-            limit=2,
         )
 
-        self.assertEqual(len(lines), 2)
+        self.assertEqual(len(lines), 1)
         self.assertIn("T1:Need user scope", lines[0])
         self.assertIn("等待用户", lines[0])
-        self.assertIn("T2:Review handoff", lines[1])
-        self.assertIn("已移交给 foreman", lines[1])
+
+    def test_build_task_proposal_candidates_follow_proposal_ready_focus(self) -> None:
+        proposals = build_task_proposal_candidates(
+            [
+                _task("T1", title="Need user scope", status="active", waiting_on="user"),
+                _task("T2", title="Blocked on peer output", status="active", blocked_by=["T9"]),
+            ],
+            signal_payload={
+                "proposal_ready": {
+                    "ready": True,
+                    "focus": "blocked",
+                }
+            },
+        )
+
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(proposals[0]["reason"], "blocked")
+        self.assertEqual(proposals[0]["action"]["task_id"], "T2")
 
 
 if __name__ == "__main__":

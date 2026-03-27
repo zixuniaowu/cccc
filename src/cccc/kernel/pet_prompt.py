@@ -215,7 +215,11 @@ def _load_pet_runtime_context(group: Group) -> Dict[str, Any]:
             "archived": archived_count,
         },
         "agent_states": agent_states,
-        "task_proposal_candidates": build_task_proposal_summary_lines(tasks, limit=2),
+        "task_proposal_candidates": build_task_proposal_summary_lines(
+            tasks,
+            signal_payload=signal_payload,
+            limit=1,
+        ),
         "automation_proposal_candidates": build_pet_automation_proposal_summary_lines(
             group,
             signal_payload=signal_payload,

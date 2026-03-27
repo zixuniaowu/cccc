@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 from .pet_task_triage import enum_text, task_brief, trim_task_text
 
@@ -32,8 +32,36 @@ def _proposal(
     }
 
 
-def build_task_proposal_candidates(tasks: Iterable[Any]) -> List[Dict[str, Any]]:
+def _matches_focus(reason: str, *, focus: str) -> bool:
+    normalized_reason = str(reason or "").strip().lower()
+    normalized_focus = str(focus or "").strip().lower()
+    if normalized_focus in {"", "none", "task_pressure"}:
+        return True
+    if normalized_focus == "waiting_user":
+        return normalized_reason == "waiting_user"
+    if normalized_focus == "handoff":
+        return normalized_reason == "handoff"
+    if normalized_focus == "blocked":
+        return normalized_reason == "blocked"
+    return False
+
+
+def build_task_proposal_candidates(
+    tasks: Iterable[Any],
+    *,
+    signal_payload: Optional[Dict[str, Any]] = None,
+    limit: int = 1,
+) -> List[Dict[str, Any]]:
     proposals: List[Dict[str, Any]] = []
+    proposal_ready = (
+        signal_payload.get("proposal_ready")
+        if isinstance(signal_payload, dict) and isinstance(signal_payload.get("proposal_ready"), dict)
+        else {}
+    )
+    focus = str(proposal_ready.get("focus") or "none").strip().lower()
+    ready = bool(proposal_ready.get("ready")) if proposal_ready else False
+    if ready and focus in {"reply_pressure", "coordination_rhythm"}:
+        return []
     for task in tasks:
         status = enum_text(getattr(task, "status", ""))
         waiting_on = enum_text(getattr(task, "waiting_on", ""))
@@ -101,13 +129,24 @@ def build_task_proposal_candidates(tasks: Iterable[Any]) -> List[Dict[str, Any]]
                 )
             )
 
+    if ready and focus not in {"", "none", "task_pressure"}:
+        proposals = [
+            item for item in proposals
+            if _matches_focus(str(item.get("reason") or ""), focus=focus)
+        ]
+
     proposals.sort(key=lambda item: (-int(item.get("priority") or 0), str(item.get("reason") or ""), str(((item.get("action") or {}).get("task_id") or ""))))
-    return proposals
+    return proposals[: max(1, int(limit or 1))]
 
 
-def build_task_proposal_summary_lines(tasks: Iterable[Any], *, limit: int = 2) -> List[str]:
+def build_task_proposal_summary_lines(
+    tasks: Iterable[Any],
+    *,
+    signal_payload: Optional[Dict[str, Any]] = None,
+    limit: int = 1,
+) -> List[str]:
     lines: List[str] = []
-    for item in build_task_proposal_candidates(tasks)[:limit]:
+    for item in build_task_proposal_candidates(tasks, signal_payload=signal_payload, limit=limit):
         summary = str(item.get("summary") or "").strip()
         if summary:
             lines.append(summary)
