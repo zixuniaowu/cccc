@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GroupContext, LedgerEvent } from "../../types";
+import { recordPetDecisionOutcome } from "../../services/api";
 import type { PetReminder } from "./types";
 import {
   createMentionReaction,
@@ -18,7 +19,19 @@ export interface UseWebPetNotificationsResult {
   reminders: PetReminder[];
   activeReminder: PetReminder | null;
   reaction: PetReaction | null;
-  dismissReminder: (fingerprint: string) => void;
+  dismissReminder: (
+    fingerprint: string,
+    opts?: { outcome?: "dismissed" | "snoozed" | null; cooldownMs?: number }
+  ) => void;
+}
+
+export function shouldProjectReminderForGroupState(
+  reminder: PetReminder,
+  groupState: string,
+): boolean {
+  const normalizedState = String(groupState || "").trim().toLowerCase();
+  if (normalizedState === "active") return true;
+  return reminder.action.type === "restart_actor" || reminder.action.type === "automation_proposal";
 }
 
 function getLatestEvent(events: LedgerEvent[]): LedgerEvent | null {
@@ -74,8 +87,8 @@ function persistSnoozes(groupId: string, snoozes: Record<string, number>): void 
       return;
     }
     window.localStorage.setItem(key, JSON.stringify(snoozes));
-  } catch {
-    // Ignore storage failures; snoozes still work in-memory.
+  } catch (error) {
+    console.warn("failed to persist web pet snoozes", error);
   }
 }
 
@@ -128,8 +141,8 @@ export function useWebPetNotifications(input: {
 
   const projected = useMemo(
     () => {
-      if (groupState !== "active") return [];
-      return Array.isArray(input.decisions) ? input.decisions : [];
+      const decisions = Array.isArray(input.decisions) ? input.decisions : [];
+      return decisions.filter((reminder) => shouldProjectReminderForGroupState(reminder, groupState));
     },
     [groupState, input.decisions],
   );
@@ -179,14 +192,43 @@ export function useWebPetNotifications(input: {
   }, [dismissCooldownUntil, ephemeralReminder, nowTick, reminders]);
 
   useEffect(() => {
+    const nextState = getInitialNotificationState(groupId);
+    snoozedUntilRef.current = nextState.snoozedUntil;
+    dismissCooldownUntilRef.current = 0;
+    lastProcessedEventIdRef.current = "";
+    didHydrateTaskSnapshotRef.current = false;
+    previousTaskSnapshotRef.current = {};
+    // eslint-disable-next-line react-hooks/set-state-in-effect 
+    setNowTick(nextState.now);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSnoozedUntilSnapshot(nextState.snoozedUntil);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDismissCooldownUntil(0);
     const frame = window.requestAnimationFrame(() => {
       setEphemeralReminder(null);
       setReaction(null);
     });
-    lastProcessedEventIdRef.current = "";
-    didHydrateTaskSnapshotRef.current = false;
-    previousTaskSnapshotRef.current = {};
     return () => window.cancelAnimationFrame(frame);
+  }, [groupId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = getSnoozeStorageKey(groupId);
+    if (!key.trim()) return;
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== window.localStorage || event.key !== key) return;
+      const now = Date.now();
+      const next = loadPersistedSnoozes(groupId, now);
+      snoozedUntilRef.current = next;
+      setSnoozedUntilSnapshot(next);
+      setNowTick(now);
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
   }, [groupId]);
 
   useEffect(() => {
@@ -245,13 +287,13 @@ export function useWebPetNotifications(input: {
     return () => window.clearTimeout(timeout);
   }, [reaction]);
 
-  const dismissReminder = useCallback((fingerprint: string) => {
+  const dismissReminder = useCallback((fingerprint: string, opts?: { outcome?: "dismissed" | "snoozed" | null; cooldownMs?: number }) => {
     const normalized = String(fingerprint || "").trim();
     if (!normalized) return;
 
     const now = Date.now();
     const reminder = reminderByFingerprint.get(normalized);
-    const snoozeMs = getReminderSnoozeMs(reminder);
+    const snoozeMs = Math.max(0, Number(opts?.cooldownMs || 0)) || getReminderSnoozeMs(reminder);
     snoozedUntilRef.current = {
       ...snoozedUntilRef.current,
       [normalized]: now + snoozeMs,
@@ -279,6 +321,18 @@ export function useWebPetNotifications(input: {
       setDismissCooldownUntil(0);
       setNowTick(Date.now());
     }, DISMISS_COOLDOWN_MS + 10);
+
+    const outcome = opts?.outcome === undefined ? "dismissed" : opts.outcome;
+    if (outcome && reminder) {
+      void recordPetDecisionOutcome(groupId, {
+        fingerprint: normalized,
+        outcome,
+        decisionId: reminder.id,
+        actionType: reminder.action.type,
+        cooldownMs: snoozeMs,
+        sourceEventId: reminder.source.eventId,
+      });
+    }
   }, [groupId, reminderByFingerprint]);
 
   return {

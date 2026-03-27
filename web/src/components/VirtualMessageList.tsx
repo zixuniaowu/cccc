@@ -146,7 +146,6 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
         onRelay={onRelay}
         onOpenSource={onOpenSource}
         onOpenPresentationRef={onOpenPresentationRef}
-        onLayoutChange={() => onRowLayoutChange(rowRef.current)}
       />
     </div>
   );
@@ -222,6 +221,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const anchorMessageIdRef = useRef<string>("");
   const anchorOffsetRef = useRef(0);
   const lastScrollTopRef = useRef(0);
+  // 标记容器正在处理 resize（如 footer 回复栏出现/消失），
+  // 防止 handleScroll 将浏览器裁剪 scrollTop 误判为用户上滑
+  const isContainerResizingRef = useRef(false);
 
   // Track previous resetKey for scroll snapshot before group switch
   const prevResetKeyRef = useRef<string | undefined>(undefined);
@@ -336,51 +338,27 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     };
   }, [messages, shouldVirtualize, virtualizer]);
 
+  const setFollowBottom = useCallback((next: boolean) => {
+    shouldFollowBottomRef.current = next;
+    if (followBottomRef) followBottomRef.current = next;
+  }, [followBottomRef]);
+
+  const setAtBottom = useCallback((next: boolean) => {
+    isAtBottomRef.current = next;
+  }, []);
+
   const stickToBottomIfNeeded = useCallback(() => {
-    if (!shouldFollowBottomRef.current) return;
+    // 将 ref 检查推迟到 rAF 内执行，确保 handleScroll 中的同步方向检测
+    // 有机会先将 shouldFollowBottomRef 设为 false，避免竞态导致弹回抖动
     window.requestAnimationFrame(() => {
+      // 容器 resize 期间（如回复栏出现/消失）不做任何滚动
+      if (isContainerResizingRef.current) return;
+      if (!shouldFollowBottomRef.current) return;
       const el = parentRef.current;
       if (!el) return;
       el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
     });
   }, []);
-
-  const scheduleRemeasure = useCallback(() => {
-    if (!shouldVirtualize) {
-      stickToBottomIfNeeded();
-      return;
-    }
-    if (remeasureRafRef.current != null) return;
-    remeasureRafRef.current = window.requestAnimationFrame(() => {
-      remeasureRafRef.current = null;
-      virtualizer.measure();
-      stickToBottomIfNeeded();
-    });
-  }, [shouldVirtualize, stickToBottomIfNeeded, virtualizer]);
-
-  const handleRowLayoutChange = useCallback((node: HTMLDivElement | null) => {
-    if (shouldVirtualize && node) {
-      measureElement(node);
-    }
-    stickToBottomIfNeeded();
-  }, [measureElement, shouldVirtualize, stickToBottomIfNeeded]);
-
-  const checkIsAtBottom = useCallback(() => {
-    const el = parentRef.current;
-    if (!el) return true;
-    // Increased threshold to reduce false negatives when near bottom
-    // (e.g., during layout shifts or when switching groups)
-    const threshold = 200;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-  }, []);
-
-  const scrollToBottom = useCallback(() => {
-    const el = parentRef.current;
-    if (!el || messages.length <= 0) return;
-    requestAnimationFrame(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
-    });
-  }, [messages.length]);
 
   const scrollToMessageAnchor = useCallback((eventId: string, offsetPx = 0) => {
     const el = parentRef.current;
@@ -403,6 +381,59 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     el.scrollTo({ top: row.offsetTop + Math.max(0, offsetPx), behavior: "auto" });
     return true;
   }, [getMessageRowById, messages, shouldVirtualize, virtualizer]);
+
+  const scheduleRemeasure = useCallback(() => {
+    const el = parentRef.current;
+    const anchor = !shouldFollowBottomRef.current && el ? getAnchorSnapshot(el.scrollTop) : null;
+    if (!shouldVirtualize) {
+      if (!anchor || !anchor.anchorId || shouldFollowBottomRef.current) {
+        stickToBottomIfNeeded();
+      } else {
+        window.requestAnimationFrame(() => {
+          scrollToMessageAnchor(anchor.anchorId, anchor.offsetPx);
+        });
+      }
+      return;
+    }
+    if (remeasureRafRef.current != null) return;
+    remeasureRafRef.current = window.requestAnimationFrame(() => {
+      remeasureRafRef.current = null;
+      virtualizer.measure();
+      if (!anchor || !anchor.anchorId || shouldFollowBottomRef.current) {
+        stickToBottomIfNeeded();
+      } else {
+        scrollToMessageAnchor(anchor.anchorId, anchor.offsetPx);
+      }
+    });
+  }, [getAnchorSnapshot, scrollToMessageAnchor, shouldVirtualize, stickToBottomIfNeeded, virtualizer]);
+
+  const handleRowLayoutChange = useCallback((node: HTMLDivElement | null) => {
+    if (shouldVirtualize && node) {
+      measureElement(node);
+    }
+    // 容器 resize 期间跳过 stickToBottom，
+    // 避免滚动条出现/消失导致的行宽变化触发不必要的滚动
+    if (!isContainerResizingRef.current) {
+      stickToBottomIfNeeded();
+    }
+  }, [measureElement, shouldVirtualize, stickToBottomIfNeeded]);
+
+  const checkIsAtBottom = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return true;
+    // Increased threshold to reduce false negatives when near bottom
+    // (e.g., during layout shifts or when switching groups)
+    const threshold = 200;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const el = parentRef.current;
+    if (!el || messages.length <= 0) return;
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    });
+  }, [messages.length]);
 
   const cancelScheduledScroll = useCallback(() => {
     const id = scrollTimeoutRef.current;
@@ -498,6 +529,18 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   );
 
   const handleScroll = useCallback(() => {
+    // 同步检测上滑方向，立即解除底部跟随，防止与 stickToBottomIfNeeded 竞态
+    // 跳过容器 resize 引起的 scrollTop 变化（如回复栏出现/消失）
+    const elSync = parentRef.current;
+    if (elSync && !isContainerResizingRef.current) {
+      const curTopSync = elSync.scrollTop;
+      const prevTopSync = lastScrollTopRef.current;
+      if (curTopSync < prevTopSync - 4) {
+        setFollowBottom(false);
+        setAtBottom(false);
+      }
+    }
+
     if (scrollRafScheduledRef.current) return;
     scrollRafScheduledRef.current = true;
 
@@ -514,18 +557,18 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     lastScrollTopRef.current = curTop;
 
     const atBottom = checkIsAtBottom();
-    const scrollingUp = curTop < prevTop - 4;
+    const scrollingUp = !isContainerResizingRef.current && curTop < prevTop - 4;
     if (scrollingUp) {
-      isAtBottomRef.current = false;
-      shouldFollowBottomRef.current = false;
+      setAtBottom(false);
+      setFollowBottom(false);
       onScrollChange?.(false);
     } else if (atBottom) {
-      shouldFollowBottomRef.current = true;
+      setFollowBottom(true);
     }
     // Only notify parent when atBottom state actually changes (not on every scroll event)
     // to avoid triggering store updates and re-renders during inertia scrolling.
     const wasAtBottom = isAtBottomRef.current;
-    isAtBottomRef.current = atBottom;
+    setAtBottom(atBottom);
     if (atBottom !== wasAtBottom) {
       onScrollChange?.(atBottom);
     }
@@ -570,7 +613,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       onLoadMore();
     }
     });
-  }, [checkIsAtBottom, getAnchorSnapshot, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange, onScrollSnapshot]);
+  }, [checkIsAtBottom, getAnchorSnapshot, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange, onScrollSnapshot, setAtBottom, setFollowBottom]);
 
   // When switching views (group or window-mode), reset internal scroll bookkeeping.
   //
@@ -600,8 +643,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     scrollTokenRef.current += 1;
     prevMessageCountRef.current = 0;
     prevTailMessageIdRef.current = "";
-    isAtBottomRef.current = true;
-    shouldFollowBottomRef.current = true;
+    setAtBottom(true);
+    setFollowBottom(true);
     didInitialScrollRef.current = false;
     topLoadArmedRef.current = true;
     cancelScheduledScroll();
@@ -621,7 +664,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (shouldVirtualize) {
       virtualizer.measure();
     }
-  }, [resetKey, cancelScheduledScroll, onScrollSnapshot, shouldVirtualize, virtualizer]);
+  }, [resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, setFollowBottom, shouldVirtualize, virtualizer]);
 
   useEffect(() => {
     const prevCount = prevMessageCountRef.current;
@@ -641,22 +684,23 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     prevMessageCountRef.current = messages.length;
     prevTailMessageIdRef.current = nextTailId;
 
-    const shouldAutoFollow = isAtBottomRef.current || !!followBottomRef?.current;
+    const shouldAutoFollow = isAtBottomRef.current;
     if (appendedAtTail && shouldAutoFollow) {
-      isAtBottomRef.current = true;
-      shouldFollowBottomRef.current = true;
+      setAtBottom(true);
+      setFollowBottom(true);
       scheduleScrollToBottom({ requireAtBottom: true });
     }
-  }, [followBottomRef, messages, scheduleScrollToBottom]);
+  }, [messages, scheduleScrollToBottom, setAtBottom, setFollowBottom]);
 
   useEffect(() => {
     if (didInitialScrollRef.current) return;
     if (messages.length <= 0) return;
     didInitialScrollRef.current = true;
-    shouldFollowBottomRef.current = !initialScrollTargetId && !initialScrollAnchorId;
+    setFollowBottom(!initialScrollTargetId && !initialScrollAnchorId);
     scheduleScroll(() => {
       if (initialScrollTargetId) {
-        isAtBottomRef.current = false;
+        setAtBottom(false);
+        setFollowBottom(false);
         if (shouldVirtualize) {
           const idx = messages.findIndex((m) => String(m?.id || "") === String(initialScrollTargetId));
           if (idx >= 0) {
@@ -671,18 +715,20 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         if (shouldVirtualize) {
           const idx = messages.findIndex((m) => String(m?.id || "") === String(initialScrollAnchorId));
           if (idx >= 0) {
-            isAtBottomRef.current = false;
+            setAtBottom(false);
+            setFollowBottom(false);
             scrollToAnchorStable(idx, Number(initialScrollAnchorOffsetPx || 0));
             return;
           }
         } else if (scrollToMessageAnchor(String(initialScrollAnchorId), Number(initialScrollAnchorOffsetPx || 0))) {
-          isAtBottomRef.current = false;
+          setAtBottom(false);
+          setFollowBottom(false);
           return;
         }
       }
       scrollToBottom();
     });
-  }, [initialScrollAnchorId, initialScrollAnchorOffsetPx, initialScrollTargetId, messages, scheduleScroll, scrollToAnchorStable, scrollToBottom, scrollToIndexStable, scrollToMessageAnchor, shouldVirtualize]);
+  }, [initialScrollAnchorId, initialScrollAnchorOffsetPx, initialScrollTargetId, messages, scheduleScroll, scrollToAnchorStable, scrollToBottom, scrollToIndexStable, scrollToMessageAnchor, setAtBottom, setFollowBottom, shouldVirtualize]);
 
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
@@ -692,11 +738,28 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (!el || typeof ResizeObserver === "undefined") return;
 
     const observer = new ResizeObserver(() => {
-      scheduleRemeasure();
+      // 容器高度变化（如 footer 回复栏出现/消失）时，不做任何滚动，
+      // 让消息列表的可视位置完全不变。
+      // virtualizer 内部已有自己的 ResizeObserver 处理视口重算，无需重复调用 measure()。
+      isContainerResizingRef.current = true;
+
+      // 同步更新 lastScrollTopRef，避免浏览器裁剪 scrollTop 后
+      // handleScroll 将其误判为用户上滑方向
+      lastScrollTopRef.current = el.scrollTop;
+
+      // 双帧 rAF 延迟清除标记，确保覆盖行 ResizeObserver 的异步回调
+      // （行宽可能因滚动条出现/消失而变化，触发 handleRowLayoutChange）
+      window.requestAnimationFrame(() => {
+        lastScrollTopRef.current = el.scrollTop;
+        window.requestAnimationFrame(() => {
+          isContainerResizingRef.current = false;
+          lastScrollTopRef.current = el.scrollTop;
+        });
+      });
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [scheduleRemeasure, shouldVirtualize]);
+  }, [shouldVirtualize, virtualizer]);
 
   useEffect(() => {
     return () => {
@@ -764,10 +827,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         // Keep topLoad disarmed so the restored position (which may still be
         // near the top) doesn't immediately re-trigger another load.
         topLoadArmedRef.current = false;
-        shouldFollowBottomRef.current = false;
+        setFollowBottom(false);
       }
     }
-  }, [isLoadingHistory, scrollToMessageAnchor]);
+  }, [isLoadingHistory, scrollToMessageAnchor, setFollowBottom]);
 
   useEffect(() => {
     if (isLoadingHistory) return;
@@ -892,14 +955,13 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                       }
                     }}
                     onCopyLink={onCopyLink}
-                    onCopyContent={onCopyContent}
-                    onRelay={onRelay}
-                    onOpenSource={onOpenSource}
-                    onOpenPresentationRef={onOpenPresentationRef}
-                    onLayoutChange={() => handleRowLayoutChange(null)}
-                  />
-                </div>
-              ))}
+                  onCopyContent={onCopyContent}
+                  onRelay={onRelay}
+                  onOpenSource={onOpenSource}
+                  onOpenPresentationRef={onOpenPresentationRef}
+                />
+              </div>
+            ))}
             </div>
           )}
 

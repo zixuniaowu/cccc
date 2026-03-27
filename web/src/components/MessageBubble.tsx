@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { FloatingPortal } from "@floating-ui/react";
 import { useTranslation } from 'react-i18next';
 import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef } from "../types";
@@ -19,6 +19,8 @@ const RUNTIME_LOGO: Record<string, string> = {
     codex: `${RUNTIME_LOGO_BASE}logos/codex.png`,
     gemini: `${RUNTIME_LOGO_BASE}logos/gemini.png`,
 };
+const IMAGE_ASPECT_RATIO_CACHE = new Map<string, number>();
+const IMAGE_LOAD_ERROR_CACHE = new Set<string>();
 
 function resolveSenderActor(actors: Actor[], senderId: string): Actor | null {
     const key = String(senderId || "").trim();
@@ -146,10 +148,11 @@ function ImagePreview({
     isUserMessage: boolean;
     isDark: boolean;
 }) {
-    const [loadError, setLoadError] = useState(false);
+    const [loadError, setLoadError] = useState(() => IMAGE_LOAD_ERROR_CACHE.has(href));
     const [isLightboxOpen, setIsLightboxOpen] = useState(false);
     const [resolvedHref, setResolvedHref] = useState<string>(isSvg ? "" : href);
     const [isResolvingSvg, setIsResolvingSvg] = useState<boolean>(isSvg);
+    const [aspectRatio, setAspectRatio] = useState<number | null>(() => IMAGE_ASPECT_RATIO_CACHE.get(href) ?? null);
     const { t } = useTranslation('chat');
 
     useEffect(() => {
@@ -210,6 +213,38 @@ function ImagePreview({
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, [isLightboxOpen]);
 
+    useEffect(() => {
+        const src = resolvedHref || href;
+        if (!src || isResolvingSvg || IMAGE_LOAD_ERROR_CACHE.has(href)) {
+            return undefined;
+        }
+        const cachedAspectRatio = IMAGE_ASPECT_RATIO_CACHE.get(href);
+        if (typeof cachedAspectRatio === "number" && cachedAspectRatio > 0) {
+            return undefined;
+        }
+        let cancelled = false;
+        const img = new Image();
+        img.onload = () => {
+            if (cancelled) return;
+            const width = Number(img.naturalWidth || 0);
+            const height = Number(img.naturalHeight || 0);
+            if (width > 0 && height > 0) {
+                const nextAspectRatio = width / height;
+                IMAGE_ASPECT_RATIO_CACHE.set(href, nextAspectRatio);
+                setAspectRatio(nextAspectRatio);
+            }
+        };
+        img.onerror = () => {
+            if (cancelled) return;
+            IMAGE_LOAD_ERROR_CACHE.add(href);
+            setLoadError(true);
+        };
+        img.src = src;
+        return () => {
+            cancelled = true;
+        };
+    }, [resolvedHref, href, isResolvingSvg]);
+
     if (loadError) {
         // Fallback to file download link on error
         return (
@@ -238,7 +273,9 @@ function ImagePreview({
                 type="button"
                 className={classNames(
                     "group overflow-hidden rounded-lg",
-                    isSvg ? "block" : "block max-w-full"
+                    isSvg
+                        ? "block"
+                        : "inline-flex max-w-[min(22rem,70vw)] sm:max-w-[min(30rem,60vw)]"
                 )}
                 onClick={() => setIsLightboxOpen(true)}
                 aria-label={t('openImagePreview', { name: alt })}
@@ -259,14 +296,42 @@ function ImagePreview({
                     </div>
                 ) : (
                     <img
-                        src={resolvedHref}
+                        src={resolvedHref || href}
                         alt={alt}
                         className={classNames(
-                            "cursor-zoom-in object-contain rounded-lg transition-opacity group-hover:opacity-95",
-                            isSvg ? "block h-auto w-full max-h-64 sm:max-h-80" : "max-w-full max-h-64 sm:max-h-80"
+                            "cursor-zoom-in rounded-lg object-contain transition-opacity group-hover:opacity-95",
+                            isSvg
+                                ? "block h-auto w-full max-h-64 sm:max-h-80"
+                                : "block w-full",
+                            isSvg
+                                ? null
+                                : isUserMessage
+                                    ? "bg-blue-700/20"
+                                    : isDark
+                                        ? "bg-slate-900/40"
+                                        : "bg-gray-100"
                         )}
-                        loading="lazy"
-                        onError={() => setLoadError(true)}
+                        style={isSvg ? undefined : {
+                            aspectRatio: aspectRatio ?? "4 / 3",
+                            maxHeight: "20rem",
+                        }}
+                        loading={isSvg ? "lazy" : "eager"}
+                        decoding="async"
+                        onError={() => {
+                            IMAGE_LOAD_ERROR_CACHE.add(href);
+                            setLoadError(true);
+                        }}
+                        onLoad={(event) => {
+                            if (isSvg) return;
+                            const target = event.currentTarget;
+                            const width = Number(target.naturalWidth || 0);
+                            const height = Number(target.naturalHeight || 0);
+                            if (width > 0 && height > 0) {
+                                const nextAspectRatio = width / height;
+                                IMAGE_ASPECT_RATIO_CACHE.set(href, nextAspectRatio);
+                                setAspectRatio(nextAspectRatio);
+                            }
+                        }}
                     />
                 )}
             </button>
@@ -376,7 +441,6 @@ export interface MessageBubbleProps {
     onRelay?: (ev: LedgerEvent) => void;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
     onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
-    onLayoutChange?: () => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -396,7 +460,6 @@ export const MessageBubble = memo(function MessageBubble({
     onRelay,
     onOpenSource,
     onOpenPresentationRef,
-    onLayoutChange,
 }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
     const isOptimistic = !!(ev.data as Record<string, unknown> | undefined)?._optimistic;
@@ -405,7 +468,6 @@ export const MessageBubble = memo(function MessageBubble({
 
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
     const [copiedMessageText, setCopiedMessageText] = useState(false);
-    const rootRef = useRef<HTMLDivElement | null>(null);
 
     const canShowAgentState = useMemo(() => {
         if (isUserMessage) return false;
@@ -577,25 +639,6 @@ export const MessageBubble = memo(function MessageBubble({
         return () => window.clearTimeout(timer);
     }, [copiedMessageText]);
 
-    useEffect(() => {
-        const el = rootRef.current;
-        if (!el || typeof ResizeObserver === "undefined" || !onLayoutChange) return undefined;
-
-        let rafId: number | null = null;
-        const observer = new ResizeObserver(() => {
-            if (rafId != null) window.cancelAnimationFrame(rafId);
-            rafId = window.requestAnimationFrame(() => {
-                rafId = null;
-                onLayoutChange();
-            });
-        });
-        observer.observe(el);
-        return () => {
-            observer.disconnect();
-            if (rafId != null) window.cancelAnimationFrame(rafId);
-        };
-    }, [onLayoutChange]);
-
     const handleCopyMessageText = useCallback(async () => {
         const ok = await copyText(copyableMessageText);
         if (ok) {
@@ -605,7 +648,6 @@ export const MessageBubble = memo(function MessageBubble({
 
     return (
         <div
-            ref={rootRef}
             className={classNames(
                 "relative flex w-full min-w-0 gap-2 sm:gap-3 group",
                 isUserMessage
@@ -799,7 +841,7 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 <div
                     className={classNames(
-                        "px-4 py-2.5 text-sm leading-relaxed",
+                        "inline-flex max-w-full flex-col px-4 py-2.5 text-sm leading-relaxed",
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none shadow-sm"
                             : "glass-bubble rounded-2xl rounded-tl-none text-[var(--color-text-primary)]"
@@ -915,7 +957,7 @@ export const MessageBubble = memo(function MessageBubble({
                             <>
                                 {/* Image previews */}
                                 {imageAttachments.length > 0 && (
-                                    <div className="mt-3 flex flex-wrap gap-2">
+                                    <div className="mt-3 flex max-w-full flex-wrap items-start gap-2">
                                         {imageAttachments.map((a, i) => {
                                             const parts = a.path.split("/");
                                             const blobName = parts[parts.length - 1] || "";
@@ -936,7 +978,7 @@ export const MessageBubble = memo(function MessageBubble({
                                 )}
                                 {/* File attachments */}
                                 {fileAttachments.length > 0 && (
-                                    <div className="mt-3 flex flex-wrap gap-2">
+                                    <div className="mt-3 flex max-w-full flex-wrap items-start gap-2">
                                         {fileAttachments.map((a, i) => {
                                             const parts = a.path.split("/");
                                             const blobName = parts[parts.length - 1] || "";

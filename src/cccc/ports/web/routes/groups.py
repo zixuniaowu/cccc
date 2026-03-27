@@ -33,6 +33,8 @@ from ....kernel.prompt_files import (
     write_group_prompt_file,
 )
 from ....kernel.pet_prompt import build_pet_prompt_parts, build_pet_snapshot_text, load_pet_help_markdown
+from ....kernel.pet_outcomes import append_pet_decision_outcome
+from ....kernel.pet_signals import load_pet_signals
 from ...mcp.utils.help_markdown import parse_help_markdown
 from ....kernel.access_tokens import list_access_tokens
 from ....kernel.pet_decisions import load_pet_decisions
@@ -52,6 +54,7 @@ from ..schemas import (
     GroupSettingsRequest,
     GroupTemplatePreviewRequest,
     GroupUpdateRequest,
+    PetDecisionOutcomeRequest,
     ProjectMdUpdateRequest,
     RepoPromptUpdateRequest,
     RouteContext,
@@ -158,10 +161,13 @@ def _build_pet_context_payload(
     help_content = str(help_prompt.get("content") or "")
     persona = str(help_prompt.get("persona") or "").strip()
     source = str(help_prompt.get("pet_source") or "default").strip() or "default"
+    decisions = load_pet_decisions(group)
+    signals = load_pet_signals(group, context_payload=context_payload)
     payload = {
         "persona": persona,
         "snapshot": build_pet_snapshot_text(group, context_payload),
-        "decisions": load_pet_decisions(group),
+        "decisions": decisions,
+        "signals": signals,
         "source": source,
     }
     if not verbose:
@@ -1168,6 +1174,24 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 ),
             },
         }
+
+    @group_router.post("/pet-decisions/outcome")
+    async def pet_decision_outcome_post(group_id: str, req: PetDecisionOutcomeRequest) -> Dict[str, Any]:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        event = await run_in_threadpool(
+            append_pet_decision_outcome,
+            group,
+            by=str(req.by or "user").strip() or "user",
+            fingerprint=str(req.fingerprint or "").strip(),
+            outcome=str(req.outcome or "").strip(),
+            decision_id=str(req.decision_id or "").strip(),
+            action_type=str(req.action_type or "").strip(),
+            cooldown_ms=int(req.cooldown_ms or 0),
+            source_event_id=str(req.source_event_id or "").strip(),
+        )
+        return {"ok": True, "result": {"event": event}}
 
     @group_router.put("/prompts/{kind}")
     async def prompts_put(group_id: str, kind: str, req: RepoPromptUpdateRequest) -> Dict[str, Any]:

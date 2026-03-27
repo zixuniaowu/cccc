@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ...kernel.actors import find_actor
 from ...kernel.ledger import append_event
+from ...kernel.runtime import runtime_start_preflight_error
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...runners.platform_support import pty_support_error_message
@@ -80,6 +81,9 @@ def start_actor_process(
         return {"success": False, "error": "custom runtime requires a command (PTY runner)"}
 
     effective_cmd = normalize_runtime_command(runtime, list(command or []))
+    runtime_error = runtime_start_preflight_error(runtime, effective_cmd, runner=effective_runner)
+    if runtime_error:
+        return {"success": False, "error": runtime_error}
 
     if effective_runner != "headless":
         try:

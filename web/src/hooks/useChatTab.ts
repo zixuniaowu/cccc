@@ -497,13 +497,18 @@ export function useChatTab({
 
       // Cross-group sends do not deliver a canonical event into the current
       // group's stream, so clear the optimistic entry on HTTP success.
-      if (isCrossGroup || canonicalEvent) {
+      //
+      // Same-group sends keep the optimistic row until SSE reconciliation by
+      // client_id. Replacing an optimistic attachment preview with the HTTP
+      // response event causes a second image load/layout pass, which produces
+      // a visible jump while the list is following bottom.
+      if (isCrossGroup) {
         removeOutbox(selectedGroupId, localId);
       }
-      // Accepted-without-event for same-group sends means the daemon has
-      // queued the send; keep the optimistic entry until SSE delivers the
-      // canonical event with client_id.
-      if (canonicalEvent) {
+      // For same-group sends, rely on SSE to append the canonical event and
+      // clear the matching optimistic row. Cross-group sends still need the
+      // returned event because they do not stream back into the current group.
+      if (canonicalEvent && isCrossGroup) {
         appendEvent(canonicalEvent, selectedGroupId);
       }
       setDestGroupId(selectedGroupId);

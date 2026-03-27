@@ -35,7 +35,8 @@ describe("derivePetPersonaPolicy", () => {
     `);
 
     expect(policy.compactMessageEvents).toBe(true);
-    expect(policy.autoRestartActors).toBe(true);
-    expect(policy.autoCompleteTasks).toBe(false);
+    expect(policy).toEqual({
+      compactMessageEvents: true,
+    });
   });
 });

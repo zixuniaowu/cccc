@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldSurfaceReminder } from "./useWebPetData";
+import { shouldSurfaceReminder, shouldUseCompactReminderSummary } from "./useWebPetData";
 import type { PetReminder } from "./types";
 import type { PetPersonaPolicy } from "./petPersona";
 
@@ -96,5 +96,61 @@ describe("shouldSurfaceReminder", () => {
         makePolicy(),
       ),
     ).toBe(true);
+  });
+
+  it("keeps automation proposal reminders when they have executable actions", () => {
+    expect(
+      shouldSurfaceReminder(
+        makeReminder({
+          summary: "建议创建一条一次性提醒规则。",
+          action: {
+            type: "automation_proposal",
+            groupId: "g-1",
+            title: "One-shot follow-up",
+            summary: "稍后检查 waiting_user 是否已推进。",
+            actions: [
+              {
+                type: "create_rule",
+                rule: {
+                  id: "pet-user-dependency-followup-once",
+                },
+              },
+            ],
+          },
+        }),
+        makePolicy(),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("shouldUseCompactReminderSummary", () => {
+  it("only compacts direct send suggestions", () => {
+    expect(shouldUseCompactReminderSummary(makeReminder(), makePolicy())).toBe(true);
+    expect(
+      shouldUseCompactReminderSummary(
+        makeReminder({
+          action: {
+            type: "automation_proposal",
+            groupId: "g-1",
+            title: "One-shot follow-up",
+            actions: [{ type: "create_rule" }],
+          },
+        }),
+        makePolicy(),
+      ),
+    ).toBe(false);
+    expect(
+      shouldUseCompactReminderSummary(
+        makeReminder({
+          action: {
+            type: "task_proposal",
+            groupId: "g-1",
+            operation: "move",
+          },
+        }),
+        makePolicy(),
+      ),
+    ).toBe(false);
   });
 });

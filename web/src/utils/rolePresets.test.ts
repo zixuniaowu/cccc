@@ -70,9 +70,10 @@ describe("rolePresets", () => {
     expect(getRolePresetApplyState("existing draft", "")).toBe("no_change");
   });
 
-  it("uses coordinator as the default pet persona seed", () => {
-    expect(getDefaultPetPersonaSeed()).toBe(
-      String(getRolePresetById("coordinator")?.content || "").trim(),
-    );
+  it("uses a dedicated execution-focused default pet persona seed", () => {
+    const seed = getDefaultPetPersonaSeed();
+    expect(seed).toContain("You are the Web Pet for this group.");
+    expect(seed).toContain("Every pet review must end with exactly one decision write");
+    expect(seed).toContain("low-noise");
   });
 });

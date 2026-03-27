@@ -52,6 +52,36 @@ def _normalize_action(raw: Any) -> Dict[str, Any]:
         if text:
             out["text"] = text
         return out
+    if action_type == "automation_proposal":
+        out["group_id"] = str(raw.get("group_id") or "").strip()
+        title = str(raw.get("title") or "").strip()
+        if title:
+            out["title"] = title
+        summary = str(raw.get("summary") or "").strip()
+        if summary:
+            out["summary"] = summary
+        actions_raw = raw.get("actions")
+        if isinstance(actions_raw, list):
+            normalized_actions: list[dict[str, Any]] = []
+            for item in actions_raw:
+                if not isinstance(item, dict):
+                    continue
+                action_item: Dict[str, Any] = {}
+                action_kind = str(item.get("type") or "").strip()
+                if not action_kind:
+                    continue
+                action_item["type"] = action_kind
+                for key in ("rule_id", "enabled"):
+                    if key in item:
+                        action_item[key] = item.get(key)
+                if isinstance(item.get("rule"), dict):
+                    action_item["rule"] = dict(item.get("rule") or {})
+                if isinstance(item.get("ruleset"), dict):
+                    action_item["ruleset"] = dict(item.get("ruleset") or {})
+                normalized_actions.append(action_item)
+            if normalized_actions:
+                out["actions"] = normalized_actions
+        return out
     return {}
 
 

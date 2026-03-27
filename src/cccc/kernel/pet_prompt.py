@@ -5,11 +5,14 @@ from typing import Any, Dict
 from .context import ContextStorage
 from .group import Group
 from .pet_actor import PET_ACTOR_ID
+from .pet_automation_proposals import build_pet_automation_proposal_summary_lines
+from .pet_signals import build_pet_signal_summary_lines, load_pet_signals
 from .pet_task_proposals import build_task_proposal_summary_lines
 from .pet_task_triage import build_task_triage_payload, join_task_briefs
 from .prompt_files import HELP_FILENAME, load_builtin_help_markdown, read_group_prompt_file
 from .system_prompt import render_role_system_prompt
 from ..ports.mcp.utils.help_markdown import _select_help_markdown, parse_help_markdown
+from ..daemon.automation.engine import _load_ruleset as load_automation_ruleset
 
 
 def load_pet_help_markdown(group: Group) -> str:
@@ -101,6 +104,21 @@ def build_pet_snapshot_text(group: Any, context_payload: Dict[str, Any]) -> str:
         if rendered:
             parts.append(f"Task Proposals: {rendered}")
 
+    automation_proposal_candidates = (
+        context_payload.get("automation_proposal_candidates")
+        if isinstance(context_payload.get("automation_proposal_candidates"), list)
+        else []
+    )
+    if automation_proposal_candidates:
+        rendered = " ; ".join(str(item or "").strip() for item in automation_proposal_candidates[:2] if str(item or "").strip())
+        if rendered:
+            parts.append(f"Automation Proposals: {rendered}")
+
+    signal_payload = context_payload.get("pet_signals") if isinstance(context_payload.get("pet_signals"), dict) else None
+    if signal_payload is None:
+        signal_payload = load_pet_signals(group, context_payload=context_payload)
+    parts.extend(build_pet_signal_summary_lines(signal_payload))
+
     return "\n".join(parts)
 
 
@@ -114,14 +132,20 @@ def build_pet_prompt_parts(group: Group, *, help_markdown: str, context_payload:
             "Pet Decision Contract:",
             "- You are the Web Pet actor. Reuse the normal peer workflow, tools, and context discipline.",
             "- Your reminder output surface is cccc_pet_decisions, not visible chat.",
+            "- Every time you receive a pet_review request, you must finish by calling cccc_pet_decisions exactly once.",
+            "- The only valid end states for a review are: action=replace with the full current decision list, or action=clear when there is truly nothing actionable.",
+            "- Do not end a review with analysis only. Do not skip the tool call. Do not leave stale decisions untouched.",
             "- When you have current actionable reminders, call cccc_pet_decisions with action=replace and write the full decision list.",
             "- When there is no current actionable reminder, call cccc_pet_decisions with action=clear.",
             "- Do not emit low-signal status chatter, duplicate restarts, or reminder-like chat messages just to mirror state.",
             "- Judge from current evidence and context. Do not rely on fixed frontend keyword matching.",
+            "- chat_reply, reply_required, actor_down, blocked work, waiting_user, and handoff pressure are high-signal review inputs; do not ignore them silently.",
             "- For task-board management, prefer proposing a structured task_proposal for the foreman instead of mutating shared tasks yourself.",
+            "- For repeatable coordination issues, you may propose a structured automation_proposal, but do not assume permission to execute it yourself.",
             "- When task pressure is high, prefer one high-value proposal over many noisy reminders.",
             "- For task triage, prioritize: waiting_user > handoff > blocked > planned backlog cleanup.",
             "- If Runtime Snapshot includes Task Proposals, treat them as high-signal candidate directions, then decide whether one is worth surfacing now.",
+            "- Treat Proposal Ready as the current best evidence about whether a reminder should be emitted now, and what it should focus on.",
             "- Unless there is an urgent runtime failure, emit at most one task_proposal per review.",
         ]
     )
@@ -181,6 +205,8 @@ def _load_pet_runtime_context(group: Group) -> Dict[str, Any]:
             }
         )
 
+    signal_payload = load_pet_signals(group, context_payload=task_triage)
+    automation_ruleset = load_automation_ruleset(group)
     return {
         "tasks_summary": {
             "total": len(tasks),
@@ -190,6 +216,13 @@ def _load_pet_runtime_context(group: Group) -> Dict[str, Any]:
         },
         "agent_states": agent_states,
         "task_proposal_candidates": build_task_proposal_summary_lines(tasks, limit=2),
+        "automation_proposal_candidates": build_pet_automation_proposal_summary_lines(
+            group,
+            signal_payload=signal_payload,
+            ruleset=automation_ruleset,
+            limit=1,
+        ),
+        "pet_signals": signal_payload,
         **task_triage,
     }
 

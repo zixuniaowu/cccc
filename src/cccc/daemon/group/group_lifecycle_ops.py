@@ -11,6 +11,7 @@ from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.pet_actor import sync_pet_actor
 from ...kernel.permissions import require_group_permission
+from ...kernel.runtime import runtime_start_preflight_error
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
@@ -142,6 +143,18 @@ def handle_group_start(
                     },
                 )
             if runner_effective != "headless":
+                effective_cmd = normalize_runtime_command(runtime, list(cmd or []))
+                runtime_error = runtime_start_preflight_error(runtime, effective_cmd, runner=runner_effective)
+                if runtime_error:
+                    return _error(
+                        "runtime_unavailable",
+                        runtime_error,
+                        details={
+                            "group_id": group.group_id,
+                            "actor_id": aid,
+                            "runtime": runtime,
+                        },
+                    )
                 try:
                     mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
                 except Exception as e:
@@ -162,7 +175,6 @@ def handle_group_start(
                 except Exception:
                     pass
             else:
-                effective_cmd = normalize_runtime_command(runtime, list(cmd or []))
                 session = pty_runner.SUPERVISOR.start_actor(
                     group_id=group.group_id,
                     actor_id=aid,

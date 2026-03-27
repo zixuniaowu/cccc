@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Optional
 from ...kernel.actors import list_actors
 from ...kernel.group import load_group
 from ...kernel.pet_actor import sync_pet_actor
+from ...kernel.runtime import runtime_start_preflight_error
 from ...util.conv import coerce_bool
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -111,6 +112,11 @@ def autostart_running_groups(
                 continue
 
             ok_mcp = True
+            effective_cmd = normalize_runtime_command(runtime, list(command or [])) if effective_runner != "headless" else []
+            runtime_error = runtime_start_preflight_error(runtime, effective_cmd, runner=effective_runner)
+            if runtime_error:
+                logger.warning("Autostart skipped for %s/%s: %s", group_id, actor_id, runtime_error)
+                continue
             try:
                 ok_mcp = bool(ensure_mcp_installed(runtime, cwd))
             except Exception:
@@ -136,7 +142,6 @@ def autostart_running_groups(
                     )
                 else:
                     effective_env = merge_actor_env_with_private(group.group_id, actor_id, env)
-                    effective_cmd = normalize_runtime_command(runtime, list(command or []))
                     session = pty_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
                         actor_id=actor_id,

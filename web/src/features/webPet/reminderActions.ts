@@ -1,7 +1,7 @@
 import type { PetReminder, ReminderAction } from "./types";
 
 export interface ReminderActionButton {
-  labelKey: "send" | "askForeman" | "restart" | "restartPeer" | "restartForeman";
+  labelKey: "send" | "askForeman" | "applyRule" | "restart" | "restartPeer" | "restartForeman";
   fallback: string;
   action: ReminderAction;
 }
@@ -9,7 +9,10 @@ export interface ReminderActionButton {
 export function getReminderActionButtons(
   reminder: PetReminder,
 ): ReminderActionButton[] {
-  if (reminder.action.type === "send_suggestion" && reminder.suggestion?.trim()) {
+  if (
+    reminder.action.type === "send_suggestion" &&
+    (reminder.suggestion?.trim() || reminder.action.text?.trim())
+  ) {
     return [
       {
         labelKey: "send",
@@ -40,6 +43,16 @@ export function getReminderActionButtons(
       {
         labelKey: "askForeman",
         fallback: "Ask foreman",
+        action: reminder.action,
+      },
+    ];
+  }
+
+  if (reminder.action.type === "automation_proposal") {
+    return [
+      {
+        labelKey: "applyRule",
+        fallback: "Apply rule",
         action: reminder.action,
       },
     ];

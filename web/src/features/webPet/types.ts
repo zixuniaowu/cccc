@@ -38,6 +38,13 @@ export type ReminderAction =
       text?: string;
     }
   | {
+      type: "automation_proposal";
+      groupId: string;
+      title?: string;
+      summary?: string;
+      actions: Array<Record<string, unknown>>;
+    }
+  | {
       type: "restart_actor";
       groupId: string;
       actorId: string;

@@ -304,6 +304,8 @@ export function invalidateContextRead(groupId: string): void {
 export type FetchContextOptions = {
   fresh?: boolean;
   detail?: ContextDetailLevel;
+  noCache?: boolean;
+  signal?: AbortSignal;
 };
 
 type UnknownRecord = Record<string, unknown>;
@@ -731,8 +733,8 @@ export async function fetchPing(options?: { includeHome?: boolean }) {
   );
 }
 
-export async function fetchGroup(groupId: string) {
-  return apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(groupId)}`);
+export async function fetchGroup(groupId: string, init?: RequestInit & { noCache?: boolean }) {
+  return apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(groupId)}`, init);
 }
 
 export async function fetchPresentation(groupId: string): Promise<ApiResponse<{ group_id: string; presentation: GroupPresentation }>> {
@@ -1147,7 +1149,7 @@ export async function importGroupTemplateReplace(groupId: string, file: File) {
 
 // ============ Ledger ============
 
-export async function fetchLedgerTail(groupId: string, lines = 120) {
+export async function fetchLedgerTail(groupId: string, lines = 120, init?: RequestInit & { noCache?: boolean }) {
   const params = new URLSearchParams({
     kind: "chat",
     limit: String(lines),
@@ -1156,7 +1158,8 @@ export async function fetchLedgerTail(groupId: string, lines = 120) {
     with_obligation_status: "true",
   });
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`
+    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`,
+    init,
   );
 }
 
@@ -1259,7 +1262,7 @@ export type PetPeerContextResponse = {
       suggestion_kind?: "mention" | "reply_required" | string | null;
     };
     action?: {
-      type?: "send_suggestion" | "restart_actor" | "task_proposal" | string;
+      type?: "send_suggestion" | "restart_actor" | "task_proposal" | "automation_proposal" | string;
       group_id?: string | null;
       actor_id?: string | null;
       text?: string | null;
@@ -1270,6 +1273,8 @@ export type PetPeerContextResponse = {
       title?: string | null;
       status?: string | null;
       assignee?: string | null;
+      summary?: string | null;
+      actions?: Array<Record<string, unknown>>;
     };
     updated_at?: string | null;
   }>;
@@ -1277,6 +1282,54 @@ export type PetPeerContextResponse = {
   help?: string;
   prompt?: string;
   snapshot: string;
+  signals?: {
+    reply_pressure?: {
+      severity?: string;
+      pending_count?: number;
+      overdue_count?: number;
+      oldest_pending_seconds?: number;
+      baseline_median_reply_seconds?: number;
+    };
+    coordination_rhythm?: {
+      severity?: string;
+      foreman_id?: string;
+      silence_seconds?: number;
+      baseline_median_gap_seconds?: number;
+    };
+    task_pressure?: {
+      severity?: string;
+      score?: number;
+      trend_score?: number;
+      blocked_count?: number;
+      waiting_user_count?: number;
+      handoff_count?: number;
+      planned_backlog_count?: number;
+      recent_blocked_updates?: number;
+      recent_waiting_user_updates?: number;
+      recent_handoff_updates?: number;
+      recent_task_create_ops?: number;
+      recent_task_update_ops?: number;
+      recent_task_move_ops?: number;
+      recent_task_restore_ops?: number;
+      recent_task_delete_ops?: number;
+      recent_task_change_count?: number;
+      recent_task_context_sync_events?: number;
+      ledger_trend_score?: number;
+    };
+    proposal_ready?: {
+      ready?: boolean;
+      focus?: string;
+      severity?: string;
+      summary?: string;
+      pending_reply_count?: number;
+      overdue_reply_count?: number;
+      waiting_user_count?: number;
+      blocked_count?: number;
+      handoff_count?: number;
+      recent_task_change_count?: number;
+      foreman_silence_seconds?: number;
+    };
+  };
   source: "help" | "default";
   help_prompt?: GroupPromptInfo;
 };
@@ -1311,6 +1364,36 @@ export async function fetchPetPeerContext(groupId: string, opts?: { fresh?: bool
   );
 }
 
+export async function recordPetDecisionOutcome(
+  groupId: string,
+  payload: {
+    fingerprint: string;
+    outcome: "executed" | "dismissed" | "snoozed" | "expired";
+    decisionId?: string;
+    actionType?: string;
+    cooldownMs?: number;
+    sourceEventId?: string;
+  }
+) {
+  const gid = String(groupId || "").trim();
+  clearSharedReadRequest(petPeerContextRequestKey(gid, false, false));
+  clearSharedReadRequest(petPeerContextRequestKey(gid, false, true));
+  clearSharedReadRequest(petPeerContextRequestKey(gid, true, false));
+  clearSharedReadRequest(petPeerContextRequestKey(gid, true, true));
+  return apiJson<{ event?: unknown }>(`/api/v1/groups/${encodeURIComponent(gid)}/pet-decisions/outcome`, {
+    method: "POST",
+    body: JSON.stringify({
+      fingerprint: String(payload.fingerprint || "").trim(),
+      outcome: payload.outcome,
+      decision_id: String(payload.decisionId || "").trim(),
+      action_type: String(payload.actionType || "").trim(),
+      cooldown_ms: Number(payload.cooldownMs || 0),
+      source_event_id: String(payload.sourceEventId || "").trim(),
+      by: "user",
+    }),
+  });
+}
+
 export async function updateGroupPrompt(
   groupId: string,
   kind: GroupPromptKind,
@@ -1336,11 +1419,14 @@ export async function resetGroupPrompt(groupId: string, kind: GroupPromptKind) {
 
 // ============ Actors ============
 
-export async function fetchActors(groupId: string, includeUnread = false) {
+export async function fetchActors(groupId: string, includeUnread = false, init?: RequestInit & { noCache?: boolean }) {
   const gid = String(groupId || "").trim();
   const url = includeUnread
     ? `/api/v1/groups/${encodeURIComponent(gid)}/actors?include_unread=true`
     : `/api/v1/groups/${encodeURIComponent(gid)}/actors`;
+  if (init?.noCache || init?.signal) {
+    return apiJson<{ actors: Actor[] }>(url, init);
+  }
   if (includeUnread) {
     return apiJson<{ actors: Actor[] }>(url);
   }
@@ -1727,10 +1813,29 @@ export async function fetchContext(groupId: string, opts?: FetchContextOptions) 
     clearContextRequest(gid);
     params.set("fresh", "1");
     params.set("_", String(Date.now()));
+    if (opts?.noCache || opts?.signal) {
+      return apiJson<unknown>(
+        `/api/v1/groups/${encodeURIComponent(gid)}/context?${params.toString()}`,
+        { signal: opts?.signal },
+      ).then((resp) => {
+        if (!resp.ok) return resp as ApiResponse<GroupContext>;
+        return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
+      });
+    }
     return reuseSharedReadRequest(contextRequestKey(gid, detail), async () => {
       const resp = await apiJson<unknown>(
         `/api/v1/groups/${encodeURIComponent(gid)}/context?${params.toString()}`
       );
+      if (!resp.ok) return resp as ApiResponse<GroupContext>;
+      return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
+    });
+  }
+  if (opts?.noCache || opts?.signal) {
+    const suffix = params.toString();
+    return apiJson<unknown>(
+      `/api/v1/groups/${encodeURIComponent(gid)}/context${suffix ? `?${suffix}` : ""}`,
+      { signal: opts?.signal },
+    ).then((resp) => {
       if (!resp.ok) return resp as ApiResponse<GroupContext>;
       return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
     });
@@ -1823,9 +1928,10 @@ export async function deleteCoordinationTask(groupId: string, taskId: string) {
 }
 
 
-export async function fetchSettings(groupId: string) {
+export async function fetchSettings(groupId: string, init?: RequestInit & { noCache?: boolean }) {
   return apiJson<{ settings: GroupSettings }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/settings`
+    `/api/v1/groups/${encodeURIComponent(groupId)}/settings`,
+    init,
   );
 }
 
@@ -1986,6 +2092,21 @@ export async function updateAutomation(groupId: string, ruleset: AutomationRuleS
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/automation`, {
     method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function manageAutomation(
+  groupId: string,
+  actions: Array<Record<string, unknown>>,
+  expectedVersion?: number,
+) {
+  const body: Record<string, unknown> = { actions, by: "user" };
+  if (typeof expectedVersion === "number" && Number.isFinite(expectedVersion)) {
+    body.expected_version = Math.trunc(expectedVersion);
+  }
+  return apiJson<GroupAutomation>(`/api/v1/groups/${encodeURIComponent(groupId)}/automation/manage`, {
+    method: "POST",
     body: JSON.stringify(body),
   });
 }

@@ -21,8 +21,22 @@ export function shouldSurfaceReminder(
     return !!reminder.action.groupId &&
       (!!reminder.action.text?.trim() || !!reminder.summary.trim());
   }
+  if (reminder.action.type === "automation_proposal") {
+    return !!reminder.action.groupId &&
+      reminder.action.actions.length > 0 &&
+      (!!reminder.action.summary?.trim() || !!reminder.action.title?.trim() || !!reminder.summary.trim());
+  }
   return reminder.action.type === "send_suggestion" &&
     (!!reminder.suggestion?.trim() || !!reminder.action.text?.trim());
+}
+
+export function shouldUseCompactReminderSummary(
+  reminder: PetReminder,
+  policy: PetPersonaPolicy,
+): boolean {
+  return Boolean(policy.compactMessageEvents) &&
+    reminder.kind === "suggestion" &&
+    reminder.action.type === "send_suggestion";
 }
 
 function localizeConnectionMessage(
@@ -49,7 +63,7 @@ function localizeReminder(
       : reminder.agent;
 
   let summary = reminder.summary;
-  if (policy.compactMessageEvents && reminder.kind === "suggestion") {
+  if (shouldUseCompactReminderSummary(reminder, policy)) {
     summary = buildCompactMessageSummary(
       reminder.source.suggestionKind || "mention",
       agentLabel,
@@ -153,6 +167,10 @@ export function useWebPetData(input: {
       hint = localizedPanelData.connection.message;
     } else if (filteredActiveReminder?.summary) {
       hint = filteredActiveReminder.summary;
+    } else if (petContext.status === "loading") {
+      hint = tr("hintPetContextLoading", "Syncing pet context…");
+    } else if (petContext.status === "error") {
+      hint = tr("hintPetContextUnavailable", "Pet context unavailable");
     } else if (
       localizedPanelData.taskProgress &&
       localizedPanelData.taskProgress.total > 0

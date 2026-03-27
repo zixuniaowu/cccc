@@ -641,7 +641,11 @@ def group_template_import_replace(args: Dict[str, Any]) -> DaemonResponse:
     if removed or added or updated or existing_ids != template_ids:
         try:
             storage.bump_version_state(actors_changed=True)
-            _schedule_summary_snapshot_rebuild(group.group_id)
+            # Actor removals should invalidate the cached summary first so the next
+            # summary read can return the previous snapshot marked stale before any
+            # rebuild races ahead and replaces it.
+            if not removed:
+                _schedule_summary_snapshot_rebuild(group.group_id)
         except Exception:
             pass
 

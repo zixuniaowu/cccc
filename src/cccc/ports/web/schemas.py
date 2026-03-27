@@ -210,6 +210,16 @@ class GroupSettingsRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class PetDecisionOutcomeRequest(BaseModel):
+    fingerprint: str
+    outcome: Literal["executed", "dismissed", "snoozed", "expired"]
+    decision_id: str = Field(default="")
+    action_type: str = Field(default="")
+    cooldown_ms: int = Field(default=0)
+    source_event_id: str = Field(default="")
+    by: str = Field(default="user")
+
+
 class GroupAutomationRequest(BaseModel):
     rules: list[AutomationRule] = Field(default_factory=list)
     snippets: Dict[str, str] = Field(default_factory=dict)

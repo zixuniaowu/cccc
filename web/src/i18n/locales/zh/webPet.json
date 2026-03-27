@@ -26,6 +26,7 @@
   "action": {
     "send": "发送",
     "askForeman": "交给 foreman",
+    "applyRule": "应用规则",
     "restart": "重启",
     "restartPeer": "重启 peer",
     "restartForeman": "重启 foreman",
@@ -37,7 +38,9 @@
     "restartRequested": "已请求重启",
     "actorRestartFailed": "重启失败",
     "taskProposalSent": "任务提案已发给 foreman",
-    "taskProposalSendFailed": "发送任务提案失败"
+    "taskProposalSendFailed": "发送任务提案失败",
+    "automationProposalApplied": "自动化提案已应用",
+    "automationProposalApplyFailed": "应用自动化提案失败"
   },
   "suggestionLabel": "建议",
   "taskProgress": "{{done}}/{{total}} 已完成",

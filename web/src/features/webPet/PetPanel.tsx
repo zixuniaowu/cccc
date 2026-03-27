@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { getReminderActionButtons } from "./reminderActions";
-import type { PanelData, PetReminder, ReminderAction } from "./types";
+import type { PanelData, PetReminder } from "./types";
 
 interface PetPanelProps {
   panelData: PanelData;
@@ -10,7 +10,7 @@ interface PetPanelProps {
   /** Panel opens on this side of the cat */
   align?: "left" | "right";
   onClose?: () => void;
-  onAction?: (action: ReminderAction) => void;
+  onAction?: (reminder: PetReminder) => void;
   catSize?: number;
 }
 
@@ -165,7 +165,7 @@ export function PetPanel({
                     title={reminder.summary}
                     onClick={
                       clickable
-                        ? () => onAction(actionButtons[0]!.action)
+                        ? () => onAction(reminder)
                         : undefined
                     }
                     onKeyDown={
@@ -173,7 +173,7 @@ export function PetPanel({
                         ? (e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
-                              onAction(actionButtons[0]!.action);
+                              onAction(reminder);
                             }
                           }
                         : undefined
@@ -202,7 +202,7 @@ export function PetPanel({
                             onClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
-                              onAction(button.action);
+                              onAction(reminder);
                             }}
                             onPointerDown={(event) => {
                               event.stopPropagation();

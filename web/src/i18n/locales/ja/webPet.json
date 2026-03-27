@@ -26,6 +26,7 @@
   "action": {
     "send": "送信",
     "askForeman": "foreman に渡す",
+    "applyRule": "ルール適用",
     "restart": "再起動",
     "restartPeer": "peer を再起動",
     "restartForeman": "foreman を再起動",
@@ -37,7 +38,9 @@
     "restartRequested": "再起動を依頼しました",
     "actorRestartFailed": "再起動に失敗しました",
     "taskProposalSent": "タスク提案を foreman に送りました",
-    "taskProposalSendFailed": "タスク提案の送信に失敗しました"
+    "taskProposalSendFailed": "タスク提案の送信に失敗しました",
+    "automationProposalApplied": "自動化提案を適用しました",
+    "automationProposalApplyFailed": "自動化提案の適用に失敗しました"
   },
   "suggestionLabel": "提案",
   "taskProgress": "{{done}}/{{total}} 完了",

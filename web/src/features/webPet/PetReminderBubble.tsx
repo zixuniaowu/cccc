@@ -1,12 +1,12 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getReminderActionButtons } from "./reminderActions";
-import type { PetReminder, ReminderAction } from "./types";
+import type { PetReminder } from "./types";
 
 interface PetReminderBubbleProps {
   reminder: PetReminder | null;
-  onDismiss: (fingerprint: string) => void;
-  onAction?: (action: ReminderAction) => void;
+  onDismiss: (fingerprint: string, opts?: { outcome?: "dismissed" | "snoozed" | null; cooldownMs?: number }) => void;
+  onAction?: (reminder: PetReminder) => void;
 }
 
 export function PetReminderBubble({
@@ -22,12 +22,11 @@ export function PetReminderBubble({
   }, [onDismiss, reminder]);
 
   const handleButtonAction = useCallback(
-    (action: ReminderAction) => {
+    () => {
       if (!reminder) return;
-      onAction?.(action);
-      onDismiss(reminder.fingerprint);
+      onAction?.(reminder);
     },
-    [onAction, onDismiss, reminder],
+    [onAction, reminder],
   );
 
   const displayAgent = reminder?.agent === "system"
@@ -126,7 +125,7 @@ export function PetReminderBubble({
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    handleButtonAction(btn.action);
+                    handleButtonAction();
                   }}
                   onPointerDown={(event) => {
                     event.stopPropagation();

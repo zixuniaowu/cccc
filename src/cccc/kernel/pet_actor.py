@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from ..util.conv import coerce_bool
 from .actors import INTERNAL_KIND_PET, add_actor, find_actor, find_foreman, list_visible_actors, remove_actor, update_actor
 from .group import Group
-from .runtime import get_runtime_command_with_flags
+from .runtime import PRIMARY_RUNTIMES, detect_runtime, get_runtime_command_with_flags, runtime_start_preflight_error
 
 PET_ACTOR_ID = "pet-peer"
 PET_ACTOR_TITLE = "Pet Peer"
+LOGGER = logging.getLogger(__name__)
 
 
 def is_desktop_pet_enabled(group: Group) -> bool:
@@ -25,15 +27,30 @@ def get_pet_actor(group: Group) -> Optional[Dict[str, Any]]:
     return actor
 
 
-def _pet_actor_seed(group: Group) -> Dict[str, Any]:
+def _pet_actor_seed(group: Group, *, fallback_actor: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     source = find_foreman(group)
     if not isinstance(source, dict):
         visible = list_visible_actors(group)
-        source = visible[0] if visible else {}
+        source = visible[0] if visible else fallback_actor if isinstance(fallback_actor, dict) else {}
+    if not isinstance(source, dict) or not source:
+        LOGGER.warning(
+            "pet actor seed fell back to defaults: no foreman, visible actor, or existing pet actor (group_id=%s)",
+            group.group_id,
+        )
+        source = {}
 
-    runtime = str(source.get("runtime") or "codex").strip() or "codex"
-    runner = str(source.get("runner") or "pty").strip() or "pty"
+    runtime_value = str(source.get("runtime") or "").strip()
+    runner_value = str(source.get("runner") or "").strip()
+    runner = runner_value if runner_value else "pty"
     command = source.get("command") if isinstance(source.get("command"), list) else []
+    runtime = runtime_value if runtime_value else "codex"
+    if runtime_start_preflight_error(runtime, list(command), runner=runner):
+        for candidate in PRIMARY_RUNTIMES:
+            if not detect_runtime(candidate).available:
+                continue
+            runtime = candidate
+            command = get_runtime_command_with_flags(candidate)
+            break
     env = source.get("env") if isinstance(source.get("env"), dict) else {}
     return {
         "title": PET_ACTOR_TITLE,
@@ -51,7 +68,7 @@ def _pet_actor_seed(group: Group) -> Dict[str, Any]:
 
 def ensure_pet_actor(group: Group) -> Dict[str, Any]:
     current = get_pet_actor(group)
-    seed = _pet_actor_seed(group)
+    seed = _pet_actor_seed(group, fallback_actor=current)
     if current is None:
         return add_actor(
             group,

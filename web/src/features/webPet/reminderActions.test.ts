@@ -31,6 +31,33 @@ describe("getReminderActionButtons", () => {
     ]);
   });
 
+  it("returns send when action text exists without suggestion", () => {
+    const reminder: PetReminder = {
+      id: "reply_required:evt-2",
+      kind: "suggestion",
+      priority: 80,
+      summary: "请直接发送这条回复",
+      agent: "foreman",
+      source: { eventId: "evt-2", suggestionKind: "reply_required" },
+      fingerprint: "group:g-1:suggestion:reply_required:evt-2",
+      action: {
+        type: "send_suggestion",
+        groupId: "g-1",
+        text: "我先处理这条，稍后同步结果。",
+        to: ["foreman"],
+        replyTo: "evt-2",
+      },
+    };
+
+    expect(getReminderActionButtons(reminder)).toEqual([
+      {
+        labelKey: "send",
+        fallback: "Send",
+        action: reminder.action,
+      },
+    ]);
+  });
+
   it("returns restart button for actor_down reminders", () => {
     const reminder: PetReminder = {
       id: "actor_down:peer-1",

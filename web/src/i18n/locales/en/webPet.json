@@ -26,6 +26,7 @@
   "action": {
     "send": "Send",
     "askForeman": "Ask foreman",
+    "applyRule": "Apply rule",
     "restart": "Restart",
     "restartPeer": "Restart peer",
     "restartForeman": "Restart foreman",
@@ -37,7 +38,9 @@
     "restartRequested": "Restart requested",
     "actorRestartFailed": "Failed to restart actor",
     "taskProposalSent": "Task proposal sent to foreman",
-    "taskProposalSendFailed": "Failed to send task proposal"
+    "taskProposalSendFailed": "Failed to send task proposal",
+    "automationProposalApplied": "Automation proposal applied",
+    "automationProposalApplyFailed": "Failed to apply automation proposal"
   },
   "suggestionLabel": "Suggestion",
   "taskProgress": "{{done}}/{{total}} done",

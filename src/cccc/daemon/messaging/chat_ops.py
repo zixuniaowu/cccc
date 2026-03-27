@@ -694,7 +694,7 @@ def handle_reply(
             group.group_id,
             reason="chat_reply",
             source_event_id=event_id,
-            immediate=True,
+            immediate=reply_required,
         )
     except Exception:
         pass
