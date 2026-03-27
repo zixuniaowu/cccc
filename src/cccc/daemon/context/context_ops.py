@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -886,6 +887,21 @@ def _schedule_summary_snapshot_rebuild(group_id: str) -> bool:
 
     threading.Thread(target=_run, name=f"cccc-summary-{gid}", daemon=True).start()
     return True
+
+
+def _wait_for_summary_snapshot_rebuild(group_id: str, *, timeout_s: float = 1.0) -> bool:
+    gid = str(group_id or "").strip()
+    if not gid:
+        return True
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    while True:
+        with _SUMMARY_REBUILD_LOCK:
+            in_flight = gid in _SUMMARY_REBUILD_IN_FLIGHT
+        if not in_flight:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
 
 
 def _get_summary_context_fast(storage: ContextStorage, *, group_id: str) -> Dict[str, Any]:

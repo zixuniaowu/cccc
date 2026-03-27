@@ -15,7 +15,6 @@ from ...kernel.permissions import require_group_permission
 from ...kernel.runtime import runtime_start_preflight_error
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
-from ...runners.platform_support import pty_support_error_message
 from ...util.conv import coerce_bool
 from ..actors.actor_profile_runtime import resolve_linked_actor_before_start
 from ..pet.review_scheduler import cancel_pet_review, request_pet_review
@@ -145,8 +144,6 @@ def handle_group_start(
                     },
                 )
             if runner_effective != "headless":
-                if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
-                    raise RuntimeError(pty_support_error_message() or "PTY runner is not supported in this environment.")
                 try:
                     mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
                 except Exception as e:

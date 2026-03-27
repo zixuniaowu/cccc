@@ -57,7 +57,8 @@ def _normalize_compare_text(value: Any) -> str:
 
 
 def _quoted_task_title(value: Any) -> str:
-    return f'"{str(value or "").replace("\"", "\\\"")}"'
+    escaped = str(value or "").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _build_task_proposal_message(action: Dict[str, Any]) -> str:
