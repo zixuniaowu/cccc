@@ -37,6 +37,36 @@ describe("aggregateWebPetState", () => {
     expect(result.panelData.agents[0].state).toBe("working");
   });
 
+  it("prefers actors_runtime effective working state over active task heuristics", () => {
+    const context: GroupContext = {
+      agent_states: [makeAgentState("peer-impl-1", "", "implementing")],
+      actors_runtime: [
+        {
+          id: "peer-impl-1",
+          effective_working_state: "working",
+        },
+      ],
+    };
+    const result = aggregateWebPetState(makeInput({ groupContext: context }));
+    expect(result.catState).toBe("working");
+    expect(result.panelData.agents[0].state).toBe("working");
+  });
+
+  it("includes runtime-only actors in panel state", () => {
+    const context: GroupContext = {
+      actors_runtime: [
+        {
+          id: "peer-impl-1",
+          effective_working_state: "working",
+        },
+      ],
+    };
+    const result = aggregateWebPetState(makeInput({ groupContext: context }));
+    expect(result.catState).toBe("working");
+    expect(result.panelData.agents).toHaveLength(1);
+    expect(result.panelData.agents[0].id).toBe("peer-impl-1");
+  });
+
   it("returns busy when multiple agents are active", () => {
     const context: GroupContext = {
       agent_states: [

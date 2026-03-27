@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
+from ..util.time import parse_utc_iso, utc_now_iso
+
 from .pet_task_triage import enum_text, task_brief, trim_task_text
+
+
+_TASK_PROPOSAL_ECHO_SUPPRESS_SECONDS = 10 * 60
+_RECENT_USER_MESSAGE_SCAN_LIMIT = 12
 
 
 def _proposal(
@@ -46,10 +52,101 @@ def _matches_focus(reason: str, *, focus: str) -> bool:
     return False
 
 
+def _normalize_compare_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _quoted_task_title(value: Any) -> str:
+    return f'"{str(value or "").replace("\"", "\\\"")}"'
+
+
+def _build_task_proposal_message(action: Dict[str, Any]) -> str:
+    explicit = str(action.get("text") or "").strip()
+    if explicit:
+        return explicit
+
+    refs: list[str] = []
+    task_id = str(action.get("task_id") or "").strip()
+    title = str(action.get("title") or "").strip()
+    status = str(action.get("status") or "").strip()
+    assignee = str(action.get("assignee") or "").strip()
+    if task_id:
+        refs.append(f"task_id={task_id}")
+    if title:
+        refs.append(f"title={_quoted_task_title(title)}")
+    if status:
+        refs.append(f"status={status}")
+    if assignee:
+        refs.append(f"assignee={assignee}")
+
+    op = str(action.get("operation") or "").strip().lower() or "update"
+    op_text = op if op in {"create", "update", "move", "handoff", "archive"} else "update"
+    suffix = f" ({', '.join(refs)})" if refs else ""
+    return f"Pet task proposal: please use cccc_task to {op_text} this task{suffix}."
+
+
+def _event_targets_foreman(event: Dict[str, Any]) -> bool:
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    raw_to = data.get("to")
+    if not isinstance(raw_to, list):
+        return False
+    for item in raw_to:
+        normalized = _normalize_compare_text(item)
+        if normalized in {"@foreman", "foreman"}:
+            return True
+    return False
+
+
+def _event_mentions_task(action: Dict[str, Any], text: Any) -> bool:
+    normalized_text = _normalize_compare_text(text)
+    if not normalized_text:
+        return False
+    expected = _normalize_compare_text(_build_task_proposal_message(action))
+    return bool(expected) and normalized_text == expected
+
+
+def _is_user_message_to_foreman(event: Dict[str, Any]) -> bool:
+    if str(event.get("kind") or "").strip() != "chat.message":
+        return False
+    if str(event.get("by") or "").strip() != "user":
+        return False
+    return _event_targets_foreman(event)
+
+
+def _is_recent_user_echo_for_task(
+    action: Dict[str, Any],
+    recent_chat_events: Iterable[Dict[str, Any]],
+) -> bool:
+    now_dt = parse_utc_iso(utc_now_iso())
+    if now_dt is None:
+        return False
+
+    scanned = 0
+    for event in recent_chat_events:
+        if not isinstance(event, dict):
+            continue
+        if not _is_user_message_to_foreman(event):
+            continue
+        scanned += 1
+        if scanned > _RECENT_USER_MESSAGE_SCAN_LIMIT:
+            break
+        event_dt = parse_utc_iso(str(event.get("ts") or "").strip())
+        if event_dt is None:
+            continue
+        age_seconds = (now_dt - event_dt).total_seconds()
+        if age_seconds < 0 or age_seconds > _TASK_PROPOSAL_ECHO_SUPPRESS_SECONDS:
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if _event_mentions_task(action, data.get("text")):
+            return True
+    return False
+
+
 def build_task_proposal_candidates(
     tasks: Iterable[Any],
     *,
     signal_payload: Optional[Dict[str, Any]] = None,
+    recent_chat_events: Optional[Iterable[Dict[str, Any]]] = None,
     limit: int = 1,
 ) -> List[Dict[str, Any]]:
     proposals: List[Dict[str, Any]] = []
@@ -129,6 +226,16 @@ def build_task_proposal_candidates(
                 )
             )
 
+    if recent_chat_events is not None:
+        proposals = [
+            item
+            for item in proposals
+            if not _is_recent_user_echo_for_task(
+                item.get("action") if isinstance(item.get("action"), dict) else {},
+                recent_chat_events,
+            )
+        ]
+
     if ready and focus not in {"", "none", "task_pressure"}:
         proposals = [
             item for item in proposals
@@ -143,10 +250,16 @@ def build_task_proposal_summary_lines(
     tasks: Iterable[Any],
     *,
     signal_payload: Optional[Dict[str, Any]] = None,
+    recent_chat_events: Optional[Iterable[Dict[str, Any]]] = None,
     limit: int = 1,
 ) -> List[str]:
     lines: List[str] = []
-    for item in build_task_proposal_candidates(tasks, signal_payload=signal_payload, limit=limit):
+    for item in build_task_proposal_candidates(
+        tasks,
+        signal_payload=signal_payload,
+        recent_chat_events=recent_chat_events,
+        limit=limit,
+    ):
         summary = str(item.get("summary") or "").strip()
         if summary:
             lines.append(summary)

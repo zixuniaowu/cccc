@@ -1,5 +1,6 @@
 import type {
   AgentState,
+  ActorRuntimeState,
   ContextDetailLevel,
   GroupContext,
   GroupPresentation,
@@ -428,6 +429,25 @@ function normalizeAgentState(value: unknown): AgentState | null {
   };
 }
 
+function normalizeActorRuntimeState(value: unknown): ActorRuntimeState | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const id = asString(record.id).trim();
+  if (!id) return null;
+  return {
+    id,
+    runtime: asOptionalString(record.runtime) || undefined,
+    runner: asOptionalString(record.runner) || undefined,
+    runner_effective: asOptionalString(record.runner_effective) || undefined,
+    running: typeof record.running === "boolean" ? record.running : undefined,
+    idle_seconds: typeof record.idle_seconds === "number" ? record.idle_seconds : null,
+    effective_working_state: asOptionalString(record.effective_working_state) || undefined,
+    effective_working_reason: asOptionalString(record.effective_working_reason) || undefined,
+    effective_working_updated_at: asOptionalString(record.effective_working_updated_at),
+    effective_active_task_id: asOptionalString(record.effective_active_task_id),
+  };
+}
+
 function normalizeTaskSummary(value: unknown, tasks: Task[]): GroupTasksSummary {
   const record = asRecord(value);
   if (record) {
@@ -472,6 +492,9 @@ export function normalizeContext(raw: unknown): GroupContext {
     : [];
   const agentStates = Array.isArray(record.agent_states)
     ? record.agent_states.map((item) => normalizeAgentState(item)).filter((item): item is AgentState => !!item)
+    : [];
+  const actorsRuntime = Array.isArray(record.actors_runtime)
+    ? record.actors_runtime.map((item) => normalizeActorRuntimeState(item)).filter((item): item is ActorRuntimeState => !!item)
     : [];
   const briefRecord = asRecord(coordination.brief);
   const summary = normalizeTaskSummary(record.tasks_summary, tasks);
@@ -518,6 +541,7 @@ export function normalizeContext(raw: unknown): GroupContext {
         : [],
     },
     agent_states: agentStates,
+    actors_runtime: actorsRuntime,
     attention: attentionRecord
       ? {
           blocked: Array.isArray(attentionRecord.blocked)

@@ -234,8 +234,10 @@ export function buildPetPeerContext(
 
 export function usePetPeerContext(input: {
   groupId: string | null | undefined;
+  refreshToken?: number;
 }): PetPeerContext {
   const groupId = String(input.groupId || "").trim();
+  const refreshToken = Number(input.refreshToken || 0);
   const [state, setState] = useState<{
     groupId: string;
     rawContext: Partial<PetPeerContextResponse> | null;
@@ -280,7 +282,7 @@ export function usePetPeerContext(input: {
     return () => {
       cancelled = true;
     };
-  }, [groupId]);
+  }, [groupId, refreshToken]);
 
   if (!groupId || state.groupId !== groupId) {
     return buildPetPeerContext(null, { status: !groupId ? "idle" : "loading" });

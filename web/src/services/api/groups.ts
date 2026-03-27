@@ -587,6 +587,17 @@ export async function fetchPetPeerContext(groupId: string, opts?: { fresh?: bool
   );
 }
 
+export async function requestPetPeerReview(groupId: string) {
+  const gid = String(groupId || "").trim();
+  clearSharedReadRequest(petPeerContextRequestKey(gid, false, false));
+  clearSharedReadRequest(petPeerContextRequestKey(gid, false, true));
+  clearSharedReadRequest(petPeerContextRequestKey(gid, true, false));
+  clearSharedReadRequest(petPeerContextRequestKey(gid, true, true));
+  return apiJson<{ accepted?: boolean }>(`/api/v1/groups/${encodeURIComponent(gid)}/pet-context/review`, {
+    method: "POST",
+  });
+}
+
 export async function recordPetDecisionOutcome(
   groupId: string,
   payload: {

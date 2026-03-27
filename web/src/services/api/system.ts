@@ -1,13 +1,9 @@
-import type { DirItem, DirSuggestion, GroupPresentation, GroupMeta, RuntimeInfo, WebAccessSession } from "../../types";
+import type { DirItem, DirSuggestion, RuntimeInfo } from "../../types";
 import {
   apiJson,
-  clearPingReadRequest,
-  clearWebAccessSessionReadRequest,
-  groupsRequestKey,
   pingRequestKey,
   RECENT_BOOTSTRAP_READ_TTL_MS,
   reuseRecentReadRequest,
-  webAccessSessionRequestKey,
 } from "./base";
 
 export async function fetchPing(options?: { includeHome?: boolean }) {

@@ -128,6 +128,10 @@ export type Actor = {
   enabled?: boolean;
   running?: boolean;  // Actual process running status
   idle_seconds?: number | null;  // Seconds since last PTY output (null if not running/headless)
+  effective_working_state?: "stopped" | "idle" | "working" | "waiting" | "stuck" | string;
+  effective_working_reason?: string;
+  effective_working_updated_at?: string | null;
+  effective_active_task_id?: string | null;
   command?: string[];
   env?: Record<string, string>;
   capability_autoload?: string[];
@@ -307,6 +311,19 @@ export type AgentState = {
   updated_at?: string | null;
 };
 
+export type ActorRuntimeState = {
+  id: string;
+  runtime?: string;
+  runner?: string;
+  runner_effective?: string;
+  running?: boolean;
+  idle_seconds?: number | null;
+  effective_working_state?: "stopped" | "idle" | "working" | "waiting" | "stuck" | string;
+  effective_working_reason?: string;
+  effective_working_updated_at?: string | null;
+  effective_active_task_id?: string | null;
+};
+
 export type RuntimeInfo = {
   name: string;
   display_name: string;
@@ -476,6 +493,7 @@ export type GroupContext = {
     recent_handoffs?: CoordinationNote[];
   };
   agent_states?: AgentState[];
+  actors_runtime?: ActorRuntimeState[];
   attention?: ContextAttention | null;
   board?: ContextBoard | null;
   tasks_summary?: GroupTasksSummary;

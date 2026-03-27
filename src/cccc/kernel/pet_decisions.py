@@ -142,12 +142,7 @@ def _normalize_task_proposal_summary(
     fingerprint: str,
     source: Dict[str, Any],
 ) -> str:
-    text = _normalize_text(summary)
-    suggestion_kind = str(source.get("suggestion_kind") or "").strip().lower()
-    normalized_fingerprint = str(fingerprint or "").strip().lower()
-    if suggestion_kind == "reply_pressure" or "reply_pressure" in normalized_fingerprint:
-        return "先处理那条拖得最久的待回复线程"
-    return text
+    return _normalize_text(summary)
 
 
 def _normalize_task_proposal_text(
@@ -156,12 +151,7 @@ def _normalize_task_proposal_text(
     fingerprint: str,
     source: Dict[str, Any],
 ) -> str:
-    normalized = _normalize_text(text)
-    suggestion_kind = str(source.get("suggestion_kind") or "").strip().lower()
-    normalized_fingerprint = str(fingerprint or "").strip().lower()
-    if suggestion_kind == "reply_pressure" or "reply_pressure" in normalized_fingerprint:
-        return "先处理拖得最久的待回复线程：给出当前结论，或明确还缺什么运行态证据，不要继续挂着。"
-    return normalized
+    return _normalize_text(text)
 
 
 def _normalize_action(raw: Any, *, fingerprint: str = "", source: Dict[str, Any] | None = None) -> Dict[str, Any]:

@@ -37,7 +37,6 @@ import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { ModalFrame } from "../modals/ModalFrame";
 import { settingsDialogBodyClass, settingsDialogPanelClass } from "../modals/settings/types";
-import { useWebPetStore } from "../../stores";
 import { parseHelpMarkdown, updatePetHelpNote } from "../../utils/helpMarkdown";
 import { AgentsView } from "./agents/AgentsView";
 import { ProjectPanel } from "./coordination/ProjectPanel";

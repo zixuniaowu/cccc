@@ -987,6 +987,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             stop_event=stop_event,
             home=p.home,
             pty_supervisor=pty_runner.SUPERVISOR,
+            headless_supervisor=headless_runner.SUPERVISOR,
             event_broadcaster=_activity_broadcaster,
             load_group=load_group,
             interval_seconds=10.0,

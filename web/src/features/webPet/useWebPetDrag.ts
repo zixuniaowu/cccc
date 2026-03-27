@@ -32,10 +32,9 @@ function clampPosition(x: number, y: number) {
   };
 }
 
-export function useWebPetDrag(groupId: string, stackIndex = 0) {
+export function useWebPetDrag(groupId: string, stackIndex = 0, onTap?: () => void) {
   const positions = useWebPetStore((state) => state.positions);
   const setPosition = useWebPetStore((state) => state.setPosition);
-  const togglePanel = useWebPetStore((state) => state.togglePanel);
   const position = getWebPetPosition(groupId, positions, stackIndex);
   const [isDragging, setIsDragging] = useState(false);
   const pointerStateRef = useRef<PointerState>(null);
@@ -96,7 +95,7 @@ export function useWebPetDrag(groupId: string, stackIndex = 0) {
 
     if (!pointerState.dragging) {
       setIsDragging(false);
-      togglePanel(groupId);
+      onTap?.();
       return;
     }
 

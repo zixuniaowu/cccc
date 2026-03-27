@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Optional, Sequence
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import list_actors, update_actor
+from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
@@ -324,6 +325,10 @@ def handle_actor_restart(
                 write_pty_state(group.group_id, actor_id, pid=session.pid)
             except Exception:
                 pass
+        try:
+            ContextStorage(group).clear_agent_status_if_present(actor_id)
+        except Exception:
+            pass
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
     event = append_event(

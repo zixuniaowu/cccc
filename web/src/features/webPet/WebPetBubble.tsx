@@ -10,8 +10,7 @@ interface WebPetBubbleProps {
   state: CatState;
   hint: string;
   reaction: PetReaction;
-  panelOpen: boolean;
-  onTogglePanel: () => void;
+  onPress?: () => void;
 }
 
 export function WebPetBubble({
@@ -20,11 +19,10 @@ export function WebPetBubble({
   state,
   hint,
   reaction,
-  panelOpen,
-  onTogglePanel,
+  onPress,
 }: WebPetBubbleProps) {
   const { t } = useTranslation("webPet");
-  const { isDragging, handlers } = useWebPetDrag(groupId, stackIndex);
+  const { isDragging, handlers } = useWebPetDrag(groupId, stackIndex, onPress);
 
   return (
     <div
@@ -39,8 +37,6 @@ export function WebPetBubble({
       }}
       role="button"
       tabIndex={0}
-      aria-controls={`web-pet-panel-${groupId}`}
-      aria-expanded={panelOpen}
       aria-label={
         hint
           ? t("bubbleAriaHint", {
@@ -52,7 +48,7 @@ export function WebPetBubble({
       onKeyDown={(event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
-        onTogglePanel();
+        onPress?.();
       }}
     >
       <CatCanvas state={state} hint={hint} reaction={reaction} />

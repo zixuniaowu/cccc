@@ -10,9 +10,7 @@ type WebPetPosition = {
 };
 
 interface WebPetState {
-  panelOpenGroupId: string | null;
   positions: Record<string, WebPetPosition>;
-  togglePanel: (groupId: string) => void;
   setPosition: (groupId: string, position: WebPetPosition) => void;
 }
 
@@ -105,15 +103,7 @@ function persistPositions(positions: Record<string, WebPetPosition>): void {
 }
 
 export const useWebPetStore = create<WebPetState>((set) => ({
-  panelOpenGroupId: null,
   positions: loadStoredPositions(),
-  togglePanel: (groupId) =>
-    set((state) => ({
-      panelOpenGroupId:
-        state.panelOpenGroupId === String(groupId || "").trim()
-          ? null
-          : String(groupId || "").trim() || null,
-    })),
   setPosition: (groupId, position) => {
     const gid = String(groupId || "").trim();
     if (!gid) return;

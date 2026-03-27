@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getBackgroundRefreshDelayMs } from "./WebPet";
+import { getBackgroundRefreshDelayMs } from "./reviewTiming";
 
 describe("getBackgroundRefreshDelayMs", () => {
   it("uses the base interval for success and backs off exponentially on failures", () => {

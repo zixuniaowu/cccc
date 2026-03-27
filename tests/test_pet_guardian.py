@@ -186,7 +186,7 @@ class TestPetDecisionsOps(unittest.TestCase):
             stored = replace_pet_decisions(group, decisions=[decision], actor_id="pet-peer")
             self.assertEqual(str(stored[0]["action"]["text"] or ""), "Please share reproduction steps and the error screenshot.")
 
-    def test_replace_normalizes_task_proposal_reply_pressure_to_natural_language(self) -> None:
+    def test_replace_keeps_task_proposal_reply_pressure_text_from_pet(self) -> None:
         from cccc.kernel.pet_decisions import replace_pet_decisions
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -214,10 +214,10 @@ class TestPetDecisionsOps(unittest.TestCase):
 
             stored = replace_pet_decisions(group, decisions=[decision], actor_id="pet-peer")
 
-            self.assertEqual(str(stored[0]["summary"] or ""), "先处理那条拖得最久的待回复线程")
+            self.assertEqual(str(stored[0]["summary"] or ""), "先收口最老的一条 overdue reply 线程")
             self.assertEqual(
                 str(stored[0]["action"]["text"] or ""),
-                "先处理拖得最久的待回复线程：给出当前结论，或明确还缺什么运行态证据，不要继续挂着。",
+                "先挑最老的一条等待回复链路做收口：要么给出当前结论，要么明确缺哪条运行态证据，别继续让 overdue 堆着。",
             )
 
     def test_replace_filters_recently_executed_fingerprint(self) -> None:
@@ -332,7 +332,7 @@ class TestPetDecisionsOps(unittest.TestCase):
             self.assertFalse(resp.ok)
             self.assertEqual(load_pet_decisions(group), [previous])
 
-    def test_replace_uses_fallback_when_actor_returns_empty_but_signal_is_ready(self) -> None:
+    def test_replace_keeps_empty_when_actor_returns_no_decisions(self) -> None:
         from cccc.daemon.pet.pet_decision_ops import handle_pet_decisions_replace
 
         with tempfile.TemporaryDirectory() as tmp, patch(
@@ -341,27 +341,6 @@ class TestPetDecisionsOps(unittest.TestCase):
         ), patch(
             "cccc.daemon.pet.pet_decision_ops.get_pet_actor",
             return_value={"id": "pet-peer", "internal_kind": "pet"},
-        ), patch(
-            "cccc.daemon.pet.pet_decision_ops.build_fallback_pet_decisions",
-            return_value=[
-                {
-                    "id": "reply-pressure-oldest-followup",
-                    "kind": "task_proposal",
-                    "priority": 90,
-                    "summary": "先处理那条拖得最久的待回复线程",
-                    "agent": "pet-peer",
-                    "fingerprint": "task_proposal:reply_pressure:oldest_followup",
-                    "action": {
-                        "type": "task_proposal",
-                        "group_id": "g-demo",
-                        "operation": "update",
-                        "title": "处理最久未闭环的待回复线程",
-                        "text": "先处理拖得最久的待回复线程：给出当前结论，或明确还缺什么运行态证据，不要继续挂着。",
-                    },
-                    "source": {"suggestion_kind": "reply_pressure"},
-                    "updated_at": "",
-                }
-            ],
         ):
             resp = handle_pet_decisions_replace(
                 {
@@ -373,11 +352,11 @@ class TestPetDecisionsOps(unittest.TestCase):
 
         self.assertTrue(resp.ok, getattr(resp, "error", None))
         decisions = ((resp.result or {}).get("decisions") or [])
-        self.assertEqual(len(decisions), 1)
-        self.assertEqual(str(decisions[0].get("fingerprint") or ""), "task_proposal:reply_pressure:oldest_followup")
+        self.assertEqual(decisions, [])
 
-    def test_clear_uses_fallback_when_signal_is_still_ready(self) -> None:
+    def test_clear_always_clears_even_if_no_new_decisions_are_generated(self) -> None:
         from cccc.daemon.pet.pet_decision_ops import handle_pet_decisions_clear
+        from cccc.kernel.pet_decisions import load_pet_decisions, replace_pet_decisions
 
         with tempfile.TemporaryDirectory() as tmp, patch(
             "cccc.daemon.pet.pet_decision_ops.load_group",
@@ -385,28 +364,9 @@ class TestPetDecisionsOps(unittest.TestCase):
         ), patch(
             "cccc.daemon.pet.pet_decision_ops.get_pet_actor",
             return_value={"id": "pet-peer", "internal_kind": "pet"},
-        ), patch(
-            "cccc.daemon.pet.pet_decision_ops.build_fallback_pet_decisions",
-            return_value=[
-                {
-                    "id": "reply-pressure-oldest-followup",
-                    "kind": "task_proposal",
-                    "priority": 90,
-                    "summary": "先处理那条拖得最久的待回复线程",
-                    "agent": "pet-peer",
-                    "fingerprint": "task_proposal:reply_pressure:oldest_followup",
-                    "action": {
-                        "type": "task_proposal",
-                        "group_id": "g-demo",
-                        "operation": "update",
-                        "title": "处理最久未闭环的待回复线程",
-                        "text": "先处理拖得最久的待回复线程：给出当前结论，或明确还缺什么运行态证据，不要继续挂着。",
-                    },
-                    "source": {"suggestion_kind": "reply_pressure"},
-                    "updated_at": "",
-                }
-            ],
         ):
+            group = _FakeGroup("g-demo", Path(tmp))
+            replace_pet_decisions(group, decisions=[self._sample_decision(group.group_id)], actor_id="pet-peer")
             resp = handle_pet_decisions_clear(
                 {
                     "group_id": "g-demo",
@@ -415,10 +375,8 @@ class TestPetDecisionsOps(unittest.TestCase):
             )
 
         self.assertTrue(resp.ok, getattr(resp, "error", None))
-        self.assertFalse(bool((resp.result or {}).get("cleared")))
-        decisions = ((resp.result or {}).get("decisions") or [])
-        self.assertEqual(len(decisions), 1)
-        self.assertEqual(str(decisions[0].get("fingerprint") or ""), "task_proposal:reply_pressure:oldest_followup")
+        self.assertTrue(bool((resp.result or {}).get("cleared")))
+        self.assertEqual(load_pet_decisions(group), [])
 
 
 class TestPetActorSeed(unittest.TestCase):

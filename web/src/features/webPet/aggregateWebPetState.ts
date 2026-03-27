@@ -4,6 +4,7 @@
 import type {
   GroupContext,
   AgentState,
+  ActorRuntimeState,
   LedgerEvent,
 } from "../../types";
 import type {
@@ -39,7 +40,11 @@ export function getChatMessageText(event: LedgerEvent): string {
   return String(data?.text ?? "").trim();
 }
 
-function hasActivity(agent: AgentState): boolean {
+function hasActivity(agent: AgentState, runtimeState?: ActorRuntimeState): boolean {
+  const effectiveState = String(runtimeState?.effective_working_state || "").trim().toLowerCase();
+  if (effectiveState) {
+    return effectiveState === "working";
+  }
   return !!(agent.hot?.active_task_id ?? "").trim();
 }
 
@@ -55,12 +60,18 @@ export function aggregateWebPetState(input: AggregateInput): AggregateOutput {
 
   const context = groupContext ?? {};
   const agentStates: AgentState[] = context.agent_states ?? [];
+  const actorsRuntime = Array.isArray(context.actors_runtime) ? context.actors_runtime : [];
+  const runtimeStateById = new Map(actorsRuntime.map((item) => [item.id, item]));
+  const agentStateById = new Map(agentStates.map((item) => [item.id, item]));
+  const actorIds = Array.from(new Set([...agentStateById.keys(), ...runtimeStateById.keys()]));
 
   // When group is inactive, treat all agents as idle
   const groupInactive = groupState === "paused" || groupState === "idle" || groupState === "stopped";
 
   // Count active agents (none when group is inactive)
-  const activeAgents = groupInactive ? [] : agentStates.filter(hasActivity);
+  const activeAgents = groupInactive
+    ? []
+    : actorIds.filter((id) => hasActivity(agentStateById.get(id) ?? { id }, runtimeStateById.get(id)));
 
   // Determine cat state (priority: inactive > busy > working > napping)
   let catState: CatState;
@@ -75,17 +86,20 @@ export function aggregateWebPetState(input: AggregateInput): AggregateOutput {
   }
 
   // Build agent summaries
-  const agents: AgentSummary[] = agentStates.map((agent) => ({
-    id: agent.id,
+  const agents: AgentSummary[] = actorIds.map((id) => {
+    const agent = agentStateById.get(id);
+    return {
+    id,
     state: groupInactive
       ? "napping"
-      : hasActivity(agent)
+      : hasActivity(agent ?? { id }, runtimeStateById.get(id))
         ? activeAgents.length >= 2
           ? "busy"
           : "working"
         : "napping",
-    focus: agent.hot?.focus ?? "",
-  }));
+    focus: agent?.hot?.focus ?? "",
+  };
+  });
 
   // Connection status from SSE
   const connected = sseStatus === "connected";

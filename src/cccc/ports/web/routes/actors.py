@@ -9,11 +9,14 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from ....daemon.server import call_daemon, get_daemon_endpoint
+from ....daemon.context.context_ops import _agent_state_to_dict
 from ....daemon.actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
 from ....daemon.runner_state_ops import pty_state_path, headless_state_path
+from ....kernel.context import ContextStorage
 from ....kernel.group import load_group
 from ....kernel.query_projections import get_actor_list_projection
 from ....kernel.inbox import get_indexed_unread_counts
+from ....kernel.working_state import derive_effective_working_state
 from ....util.process import pid_is_alive
 from .groups import invalidate_context_read
 from ..schemas import (
@@ -73,6 +76,13 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
         return {"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {gid}", "details": {}}}
 
     actors = get_actor_list_projection(group)
+    storage = ContextStorage(group)
+    agent_rows = [_agent_state_to_dict(agent) for agent in storage.load_agents().agents]
+    agent_state_by_id = {
+        str(item.get("id") or "").strip(): item
+        for item in agent_rows
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    } if isinstance(agent_rows, list) else {}
     for actor in actors:
         aid = str(actor.get("id") or "").strip()
         if not aid:
@@ -80,9 +90,31 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
         runner_kind = str(actor.get("runner") or "pty").strip()
         effective_runner = _effective_runner_kind_local(runner_kind)
         actor["running"] = _actor_running_local(gid, aid, runner_kind=runner_kind)
+        idle_seconds = None
+        headless_state = None
         actor["idle_seconds"] = None
+        if effective_runner == "headless":
+            if actor["running"]:
+                headless_doc = {"status": "idle"}
+                state_path = headless_state_path(gid, aid)
+                try:
+                    raw = json.loads(state_path.read_text(encoding="utf-8"))
+                    if isinstance(raw, dict):
+                        headless_doc.update(raw)
+                except Exception:
+                    pass
+                headless_state = headless_doc
         if effective_runner != runner_kind:
             actor["runner_effective"] = effective_runner
+        actor.update(
+            derive_effective_working_state(
+                running=bool(actor.get("running")),
+                effective_runner=effective_runner,
+                idle_seconds=idle_seconds,
+                agent_state=agent_state_by_id.get(aid),
+                headless_state=headless_state,
+            )
+        )
 
     if include_unread:
         counts = get_indexed_unread_counts(group, actors=actors)

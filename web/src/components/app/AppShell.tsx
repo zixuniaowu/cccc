@@ -197,6 +197,7 @@ export function AppShell({
 
         {selectedGroupId ? (
           <TabBar
+            groupId={selectedGroupId}
             actors={actors}
             activeTab={activeTab}
             onTabChange={onTabChange}

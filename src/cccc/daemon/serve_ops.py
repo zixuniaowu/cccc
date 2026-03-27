@@ -8,6 +8,9 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from ..kernel.context import ContextStorage
+from ..kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, derive_effective_working_state
+
 _LOG = logging.getLogger("cccc.daemon.serve_ops")
 _LOOP_ERROR_LAST_TS: Dict[str, float] = {}
 _LOOP_ERROR_WINDOW_SECONDS = 30.0
@@ -267,11 +270,12 @@ def start_actor_activity_thread(
     stop_event: threading.Event,
     home: Path,
     pty_supervisor: Any,
+    headless_supervisor: Any,
     event_broadcaster: Any,
     load_group: Callable[[str], Any],
     interval_seconds: float = 10.0,
 ) -> threading.Thread:
-    """Periodically publish actor.activity SSE events with idle_seconds for running PTY actors."""
+    """Periodically publish actor.activity SSE events with effective runtime status."""
     import uuid
 
     def _actor_activity_loop() -> None:
@@ -285,7 +289,23 @@ def start_actor_activity_thread(
                         group = load_group(gid)
                         if group is None:
                             continue
-                        # Collect idle_seconds for all running PTY actors in this group
+                        storage = ContextStorage(group)
+                        agent_rows = [
+                            {
+                                "id": agent.id,
+                                "hot": {
+                                    "focus": agent.hot.focus,
+                                    "active_task_id": agent.hot.active_task_id,
+                                },
+                                "updated_at": agent.updated_at,
+                            }
+                            for agent in storage.load_agents().agents
+                        ]
+                        agent_state_by_id = {
+                            str(item.get("id") or "").strip(): item
+                            for item in agent_rows
+                            if isinstance(item, dict) and str(item.get("id") or "").strip()
+                        } if isinstance(agent_rows, list) else {}
                         actors_data = []
                         actor_list = group.doc.get("actors")
                         if not isinstance(actor_list, list):
@@ -296,14 +316,47 @@ def start_actor_activity_thread(
                             aid = str(actor.get("id") or "").strip()
                             if not aid:
                                 continue
-                            idle = pty_supervisor.idle_seconds(group_id=gid, actor_id=aid)
-                            if idle is None:
-                                continue  # not running or headless
-                            actors_data.append({
+                            runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
+                            effective_runner = "headless" if runner_kind == "headless" else "pty"
+                            running = False
+                            idle = None
+                            headless_state = None
+                            if effective_runner == "headless":
+                                state = headless_supervisor.get_state(group_id=gid, actor_id=aid)
+                                headless_state = state.model_dump() if state is not None else None
+                                running = bool(state is not None and headless_supervisor.actor_running(gid, aid))
+                            else:
+                                running = bool(pty_supervisor.actor_running(gid, aid))
+                                idle = pty_supervisor.idle_seconds(group_id=gid, actor_id=aid) if running else None
+                            pty_terminal_text = ""
+                            if effective_runner == "pty" and running:
+                                try:
+                                    pty_terminal_text = pty_supervisor.tail_output(
+                                        group_id=gid,
+                                        actor_id=aid,
+                                        max_bytes=DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES,
+                                    ).decode("utf-8", errors="replace")
+                                except Exception:
+                                    pty_terminal_text = ""
+                            if not running:
+                                continue
+                            payload = {
                                 "id": aid,
-                                "idle_seconds": round(idle, 1),
                                 "running": True,
-                            })
+                                "idle_seconds": round(float(idle), 1) if idle is not None else None,
+                            }
+                            payload.update(
+                                derive_effective_working_state(
+                                    running=running,
+                                    effective_runner=effective_runner,
+                                    runtime=str(actor.get("runtime") or ""),
+                                    idle_seconds=idle,
+                                    pty_terminal_text=pty_terminal_text,
+                                    agent_state=agent_state_by_id.get(aid),
+                                    headless_state=headless_state,
+                                )
+                            )
+                            actors_data.append(payload)
                         if actors_data:
                             event_broadcaster.publish({
                                 "id": uuid.uuid4().hex,

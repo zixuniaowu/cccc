@@ -17,7 +17,7 @@ from ....daemon.server import get_daemon_endpoint
 from ....daemon.group.presentation_ops import load_presentation_snapshot, resolve_workspace_asset_path
 from ....runners import headless as headless_runner
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
-from ....kernel.group import load_group
+from ....kernel.group import get_group_state, load_group
 from ....kernel.query_projections import get_groups_projection
 from ....daemon.runner_state_ops import pty_state_path
 from ....kernel.group_template import parse_group_template
@@ -34,7 +34,9 @@ from ....kernel.prompt_files import (
 )
 from ....kernel.pet_prompt import build_pet_prompt_parts, build_pet_snapshot_text, load_pet_help_markdown
 from ....kernel.pet_outcomes import append_pet_decision_outcome
+from ....kernel.pet_actor import get_pet_actor, is_desktop_pet_enabled
 from ....kernel.pet_signals import load_pet_signals
+from ....daemon.pet.review_scheduler import request_pet_review
 from ...mcp.utils.help_markdown import parse_help_markdown
 from ....kernel.access_tokens import list_access_tokens
 from ....kernel.pet_decisions import load_pet_decisions
@@ -1174,6 +1176,26 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 ),
             },
         }
+
+    @group_router.post("/pet-context/review")
+    async def pet_context_review_post(group_id: str) -> Dict[str, Any]:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        if not is_desktop_pet_enabled(group):
+            return {"ok": False, "error": {"code": "desktop_pet_disabled", "message": "desktop pet is disabled"}}
+        if get_group_state(group) != "active":
+            return {"ok": False, "error": {"code": "group_not_active", "message": "pet review requires active group state"}}
+        pet_actor = get_pet_actor(group)
+        if not isinstance(pet_actor, dict) or not bool(pet_actor.get("enabled", True)):
+            return {"ok": False, "error": {"code": "pet_actor_unavailable", "message": "pet actor is unavailable"}}
+        await run_in_threadpool(
+            request_pet_review,
+            group_id,
+            reason="bubble_click",
+            immediate=True,
+        )
+        return {"ok": True, "result": {"accepted": True}}
 
     @group_router.post("/pet-decisions/outcome")
     async def pet_decision_outcome_post(group_id: str, req: PetDecisionOutcomeRequest) -> Dict[str, Any]:

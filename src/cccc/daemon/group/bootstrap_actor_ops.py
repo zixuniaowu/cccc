@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from ...kernel.context import ContextStorage
 from ...kernel.actors import list_actors
 from ...kernel.group import load_group
 from ...kernel.pet_actor import sync_pet_actor
@@ -164,6 +165,10 @@ def autostart_running_groups(
 
             clear_preamble_sent(group, actor_id)
             throttle_reset_actor(group.group_id, actor_id)
+            try:
+                ContextStorage(group).clear_agent_status_if_present(actor_id)
+            except Exception:
+                pass
 
         try:
             if (

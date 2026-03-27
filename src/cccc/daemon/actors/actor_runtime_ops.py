@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from ...kernel.actors import find_actor
+from ...kernel.context import ContextStorage
 from ...kernel.ledger import append_event
 from ...kernel.runtime import runtime_start_preflight_error
 from ...runners import headless as headless_runner
@@ -80,18 +81,21 @@ def start_actor_process(
     if runtime == "custom" and effective_runner != "headless" and not command:
         return {"success": False, "error": "custom runtime requires a command (PTY runner)"}
 
-    effective_cmd = normalize_runtime_command(runtime, list(command or []))
-    runtime_error = runtime_start_preflight_error(runtime, effective_cmd, runner=effective_runner)
-    if runtime_error:
-        return {"success": False, "error": runtime_error}
-
     if effective_runner != "headless":
+        if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
+            error_message = pty_support_error_message() or "PTY runner is not supported in this environment."
+            return {"success": False, "error": error_message}
         try:
             mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
         except Exception as e:
             return {"success": False, "error": f"failed to install MCP: {e}"}
         if not mcp_ready:
             return {"success": False, "error": f"failed to install MCP for runtime: {runtime}"}
+
+    effective_cmd = normalize_runtime_command(runtime, list(command or []))
+    runtime_error = runtime_start_preflight_error(runtime, effective_cmd, runner=effective_runner)
+    if runtime_error:
+        return {"success": False, "error": runtime_error}
 
     try:
         if effective_runner == "headless":
@@ -106,9 +110,6 @@ def start_actor_process(
             except Exception:
                 pass
         else:
-            if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
-                error_message = pty_support_error_message() or "PTY runner is not supported in this environment."
-                return {"success": False, "error": error_message}
             session = pty_runner.SUPERVISOR.start_actor(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -126,6 +127,10 @@ def start_actor_process(
 
     clear_preamble_sent(group, actor_id)
     throttle_reset_actor(group.group_id, actor_id)
+    try:
+        ContextStorage(group).clear_agent_status_if_present(actor_id)
+    except Exception:
+        pass
 
     try:
         group.doc["running"] = True

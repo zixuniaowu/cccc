@@ -71,7 +71,15 @@ interface GroupState {
   setChatWindow: (w: GroupState["chatWindow"], groupId?: string) => void;
   setActors: (actors: Actor[]) => void;
   incrementActorUnread: (actorIds: string[]) => void;
-  updateActorActivity: (updates: Array<{ id: string; idle_seconds: number; running: boolean }>) => void;
+  updateActorActivity: (updates: Array<{
+    id: string;
+    idle_seconds?: number | null;
+    running: boolean;
+    effective_working_state?: string;
+    effective_working_reason?: string;
+    effective_working_updated_at?: string | null;
+    effective_active_task_id?: string | null;
+  }>) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;
   setGroupPresentation: (presentation: GroupPresentation | null) => void;
@@ -653,9 +661,26 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       let changed = false;
       const next = state.actors.map((a) => {
         const u = map.get(a.id);
-        if (u && a.idle_seconds !== u.idle_seconds) {
+        if (
+          u && (
+            a.idle_seconds !== (u.idle_seconds ?? null)
+            || a.running !== u.running
+            || a.effective_working_state !== u.effective_working_state
+            || a.effective_working_reason !== u.effective_working_reason
+            || a.effective_working_updated_at !== (u.effective_working_updated_at ?? null)
+            || a.effective_active_task_id !== (u.effective_active_task_id ?? null)
+          )
+        ) {
           changed = true;
-          return { ...a, idle_seconds: u.idle_seconds };
+          return {
+            ...a,
+            idle_seconds: u.idle_seconds ?? null,
+            running: u.running,
+            effective_working_state: u.effective_working_state,
+            effective_working_reason: u.effective_working_reason,
+            effective_working_updated_at: u.effective_working_updated_at ?? null,
+            effective_active_task_id: u.effective_active_task_id ?? null,
+          };
         }
         return a;
       });

@@ -8,10 +8,12 @@ import { Actor, AgentState, getRuntimeColor, RUNTIME_INFO } from "../types";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
 import { formatFullTime, formatTime } from "../utils/time";
-import { useObservabilityStore } from "../stores";
+import { useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { withAuthToken, fetchTerminalTail } from "../services/api";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
+import { getActorDisplayWorkingState, getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
+import { getTerminalSignalKey } from "../stores/useTerminalSignalsStore";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
@@ -70,6 +72,11 @@ export function AgentTab({
   const observabilityLoaded = useObservabilityStore((s) => s.loaded);
   const loadObservability = useObservabilityStore((s) => s.load);
   const terminalScrollbackLines = useObservabilityStore((s) => s.terminalScrollbackLines);
+  const terminalSignals = useTerminalSignalsStore((s) => s.signals);
+  const setTerminalSignal = useTerminalSignalsStore((s) => s.setSignal);
+  const clearTerminalSignal = useTerminalSignalsStore((s) => s.clearSignal);
+  const terminalSignal = terminalSignals[getTerminalSignalKey(groupId, actor.id)];
+  const workingState = getActorDisplayWorkingState(actor, terminalSignal);
 
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -86,6 +93,7 @@ export function AgentTab({
   // Last terminal output captured when agent stops — shows crash/error info
   const [stoppedTerminalTail, setStoppedTerminalTail] = useState("");
   const [stoppedTerminalTailLoading, setStoppedTerminalTailLoading] = useState(false);
+  const terminalSignalBufferRef = useRef("");
 
   const pasteStateRef = useRef<{ inFlight: boolean; lastAt: number }>({ inFlight: false, lastAt: 0 });
 
@@ -111,6 +119,12 @@ export function AgentTab({
       actorNotRunningRef.current = false;
     }
   }, [actor.runtime, canControl, isRunning]);
+
+  useEffect(() => {
+    if (isRunning && !isHeadless) return;
+    terminalSignalBufferRef.current = "";
+    clearTerminalSignal(groupId, actor.id);
+  }, [actor.id, clearTerminalSignal, groupId, isHeadless, isRunning]);
 
   // When agent stops, fetch the last terminal output so crash errors are visible
   useEffect(() => {
@@ -178,6 +192,55 @@ export function AgentTab({
     WebkitLineClamp: 2,
     overflow: "hidden",
   };
+
+  const statusTone = (() => {
+    if (!isRunning) {
+      return {
+        dotClass: "bg-slate-400/70 ring-slate-400/15 opacity-70",
+        pulse: false,
+        strongPulse: false,
+        badgeClass: "bg-slate-500/10 text-slate-500 dark:text-slate-300",
+      };
+    }
+    if (workingState === "working") {
+      return {
+        dotClass: "bg-emerald-400 ring-emerald-400/35 shadow-[0_0_0_3px_rgba(16,185,129,0.12),0_0_18px_rgba(52,211,153,0.75)] scale-110",
+        pulse: true,
+        strongPulse: true,
+        badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+      };
+    }
+    if (workingState === "waiting") {
+      return {
+        dotClass: "bg-sky-400 ring-sky-400/25 shadow-[0_0_12px_rgba(56,189,248,0.35)]",
+        pulse: true,
+        strongPulse: false,
+        badgeClass: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+      };
+    }
+    if (workingState === "stuck") {
+      return {
+        dotClass: "bg-amber-400 ring-amber-400/30 shadow-[0_0_0_3px_rgba(245,158,11,0.10),0_0_14px_rgba(251,191,36,0.45)]",
+        pulse: true,
+        strongPulse: false,
+        badgeClass: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+      };
+    }
+    return {
+      dotClass: "bg-emerald-500 ring-emerald-500/20 shadow-[0_0_14px_rgba(16,185,129,0.3)]",
+      pulse: false,
+      strongPulse: false,
+      badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+    };
+  })();
+
+  const runtimeStatusText = (() => {
+    if (!isRunning) return t("stopped");
+    if (workingState === "working") return t("working");
+    if (workingState === "waiting") return t("waiting");
+    if (workingState === "stuck") return t("stuck");
+    return t("running");
+  })();
 
   // Send interrupt (Ctrl+C)
   const sendInterrupt = () => {
@@ -379,6 +442,7 @@ export function AgentTab({
         reconnectAttemptRef.current = 0; // Reset reconnect counter
         // Reset output filter state on each successful (re)connect.
         outputFilterTailRef.current = "";
+        terminalSignalBufferRef.current = "";
 
         // Delay showing terminal to let backlog replay complete (avoids visible scrolling)
         if (terminalReadyTimeoutRef.current) {
@@ -426,6 +490,14 @@ export function AgentTab({
         }
         outputFilterTailRef.current = tail;
         const safe = tail ? replaced.slice(0, -tail.length) : replaced;
+        const signal = getTerminalSignalFromChunk(terminalSignalBufferRef.current, safe, actor.runtime);
+        terminalSignalBufferRef.current = signal.nextBuffer;
+        if (signal.signalKind) {
+          setTerminalSignal(groupId, actor.id, {
+            kind: signal.signalKind,
+            updatedAt: Date.now(),
+          });
+        }
         try {
           term.write(safe);
         } catch (err) {
@@ -515,6 +587,12 @@ export function AgentTab({
               // Some runtimes echo them as literal text on tab focus changes (seen as "[O").
               const isFocusEvent = /^\x1b\[[IO]$/.test(data);
               if (isFocusEvent) return;
+            }
+            if (data.includes("\r") || data.includes("\n") || data.includes("\x03")) {
+              setTerminalSignal(groupId, actor.id, {
+                kind: "working_output",
+                updatedAt: Date.now(),
+              });
             }
             ws.send(JSON.stringify({ t: "i", d: data }));
           }
@@ -642,13 +720,21 @@ export function AgentTab({
         <span
           className={classNames(
             "relative inline-flex w-3.5 h-3.5 rounded-full flex-shrink-0 ring-2 transition-all",
-            isRunning
-              ? "bg-emerald-500 ring-emerald-500/20 shadow-[0_0_14px_rgba(16,185,129,0.3)]"
-              : "bg-slate-400/70 ring-slate-400/15 opacity-70"
+            statusTone.dotClass
           )}
         >
-          {isRunning && (
-            <span className="absolute inset-0 rounded-full animate-ping bg-emerald-400/35 motion-reduce:animate-none" />
+          {statusTone.pulse && (
+            <span
+              className={classNames(
+                "absolute inset-[-3px] rounded-full motion-reduce:animate-none",
+                statusTone.strongPulse
+                  ? "animate-ping bg-emerald-300/35"
+                  : "animate-pulse bg-current/20"
+              )}
+            />
+          )}
+          {statusTone.strongPulse && (
+            <span className="absolute inset-[-7px] rounded-full border border-emerald-300/35 animate-ping motion-reduce:animate-none [animation-duration:1.6s]" />
           )}
         </span>
 
@@ -663,7 +749,7 @@ export function AgentTab({
               )}
             </div>
             <div className={classNames("mt-0.5 text-xs truncate", "text-[var(--color-text-tertiary)]")}>
-              {rtInfo?.label || t('custom')} • {isRunning ? t('running') : t('stopped')}
+              {rtInfo?.label || t('custom')} • {runtimeStatusText}
               {isHeadless && ` • ${t('headless')}`}
             </div>
             {/* Mobile-only: condensed single-line agent state */}
@@ -748,8 +834,8 @@ export function AgentTab({
               {t('headlessDescription')}
             </div>
             {isRunning && (
-              <div className={classNames("mt-4 px-3 py-1.5 rounded text-sm", "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300")}>
-                {t('statusRunning')}
+              <div className={classNames("mt-4 px-3 py-1.5 rounded text-sm", statusTone.badgeClass)}>
+                {t("statusWithValue", { value: runtimeStatusText })}
               </div>
             )}
           </div>

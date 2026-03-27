@@ -5,13 +5,17 @@ import type { PetReminder } from "./types";
 
 interface PetReminderBubbleProps {
   reminder: PetReminder | null;
+  message?: string;
   onDismiss: (fingerprint: string, opts?: { outcome?: "dismissed" | "snoozed" | null; cooldownMs?: number }) => void;
+  onCloseMessage?: () => void;
   onAction?: (reminder: PetReminder) => void;
 }
 
 export function PetReminderBubble({
   reminder,
+  message,
   onDismiss,
+  onCloseMessage,
   onAction,
 }: PetReminderBubbleProps) {
   const { t } = useTranslation("webPet");
@@ -56,23 +60,28 @@ export function PetReminderBubble({
     [reminder, t],
   );
 
-  if (!reminder) {
+  const plainMessage = String(message || "").trim();
+
+  if (!reminder && !plainMessage) {
     return null;
   }
 
-  const kindLabel = String(
-    t(`kind.${reminder.kind}`, {
-      defaultValue: reminder.kind.replace(/_/g, " "),
-    }),
-  );
-  const suggestion = String(reminder.suggestion || "").trim();
-  const suggestionPreview = String(reminder.suggestionPreview || "").trim();
-  const bodyText = suggestionPreview || suggestion || label;
-  const showMeta = !suggestion && !suggestionPreview;
+  const kindLabel = reminder
+    ? String(
+        t(`kind.${reminder.kind}`, {
+          defaultValue: reminder.kind.replace(/_/g, " "),
+        }),
+      )
+    : "";
+  const suggestion = String(reminder?.suggestion || "").trim();
+  const suggestionPreview = String(reminder?.suggestionPreview || "").trim();
+  const bodyText = plainMessage || suggestionPreview || suggestion || label;
+  const showMeta = !!reminder && !suggestion && !suggestionPreview;
+  const isPlainMessage = !reminder && !!plainMessage;
 
   return (
     <div
-      className="pointer-events-auto absolute z-[1110] w-[min(280px,calc(100vw-32px))]"
+      className={`pointer-events-auto absolute z-[1110] ${isPlainMessage ? "w-auto min-w-[220px] max-w-[min(360px,calc(100vw-32px))]" : "w-[min(280px,calc(100vw-32px))]"}`}
       style={{
         bottom: "calc(100% + 14px)",
         left: "50%",
@@ -81,78 +90,109 @@ export function PetReminderBubble({
       onPointerDown={(event) => {
         event.stopPropagation();
       }}
-      aria-live={reminder.ephemeral ? "assertive" : "polite"}
+      aria-live={reminder?.ephemeral ? "assertive" : "polite"}
       aria-atomic="true"
     >
-      <div className="glass-modal relative rounded-2xl border border-[var(--glass-border-subtle)] px-3 py-2 shadow-2xl">
-        <button
-          type="button"
-          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full text-sm text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)]"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            handleDismiss();
-          }}
-          aria-label={t("dismissReminderAria", {
-            defaultValue: "Dismiss reminder",
-          })}
-        >
-          ×
-        </button>
-        <div className="pr-8">
-          <div className="min-w-0">
-            {showMeta ? (
-              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-                {kindLabel}
-              </div>
-            ) : null}
+      <div className={`glass-modal rounded-2xl border border-[var(--glass-border-subtle)] shadow-2xl ${isPlainMessage ? "px-4 py-3" : "relative px-3 py-2"}`}>
+        {isPlainMessage ? (
+          <div className="flex items-center gap-3">
             <div
-              className={`${showMeta ? "mt-1" : ""} text-sm leading-5 text-[var(--color-text-primary)]`}
+              className="min-w-0 flex-1 text-sm leading-5 text-[var(--color-text-primary)]"
               title={bodyText}
             >
               {bodyText}
             </div>
-            <div className="mt-1.5 flex gap-1.5">
-              {actionButtons.map((btn) => (
-                <button
-                  key={btn.action.type}
-                  type="button"
-                  className="rounded-md bg-white/10 px-2 py-0.5 text-xs font-medium text-[var(--color-text-primary)] transition hover:bg-white/20 active:bg-white/25"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleButtonAction();
-                  }}
-                  onPointerDown={(event) => {
-                    event.stopPropagation();
-                  }}
-                >
-                  {btn.label}
-                </button>
-              ))}
-              {suggestion ? (
-                <button
-                  type="button"
-                  className="rounded-md bg-white/5 px-2 py-0.5 text-xs font-medium text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)] active:bg-white/15"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleDismiss();
-                  }}
-                  onPointerDown={(event) => {
-                    event.stopPropagation();
-                  }}
-                >
-                  {t("action.dismiss", { defaultValue: "Dismiss" })}
-                </button>
-              ) : null}
-            </div>
+            <button
+              type="button"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onCloseMessage?.();
+              }}
+              aria-label={t("dismissReminderAria", {
+                defaultValue: "Dismiss reminder",
+              })}
+            >
+              ×
+            </button>
           </div>
-        </div>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full text-sm text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                handleDismiss();
+              }}
+              aria-label={t("dismissReminderAria", {
+                defaultValue: "Dismiss reminder",
+              })}
+            >
+              ×
+            </button>
+            <div className="pr-8">
+              <div className="min-w-0">
+                {showMeta ? (
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
+                    {kindLabel}
+                  </div>
+                ) : null}
+                <div
+                  className={`${showMeta ? "mt-1" : ""} text-sm leading-5 text-[var(--color-text-primary)]`}
+                  title={bodyText}
+                >
+                  {bodyText}
+                </div>
+                <div className="mt-1.5 flex gap-1.5">
+                  {actionButtons.map((btn) => (
+                    <button
+                      key={btn.action.type}
+                      type="button"
+                      className="rounded-md bg-white/10 px-2 py-0.5 text-xs font-medium text-[var(--color-text-primary)] transition hover:bg-white/20 active:bg-white/25"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleButtonAction();
+                      }}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                      }}
+                    >
+                      {btn.label}
+                    </button>
+                  ))}
+                  {suggestion ? (
+                    <button
+                      type="button"
+                      className="rounded-md bg-white/5 px-2 py-0.5 text-xs font-medium text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)] active:bg-white/15"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleDismiss();
+                      }}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                      }}
+                    >
+                      {t("action.dismiss", { defaultValue: "Dismiss" })}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

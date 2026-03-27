@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GroupContext, LedgerEvent } from "../../types";
 import { recordPetDecisionOutcome } from "../../services/api";
 import type { PetReminder } from "./types";
+import { buildTaskProposalMessage } from "./taskProposal";
 import {
   createMentionReaction,
   createTaskReactionSnapshot,
@@ -14,6 +15,8 @@ const SUGGESTION_SNOOZE_MS = 60 * 1000;
 const GUARDIAN_SNOOZE_MS = 15 * 60 * 1000;
 const DISMISS_COOLDOWN_MS = 3_000;
 const SNOOZE_STORAGE_KEY_PREFIX = "cccc:web-pet:snoozed:";
+const TASK_PROPOSAL_ECHO_SUPPRESS_MS = 10 * 60 * 1000;
+const RECENT_USER_MESSAGE_SCAN_LIMIT = 12;
 
 export interface UseWebPetNotificationsResult {
   reminders: PetReminder[];
@@ -32,6 +35,60 @@ export function shouldProjectReminderForGroupState(
   const normalizedState = String(groupState || "").trim().toLowerCase();
   if (normalizedState === "active") return true;
   return reminder.action.type === "restart_actor" || reminder.action.type === "automation_proposal";
+}
+
+function normalizeCompareText(value: string): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function eventTargetsForeman(event: LedgerEvent): boolean {
+  const data = event.data as Record<string, unknown> | undefined;
+  const to = Array.isArray(data?.to) ? data.to : [];
+  return to.some((entry) => {
+    const normalized = normalizeCompareText(String(entry || ""));
+    return normalized === "@foreman" || normalized === "foreman";
+  });
+}
+
+function eventTextMentionsTask(reminder: PetReminder, text: string): boolean {
+  if (reminder.action.type !== "task_proposal") return false;
+  const normalizedText = normalizeCompareText(text);
+  if (!normalizedText) return false;
+  const expectedText = normalizeCompareText(buildTaskProposalMessage(reminder.action));
+  return !!expectedText && normalizedText === expectedText;
+}
+
+export function shouldSuppressTaskProposalEcho(
+  reminder: PetReminder,
+  events: LedgerEvent[],
+  nowMs: number = Date.now(),
+): boolean {
+  if (reminder.action.type !== "task_proposal") return false;
+
+  let scanned = 0;
+  for (let idx = events.length - 1; idx >= 0; idx -= 1) {
+    const event = events[idx];
+    if (!event || String(event.kind || "").trim() !== "chat.message") continue;
+    if (String(event.by || "").trim() !== "user") continue;
+    if (!eventTargetsForeman(event)) continue;
+    scanned += 1;
+    if (scanned > RECENT_USER_MESSAGE_SCAN_LIMIT) break;
+
+    const eventMs = Date.parse(String(event.ts || ""));
+    if (Number.isFinite(eventMs) && nowMs - eventMs > TASK_PROPOSAL_ECHO_SUPPRESS_MS) {
+      continue;
+    }
+
+    const data = event.data as Record<string, unknown> | undefined;
+    const text = String(data?.text || "");
+    if (eventTextMentionsTask(reminder, text)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function getLatestEvent(events: LedgerEvent[]): LedgerEvent | null {
@@ -142,9 +199,12 @@ export function useWebPetNotifications(input: {
   const projected = useMemo(
     () => {
       const decisions = Array.isArray(input.decisions) ? input.decisions : [];
-      return decisions.filter((reminder) => shouldProjectReminderForGroupState(reminder, groupState));
+      return decisions.filter((reminder) =>
+        shouldProjectReminderForGroupState(reminder, groupState) &&
+        !shouldSuppressTaskProposalEcho(reminder, events),
+      );
     },
-    [groupState, input.decisions],
+    [events, groupState, input.decisions],
   );
   const reminderByFingerprint = useMemo(
     () => new Map(projected.map((reminder) => [reminder.fingerprint, reminder])),
@@ -198,13 +258,10 @@ export function useWebPetNotifications(input: {
     lastProcessedEventIdRef.current = "";
     didHydrateTaskSnapshotRef.current = false;
     previousTaskSnapshotRef.current = {};
-    // eslint-disable-next-line react-hooks/set-state-in-effect 
-    setNowTick(nextState.now);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSnoozedUntilSnapshot(nextState.snoozedUntil);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDismissCooldownUntil(0);
     const frame = window.requestAnimationFrame(() => {
+      setNowTick(nextState.now);
+      setSnoozedUntilSnapshot(nextState.snoozedUntil);
+      setDismissCooldownUntil(0);
       setEphemeralReminder(null);
       setReaction(null);
     });

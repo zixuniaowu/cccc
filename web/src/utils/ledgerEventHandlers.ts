@@ -34,7 +34,20 @@ export function isChatMessageEvent(ev: unknown): ev is LedgerEvent & { kind: "ch
 
 export function isActorActivityEvent(
   ev: unknown,
-): ev is BaseLedgerEvent & { kind: "actor.activity"; data: { actors: Array<{ id: string; idle_seconds: number; running: boolean }> } } {
+): ev is BaseLedgerEvent & {
+  kind: "actor.activity";
+  data: {
+    actors: Array<{
+      id: string;
+      idle_seconds?: number | null;
+      running: boolean;
+      effective_working_state?: string;
+      effective_working_reason?: string;
+      effective_working_updated_at?: string | null;
+      effective_active_task_id?: string | null;
+    }>;
+  };
+} {
   return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "actor.activity";
 }
 

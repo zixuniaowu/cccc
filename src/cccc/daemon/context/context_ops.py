@@ -41,6 +41,7 @@ from ...kernel.context import (
 )
 from ...kernel.actors import get_effective_role, list_actors
 from ...kernel.group import load_group
+from ...kernel.query_projections import get_actor_list_projection
 from ...kernel.ledger import append_event
 from ...kernel.prompt_files import (
     HELP_FILENAME,
@@ -49,10 +50,13 @@ from ...kernel.prompt_files import (
     read_group_prompt_file,
     write_group_prompt_file,
 )
+from ...kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, derive_effective_working_state
 from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
 from ..space.group_space_projection import sync_group_space_projection
 from ..space.group_space_store import enqueue_space_job, get_space_binding, get_space_provider_state
+from ...runners import headless as headless_runner
+from ...runners import pty as pty_runner
 
 _CURATED_SPACE_SYNC_PREFIXES = (
     "coordination.",
@@ -241,6 +245,81 @@ def _agent_state_to_dict(agent: AgentState) -> Dict[str, Any]:
         },
         "updated_at": agent.updated_at,
     }
+
+
+def _actor_runtime_state_to_dict(
+    *,
+    group_id: str,
+    actor_doc: Dict[str, Any],
+    agent_state_by_id: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    actor_id = str(actor_doc.get("id") or "").strip()
+    runner_kind = str(actor_doc.get("runner") or "pty").strip() or "pty"
+    effective_runner = "headless" if runner_kind == "headless" else "pty"
+    running = False
+    idle_seconds = None
+    headless_state = None
+    if effective_runner == "headless":
+        state = headless_runner.SUPERVISOR.get_state(group_id=group_id, actor_id=actor_id)
+        headless_state = state.model_dump() if state is not None else None
+        running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(group_id, actor_id))
+    else:
+        running = pty_runner.SUPERVISOR.actor_running(group_id, actor_id)
+        idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=group_id, actor_id=actor_id) if running else None
+    pty_terminal_text = ""
+    if effective_runner == "pty" and running:
+        try:
+            pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
+                group_id=group_id,
+                actor_id=actor_id,
+                max_bytes=DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES,
+            ).decode("utf-8", errors="replace")
+        except Exception:
+            pty_terminal_text = ""
+
+    result = {
+        "id": actor_id,
+        "runtime": str(actor_doc.get("runtime") or "").strip() or "codex",
+        "runner": runner_kind,
+        "runner_effective": effective_runner,
+        "running": bool(running),
+        "idle_seconds": idle_seconds,
+    }
+    result.update(
+        derive_effective_working_state(
+            running=running,
+            effective_runner=effective_runner,
+            runtime=str(actor_doc.get("runtime") or "").strip(),
+            idle_seconds=idle_seconds,
+            pty_terminal_text=pty_terminal_text,
+            agent_state=agent_state_by_id.get(actor_id),
+            headless_state=headless_state,
+        )
+    )
+    return result
+
+
+def _build_actor_runtime_states(storage: ContextStorage, ordered_agents: List[AgentState]) -> List[Dict[str, Any]]:
+    actors = get_actor_list_projection(storage.group)
+    if not actors:
+        return []
+    agent_state_by_id = {
+        str(item.get("id") or "").strip(): item
+        for item in (_agent_state_to_dict(agent) for agent in ordered_agents)
+        if str(item.get("id") or "").strip()
+    }
+    result: List[Dict[str, Any]] = []
+    for actor in actors:
+        if not isinstance(actor, dict) or not str(actor.get("id") or "").strip():
+            continue
+        result.append(
+            _actor_runtime_state_to_dict(
+                group_id=storage.group.group_id,
+                actor_doc=actor,
+                agent_state_by_id=agent_state_by_id,
+            )
+        )
+    return result
 
 
 def _note_to_dict(note: CoordinationNote) -> Dict[str, Any]:
@@ -676,6 +755,7 @@ def _build_context_full_result(
     attention: Dict[str, List[Dict[str, Any]]],
     board: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[str, Any]:
+    actors_runtime = _build_actor_runtime_states(storage, ordered_agents)
     return {
         "version": storage.compute_version(),
         "coordination": {
@@ -685,6 +765,7 @@ def _build_context_full_result(
             "recent_handoffs": [_note_to_dict(note) for note in context.coordination.recent_handoffs],
         },
         "agent_states": [_agent_state_to_dict(agent) for agent in ordered_agents],
+        "actors_runtime": actors_runtime,
         "attention": attention,
         "board": board,
         "tasks_summary": _tasks_summary(tasks, attention=attention),
@@ -700,6 +781,7 @@ def _build_context_summary_result(
     ordered_agents: List[AgentState],
     attention: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[str, Any]:
+    actors_runtime = _build_actor_runtime_states(storage, ordered_agents)
     return {
         "version": storage.compute_version(),
         "coordination": {
@@ -707,6 +789,7 @@ def _build_context_summary_result(
             "tasks": [_task_to_summary_dict(task) for task in _sort_tasks(tasks)],
         },
         "agent_states": [_agent_state_to_dict(agent) for agent in ordered_agents],
+        "actors_runtime": actors_runtime,
         "attention": attention,
         "tasks_summary": _tasks_summary(tasks, attention=attention),
         "meta": context.meta if isinstance(context.meta, dict) else {},
@@ -731,6 +814,7 @@ def _empty_context_summary_result(storage: ContextStorage) -> Dict[str, Any]:
             "tasks": [],
         },
         "agent_states": [],
+        "actors_runtime": [],
         "attention": {},
         "tasks_summary": _tasks_summary([], attention={}),
         "meta": {},

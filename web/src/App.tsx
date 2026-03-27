@@ -220,7 +220,11 @@ export default function App() {
     showError,
   });
 
-  useGlobalEvents({ refreshGroups });
+  useGlobalEvents({
+    refreshGroups,
+    refreshActors,
+    selectedGroupId,
+  });
 
   const { canManageGroups, ccccHome, fetchDirSuggestions } = useAppChrome({
     parseUrlDeepLink,

@@ -103,6 +103,67 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_context_get_includes_actor_runtime_projection(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            from cccc.kernel.actors import add_actor
+            from cccc.kernel.context import ContextStorage
+            from cccc.kernel.group import load_group
+
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="peer1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            storage = ContextStorage(group)  # type: ignore[arg-type]
+            storage.update_agent_state("peer1", "Implement feature", active_task_id="T123")
+
+            with patch("cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
+                "cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.idle_seconds",
+                return_value=8.0,
+            ):
+                ctx, _ = self._context(gid)
+
+            self.assertTrue(ctx.ok, getattr(ctx, "error", None))
+            actors_runtime = ctx.result.get("actors_runtime") if isinstance(ctx.result, dict) else []
+            self.assertEqual(len(actors_runtime), 1)
+            self.assertEqual(actors_runtime[0]["id"], "peer1")
+            self.assertEqual(actors_runtime[0]["effective_working_state"], "working")
+            self.assertEqual(actors_runtime[0]["effective_active_task_id"], "T123")
+        finally:
+            cleanup()
+
+    def test_context_get_terminal_banner_can_mark_codex_working_without_active_task(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            from cccc.kernel.actors import add_actor
+            from cccc.kernel.group import load_group
+
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="peer1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            with (
+                patch("cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.actor_running", return_value=True),
+                patch("cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.idle_seconds", return_value=1.0),
+                patch(
+                    "cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.tail_output",
+                    return_value="◦ Working (49s • esc to interrupt)\n".encode("utf-8"),
+                ),
+            ):
+                ctx, _ = self._context(gid)
+
+            self.assertTrue(ctx.ok, getattr(ctx, "error", None))
+            actors_runtime = ctx.result.get("actors_runtime") if isinstance(ctx.result, dict) else []
+            self.assertEqual(len(actors_runtime), 1)
+            self.assertEqual(actors_runtime[0]["effective_working_state"], "working")
+            self.assertEqual(actors_runtime[0]["effective_working_reason"], "pty_terminal_codex_working_banner")
+        finally:
+            cleanup()
+
     def test_summary_context_hit_skips_rebuild_work_on_second_read(self) -> None:
         _, cleanup = self._with_home()
         try:
