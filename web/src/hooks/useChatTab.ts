@@ -1,7 +1,7 @@
 // useChatTab - Encapsulates ChatTab business logic and state.
 // Reduces prop drilling by providing state from stores and computed values directly.
 
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
   useGroupStore,
@@ -59,7 +59,6 @@ export function useChatTab({
 
   const busy = useUIStore((s) => s.busy);
   const chatSessions = useUIStore((s) => s.chatSessions);
-  const setBusy = useUIStore((s) => s.setBusy);
   const setChatFilter = useUIStore((s) => s.setChatFilter);
   const setShowScrollButton = useUIStore((s) => s.setShowScrollButton);
   const setChatUnreadCount = useUIStore((s) => s.setChatUnreadCount);
@@ -104,6 +103,7 @@ export function useChatTab({
   );
   const enqueueOutbox = useChatOutboxStore((s) => s.enqueue);
   const removeOutbox = useChatOutboxStore((s) => s.remove);
+  const sendInFlightRef = useRef(false);
 
   // ============ Computed Values ============
 
@@ -356,7 +356,7 @@ export function useChatTab({
   );
 
   const sendMessage = useCallback(async () => {
-    if (busy === "send") return; // re-entrancy guard (keyboard shortcut can bypass disabled button)
+    if (sendInFlightRef.current) return; // keyboard shortcut can bypass UI state; keep send single-flight locally
     const txt = composerText.trim();
     if (!selectedGroupId) return;
     if (!txt && composerFiles.length === 0) return;
@@ -451,7 +451,7 @@ export function useChatTab({
     }
 
     applyImmediateComposerFeedback();
-    setBusy("send");
+    sendInFlightRef.current = true;
     try {
       const to = toTokens;
       let resp;
@@ -532,10 +532,9 @@ export function useChatTab({
       restoreComposerState();
       showError(message);
     } finally {
-      setBusy("");
+      sendInFlightRef.current = false;
     }
   }, [
-    busy,
     composerText,
     composerFiles,
     selectedGroupId,
@@ -550,7 +549,6 @@ export function useChatTab({
     appendEvent,
     enqueueOutbox,
     removeOutbox,
-    setBusy,
     showError,
     clearComposer,
     setComposerText,

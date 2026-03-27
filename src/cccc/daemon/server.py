@@ -40,6 +40,7 @@ from ..util.time import utc_now_iso
 from .automation import AutomationManager
 from .im.bootstrap_im_ops import autostart_enabled_im_bridges
 from .group.bootstrap_actor_ops import autostart_running_groups
+from .pet.review_scheduler import recover_pending_pet_reviews
 from .mcp_install import (
     is_mcp_installed as runtime_is_mcp_installed,
     ensure_mcp_installed as runtime_ensure_mcp_installed,
@@ -1019,6 +1020,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
         # Bootstrap background work only after the daemon socket is ready, but
         # don't block the accept loop (clients should see the daemon as responsive).
+        recover_pending_pet_reviews()
         start_bootstrap_thread(
             maybe_autostart_running_groups=_maybe_autostart_running_groups,
             maybe_autostart_enabled_im_bridges=_maybe_autostart_enabled_im_bridges,

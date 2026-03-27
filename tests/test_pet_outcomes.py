@@ -56,6 +56,29 @@ class TestPetOutcomes(unittest.TestCase):
         self.assertEqual(str(events[-1].get("data", {}).get("fingerprint") or ""), "fp-old")
         self.assertEqual(str(events[-1].get("data", {}).get("outcome") or ""), "expired")
 
+    def test_load_suppressed_pet_fingerprints_uses_recent_executed_and_dismissed(self) -> None:
+        from cccc.kernel.pet_outcomes import append_pet_decision_outcome, load_suppressed_pet_fingerprints
+
+        with tempfile.TemporaryDirectory() as tmp:
+            group = _FakeGroup("g-demo", Path(tmp))
+            append_pet_decision_outcome(
+                group,
+                by="user",
+                fingerprint="fp-executed",
+                outcome="executed",
+            )
+            append_pet_decision_outcome(
+                group,
+                by="user",
+                fingerprint="fp-dismissed",
+                outcome="dismissed",
+                cooldown_ms=120000,
+            )
+            suppressed = load_suppressed_pet_fingerprints(group)
+
+        self.assertEqual(str((suppressed.get("fp-executed") or {}).get("outcome") or ""), "executed")
+        self.assertEqual(str((suppressed.get("fp-dismissed") or {}).get("outcome") or ""), "dismissed")
+
 
 if __name__ == "__main__":
     unittest.main()

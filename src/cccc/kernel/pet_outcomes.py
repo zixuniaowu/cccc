@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
+from ..util.time import parse_utc_iso, utc_now_iso
+from .inbox import iter_events_reverse
 from .ledger import append_event
 if TYPE_CHECKING:
     from .group import Group
@@ -9,11 +12,68 @@ if TYPE_CHECKING:
 
 PET_DECISION_OUTCOME_KIND = "pet.decision.outcome"
 PET_DECISION_OUTCOMES = {"executed", "dismissed", "snoozed", "expired"}
+_EXECUTED_SUPPRESS_MS = 30 * 60 * 1000
+_DISMISSED_SUPPRESS_MS = 60 * 1000
+_SNOOZED_SUPPRESS_MS = 60 * 1000
 
 
 def normalize_pet_outcome(value: Any) -> str:
     normalized = str(value or "").strip().lower()
     return normalized if normalized in PET_DECISION_OUTCOMES else ""
+
+
+def _default_outcome_cooldown_ms(outcome: str) -> int:
+    normalized = normalize_pet_outcome(outcome)
+    if normalized == "executed":
+        return _EXECUTED_SUPPRESS_MS
+    if normalized == "dismissed":
+        return _DISMISSED_SUPPRESS_MS
+    if normalized == "snoozed":
+        return _SNOOZED_SUPPRESS_MS
+    return 0
+
+
+def _latest_outcomes_by_fingerprint(group: Group, *, limit: int = 256) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for event in iter_events_reverse(group.ledger_path):
+        if str(event.get("kind") or "").strip() != PET_DECISION_OUTCOME_KIND:
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        fingerprint = str(data.get("fingerprint") or "").strip()
+        if not fingerprint or fingerprint in out:
+            continue
+        out[fingerprint] = event
+        if len(out) >= max(1, int(limit or 256)):
+            break
+    return out
+
+
+def load_suppressed_pet_fingerprints(group: Group) -> Dict[str, Dict[str, Any]]:
+    now_dt = parse_utc_iso(utc_now_iso())
+    if now_dt is None:
+        return {}
+    suppressed: Dict[str, Dict[str, Any]] = {}
+    for fingerprint, event in _latest_outcomes_by_fingerprint(group).items():
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        outcome = normalize_pet_outcome(data.get("outcome"))
+        if outcome not in {"executed", "dismissed", "snoozed"}:
+            continue
+        event_dt = parse_utc_iso(str(event.get("ts") or "").strip())
+        if event_dt is None:
+            continue
+        cooldown_ms = int(data.get("cooldown_ms") or 0)
+        if cooldown_ms <= 0:
+            cooldown_ms = _default_outcome_cooldown_ms(outcome)
+        if cooldown_ms <= 0:
+            continue
+        if event_dt + timedelta(milliseconds=cooldown_ms) <= now_dt:
+            continue
+        suppressed[fingerprint] = {
+            "outcome": outcome,
+            "cooldown_ms": cooldown_ms,
+            "ts": str(event.get("ts") or "").strip(),
+        }
+    return suppressed
 
 
 def append_pet_decision_outcome(

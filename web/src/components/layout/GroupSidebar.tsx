@@ -149,17 +149,17 @@ export function GroupSidebar({
         )}
       >
         {/* Header */}
-        <div className="p-4 pb-2">
+        <div className="px-3 py-4 pb-2">
           <div
             className={classNames(
               "flex items-center",
               isCollapsed ? "justify-center" : "justify-between"
             )}
           >
-            <div className={classNames("flex items-center", isCollapsed ? "" : "gap-3")}>
+            <div className={classNames("flex items-center", isCollapsed ? "" : "gap-2")}>
               <div className={classNames(
                 "rounded-xl flex items-center justify-center overflow-hidden glass-btn",
-                isCollapsed ? "w-11 h-11" : "h-11 min-w-[44px] max-w-[164px] px-3",
+                "w-11 h-11",
                 "text-cyan-600 dark:text-cyan-400"
               )}>
                 <img
@@ -167,7 +167,7 @@ export function GroupSidebar({
                   alt={`${branding.product_name} logo`}
                   className={classNames(
                     "object-contain",
-                    isCollapsed ? "w-6 h-6" : "max-h-6 w-auto max-w-full"
+                    isCollapsed ? "w-6 h-6" : "h-6 w-6"
                   )}
                 />
               </div>
@@ -177,11 +177,11 @@ export function GroupSidebar({
             </div>
 
             {!isCollapsed && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 {!readOnly && onCreateGroup && (
                   <button
                     className={classNames(
-                    "text-xs px-4 py-2 rounded-xl font-medium transition-all min-h-[36px] glass-btn-accent",
+                    "text-xs px-3 py-2 rounded-xl font-medium transition-all min-h-[36px] glass-btn-accent",
                         isDark ? "text-slate-100" : "text-gray-800"
                     )}
                     onClick={onCreateGroup}

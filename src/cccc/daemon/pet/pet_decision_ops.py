@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ...kernel.pet_fallback_decisions import build_fallback_pet_decisions
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
@@ -70,6 +71,10 @@ def handle_pet_decisions_replace(args: Dict[str, Any]) -> DaemonResponse:
         previous_exists, previous_payload = _capture_pet_decisions_document(group)
         previous_decisions = load_pet_decisions(group)
         normalized = replace_pet_decisions(group, decisions=list(decisions), actor_id=actor_id)
+        if not normalized and decisions == []:
+            fallback = build_fallback_pet_decisions(group)
+            if fallback:
+                normalized = replace_pet_decisions(group, decisions=fallback, actor_id=actor_id)
         event = append_event(
             group.ledger_path,
             kind="pet.decisions.replace",
@@ -116,6 +121,32 @@ def handle_pet_decisions_clear(args: Dict[str, Any]) -> DaemonResponse:
         _require_pet_actor(group, actor_id)
         previous_exists, previous_payload = _capture_pet_decisions_document(group)
         previous_decisions = load_pet_decisions(group)
+        fallback = build_fallback_pet_decisions(group)
+        if fallback:
+            normalized = replace_pet_decisions(group, decisions=fallback, actor_id=actor_id)
+            event = append_event(
+                group.ledger_path,
+                kind="pet.decisions.replace",
+                group_id=group.group_id,
+                scope_key="",
+                by=actor_id or PET_ACTOR_ID,
+                data={
+                    "count": len(normalized),
+                    "fingerprints": [
+                        str(item.get("fingerprint") or "").strip()
+                        for item in normalized
+                        if isinstance(item, dict) and str(item.get("fingerprint") or "").strip()
+                    ],
+                    "fallback_from_clear": True,
+                },
+            )
+            append_expired_pet_decision_outcomes(
+                group,
+                by=actor_id or PET_ACTOR_ID,
+                previous_decisions=previous_decisions,
+                current_decisions=normalized,
+            )
+            return DaemonResponse(ok=True, result={"decisions": normalized, "event": event, "cleared": False})
         clear_pet_decisions(group, actor_id=actor_id)
         event = append_event(
             group.ledger_path,

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
+from .pet_outcomes import load_suppressed_pet_fingerprints
 from ..util.fs import atomic_write_json, read_json
 
 if TYPE_CHECKING:
@@ -303,12 +306,60 @@ def load_pet_decisions(group: Group) -> List[Dict[str, Any]]:
     return out
 
 
+def _decision_signature(decision: Dict[str, Any]) -> str:
+    source = decision.get("source") if isinstance(decision.get("source"), dict) else {}
+    action = decision.get("action") if isinstance(decision.get("action"), dict) else {}
+    payload = {
+        "kind": str(decision.get("kind") or "").strip(),
+        "summary": str(decision.get("summary") or "").strip(),
+        "agent": str(decision.get("agent") or "").strip(),
+        "source": source,
+        "action": action,
+        "suggestion": str(decision.get("suggestion") or "").strip(),
+        "suggestion_preview": str(decision.get("suggestion_preview") or "").strip(),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _assign_unique_fingerprints(decisions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    seen_signatures: set[tuple[str, str]] = set()
+    seen_fingerprints: set[str] = set()
+    for decision in decisions:
+        fingerprint = str(decision.get("fingerprint") or "").strip()
+        if not fingerprint:
+            continue
+        signature = _decision_signature(decision)
+        signature_key = (fingerprint, signature)
+        if signature_key in seen_signatures:
+            continue
+        candidate = fingerprint
+        if candidate in seen_fingerprints:
+            digest = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:12]
+            candidate = f"{fingerprint}:{digest}"
+            suffix = 1
+            while candidate in seen_fingerprints:
+                candidate = f"{fingerprint}:{digest}:{suffix}"
+                suffix += 1
+        normalized = dict(decision)
+        normalized["fingerprint"] = candidate
+        out.append(normalized)
+        seen_signatures.add(signature_key)
+        seen_fingerprints.add(candidate)
+    return out
+
+
 def replace_pet_decisions(group: Group, *, decisions: List[Dict[str, Any]], actor_id: str) -> List[Dict[str, Any]]:
+    suppressed = load_suppressed_pet_fingerprints(group)
     normalized: List[Dict[str, Any]] = []
     for item in decisions:
         normalized_item = _normalize_decision(item)
         if normalized_item is not None:
+            fingerprint = str(normalized_item.get("fingerprint") or "").strip()
+            if fingerprint and fingerprint in suppressed:
+                continue
             normalized.append(normalized_item)
+    normalized = _assign_unique_fingerprints(normalized)
     atomic_write_json(
         pet_decisions_path(group),
         {
