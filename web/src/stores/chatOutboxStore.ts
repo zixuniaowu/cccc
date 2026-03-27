@@ -5,25 +5,43 @@
 import { create } from "zustand";
 import type { LedgerEvent } from "../types";
 
-function revokeEventObjectUrls(event: LedgerEvent | undefined): void {
+function collectEventObjectUrls(event: LedgerEvent | undefined): string[] {
   const data = event?.data;
   const attachments =
     data && typeof data === "object" && Array.isArray((data as { attachments?: unknown[] }).attachments)
       ? ((data as { attachments?: unknown[] }).attachments as unknown[])
       : [];
+  const urls: string[] = [];
   for (const item of attachments) {
     if (!item || typeof item !== "object") continue;
     const previewUrl = typeof (item as { local_preview_url?: unknown }).local_preview_url === "string"
       ? String((item as { local_preview_url?: string }).local_preview_url || "").trim()
       : "";
     if (previewUrl.startsWith("blob:")) {
-      try {
-        URL.revokeObjectURL(previewUrl);
-      } catch {
-        void 0;
-      }
+      urls.push(previewUrl);
     }
   }
+  return urls;
+}
+
+function revokeObjectUrls(urls: string[]): void {
+  for (const previewUrl of urls) {
+    try {
+      URL.revokeObjectURL(previewUrl);
+    } catch {
+      void 0;
+    }
+  }
+}
+
+function revokeEventObjectUrls(event: LedgerEvent | undefined): void {
+  revokeObjectUrls(collectEventObjectUrls(event));
+}
+
+const transferredPreviewUrlKeys = new Set<string>();
+
+function previewTransferKey(groupId: string, localId: string): string {
+  return `${groupId}::${localId}`;
 }
 
 export interface OutboxEntry {
@@ -77,7 +95,12 @@ export const useChatOutboxStore = create<ChatOutboxState>((set) => ({
       const removed = prev.find((e) => e.localId === localId);
       const next = prev.filter((e) => e.localId !== localId);
       if (next.length === prev.length) return state; // no change
-      revokeEventObjectUrls(removed?.event);
+      const transferKey = previewTransferKey(groupId, localId);
+      if (transferredPreviewUrlKeys.has(transferKey)) {
+        transferredPreviewUrlKeys.delete(transferKey);
+      } else {
+        revokeEventObjectUrls(removed?.event);
+      }
       return {
         entriesByGroup: {
           ...state.entriesByGroup,
@@ -111,4 +134,26 @@ export const useChatOutboxStore = create<ChatOutboxState>((set) => ({
 const EMPTY: OutboxEntry[] = [];
 export function selectOutboxEntries(state: ChatOutboxState, groupId: string): OutboxEntry[] {
   return state.entriesByGroup[groupId] || EMPTY;
+}
+
+export function getOutboxEntry(groupId: string, localId: string): OutboxEntry | null {
+  const entries = useChatOutboxStore.getState().entriesByGroup[groupId] || EMPTY;
+  return entries.find((entry) => entry.localId === localId) || null;
+}
+
+export function transferOutboxPreviewUrls(groupId: string, localId: string): string[] {
+  const entry = getOutboxEntry(groupId, localId);
+  if (!entry) return [];
+  const urls = collectEventObjectUrls(entry.event);
+  if (urls.length > 0) {
+    transferredPreviewUrlKeys.add(previewTransferKey(groupId, localId));
+  }
+  return urls;
+}
+
+export function releaseTransferredPreviewUrls(urls: string[], delayMs = 60000): void {
+  if (urls.length <= 0) return;
+  window.setTimeout(() => {
+    revokeObjectUrls(urls);
+  }, delayMs);
 }

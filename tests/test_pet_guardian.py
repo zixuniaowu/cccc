@@ -92,7 +92,7 @@ class TestPetDecisionsOps(unittest.TestCase):
                 "id": "decision-auto-1",
                 "kind": "suggestion",
                 "priority": 70,
-                "summary": "建议增加一个临时自动提醒规则。",
+                "summary": "Propose one temporary automation reminder rule.",
                 "agent": "Pet Peer",
                 "fingerprint": f"group:{group.group_id}:automation:idle-followup",
                 "action": {
@@ -128,6 +128,97 @@ class TestPetDecisionsOps(unittest.TestCase):
             self.assertEqual(stored[0]["action"]["title"], "Temporary reply follow-up rule")
             self.assertEqual(stored[0]["action"]["actions"][0]["type"], "create_rule")
             self.assertEqual(load_pet_decisions(group)[0]["action"]["type"], "automation_proposal")
+
+    def test_replace_compacts_foreman_send_suggestion_to_next_step_message(self) -> None:
+        from cccc.kernel.pet_decisions import replace_pet_decisions
+
+        with tempfile.TemporaryDirectory() as tmp:
+            group = _FakeGroup("g-demo", Path(tmp))
+            decision = {
+                "id": "decision-foreman-1",
+                "kind": "suggestion",
+                "priority": 90,
+                "summary": "Internal judgment: close the reply thread first.",
+                "agent": "Pet Peer",
+                "fingerprint": f"group:{group.group_id}:suggestion:reply-pressure",
+                "action": {
+                    "type": "send_suggestion",
+                    "group_id": group.group_id,
+                    "to": ["@foreman"],
+                    "text": (
+                        "The main thread is still waiting on a user-side runtime validation, inbox is empty, "
+                        "and blocked/waiting_user/handoff have no new changes. "
+                        "If reply pressure does not settle, prioritize the oldest overdue reply thread."
+                    ),
+                },
+                "source": {},
+                "updated_at": "",
+            }
+
+            stored = replace_pet_decisions(group, decisions=[decision], actor_id="pet-peer")
+
+            action_text = str(stored[0]["action"]["text"] or "")
+            self.assertEqual(action_text, "prioritize the oldest overdue reply thread.")
+            self.assertEqual(str(stored[0].get("suggestion") or ""), action_text)
+
+    def test_replace_keeps_non_foreman_send_suggestion_text(self) -> None:
+        from cccc.kernel.pet_decisions import replace_pet_decisions
+
+        with tempfile.TemporaryDirectory() as tmp:
+            group = _FakeGroup("g-demo", Path(tmp))
+            decision = {
+                "id": "decision-user-1",
+                "kind": "suggestion",
+                "priority": 60,
+                "summary": "Ask the user for more detail.",
+                "agent": "Pet Peer",
+                "fingerprint": f"group:{group.group_id}:suggestion:user-followup",
+                "action": {
+                    "type": "send_suggestion",
+                    "group_id": group.group_id,
+                    "to": ["user"],
+                    "text": "Please share reproduction steps and the error screenshot.",
+                },
+                "source": {},
+                "updated_at": "",
+            }
+
+            stored = replace_pet_decisions(group, decisions=[decision], actor_id="pet-peer")
+            self.assertEqual(str(stored[0]["action"]["text"] or ""), "Please share reproduction steps and the error screenshot.")
+
+    def test_replace_normalizes_task_proposal_reply_pressure_to_natural_language(self) -> None:
+        from cccc.kernel.pet_decisions import replace_pet_decisions
+
+        with tempfile.TemporaryDirectory() as tmp:
+            group = _FakeGroup("g-demo", Path(tmp))
+            decision = {
+                "id": "reply-pressure-oldest-followup",
+                "kind": "task_proposal",
+                "priority": 90,
+                "summary": "先收口最老的一条 overdue reply 线程",
+                "agent": "claude-1",
+                "fingerprint": "task_proposal:reply_pressure:oldest_followup",
+                "action": {
+                    "type": "task_proposal",
+                    "group_id": group.group_id,
+                    "operation": "propose",
+                    "title": "收口最老一条 overdue reply 链路",
+                    "assignee": "claude-1",
+                    "text": "先挑最老的一条等待回复链路做收口：要么给出当前结论，要么明确缺哪条运行态证据，别继续让 overdue 堆着。",
+                },
+                "source": {
+                    "suggestion_kind": "reply_pressure",
+                },
+                "updated_at": "",
+            }
+
+            stored = replace_pet_decisions(group, decisions=[decision], actor_id="pet-peer")
+
+            self.assertEqual(str(stored[0]["summary"] or ""), "先处理那条拖得最久的待回复线程")
+            self.assertEqual(
+                str(stored[0]["action"]["text"] or ""),
+                "先处理拖得最久的待回复线程：给出当前结论，或明确还缺什么运行态证据，不要继续挂着。",
+            )
 
     def test_replace_rolls_back_when_ledger_append_fails(self) -> None:
         from cccc.daemon.pet.pet_decision_ops import handle_pet_decisions_replace
@@ -241,6 +332,21 @@ class TestPetActorSeed(unittest.TestCase):
 
         self.assertEqual(seed["runtime"], "claude")
         self.assertEqual(seed["command"], ["claude", "--dangerously-skip-permissions"])
+
+
+class TestPetPromptContract(unittest.TestCase):
+    def test_render_pet_system_prompt_declares_outbound_message_boundary(self) -> None:
+        from cccc.kernel.pet_prompt import render_pet_system_prompt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            group = _FakeGroup("g-demo", Path(tmp))
+            group.doc = {"title": "demo", "state": "active", "actors": []}
+            prompt = render_pet_system_prompt(group, actor={"id": "pet-peer"}, context_payload={})
+
+        self.assertIn("summary is your internal judgment", prompt)
+        self.assertIn("action.text must already be the final message", prompt)
+        self.assertIn("short next-step message", prompt)
+        self.assertIn("task_proposal, summary and action.text must both read like natural next-step guidance", prompt)
 
 
 if __name__ == "__main__":

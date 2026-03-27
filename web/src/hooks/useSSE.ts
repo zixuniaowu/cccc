@@ -1,7 +1,12 @@
 // SSE connection management for the ledger stream.
 import { useEffect, useRef } from "react";
 import { useGroupStore, useUIStore, useModalStore } from "../stores";
-import { useChatOutboxStore } from "../stores/chatOutboxStore";
+import {
+  getOutboxEntry,
+  releaseTransferredPreviewUrls,
+  transferOutboxPreviewUrls,
+  useChatOutboxStore,
+} from "../stores/chatOutboxStore";
 import { beginContextRequest, isLatestContextRequest } from "../stores/useGroupStore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
@@ -33,6 +38,56 @@ import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
 
 const MAX_RECONCILED_EVENTS = 800;
+
+function mergeCanonicalAttachmentsWithOptimisticPreview(
+  ev: Record<string, unknown>,
+  groupId: string,
+): { event: Record<string, unknown>; transferredPreviewUrls: string[] } {
+  if (String(ev.kind || "").trim() !== "chat.message" || String(ev.by || "").trim() !== "user") {
+    return { event: ev, transferredPreviewUrls: [] };
+  }
+  const data = ev.data && typeof ev.data === "object" ? (ev.data as Record<string, unknown>) : null;
+  const clientId = data && typeof data.client_id === "string" ? data.client_id.trim() : "";
+  if (!clientId) {
+    return { event: ev, transferredPreviewUrls: [] };
+  }
+
+  const outboxEntry = getOutboxEntry(groupId, clientId);
+  const optimisticData = outboxEntry?.event?.data && typeof outboxEntry.event.data === "object"
+    ? (outboxEntry.event.data as { attachments?: unknown[] })
+    : null;
+  const optimisticAttachments = Array.isArray(optimisticData?.attachments) ? optimisticData.attachments : [];
+  const canonicalAttachments = Array.isArray(data?.attachments) ? data.attachments : [];
+  if (optimisticAttachments.length <= 0 || canonicalAttachments.length <= 0) {
+    return { event: ev, transferredPreviewUrls: [] };
+  }
+
+  const mergedAttachments = canonicalAttachments.map((attachment, index) => {
+    if (!attachment || typeof attachment !== "object") return attachment;
+    const optimistic = optimisticAttachments[index];
+    if (!optimistic || typeof optimistic !== "object") return attachment;
+    const previewUrl = typeof (optimistic as { local_preview_url?: unknown }).local_preview_url === "string"
+      ? String((optimistic as { local_preview_url?: string }).local_preview_url || "").trim()
+      : "";
+    if (!previewUrl.startsWith("blob:")) return attachment;
+    return {
+      ...attachment,
+      local_preview_url: previewUrl,
+    };
+  });
+
+  const transferredPreviewUrls = transferOutboxPreviewUrls(groupId, clientId);
+  return {
+    event: {
+      ...ev,
+      data: {
+        ...data,
+        attachments: mergedAttachments,
+      },
+    },
+    transferredPreviewUrls,
+  };
+}
 
 interface UseSSEOptions {
   activeTabRef: React.MutableRefObject<string>;
@@ -244,35 +299,39 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           return;
         }
 
-        // Initialize read/ack status for new messages
-        initializeReadStatus(ev, actorsRef.current);
-        initializeAckStatus(ev, actorsRef.current);
-        initializeObligationStatus(ev, actorsRef.current);
+        const reconciled = mergeCanonicalAttachmentsWithOptimisticPreview(ev as Record<string, unknown>, groupId);
+        const nextEvent = reconciled.event;
 
-        appendEvent(ev, groupId);
+        // Initialize read/ack status for new messages
+        initializeReadStatus(nextEvent, actorsRef.current);
+        initializeAckStatus(nextEvent, actorsRef.current);
+        initializeObligationStatus(nextEvent, actorsRef.current);
+
+        appendEvent(nextEvent, groupId);
 
         // Reconcile outbox: when a user's chat.message arrives via SSE,
         // remove only the exact optimistic entry that produced this canonical event.
-        if (isChatMessageEvent(ev) && String(ev.by || "") === "user") {
-          const msgData = ev.data && typeof ev.data === "object" ? (ev.data as { client_id?: unknown }) : null;
+        if (isChatMessageEvent(nextEvent) && String(nextEvent.by || "") === "user") {
+          const msgData = nextEvent.data && typeof nextEvent.data === "object" ? (nextEvent.data as { client_id?: unknown }) : null;
           const clientId = msgData && typeof msgData.client_id === "string" ? msgData.client_id.trim() : "";
           if (clientId) {
             useChatOutboxStore.getState().remove(groupId, clientId);
+            releaseTransferredPreviewUrls(reconciled.transferredPreviewUrls);
           }
         }
 
         // Reply to an earlier message updates its obligation status in-place.
-        if (isChatMessageEvent(ev)) {
-          const msgData = ev.data && typeof ev.data === "object" ? (ev.data as { reply_to?: unknown }) : null;
+        if (isChatMessageEvent(nextEvent)) {
+          const msgData = nextEvent.data && typeof nextEvent.data === "object" ? (nextEvent.data as { reply_to?: unknown }) : null;
           const replyTo = msgData && typeof msgData.reply_to === "string" ? String(msgData.reply_to || "").trim() : "";
-          const replyBy = String(ev.by || "").trim();
+          const replyBy = String(nextEvent.by || "").trim();
           if (replyTo && replyBy) {
             updateReplyStatus(replyTo, replyBy, groupId);
           }
         }
 
-        if (isChatMessageEvent(ev) && String(ev.by || "").trim() !== "user") {
-          const msgData = ev.data && typeof ev.data === "object" ? (ev.data as ChatMessageData) : null;
+        if (isChatMessageEvent(nextEvent) && String(nextEvent.by || "").trim() !== "user") {
+          const msgData = nextEvent.data && typeof nextEvent.data === "object" ? (nextEvent.data as ChatMessageData) : null;
           const presentationRefs = getPresentationMessageRefs(msgData?.refs);
           const needsAttention =
             String(msgData?.priority || "normal").trim() === "attention" ||
@@ -287,20 +346,20 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           }
         }
 
-        if (isChatMessageEvent(ev)) {
-          const recipients = getRecipientActorIdsForEvent(ev, actorsRef.current);
+        if (isChatMessageEvent(nextEvent)) {
+          const recipients = getRecipientActorIdsForEvent(nextEvent, actorsRef.current);
           if (recipients.length > 0) {
             incrementActorUnread(recipients);
           }
         }
 
         // Update unread count
-        if (shouldIncrementUnread(ev, activeTabRef.current === "chat", chatAtBottomRef.current)) {
+        if (shouldIncrementUnread(nextEvent, activeTabRef.current === "chat", chatAtBottomRef.current)) {
           incrementChatUnread(groupId);
         }
 
-        const notifyTargetActorId = getNotifyTargetActorId(ev);
-        const actorRefreshMode = getActorRefreshMode(ev);
+        const notifyTargetActorId = getNotifyTargetActorId(nextEvent);
+        const actorRefreshMode = getActorRefreshMode(nextEvent);
         if (notifyTargetActorId) {
           // Hot-path optimization: most system.notify events already declare a
           // single target actor, so we can update the unread badge locally

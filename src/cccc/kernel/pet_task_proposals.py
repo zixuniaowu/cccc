@@ -80,7 +80,7 @@ def build_task_proposal_candidates(
                 _proposal(
                     priority=100,
                     reason="waiting_user",
-                    summary=f"{brief} 正在等待用户，建议 foreman 优先闭环或推进。",
+                    summary=f"{brief} is waiting on the user; foreman should close the dependency or push it forward.",
                     operation="move" if next_status else "update",
                     task=task,
                     status=next_status,
@@ -94,7 +94,7 @@ def build_task_proposal_candidates(
                 _proposal(
                     priority=90,
                     reason="handoff",
-                    summary=f"{brief} 已移交给 {handoff_to}，建议 foreman 跟进接手情况。",
+                    summary=f"{brief} was handed off to {handoff_to}; foreman should confirm ownership and next step.",
                     operation="handoff",
                     task=task,
                     assignee=handoff_to,
@@ -110,7 +110,7 @@ def build_task_proposal_candidates(
                 _proposal(
                     priority=80,
                     reason="blocked",
-                    summary=f"{brief} 当前受阻{blocker_text}，建议 foreman 协调解阻塞。",
+                    summary=f"{brief} is blocked{blocker_text}; foreman should coordinate the unblock path.",
                     operation="update",
                     task=task,
                     assignee=assignee,
@@ -123,7 +123,7 @@ def build_task_proposal_candidates(
                 _proposal(
                     priority=70,
                     reason="planned_backlog",
-                    summary=f"{brief} 仍在 planned 且无人负责，建议 foreman 判断是否启动或清理。",
+                    summary=f"{brief} is still planned with no owner; foreman should decide whether to start or prune it.",
                     operation="update",
                     task=task,
                 )

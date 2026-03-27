@@ -107,7 +107,7 @@ def build_pet_automation_proposal_candidates(
             _proposal_for_rule(
                 group_id=group_id,
                 title="One-shot reply follow-up",
-                summary="建议创建一条一次性提醒规则，稍后检查 overdue reply 是否已闭环。",
+                summary="Create a one-shot reminder rule to recheck whether the overdue reply loop has closed.",
                 rule=rule,
                 existing_rule=_find_rule_id(ruleset, rule_id),
             )
@@ -125,7 +125,7 @@ def build_pet_automation_proposal_candidates(
             _proposal_for_rule(
                 group_id=group_id,
                 title="One-shot user dependency follow-up",
-                summary="建议创建一条一次性提醒规则，稍后检查 waiting_user 任务是否已推进。",
+                summary="Create a one-shot reminder rule to recheck whether the waiting_user task has moved.",
                 rule=rule,
                 existing_rule=_find_rule_id(ruleset, rule_id),
             )
@@ -143,7 +143,7 @@ def build_pet_automation_proposal_candidates(
             _proposal_for_rule(
                 group_id=group_id,
                 title="One-shot handoff follow-up",
-                summary="建议创建一条一次性提醒规则，稍后检查 handoff 是否已经完成接手。",
+                summary="Create a one-shot reminder rule to recheck whether the handoff has been accepted.",
                 rule=rule,
                 existing_rule=_find_rule_id(ruleset, rule_id),
             )
@@ -161,7 +161,7 @@ def build_pet_automation_proposal_candidates(
             _proposal_for_rule(
                 group_id=group_id,
                 title="One-shot blocked-work follow-up",
-                summary="建议创建一条一次性提醒规则，稍后检查 blocked work 是否仍无进展。",
+                summary="Create a one-shot reminder rule to recheck whether the blocked work is still stuck.",
                 rule=rule,
                 existing_rule=_find_rule_id(ruleset, rule_id),
             )

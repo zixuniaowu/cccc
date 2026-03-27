@@ -1,46 +1,17 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { FloatingPortal } from "@floating-ui/react";
-import { useTranslation } from 'react-i18next';
+import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
+import { useTranslation } from "react-i18next";
 import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
-import { ImageIcon, FileIcon, CloseIcon } from "./Icons";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
-import { isImageAttachment, isSvgAttachment } from "../utils/messageAttachments";
+import { MessageAttachments } from "./messageBubble/MessageAttachments";
+import { ActorAvatar } from "./ActorAvatar";
 
 const LazyMarkdownRenderer = lazy(() =>
     import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
 );
-
-const RUNTIME_LOGO_BASE = import.meta.env.BASE_URL;
-const RUNTIME_LOGO: Record<string, string> = {
-    claude: `${RUNTIME_LOGO_BASE}logos/claude.png`,
-    codex: `${RUNTIME_LOGO_BASE}logos/codex.png`,
-    gemini: `${RUNTIME_LOGO_BASE}logos/gemini.png`,
-};
-const IMAGE_ASPECT_RATIO_CACHE = new Map<string, number>();
-const IMAGE_LOAD_ERROR_CACHE = new Set<string>();
-
-function resolveSenderActor(actors: Actor[], senderId: string): Actor | null {
-    const key = String(senderId || "").trim();
-    if (!key) return null;
-
-    const exactId = actors.find((actor) => String(actor.id || "").trim() === key);
-    if (exactId) return exactId;
-
-    // 兼容历史消息：旧 `by` 可能已经不是现行 actor id，但仍等于当前 title。
-    const exactTitle = actors.find((actor) => String(actor.title || "").trim() === key);
-    if (exactTitle) return exactTitle;
-
-    const lower = key.toLowerCase();
-    return actors.find((actor) => {
-        const actorId = String(actor.id || "").trim().toLowerCase();
-        const actorTitle = String(actor.title || "").trim().toLowerCase();
-        return actorId === lower || actorTitle === lower;
-    }) || null;
-}
-
 
 function formatEventLine(ev: LedgerEvent): string {
     if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
@@ -134,298 +105,9 @@ function buildMessageCopyText({
     return sections.join("\n\n").trim();
 }
 
-// Image preview component with loading state and error handling
-function ImagePreview({
-    href,
-    alt,
-    isSvg,
-    isUserMessage,
-    isDark,
-}: {
-    href: string;
-    alt: string;
-    isSvg: boolean;
-    isUserMessage: boolean;
-    isDark: boolean;
-}) {
-    const [loadError, setLoadError] = useState(() => IMAGE_LOAD_ERROR_CACHE.has(href));
-    const [isLightboxOpen, setIsLightboxOpen] = useState(false);
-    const [resolvedHref, setResolvedHref] = useState<string>(isSvg ? "" : href);
-    const [isResolvingSvg, setIsResolvingSvg] = useState<boolean>(isSvg);
-    const [aspectRatio, setAspectRatio] = useState<number | null>(() => IMAGE_ASPECT_RATIO_CACHE.get(href) ?? null);
-    const { t } = useTranslation('chat');
-
-    useEffect(() => {
-        let cancelled = false;
-        let objectUrl = "";
-
-        setLoadError(false);
-        if (!isSvg || href.startsWith("blob:") || href.startsWith("data:")) {
-            setResolvedHref(href);
-            setIsResolvingSvg(false);
-            return undefined;
-        }
-
-        setResolvedHref("");
-        setIsResolvingSvg(true);
-
-        void (async () => {
-            try {
-                const resp = await fetch(href, { credentials: "same-origin" });
-                if (!resp.ok) {
-                    throw new Error(`svg_fetch_failed:${resp.status}`);
-                }
-                const blob = await resp.blob();
-                objectUrl = URL.createObjectURL(blob);
-                if (!cancelled) {
-                    setResolvedHref(objectUrl);
-                    setIsResolvingSvg(false);
-                }
-            } catch {
-                if (!cancelled) {
-                    setLoadError(true);
-                    setIsResolvingSvg(false);
-                }
-            }
-        })();
-
-        return () => {
-            cancelled = true;
-            if (objectUrl) {
-                URL.revokeObjectURL(objectUrl);
-            }
-        };
-    }, [href, isSvg]);
-
-    useEffect(() => {
-        if (!isLightboxOpen) {
-            return undefined;
-        }
-
-        // 支持 ESC 关闭，保持图片预览可快速退出。
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === "Escape") {
-                setIsLightboxOpen(false);
-            }
-        };
-
-        window.addEventListener("keydown", handleKeyDown);
-        return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [isLightboxOpen]);
-
-    useEffect(() => {
-        const src = resolvedHref || href;
-        if (!src || isResolvingSvg || IMAGE_LOAD_ERROR_CACHE.has(href)) {
-            return undefined;
-        }
-        const cachedAspectRatio = IMAGE_ASPECT_RATIO_CACHE.get(href);
-        if (typeof cachedAspectRatio === "number" && cachedAspectRatio > 0) {
-            return undefined;
-        }
-        let cancelled = false;
-        const img = new Image();
-        img.onload = () => {
-            if (cancelled) return;
-            const width = Number(img.naturalWidth || 0);
-            const height = Number(img.naturalHeight || 0);
-            if (width > 0 && height > 0) {
-                const nextAspectRatio = width / height;
-                IMAGE_ASPECT_RATIO_CACHE.set(href, nextAspectRatio);
-                setAspectRatio(nextAspectRatio);
-            }
-        };
-        img.onerror = () => {
-            if (cancelled) return;
-            IMAGE_LOAD_ERROR_CACHE.add(href);
-            setLoadError(true);
-        };
-        img.src = src;
-        return () => {
-            cancelled = true;
-        };
-    }, [resolvedHref, href, isResolvingSvg]);
-
-    if (loadError) {
-        // Fallback to file download link on error
-        return (
-            <a
-                href={href}
-                className={classNames(
-                    "inline-flex items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors max-w-full",
-                    isUserMessage
-                        ? "bg-blue-700/50 hover:bg-blue-700 text-white border border-blue-500"
-                        : isDark
-                            ? "bg-slate-900/50 hover:bg-slate-900 text-slate-300 border border-slate-700"
-                            : "bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200"
-                )}
-                title={t('download', { name: alt })}
-                download
-            >
-                <ImageIcon size={14} className="opacity-70 flex-shrink-0" />
-                <span className="truncate">{alt}</span>
-            </a>
-        );
-    }
-
-    return (
-        <>
-            <button
-                type="button"
-                className={classNames(
-                    "group overflow-hidden rounded-lg",
-                    isSvg
-                        ? "block"
-                        : "inline-flex max-w-[min(22rem,70vw)] sm:max-w-[min(30rem,60vw)]"
-                )}
-                onClick={() => setIsLightboxOpen(true)}
-                aria-label={t('openImagePreview', { name: alt })}
-                title={t('openImagePreview', { name: alt })}
-                disabled={isResolvingSvg}
-                style={isSvg ? { width: "12rem", maxWidth: "100%" } : undefined}
-            >
-                {isResolvingSvg ? (
-                    <div
-                        className={classNames(
-                            "flex min-h-28 min-w-28 items-center justify-center rounded-lg border px-4 py-6 text-xs",
-                            isUserMessage
-                                ? "border-blue-500/50 bg-blue-700/30 text-blue-50"
-                                : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
-                        )}
-                    >
-                        {alt}
-                    </div>
-                ) : (
-                    <img
-                        src={resolvedHref || href}
-                        alt={alt}
-                        className={classNames(
-                            "cursor-zoom-in rounded-lg object-contain transition-opacity group-hover:opacity-95",
-                            isSvg
-                                ? "block h-auto w-full max-h-64 sm:max-h-80"
-                                : "block w-full",
-                            isSvg
-                                ? null
-                                : isUserMessage
-                                    ? "bg-blue-700/20"
-                                    : isDark
-                                        ? "bg-slate-900/40"
-                                        : "bg-gray-100"
-                        )}
-                        style={isSvg ? undefined : {
-                            aspectRatio: aspectRatio ?? "4 / 3",
-                            maxHeight: "20rem",
-                        }}
-                        loading={isSvg ? "lazy" : "eager"}
-                        decoding="async"
-                        onError={() => {
-                            IMAGE_LOAD_ERROR_CACHE.add(href);
-                            setLoadError(true);
-                        }}
-                        onLoad={(event) => {
-                            if (isSvg) return;
-                            const target = event.currentTarget;
-                            const width = Number(target.naturalWidth || 0);
-                            const height = Number(target.naturalHeight || 0);
-                            if (width > 0 && height > 0) {
-                                const nextAspectRatio = width / height;
-                                IMAGE_ASPECT_RATIO_CACHE.set(href, nextAspectRatio);
-                                setAspectRatio(nextAspectRatio);
-                            }
-                        }}
-                    />
-                )}
-            </button>
-
-            {isLightboxOpen && (
-                <FloatingPortal>
-                    <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-6 animate-fade-in">
-                        <button
-                            type="button"
-                            className={classNames(
-                                "absolute inset-0",
-                                "glass-overlay"
-                            )}
-                            onClick={() => setIsLightboxOpen(false)}
-                            aria-label={t('common:close')}
-                        />
-
-                        <div
-                            className={classNames(
-                                "relative z-[81] flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl",
-                                "glass-modal"
-                            )}
-                            role="dialog"
-                            aria-modal="true"
-                            aria-label={t('imagePreviewDialog')}
-                            onClick={(event) => event.stopPropagation()}
-                        >
-                            <div className={classNames(
-                                "flex items-center justify-between gap-3 border-b px-4 py-3",
-                                "border-[var(--glass-border-subtle)]"
-                            )}>
-                                <div className="min-w-0">
-                                    <p className={classNames(
-                                        "truncate text-sm font-medium",
-                                        "text-[var(--color-text-primary)]"
-                                    )}>
-                                        {alt}
-                                    </p>
-                                    <p className={classNames(
-                                        "text-xs",
-                                        "text-[var(--color-text-tertiary)]"
-                                    )}>
-                                        {t('imagePreviewHint')}
-                                    </p>
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                    <a
-                                        href={href}
-                                        download
-                                        className={classNames(
-                                            "inline-flex items-center rounded-lg px-3 py-2 text-xs font-medium transition-colors",
-                                            isDark
-                                                ? "bg-slate-800 text-slate-100 hover:bg-slate-700"
-                                                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                                        )}
-                                        title={t('download', { name: alt })}
-                                    >
-                                        {t('download', { name: alt })}
-                                    </a>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsLightboxOpen(false)}
-                                        className={classNames(
-                                            "inline-flex items-center justify-center rounded-lg p-2 transition-colors",
-                                            isDark
-                                                ? "text-slate-300 hover:bg-slate-800 hover:text-slate-100"
-                                                : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                                        )}
-                                        aria-label={t('common:close')}
-                                    >
-                                        <CloseIcon size={18} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center justify-center overflow-auto p-4 sm:p-6">
-                                <img
-                                    src={resolvedHref}
-                                    alt={alt}
-                                    className="max-h-[75vh] w-auto max-w-full rounded-xl object-contain"
-                                />
-                            </div>
-                        </div>
-                    </div>
-                </FloatingPortal>
-            )}
-        </>
-    );
-}
-
 export interface MessageBubbleProps {
     event: LedgerEvent;
+    actorById: Map<string, Actor>;
     actors: Actor[];
     displayNameMap: Map<string, string>;
     agentState: AgentState | null;
@@ -445,6 +127,7 @@ export interface MessageBubbleProps {
 
 export const MessageBubble = memo(function MessageBubble({
     event: ev,
+    actorById,
     actors,
     displayNameMap,
     agentState,
@@ -468,6 +151,21 @@ export const MessageBubble = memo(function MessageBubble({
 
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
     const [copiedMessageText, setCopiedMessageText] = useState(false);
+    const { refs, floatingStyles, context } = useFloating({
+        open: isAgentStateOpen,
+        onOpenChange: setIsAgentStateOpen,
+        placement: "bottom-start",
+        middleware: [offset(8), flip(), shift({ padding: 8 })],
+        whileElementsMounted: autoUpdate,
+        strategy: "fixed",
+    });
+    const isAgentStatePositioned = context.isPositioned;
+    const setAgentStateReference = useCallback((node: HTMLElement | null) => {
+        refs.setReference(node);
+    }, [refs]);
+    const setAgentStateFloating = useCallback((node: HTMLElement | null) => {
+        refs.setFloating(node);
+    }, [refs]);
 
     const canShowAgentState = useMemo(() => {
         if (isUserMessage) return false;
@@ -514,6 +212,12 @@ export const MessageBubble = memo(function MessageBubble({
         .filter((a) => a.path.startsWith("state/blobs/") || a.local_preview_url.startsWith("blob:"));
     const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
     const shouldRenderMarkdown = useMemo(() => mayContainMarkdown(messageText), [messageText]);
+    const stableMessageAttachmentKey = useMemo(() => {
+        const clientId = typeof msgData?.client_id === "string" ? String(msgData.client_id || "").trim() : "";
+        if (clientId) return `client:${clientId}`;
+        const eventId = typeof ev.id === "string" ? String(ev.id || "").trim() : "";
+        return eventId || `row:${String(ev.ts || "")}:${String(ev.by || "")}`;
+    }, [ev.id, ev.ts, ev.by, msgData]);
     const copyableMessageText = useMemo(
         () =>
             buildMessageCopyText({
@@ -608,22 +312,16 @@ export const MessageBubble = memo(function MessageBubble({
     // Sender display name (use title if available)
     const senderActor = useMemo(() => {
         if (isUserMessage) return null;
-        return resolveSenderActor(actors, String(ev.by || ""));
-    }, [actors, ev.by, isUserMessage]);
+        const senderId = String(ev.by || "").trim();
+        if (!senderId) return null;
+        return actorById.get(senderId) || null;
+    }, [actorById, ev.by, isUserMessage]);
 
     const senderDisplayName = useMemo(() => {
         const by = String(ev.by || "");
         if (!by || by === "user") return by;
         return String(senderActor?.title || "").trim() || displayNameMap.get(by) || by;
     }, [displayNameMap, ev.by, senderActor]);
-
-    // Sender runtime logo path (for actor avatars)
-    const senderLogoSrc = useMemo(() => {
-        if (isUserMessage) return null;
-        const runtime = String(senderActor?.runtime || "").toLowerCase();
-        if (!runtime) return null;
-        return RUNTIME_LOGO[runtime] || null;
-    }, [isUserMessage, senderActor]);
 
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
@@ -660,15 +358,10 @@ export const MessageBubble = memo(function MessageBubble({
             <div className="relative hidden sm:block">
                 <div
                     className={classNames(
-                        "flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-bold shadow-sm mt-1",
-                        isUserMessage
-                            ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
-                            : isDark
-                                ? "bg-slate-700 text-slate-200"
-                                : "bg-white border border-gray-200 text-gray-700",
-                        !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : "",
+                        "mt-1 h-8 w-8 flex-shrink-0",
                         canShowAgentState ? "cursor-help" : ""
                     )}
+                    ref={canShowAgentState ? setAgentStateReference : undefined}
                     onMouseEnter={canShowAgentState ? () => setIsAgentStateOpen(true) : undefined}
                     onMouseLeave={canShowAgentState ? () => setIsAgentStateOpen(false) : undefined}
                     onFocus={canShowAgentState ? () => setIsAgentStateOpen(true) : undefined}
@@ -676,16 +369,24 @@ export const MessageBubble = memo(function MessageBubble({
                     tabIndex={canShowAgentState ? 0 : undefined}
                     aria-label={canShowAgentState ? t('agentStateTooltipLabel', { defaultValue: 'View agent state' }) : undefined}
                 >
-                    {senderLogoSrc
-                        ? <img src={senderLogoSrc} alt="" className="w-full h-full object-cover" />
-                        : isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
+                    <ActorAvatar
+                        runtime={senderActor?.runtime}
+                        title={senderDisplayName}
+                        isUser={isUserMessage}
+                        isDark={isDark}
+                        accentRingClassName={senderAccent?.ring}
+                    />
                 </div>
-
+            </div>
+            <FloatingPortal>
                 {isAgentStateOpen && canShowAgentState ? (
                     <div
+                        ref={setAgentStateFloating}
+                        style={floatingStyles}
                         className={classNames(
-                            "absolute left-0 top-full z-20 mt-2 w-[min(360px,calc(100vw-32px))] rounded-2xl px-3 py-2 shadow-2xl",
-                            "glass-modal text-[var(--color-text-primary)]"
+                            "pointer-events-none z-[80] w-[min(360px,calc(100vw-32px))] rounded-2xl px-3 py-2 shadow-2xl transition-opacity duration-150",
+                            "glass-modal text-[var(--color-text-primary)]",
+                            isAgentStatePositioned ? "opacity-100" : "opacity-0"
                         )}
                         role="status"
                     >
@@ -736,7 +437,7 @@ export const MessageBubble = memo(function MessageBubble({
                         ) : null}
                     </div>
                 ) : null}
-            </div>
+            </FloatingPortal>
 
             {/* Message Content */}
             <div
@@ -752,21 +453,15 @@ export const MessageBubble = memo(function MessageBubble({
                         isUserMessage ? "justify-end" : "justify-start"
                     )}
                 >
-                    <div
-                        className={classNames(
-                            "flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm overflow-hidden",
-                            isUserMessage
-                                ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
-                                : isDark
-                                    ? "bg-slate-700 text-slate-200"
-                                    : "bg-white border border-gray-200 text-gray-700",
-                            !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
-                        )}
-                    >
-                        {senderLogoSrc
-                            ? <img src={senderLogoSrc} alt="" className="w-full h-full object-cover" />
-                            : isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
-                    </div>
+                    <ActorAvatar
+                        runtime={senderActor?.runtime}
+                        title={senderDisplayName}
+                        isUser={isUserMessage}
+                        isDark={isDark}
+                        accentRingClassName={senderAccent?.ring}
+                        sizeClassName="h-6 w-6"
+                        textClassName="text-[10px]"
+                    />
                     <span
                         className={classNames(
                             "text-xs font-medium flex-shrink-0",
@@ -946,67 +641,14 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
 
                     {/* Attachments */}
-                    {blobAttachments.length > 0 && blobGroupId && (() => {
-                        const imageAttachments = blobAttachments.filter((a) =>
-                            isImageAttachment(a)
-                        );
-                        const fileAttachments = blobAttachments.filter((a) =>
-                            !isImageAttachment(a)
-                        );
-                        return (
-                            <>
-                                {/* Image previews */}
-                                {imageAttachments.length > 0 && (
-                                    <div className="mt-3 flex max-w-full flex-wrap items-start gap-2">
-                                        {imageAttachments.map((a, i) => {
-                                            const parts = a.path.split("/");
-                                            const blobName = parts[parts.length - 1] || "";
-                                            const href = a.local_preview_url || `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
-                                            const label = a.title || blobName || "image";
-                                            return (
-                                                    <ImagePreview
-                                                        key={`img-${blobName || "local"}:${i}`}
-                                                        href={href}
-                                                        alt={label}
-                                                        isSvg={isSvgAttachment(a)}
-                                                        isUserMessage={isUserMessage}
-                                                        isDark={isDark}
-                                                    />
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                                {/* File attachments */}
-                                {fileAttachments.length > 0 && (
-                                    <div className="mt-3 flex max-w-full flex-wrap items-start gap-2">
-                                        {fileAttachments.map((a, i) => {
-                                            const parts = a.path.split("/");
-                                            const blobName = parts[parts.length - 1] || "";
-                                            const href = a.local_preview_url || `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
-                                            const label = a.title || blobName || "file";
-                                            return (
-                                                <a
-                                                    key={`file-${blobName}:${i}`}
-                                                    href={href}
-                                                    className={classNames(
-                                                        "inline-flex items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors max-w-full",
-                                                        isUserMessage
-                                                            ? "bg-blue-700/50 hover:bg-blue-700 text-white border border-blue-500"
-                                                            : "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
-                                                    )}
-                                                    title={t('download', { name: label })}
-                                                    download
-                                                >
-                                                    <FileIcon size={14} className="opacity-70 flex-shrink-0" />
-                                                    <span className="truncate">{label}</span>
-                                                </a>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </>
-                        );
-                    })()}
+                    <MessageAttachments
+                        attachments={blobAttachments}
+                        blobGroupId={blobGroupId}
+                        isUserMessage={isUserMessage}
+                        isDark={isDark}
+                        attachmentKeyPrefix={stableMessageAttachmentKey}
+                        downloadTitle={(name) => t('download', { name })}
+                    />
                 </div>
                 </div>
 

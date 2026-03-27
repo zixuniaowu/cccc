@@ -78,7 +78,7 @@ class TestPetTaskProposals(unittest.TestCase):
 
         self.assertEqual(len(lines), 1)
         self.assertIn("T1:Need user scope", lines[0])
-        self.assertIn("等待用户", lines[0])
+        self.assertIn("waiting on the user", lines[0])
 
     def test_build_task_proposal_candidates_follow_proposal_ready_focus(self) -> None:
         proposals = build_task_proposal_candidates(

@@ -5,6 +5,17 @@ import { LedgerEvent, Actor, AgentState, PresentationMessageRef } from "../types
 import { MessageBubble } from "./MessageBubble";
 import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
 
+function getStableMessageKey(message: LedgerEvent | undefined, index: number): string | number {
+  if (message?.kind === "chat.message" && message.data && typeof message.data === "object") {
+    const clientId = typeof (message.data as { client_id?: unknown }).client_id === "string"
+      ? String((message.data as { client_id?: string }).client_id || "").trim()
+      : "";
+    if (clientId) return `client:${clientId}`;
+  }
+  const eventId = typeof message?.id === "string" ? String(message.id || "").trim() : "";
+  return eventId || index;
+}
+
 export interface VirtualMessageListProps {
   messages: LedgerEvent[];
   actors: Actor[];
@@ -45,6 +56,7 @@ type VirtualMessageListInnerProps = VirtualMessageListProps & {
 type VirtualMessageRowProps = {
   virtualRow: { key: React.Key; index: number; start: number };
   message: LedgerEvent;
+  actorById: Map<string, Actor>;
   actors: Actor[];
   displayNameMap: Map<string, string>;
   agentState: AgentState | null;
@@ -67,6 +79,7 @@ type VirtualMessageRowProps = {
 const VirtualMessageRow = memo(function VirtualMessageRow({
   virtualRow,
   message,
+  actorById,
   actors,
   displayNameMap,
   agentState,
@@ -127,6 +140,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
     >
       <MessageBubble
         event={message}
+        actorById={actorById}
         actors={actors}
         displayNameMap={displayNameMap}
         agentState={agentState}
@@ -192,6 +206,24 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     for (const p of agentStates || []) m.set(String(p.id || ""), p);
     return m;
   }, [agentStates]);
+
+  const actorById = useMemo(() => {
+    const map = new Map<string, Actor>();
+    for (const actor of actors || []) {
+      const actorId = String(actor.id || "").trim();
+      if (actorId) map.set(actorId, actor);
+
+      const actorTitle = String(actor.title || "").trim();
+      if (actorTitle && !map.has(actorTitle)) map.set(actorTitle, actor);
+
+      const actorIdLower = actorId.toLowerCase();
+      if (actorIdLower && !map.has(actorIdLower)) map.set(actorIdLower, actor);
+
+      const actorTitleLower = actorTitle.toLowerCase();
+      if (actorTitleLower && !map.has(actorTitleLower)) map.set(actorTitleLower, actor);
+    }
+    return map;
+  }, [actors]);
 
   // Create display name map once at the list level (not per-message)
   const displayNameMap = useActorDisplayNameMap(actors);
@@ -291,7 +323,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => parentRef.current,
-    getItemKey: (index) => messages[index]?.id ?? index,
+    getItemKey: (index) => getStableMessageKey(messages[index], index),
     estimateSize: getEstimatedSize,
     overscan: 10,
     paddingStart: 72,
@@ -908,6 +940,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     key={virtualRow.key}
                     virtualRow={virtualRow}
                     message={message}
+                    actorById={actorById}
                     actors={actors}
                     displayNameMap={displayNameMap}
                     agentState={agentStateById.get(String(message.by || "")) || null}
@@ -940,6 +973,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                 >
                   <MessageBubble
                     event={message}
+                    actorById={actorById}
                     actors={actors}
                     displayNameMap={displayNameMap}
                     agentState={agentStateById.get(String(message.by || "")) || null}

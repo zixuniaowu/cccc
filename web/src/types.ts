@@ -29,6 +29,7 @@ export type EventAttachment = {
   title?: string;
   bytes?: number;
   mime_type?: string;
+  local_preview_url?: string;
 };
 
 // Local-only preview attachment used by optimistic messages before upload confirmation.

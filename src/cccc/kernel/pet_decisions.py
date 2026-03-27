@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -15,9 +16,155 @@ def pet_decisions_path(group: Group) -> Path:
     return group.path / "state" / "pet_decisions.json"
 
 
-def _normalize_action(raw: Any) -> Dict[str, Any]:
+_FOREMAN_ACTION_KEYWORDS = (
+    "prioritize",
+    "please",
+    "follow up",
+    "handle",
+    "close",
+    "move",
+    "confirm",
+    "restart",
+    "apply",
+    "check",
+    "decide",
+    "sync",
+    "contact",
+    "reply",
+    "ask",
+    "review",
+)
+_ACTION_PREFIX_RE = re.compile(r"^(please|prioritize|follow up|check|review|ask|decide|restart|apply)\b", re.IGNORECASE)
+_STRUCTURED_TOKEN_RE = re.compile(r"\b[a-z0-9]+(?:[_/-][a-z0-9]+)+\b", re.IGNORECASE)
+_LONG_ASCII_TOKEN_RE = re.compile(r"\b[a-z]{5,}\b", re.IGNORECASE)
+
+
+def _normalize_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _is_foreman_target(raw: Any) -> bool:
+    if not isinstance(raw, list):
+        return False
+    targets = [str(item or "").strip().lower() for item in raw]
+    return "@foreman" in targets or "foreman" in targets
+
+
+def _split_message_clauses(text: str) -> list[str]:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return []
+    parts = re.split(r"[。！？；\n]+", normalized)
+    clauses: list[str] = []
+    for part in parts:
+        for chunk in re.split(r"[，,]+", part):
+            clause = _normalize_text(chunk)
+            if clause:
+                clauses.append(clause)
+    return clauses
+
+
+def _structured_noise_count(text: str) -> int:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return 0
+    structured = len(_STRUCTURED_TOKEN_RE.findall(normalized))
+    structured += normalized.count("/")
+    structured += normalized.count("=")
+    structured += normalized.count(":")
+    ascii_tokens = _LONG_ASCII_TOKEN_RE.findall(normalized)
+    if len(ascii_tokens) >= 3:
+        structured += len(ascii_tokens) - 2
+    return structured
+
+
+def _score_foreman_clause(clause: str) -> int:
+    text = _normalize_text(clause)
+    if not text:
+        return -999
+    score = 0
+    for keyword in _FOREMAN_ACTION_KEYWORDS:
+        if keyword in text:
+            score += 4
+    if _ACTION_PREFIX_RE.search(text):
+        score += 4
+    if "?" in text or "？" in text:
+        score += 2
+    if len(text) <= 28:
+        score += 1
+    elif len(text) >= 44:
+        score -= 2
+    structured_noise = _structured_noise_count(text)
+    score -= min(structured_noise * 2, 8)
+    if text.count("，") + text.count(",") >= 2 and score < 4:
+        score -= 2
+    return score
+
+
+def _compact_foreman_message(text: str) -> str:
+    raw = _normalize_text(text)
+    clauses = _split_message_clauses(raw)
+    if len(clauses) <= 1:
+        return raw
+    best_index = 0
+    best_score = -999
+    for idx, clause in enumerate(clauses):
+        score = _score_foreman_clause(clause)
+        if score > best_score:
+            best_score = score
+            best_index = idx
+    picked: list[str] = []
+    first = clauses[best_index]
+    if first:
+        picked.append(first)
+    if best_index + 1 < len(clauses):
+        second = clauses[best_index + 1]
+        if _score_foreman_clause(second) >= 0 and len(f"{first}，{second}") <= 40:
+            picked.append(second)
+    return _normalize_text("，".join(picked) or raw)
+
+
+def _normalize_send_suggestion_text(raw_text: Any, *, raw_to: Any) -> str:
+    text = _normalize_text(raw_text)
+    if not text:
+        return ""
+    if _is_foreman_target(raw_to):
+        return _compact_foreman_message(text)
+    return text
+
+
+def _normalize_task_proposal_summary(
+    summary: Any,
+    *,
+    fingerprint: str,
+    source: Dict[str, Any],
+) -> str:
+    text = _normalize_text(summary)
+    suggestion_kind = str(source.get("suggestion_kind") or "").strip().lower()
+    normalized_fingerprint = str(fingerprint or "").strip().lower()
+    if suggestion_kind == "reply_pressure" or "reply_pressure" in normalized_fingerprint:
+        return "先处理那条拖得最久的待回复线程"
+    return text
+
+
+def _normalize_task_proposal_text(
+    text: Any,
+    *,
+    fingerprint: str,
+    source: Dict[str, Any],
+) -> str:
+    normalized = _normalize_text(text)
+    suggestion_kind = str(source.get("suggestion_kind") or "").strip().lower()
+    normalized_fingerprint = str(fingerprint or "").strip().lower()
+    if suggestion_kind == "reply_pressure" or "reply_pressure" in normalized_fingerprint:
+        return "先处理拖得最久的待回复线程：给出当前结论，或明确还缺什么运行态证据，不要继续挂着。"
+    return normalized
+
+
+def _normalize_action(raw: Any, *, fingerprint: str = "", source: Dict[str, Any] | None = None) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
+    source_payload = source if isinstance(source, dict) else {}
     action_type = str(raw.get("type") or "").strip()
     out: Dict[str, Any] = {"type": action_type}
     if action_type == "restart_actor":
@@ -26,9 +173,10 @@ def _normalize_action(raw: Any) -> Dict[str, Any]:
         return out
     if action_type == "send_suggestion":
         out["group_id"] = str(raw.get("group_id") or "").strip()
-        out["text"] = str(raw.get("text") or "").strip()
+        normalized_to = [str(item or "").strip() for item in raw.get("to") if str(item or "").strip()] if isinstance(raw.get("to"), list) else []
+        out["text"] = _normalize_send_suggestion_text(raw.get("text"), raw_to=normalized_to)
         if isinstance(raw.get("to"), list):
-            out["to"] = [str(item or "").strip() for item in raw.get("to") if str(item or "").strip()]
+            out["to"] = normalized_to
         reply_to = str(raw.get("reply_to") or "").strip()
         if reply_to:
             out["reply_to"] = reply_to
@@ -48,7 +196,11 @@ def _normalize_action(raw: Any) -> Dict[str, Any]:
         assignee = str(raw.get("assignee") or "").strip()
         if assignee:
             out["assignee"] = assignee
-        text = str(raw.get("text") or "").strip()
+        text = _normalize_task_proposal_text(
+            raw.get("text"),
+            fingerprint=fingerprint,
+            source=source_payload,
+        )
         if text:
             out["text"] = text
         return out
@@ -103,10 +255,13 @@ def _normalize_decision(raw: Any) -> Dict[str, Any] | None:
     fingerprint = str(raw.get("fingerprint") or "").strip()
     kind = str(raw.get("kind") or "").strip()
     summary = str(raw.get("summary") or "").strip()
-    action = _normalize_action(raw.get("action"))
+    source = _normalize_source(raw.get("source"))
+    action = _normalize_action(raw.get("action"), fingerprint=fingerprint, source=source)
     action_type = str(action.get("type") or "").strip()
     if not decision_id or not fingerprint or not kind or not summary or not action_type:
         return None
+    if action_type == "task_proposal":
+        summary = _normalize_task_proposal_summary(summary, fingerprint=fingerprint, source=source)
     out: Dict[str, Any] = {
         "id": decision_id,
         "kind": kind,
@@ -115,13 +270,17 @@ def _normalize_decision(raw: Any) -> Dict[str, Any] | None:
         "agent": str(raw.get("agent") or "").strip(),
         "fingerprint": fingerprint,
         "action": action,
-        "source": _normalize_source(raw.get("source")),
+        "source": source,
         "updated_at": str(raw.get("updated_at") or "").strip(),
     }
     suggestion = str(raw.get("suggestion") or "").strip()
+    if action_type == "send_suggestion":
+        suggestion = _normalize_send_suggestion_text(suggestion or action.get("text") or "", raw_to=action.get("to"))
     if suggestion:
         out["suggestion"] = suggestion
     suggestion_preview = str(raw.get("suggestion_preview") or "").strip()
+    if action_type == "send_suggestion" and not suggestion_preview:
+        suggestion_preview = suggestion
     if suggestion_preview:
         out["suggestion_preview"] = suggestion_preview
     if bool(raw.get("ephemeral")):
