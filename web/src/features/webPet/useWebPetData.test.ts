@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { shouldSurfaceReminder, shouldUseCompactReminderSummary } from "./useWebPetData";
+import { shouldSurfaceReminder } from "./useWebPetData";
 import type { PetReminder } from "./types";
-import type { PetPersonaPolicy } from "./petPersona";
-
-function makePolicy(overrides: Partial<PetPersonaPolicy> = {}): PetPersonaPolicy {
-  return {
-    compactMessageEvents: true,
-    ...overrides,
-  };
-}
 
 function makeReminder(overrides: Partial<PetReminder> = {}): PetReminder {
   return {
@@ -20,7 +12,7 @@ function makeReminder(overrides: Partial<PetReminder> = {}): PetReminder {
     source: { eventId: "evt-1", suggestionKind: "mention" },
     fingerprint: "group:g-1:suggestion:mention:evt-1",
     action: {
-      type: "send_suggestion",
+      type: "draft_message",
       groupId: "g-1",
       text: "我来处理这条。",
       to: ["peer"],
@@ -31,19 +23,18 @@ function makeReminder(overrides: Partial<PetReminder> = {}): PetReminder {
 }
 
 describe("shouldSurfaceReminder", () => {
-  it("keeps actionable send_suggestion reminders for low-noise persona", () => {
+  it("keeps actionable draft_message reminders", () => {
     expect(
       shouldSurfaceReminder(
         makeReminder({
           action: {
-            type: "send_suggestion",
+            type: "draft_message",
             groupId: "g-1",
             text: "我来处理这条。",
             to: ["peer"],
             replyTo: "evt-1",
           },
         }),
-        makePolicy(),
       ),
     ).toBe(true);
   });
@@ -60,22 +51,20 @@ describe("shouldSurfaceReminder", () => {
             actorId: "peer-1",
           },
         }),
-        makePolicy(),
       ),
     ).toBe(true);
   });
 
-  it("hides malformed send_suggestion reminders", () => {
+  it("hides malformed draft_message reminders", () => {
     expect(
       shouldSurfaceReminder(
         makeReminder({
           action: {
-            type: "send_suggestion",
+            type: "draft_message",
             groupId: "g-1",
             text: "",
           },
         }),
-        makePolicy(),
       ),
     ).toBe(false);
   });
@@ -93,7 +82,6 @@ describe("shouldSurfaceReminder", () => {
             status: "active",
           },
         }),
-        makePolicy(),
       ),
     ).toBe(true);
   });
@@ -118,39 +106,7 @@ describe("shouldSurfaceReminder", () => {
             ],
           },
         }),
-        makePolicy(),
       ),
     ).toBe(true);
-  });
-});
-
-describe("shouldUseCompactReminderSummary", () => {
-  it("only compacts direct send suggestions", () => {
-    expect(shouldUseCompactReminderSummary(makeReminder(), makePolicy())).toBe(true);
-    expect(
-      shouldUseCompactReminderSummary(
-        makeReminder({
-          action: {
-            type: "automation_proposal",
-            groupId: "g-1",
-            title: "One-shot follow-up",
-            actions: [{ type: "create_rule" }],
-          },
-        }),
-        makePolicy(),
-      ),
-    ).toBe(false);
-    expect(
-      shouldUseCompactReminderSummary(
-        makeReminder({
-          action: {
-            type: "task_proposal",
-            groupId: "g-1",
-            operation: "move",
-          },
-        }),
-        makePolicy(),
-      ),
-    ).toBe(false);
   });
 });

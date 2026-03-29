@@ -4,6 +4,7 @@ import { Actor } from "../types";
 import { classNames } from "../utils/classNames";
 import { useTerminalSignalsStore, getTerminalSignalKey } from "../stores";
 import { getActorDisplayWorkingState } from "../utils/terminalWorkingState";
+import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 
 interface TabBarProps {
   groupId: string;
@@ -14,6 +15,26 @@ interface TabBarProps {
   isDark: boolean;
   onAddAgent?: () => void;
   canAddAgent?: boolean;
+}
+
+type ActorTabIndicator = {
+  dotClass: string;
+  labelClass: string;
+  pulse: boolean;
+  strongPulse: boolean;
+};
+
+export function getActorTabIndicatorState(input: {
+  isRunning: boolean;
+  workingState: string;
+}): ActorTabIndicator {
+  const indicator = getRuntimeIndicatorState(input);
+  return {
+    dotClass: indicator.dotClass,
+    labelClass: indicator.labelClass,
+    pulse: indicator.pulse,
+    strongPulse: indicator.strongPulse,
+  };
 }
 
 export function TabBar({ groupId, actors, activeTab, onTabChange, unreadChatCount, isDark: _isDark, onAddAgent, canAddAgent = true }: TabBarProps) {
@@ -122,49 +143,7 @@ export function TabBar({ groupId, actors, activeTab, onTabChange, unreadChatCoun
     const terminalSignal = terminalSignals[getTerminalSignalKey(groupId, actor.id)];
     const workingState = getActorDisplayWorkingState(actor, terminalSignal);
     const isRunning = actor.running ?? actor.enabled ?? false;
-
-    if (!isRunning) {
-      return {
-        dotClass: "bg-slate-400/70 ring-slate-400/15 opacity-70",
-        labelClass: "",
-        pulse: false,
-        strongPulse: false,
-      };
-    }
-
-    if (workingState === "working") {
-      return {
-        dotClass: "bg-emerald-400 ring-emerald-400/35 shadow-[0_0_0_3px_rgba(16,185,129,0.12),0_0_18px_rgba(52,211,153,0.75)] scale-110",
-        labelClass: "text-emerald-50",
-        pulse: true,
-        strongPulse: true,
-      };
-    }
-
-    if (workingState === "stuck") {
-      return {
-        dotClass: "bg-amber-400 ring-amber-400/30 shadow-[0_0_0_3px_rgba(245,158,11,0.10),0_0_14px_rgba(251,191,36,0.45)]",
-        labelClass: "text-amber-100",
-        pulse: true,
-        strongPulse: false,
-      };
-    }
-
-    if (workingState === "waiting") {
-      return {
-        dotClass: "bg-sky-400 ring-sky-400/25 shadow-[0_0_12px_rgba(56,189,248,0.35)]",
-        labelClass: "",
-        pulse: true,
-        strongPulse: false,
-      };
-    }
-
-    return {
-      dotClass: "bg-emerald-500 ring-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.28)]",
-      labelClass: "",
-      pulse: false,
-      strongPulse: false,
-    };
+    return getActorTabIndicatorState({ isRunning: Boolean(isRunning), workingState });
   };
 
   return (
@@ -239,7 +218,7 @@ export function TabBar({ groupId, actors, activeTab, onTabChange, unreadChatCoun
                 {/* Run Indicator */}
                 <span
                   className={classNames(
-                    "relative inline-flex w-2.5 h-2.5 rounded-full flex-shrink-0 transition-all ring-2",
+                    "relative inline-flex w-2.5 h-2.5 rounded-full flex-shrink-0 transition-all",
                     indicator.dotClass
                   )}
                 >

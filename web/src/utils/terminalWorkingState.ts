@@ -4,6 +4,7 @@ import type { TerminalSignal } from "../stores/useTerminalSignalsStore";
 const MAX_TERMINAL_BUFFER_CHARS = 4000;
 const WORKING_OUTPUT_TTL_MS = 5000;
 const CODEX_TERMINAL_SIGNAL_WINDOW_CHARS = 1600;
+const PTY_RECENT_ACTIVITY_WORKING_SECONDS = 4;
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
 const ANSI_ESCAPE_RE = new RegExp(
@@ -110,17 +111,29 @@ export function getActorDisplayWorkingState(
   const backendState = String(actor.effective_working_state || "").trim().toLowerCase() || "idle";
   const effectiveRunner = String(actor.runner_effective || actor.runner || "pty").trim().toLowerCase() || "pty";
   const isRunning = actor.running ?? actor.enabled ?? false;
+  const idleSeconds =
+    typeof actor.idle_seconds === "number" && Number.isFinite(actor.idle_seconds)
+      ? Math.max(0, actor.idle_seconds)
+      : null;
 
-  if (!isRunning || effectiveRunner === "headless" || !signal) {
+  if (!isRunning || effectiveRunner === "headless") {
     return backendState;
   }
 
-  if (signal.kind === "idle_prompt") {
+  if (signal?.kind === "idle_prompt") {
     return "idle";
   }
 
-  if (signal.kind === "working_output" && now - signal.updatedAt <= WORKING_OUTPUT_TTL_MS) {
+  if (signal?.kind === "working_output" && now - signal.updatedAt <= WORKING_OUTPUT_TTL_MS) {
     if (backendState === "idle") return "working";
+  }
+
+  if (
+    backendState === "idle" &&
+    idleSeconds !== null &&
+    idleSeconds <= PTY_RECENT_ACTIVITY_WORKING_SECONDS
+  ) {
+    return "working";
   }
 
   return backendState;

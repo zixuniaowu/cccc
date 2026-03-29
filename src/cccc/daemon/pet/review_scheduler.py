@@ -109,13 +109,8 @@ def _can_review_now(group_id: str) -> bool:
     return True
 
 
-def _emit_pet_review(group_id: str, reasons: Set[str], source_event_id: str) -> None:
-    group = load_group(group_id)
-    if group is None:
-        return
-    if not _can_review_now(group_id):
-        return
-    notify = SystemNotifyData(
+def _pet_review_notify(reasons: Set[str], source_event_id: str) -> SystemNotifyData:
+    return SystemNotifyData(
         kind="info",
         priority="normal",
         title="Pet review requested",
@@ -129,7 +124,44 @@ def _emit_pet_review(group_id: str, reasons: Set[str], source_event_id: str) -> 
             "source_event_id": source_event_id or None,
         },
     )
-    emit_system_notify(group, by="system", notify=notify)
+
+
+def _emit_pet_review(group_id: str, reasons: Set[str], source_event_id: str) -> None:
+    group = load_group(group_id)
+    if group is None:
+        return
+    if not _can_review_now(group_id):
+        return
+    emit_system_notify(group, by="system", notify=_pet_review_notify(reasons, source_event_id))
+
+
+def request_manual_pet_review(
+    group_id: str,
+    *,
+    reason: str,
+    source_event_id: str = "",
+) -> bool:
+    gid = str(group_id or "").strip()
+    if not gid:
+        return False
+    group = load_group(gid)
+    if group is None:
+        return False
+    if not is_desktop_pet_enabled(group):
+        return False
+    if get_group_state(group) not in {"active", "idle"}:
+        return False
+    actor = get_pet_actor(group)
+    if not isinstance(actor, dict):
+        return False
+    if not bool(actor.get("enabled", True)):
+        return False
+    emit_system_notify(
+        group,
+        by="system",
+        notify=_pet_review_notify({_normalize_reason(reason)}, source_event_id),
+    )
+    return True
 
 
 def _flush_due_review(group_id: str) -> None:

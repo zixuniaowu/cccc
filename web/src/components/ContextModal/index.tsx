@@ -55,6 +55,7 @@ import {
   parseChecklist,
   parseLineList,
   resolvePetPersonaDraft,
+  isVisibleContextAgent,
   petPersonaDraftDirty,
   taskDisplaySummary,
   taskDraftDirty,
@@ -141,7 +142,10 @@ export function ContextModal({
   const brief = context?.coordination?.brief || null;
   const desktopPetEnabled = Boolean(settings?.desktop_pet_enabled);
   const tasks = useMemo(() => (Array.isArray(context?.coordination?.tasks) ? context.coordination.tasks : []), [context]);
-  const agents = useMemo(() => (Array.isArray(context?.agent_states) ? context.agent_states : []), [context]);
+  const agents = useMemo(
+    () => (Array.isArray(context?.agent_states) ? context.agent_states.filter((agent) => isVisibleContextAgent(agent)) : []),
+    [context]
+  );
   const board = useMemo(() => buildBoard(tasks, context?.board), [context?.board, tasks]);
 
   const allBoardTasks = useMemo(

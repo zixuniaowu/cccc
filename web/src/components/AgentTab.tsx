@@ -14,6 +14,7 @@ import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, Rocket
 import { ScrollFade } from "./ScrollFade";
 import { getActorDisplayWorkingState, getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
 import { getTerminalSignalKey } from "../stores/useTerminalSignalsStore";
+import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
@@ -193,45 +194,46 @@ export function AgentTab({
     overflow: "hidden",
   };
 
+  const runtimeIndicator = getRuntimeIndicatorState({ isRunning: Boolean(isRunning), workingState });
   const statusTone = (() => {
-    if (!isRunning) {
-      return {
-        dotClass: "bg-slate-400/70 ring-slate-400/15 opacity-70",
-        pulse: false,
-        strongPulse: false,
-        badgeClass: "bg-slate-500/10 text-slate-500 dark:text-slate-300",
-      };
+    switch (runtimeIndicator.tone) {
+      case "stop":
+        return {
+          dotClass: runtimeIndicator.dotClass,
+          pulse: runtimeIndicator.pulse,
+          strongPulse: runtimeIndicator.strongPulse,
+          badgeClass: "bg-slate-500/10 text-slate-500 dark:text-slate-300",
+        };
+      case "working":
+        return {
+          dotClass: runtimeIndicator.dotClass,
+          pulse: runtimeIndicator.pulse,
+          strongPulse: runtimeIndicator.strongPulse,
+          badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+        };
+      case "waiting":
+        return {
+          dotClass: runtimeIndicator.dotClass,
+          pulse: runtimeIndicator.pulse,
+          strongPulse: runtimeIndicator.strongPulse,
+          badgeClass: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+        };
+      case "stuck":
+        return {
+          dotClass: runtimeIndicator.dotClass,
+          pulse: runtimeIndicator.pulse,
+          strongPulse: runtimeIndicator.strongPulse,
+          badgeClass: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+        };
+      case "run":
+      default:
+        return {
+          dotClass: runtimeIndicator.dotClass,
+          pulse: runtimeIndicator.pulse,
+          strongPulse: runtimeIndicator.strongPulse,
+          badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+        };
     }
-    if (workingState === "working") {
-      return {
-        dotClass: "bg-emerald-400 ring-emerald-400/35 shadow-[0_0_0_3px_rgba(16,185,129,0.12),0_0_18px_rgba(52,211,153,0.75)] scale-110",
-        pulse: true,
-        strongPulse: true,
-        badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
-      };
-    }
-    if (workingState === "waiting") {
-      return {
-        dotClass: "bg-sky-400 ring-sky-400/25 shadow-[0_0_12px_rgba(56,189,248,0.35)]",
-        pulse: true,
-        strongPulse: false,
-        badgeClass: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
-      };
-    }
-    if (workingState === "stuck") {
-      return {
-        dotClass: "bg-amber-400 ring-amber-400/30 shadow-[0_0_0_3px_rgba(245,158,11,0.10),0_0_14px_rgba(251,191,36,0.45)]",
-        pulse: true,
-        strongPulse: false,
-        badgeClass: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-      };
-    }
-    return {
-      dotClass: "bg-emerald-500 ring-emerald-500/20 shadow-[0_0_14px_rgba(16,185,129,0.3)]",
-      pulse: false,
-      strongPulse: false,
-      badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
-    };
   })();
 
   const runtimeStatusText = (() => {
@@ -719,7 +721,7 @@ export function AgentTab({
       )}>
         <span
           className={classNames(
-            "relative inline-flex w-3.5 h-3.5 rounded-full flex-shrink-0 ring-2 transition-all",
+            "relative inline-flex w-2.5 h-2.5 rounded-full flex-shrink-0 transition-all",
             statusTone.dotClass
           )}
         >

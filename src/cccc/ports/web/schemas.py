@@ -212,7 +212,7 @@ class GroupSettingsRequest(BaseModel):
 
 class PetDecisionOutcomeRequest(BaseModel):
     fingerprint: str
-    outcome: Literal["executed", "dismissed", "snoozed", "expired"]
+    outcome: Literal["executed", "dismissed"]
     decision_id: str = Field(default="")
     action_type: str = Field(default="")
     cooldown_ms: int = Field(default=0)

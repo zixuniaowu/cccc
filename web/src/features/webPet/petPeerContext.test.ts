@@ -38,7 +38,6 @@ describe("petPeerContext", () => {
     expect(context.snapshot).toContain("Group: Demo Team");
     expect(context.decisions[0]?.source.actorId).toBe("peer-1");
     expect(context.decisions[0]?.action.type).toBe("restart_actor");
-    expect(context.policy.compactMessageEvents).toBe(true);
   });
 
   it("falls back to default source when persona is empty", () => {
@@ -87,7 +86,7 @@ describe("petPeerContext", () => {
     }
   });
 
-  it("falls back to suggestion text for send_suggestion decisions", () => {
+  it("maps draft_message decisions from action.text", () => {
     const context = buildPetPeerContext({
       decisions: [
         {
@@ -102,12 +101,12 @@ describe("petPeerContext", () => {
             suggestion_kind: "reply_required",
           },
           action: {
-            type: "send_suggestion",
+            type: "draft_message",
             group_id: "g-1",
+            text: "请直接跟进用户。",
             reply_to: "evt-1",
             to: ["user"],
           },
-          suggestion: "请直接跟进用户。",
         },
       ],
       persona: "Keep low-noise.",
@@ -118,8 +117,8 @@ describe("petPeerContext", () => {
     });
 
     expect(context.decisions).toHaveLength(1);
-    expect(context.decisions[0]?.action.type).toBe("send_suggestion");
-    if (context.decisions[0]?.action.type === "send_suggestion") {
+    expect(context.decisions[0]?.action.type).toBe("draft_message");
+    if (context.decisions[0]?.action.type === "draft_message") {
       expect(context.decisions[0].action.text).toBe("请直接跟进用户。");
       expect(context.decisions[0].action.replyTo).toBe("evt-1");
     }

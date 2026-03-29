@@ -106,18 +106,23 @@ def build_pet_prompt_parts(group: Group, *, help_markdown: str, context_payload:
     snapshot = build_pet_snapshot_text(group, context_payload)
     decision_contract = "\n".join(
         [
-            "Pet Decision Contract:",
+            "Pet Runtime Contract:",
             "- You are the Web Pet actor. Reuse the normal peer workflow, tools, and context discipline.",
-            "- Your reminder output surface is cccc_pet_decisions, not visible chat.",
+            "- You have two distinct jobs: pet_review and pet_profile_refresh. Do not merge them.",
+            "- pet_review manages reminders. pet_profile_refresh maintains only your distilled user_model.",
+            "- During ordinary pet_review, your reminder output surface is cccc_pet_decisions, not visible chat.",
             "- Every time you receive a pet_review request, you must finish by calling cccc_pet_decisions exactly once.",
-            "- The only valid end states for a review are: action=replace with the full current decision list, or action=clear when there is truly nothing actionable.",
-            "- Do not end a review with analysis only. Do not skip the tool call. Do not leave stale decisions untouched.",
+            "- The only valid end states for a pet_review are: action=replace with the full current decision list, or action=clear when there is truly nothing actionable.",
+            "- Do not end a pet_review with analysis only. Do not skip the tool call. Do not leave stale decisions untouched.",
             "- When you have current actionable reminders, call cccc_pet_decisions with action=replace and write the full decision list.",
             "- When there is no current actionable reminder, call cccc_pet_decisions with action=clear.",
+            "- During pet_review, do not update cccc_agent_state just because you noticed style or memory drift.",
+            "- If a pet_review needs a draft_message and style memory matters, read your current self_state via cccc_bootstrap() and use recovery.self_state.recovery.user_model when present.",
             "- Do not emit low-signal status chatter, duplicate restarts, or reminder-like chat messages just to mirror state.",
             "- Judge from current evidence and context. Do not rely on fixed frontend keyword matching.",
             "- summary is your internal judgment for the decision list, not the final outbound message body.",
-            "- For send_suggestion, action.text must already be the final message that can be sent as-is to the recipient.",
+            "- For draft_message, action.text must already be the final message body that can be inserted into chat as-is.",
+            "- For draft_message, use action.type=draft_message and do not emit suggestion or suggestion_preview fields.",
             "- When sending to foreman, write a short next-step message, not an internal state dump or runtime analysis paragraph.",
             "- Do not paste snapshot labels, field names, slash-delimited status bundles, or metric-style observations into action.text.",
             "- Prefer one direct recommendation or one direct question that moves the next step forward immediately.",
@@ -130,6 +135,12 @@ def build_pet_prompt_parts(group: Group, *, help_markdown: str, context_payload:
             "- For task triage, prioritize: waiting_user > handoff > blocked > planned backlog cleanup.",
             "- Treat Proposal Ready as the current best evidence about whether a reminder should be emitted now, and what it should focus on.",
             "- Unless there is an urgent runtime failure, emit at most one task_proposal per review.",
+            "- During pet_profile_refresh, do not touch cccc_pet_decisions.",
+            "- A pet_profile_refresh request means: inspect your unread system.notify events, find the latest unread notify whose data.context.kind=pet_profile_refresh, read its prepared sample_packet, distill the user's drafting style, and update only your own user_model.",
+            "- During pet_profile_refresh, the only allowed write is cccc_agent_state(action=update, actor_id=pet-peer, user_model=...).",
+            "- During pet_profile_refresh, do not overwrite persona_notes.",
+            "- During pet_profile_refresh, write a short stable drafting profile, not raw message dumps, transcript slices, or copied sample text.",
+            "- The distilled user_model exists only to improve future draft_message wording. It must not affect blocked/waiting_user/handoff/runtime triage.",
         ]
     )
     prompt = "\n\n".join(

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { PetPeerContextResponse } from "../../services/api";
 import { fetchPetPeerContext } from "../../services/api";
-import { derivePetPersonaPolicy, type PetPersonaPolicy } from "./petPersona";
 import type { PetReminder } from "./types";
 
 export type PetPeerContextStatus = "idle" | "loading" | "loaded" | "error";
@@ -60,7 +59,6 @@ export type PetPeerContext = {
   help: string;
   prompt: string;
   snapshot: string;
-  policy: PetPersonaPolicy;
   source: "help" | "default";
   status: PetPeerContextStatus;
 };
@@ -134,7 +132,6 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
   const kind = String(raw?.kind || "").trim();
   const fingerprint = String(raw?.fingerprint || "").trim();
   const actionType = String(raw?.action?.type || "").trim();
-  const suggestion = String(raw?.suggestion || "").trim();
   if (!id || !kind || !fingerprint || !actionType) return null;
 
   const action =
@@ -165,18 +162,22 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
               ? raw.action.actions.filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
               : [],
           }
-      : {
-          type: "send_suggestion" as const,
+      : actionType === "draft_message"
+        ? {
+          type: "draft_message" as const,
           groupId: String(raw?.action?.group_id || "").trim(),
-          text: String(raw?.action?.text || "").trim() || suggestion,
+          text: String(raw?.action?.text || "").trim(),
           to: Array.isArray(raw?.action?.to)
             ? raw.action.to.map((entry) => String(entry || "").trim()).filter(Boolean)
             : undefined,
           replyTo: String(raw?.action?.reply_to || "").trim() || undefined,
-        };
+        }
+        : null;
+
+  if (!action) return null;
 
   if (action.type === "restart_actor" && (!action.groupId || !action.actorId)) return null;
-  if (action.type === "send_suggestion" && !action.text) return null;
+  if (action.type === "draft_message" && !action.text) return null;
   if (action.type === "task_proposal" && !action.groupId) return null;
   if (action.type === "automation_proposal" && (!action.groupId || action.actions.length === 0)) return null;
 
@@ -185,8 +186,6 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
     kind: kind === "actor_down" ? "actor_down" : "suggestion",
     priority: Number(raw?.priority || 0),
     summary: String(raw?.summary || "").trim(),
-    suggestion: suggestion || undefined,
-    suggestionPreview: String(raw?.suggestion_preview || "").trim() || undefined,
     agent: String(raw?.agent || "").trim(),
     ephemeral: !!raw?.ephemeral,
     source: {
@@ -226,7 +225,6 @@ export function buildPetPeerContext(
     help,
     prompt,
     snapshot,
-    policy: derivePetPersonaPolicy(persona || prompt),
     source: raw?.source === "help" ? "help" : "default",
     status: opts?.status || "loaded",
   };

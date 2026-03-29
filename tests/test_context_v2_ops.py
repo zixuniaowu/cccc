@@ -164,6 +164,90 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_waiting_user_task_create_requests_immediate_pet_review(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            with patch("cccc.daemon.context.context_ops.request_pet_review") as review_mock:
+                resp, _ = self._sync(
+                    gid,
+                    [
+                        {
+                            "op": "task.create",
+                            "title": "Need user answer",
+                            "status": "active",
+                            "waiting_on": "user",
+                        }
+                    ],
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            review_mock.assert_called_once()
+            self.assertEqual(str(review_mock.call_args.kwargs.get("reason") or ""), "task_waiting_user")
+            self.assertTrue(bool(review_mock.call_args.kwargs.get("immediate")))
+        finally:
+            cleanup()
+
+    def test_notes_only_task_update_does_not_request_pet_review(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            create_resp, _ = self._sync(
+                gid,
+                [{"op": "task.create", "title": "Normal task", "status": "active"}],
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            tasks_resp, _ = self._tasks(gid)
+            self.assertTrue(tasks_resp.ok, getattr(tasks_resp, "error", None))
+            tasks = (tasks_resp.result or {}).get("tasks") if isinstance(tasks_resp.result, dict) else []
+            self.assertIsInstance(tasks, list)
+            task_id = str((tasks[0] if tasks else {}).get("id") or "").strip()
+            self.assertTrue(task_id)
+
+            with patch("cccc.daemon.context.context_ops.request_pet_review") as review_mock:
+                update_resp, _ = self._sync(
+                    gid,
+                    [{"op": "task.update", "task_id": task_id, "notes": "Add more implementation detail."}],
+                )
+            self.assertTrue(update_resp.ok, getattr(update_resp, "error", None))
+            review_mock.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_coordination_brief_update_requests_immediate_pet_review(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            with patch("cccc.daemon.context.context_ops.request_pet_review") as review_mock:
+                resp, _ = self._sync(
+                    gid,
+                    [{"op": "coordination.brief.update", "current_focus": "Need user confirmation"}],
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            review_mock.assert_called_once()
+            self.assertEqual(str(review_mock.call_args.kwargs.get("reason") or ""), "coordination_brief_changed")
+            self.assertTrue(bool(review_mock.call_args.kwargs.get("immediate")))
+        finally:
+            cleanup()
+
+    def test_coordination_brief_noop_does_not_request_pet_review(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            first_resp, _ = self._sync(
+                gid,
+                [{"op": "coordination.brief.update", "current_focus": "Stable focus"}],
+            )
+            self.assertTrue(first_resp.ok, getattr(first_resp, "error", None))
+            with patch("cccc.daemon.context.context_ops.request_pet_review") as review_mock:
+                second_resp, _ = self._sync(
+                    gid,
+                    [{"op": "coordination.brief.update", "current_focus": "Stable focus"}],
+                )
+            self.assertTrue(second_resp.ok, getattr(second_resp, "error", None))
+            review_mock.assert_not_called()
+        finally:
+            cleanup()
+
     def test_summary_context_hit_skips_rebuild_work_on_second_read(self) -> None:
         _, cleanup = self._with_home()
         try:

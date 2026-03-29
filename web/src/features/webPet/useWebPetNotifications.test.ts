@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { LedgerEvent } from "../../types";
 import {
+  getUnseenReminders,
+  selectAutoPeekReminder,
   shouldProjectReminderForGroupState,
   shouldSuppressTaskProposalEcho,
+  sortProjectedReminders,
 } from "./useWebPetNotifications";
 import type { PetReminder } from "./types";
 
@@ -16,7 +19,7 @@ function makeReminder(overrides: Partial<PetReminder> = {}): PetReminder {
     source: {},
     fingerprint: "fp-1",
     action: {
-      type: "send_suggestion",
+      type: "draft_message",
       groupId: "g-1",
       text: "hello",
     },
@@ -29,7 +32,7 @@ describe("shouldProjectReminderForGroupState", () => {
     expect(shouldProjectReminderForGroupState(makeReminder(), "active")).toBe(true);
   });
 
-  it("hides send_suggestion when group is idle", () => {
+  it("hides draft_message when group is idle", () => {
     expect(shouldProjectReminderForGroupState(makeReminder(), "idle")).toBe(false);
   });
 
@@ -191,5 +194,55 @@ describe("shouldSuppressTaskProposalEcho", () => {
         Date.parse("2026-03-27T16:03:00.000Z"),
       ),
     ).toBe(false);
+  });
+});
+
+describe("sortProjectedReminders", () => {
+  it("orders reminders by descending priority", () => {
+    const sorted = sortProjectedReminders([
+      makeReminder({ id: "low", fingerprint: "fp-3", priority: 40, summary: "low" }),
+      makeReminder({ id: "high", fingerprint: "fp-1", priority: 95, summary: "high" }),
+      makeReminder({ id: "mid", fingerprint: "fp-2", priority: 70, summary: "mid" }),
+    ]);
+
+    expect(sorted.map((item) => item.id)).toEqual(["high", "mid", "low"]);
+  });
+});
+
+describe("selectAutoPeekReminder", () => {
+  it("returns the highest-priority unseen reminder when auto-peek is allowed", () => {
+    const reminders = sortProjectedReminders([
+      makeReminder({ id: "r1", fingerprint: "fp-1", priority: 60, summary: "first" }),
+      makeReminder({ id: "r2", fingerprint: "fp-2", priority: 95, summary: "second" }),
+    ]);
+
+    expect(selectAutoPeekReminder(reminders, {}, {})?.id).toBe("r2");
+  });
+
+  it("skips reminders that are already seen", () => {
+    const reminders = sortProjectedReminders([
+      makeReminder({ id: "r1", fingerprint: "fp-1", priority: 60, summary: "first" }),
+      makeReminder({ id: "r2", fingerprint: "fp-2", priority: 95, summary: "second" }),
+    ]);
+
+    const unseen = getUnseenReminders(reminders, { "fp-2": true });
+    expect(unseen.map((item) => item.id)).toEqual(["r1"]);
+    expect(selectAutoPeekReminder(reminders, { "fp-2": true }, {})?.id).toBe("r1");
+  });
+
+  it("returns null when current reminders are blocked at the same priority", () => {
+    const reminders = sortProjectedReminders([
+      makeReminder({ id: "r1", fingerprint: "fp-1", priority: 95, summary: "first" }),
+    ]);
+
+    expect(selectAutoPeekReminder(reminders, {}, { "fp-1": 95 })).toBeNull();
+  });
+
+  it("allows the same fingerprint to re-peek when its priority increases", () => {
+    const reminders = sortProjectedReminders([
+      makeReminder({ id: "r1", fingerprint: "fp-1", priority: 96, summary: "first" }),
+    ]);
+
+    expect(selectAutoPeekReminder(reminders, {}, { "fp-1": 80 })?.id).toBe("r1");
   });
 });

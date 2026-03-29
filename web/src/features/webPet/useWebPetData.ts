@@ -4,16 +4,13 @@ import { useUIStore } from "../../stores";
 import type { GroupContext, GroupDoc, LedgerEvent } from "../../types";
 import { aggregateWebPetState } from "./aggregateWebPetState";
 import { useWebPetNotifications } from "./useWebPetNotifications";
-import type { PetPersonaPolicy } from "./petPersona";
 import type { PetPeerContext } from "./petPeerContext";
+import { getPetReminderDraftText } from "./reminderText";
 import type { PanelData, PetReminder } from "./types";
-import { buildCompactMessageSummary } from "./messageSummary";
 
 export function shouldSurfaceReminder(
   reminder: PetReminder,
-  policy: PetPersonaPolicy,
 ): boolean {
-  void policy;
   if (reminder.action.type === "restart_actor") {
     return !!reminder.action.groupId && !!reminder.action.actorId;
   }
@@ -26,17 +23,8 @@ export function shouldSurfaceReminder(
       reminder.action.actions.length > 0 &&
       (!!reminder.action.summary?.trim() || !!reminder.action.title?.trim() || !!reminder.summary.trim());
   }
-  return reminder.action.type === "send_suggestion" &&
-    (!!reminder.suggestion?.trim() || !!reminder.action.text?.trim());
-}
-
-export function shouldUseCompactReminderSummary(
-  reminder: PetReminder,
-  policy: PetPersonaPolicy,
-): boolean {
-  return Boolean(policy.compactMessageEvents) &&
-    reminder.kind === "suggestion" &&
-    reminder.action.type === "send_suggestion";
+  return reminder.action.type === "draft_message" &&
+    !!getPetReminderDraftText(reminder);
 }
 
 function localizeConnectionMessage(
@@ -54,7 +42,6 @@ function localizeConnectionMessage(
 
 function localizeReminder(
   reminder: PetReminder,
-  policy: PetPersonaPolicy,
   tr: (key: string, fallback: string, vars?: Record<string, unknown>) => string,
 ): PetReminder {
   const agentLabel =
@@ -63,22 +50,17 @@ function localizeReminder(
       : reminder.agent;
 
   let summary = reminder.summary;
-  if (shouldUseCompactReminderSummary(reminder, policy)) {
-    summary = buildCompactMessageSummary(
-      reminder.source.suggestionKind || "mention",
-      agentLabel,
-    );
-  } else if (!summary.trim()) {
+  if (!summary.trim()) {
     if (reminder.kind === "suggestion" && reminder.source.suggestionKind === "reply_required") {
       summary = tr(
         "reminderSummary.replyRequired",
-        "{{actor}} provided a reply suggestion you can send directly.",
+        "{{actor}} prepared a reply draft you can review in chat.",
         { actor: agentLabel },
       );
     } else if (reminder.kind === "suggestion") {
       summary = tr(
         "reminderSummary.mention",
-        "{{actor}} provided a suggestion you can send directly.",
+        "{{actor}} prepared a draft you can review in chat.",
         { actor: agentLabel },
       );
     }
@@ -122,7 +104,15 @@ export function useWebPetData(input: {
   const events = input.events;
   const petContext = input.petContext;
   const sseStatus = useUIStore((state) => state.sseStatus);
-  const { reminders, activeReminder, reaction, dismissReminder } =
+  const {
+    reminders,
+    activeReminder,
+    autoPeekReminder,
+    unseenReminderCount,
+    reaction,
+    dismissReminder,
+    markRemindersSeen,
+  } =
     useWebPetNotifications({
       groupId,
       groupState,
@@ -130,7 +120,6 @@ export function useWebPetData(input: {
       events,
       decisions: petContext.decisions,
     });
-  const personaPolicy = petContext.policy;
   const tr = useCallback(
     (key: string, fallback: string, vars?: Record<string, unknown>) =>
       String(t(key, { defaultValue: fallback, ...(vars || {}) })),
@@ -148,18 +137,25 @@ export function useWebPetData(input: {
     });
     const localizedPanelData = localizePanelData(rawPanelData, sseStatus, tr);
     const localizedReminders = reminders.map((reminder) =>
-      localizeReminder(reminder, personaPolicy, tr),
+      localizeReminder(reminder, tr),
     );
     const filteredReminders = localizedReminders.filter((reminder) =>
-      shouldSurfaceReminder(reminder, personaPolicy),
+      shouldSurfaceReminder(reminder),
     );
     const localizedActiveReminder = activeReminder
-      ? localizeReminder(activeReminder, personaPolicy, tr)
+      ? localizeReminder(activeReminder, tr)
+      : null;
+    const localizedAutoPeekReminder = autoPeekReminder
+      ? localizeReminder(autoPeekReminder, tr)
       : null;
     const filteredActiveReminder =
-      localizedActiveReminder && shouldSurfaceReminder(localizedActiveReminder, personaPolicy)
+      localizedActiveReminder && shouldSurfaceReminder(localizedActiveReminder)
         ? localizedActiveReminder
         : filteredReminders[0] || null;
+    const filteredAutoPeekReminder =
+      localizedAutoPeekReminder && shouldSurfaceReminder(localizedAutoPeekReminder)
+        ? localizedAutoPeekReminder
+        : null;
 
     // Smart hint: prioritize connection > active reminder > task progress > agent focus > team name
     let hint: string;
@@ -195,11 +191,15 @@ export function useWebPetData(input: {
       hint,
       reminders: filteredReminders,
       activeReminder: filteredActiveReminder,
+      autoPeekReminder: filteredAutoPeekReminder,
+      unseenReminderCount,
       reaction,
       dismissReminder,
+      markRemindersSeen,
     };
   }, [
     activeReminder,
+    autoPeekReminder,
     dismissReminder,
     events,
     groupContext,
@@ -210,7 +210,8 @@ export function useWebPetData(input: {
     groupId,
     sseStatus,
     tr,
-    personaPolicy,
     petContext,
+    unseenReminderCount,
+    markRemindersSeen,
   ]);
 }

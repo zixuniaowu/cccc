@@ -28,6 +28,7 @@ from .delivery import (
     request_flush_pending_messages,
 )
 from ..pet.review_scheduler import request_pet_review
+from ..pet.profile_refresh import record_user_chat_message
 
 logger = logging.getLogger("cccc.daemon.server")
 
@@ -498,6 +499,16 @@ def handle_send(
         )
     except Exception:
         pass
+    try:
+        if by == "user":
+            record_user_chat_message(
+                group.group_id,
+                event_id=event_id,
+                ts=event_ts,
+                text=text,
+            )
+    except Exception:
+        pass
 
     return DaemonResponse(ok=True, result={"event": event})
 
@@ -696,6 +707,16 @@ def handle_reply(
             source_event_id=event_id,
             immediate=reply_required,
         )
+    except Exception:
+        pass
+    try:
+        if by == "user":
+            record_user_chat_message(
+                group.group_id,
+                event_id=event_id,
+                ts=event_ts,
+                text=text,
+            )
     except Exception:
         pass
 

@@ -2,6 +2,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
+import { getGroupStatusUnified } from "../../utils/groupStatus";
 import { GripIcon } from "../Icons";
 
 interface SortableGroupItemProps {
@@ -12,22 +13,6 @@ interface SortableGroupItemProps {
   dragDisabled?: boolean;
   onSelect: () => void;
   onWarm?: () => void;
-}
-
-type StatusKey = "run" | "paused" | "idle" | "stop";
-
-function getStatusInfo(running: boolean, state?: string): { label: string; key: StatusKey; dotClass: string } {
-  if (!running) {
-    return { label: "STOP", key: "stop", dotClass: "bg-gray-400 dark:bg-slate-500" };
-  }
-  switch (state) {
-    case "paused":
-      return { label: "PAUSED", key: "paused", dotClass: "bg-amber-500 dark:bg-amber-400" };
-    case "idle":
-      return { label: "IDLE", key: "idle", dotClass: "bg-blue-500 dark:bg-blue-400" };
-    default:
-      return { label: "RUN", key: "run", dotClass: "bg-emerald-500 dark:bg-emerald-400 run-indicator-glow" };
-  }
 }
 
 export function SortableGroupItem({
@@ -55,7 +40,7 @@ export function SortableGroupItem({
     transition,
   };
 
-  const status = getStatusInfo(group.running ?? false, group.state);
+  const status = getGroupStatusUnified(group.running ?? false, group.state);
 
   if (isCollapsed) {
     const initial = (group.title || gid).charAt(0).toUpperCase();
@@ -136,7 +121,7 @@ export function SortableGroupItem({
           <div className="flex items-center gap-2 min-w-0">
             {/* Status dot */}
             <span className={classNames(
-              "w-2 h-2 rounded-full flex-shrink-0",
+              "w-2.5 h-2.5 rounded-full flex-shrink-0",
               status.dotClass
             )} />
             <span
@@ -152,8 +137,8 @@ export function SortableGroupItem({
           </div>
           <span
             className={classNames(
-              "glass-status-pill text-[9px] px-2.5 py-1 rounded-full font-semibold flex-shrink-0 uppercase",
-              `glass-status-pill-${status.key}`
+              "text-[9px] px-2.5 py-1 rounded-full font-semibold flex-shrink-0 uppercase",
+              status.pillClass
             )}
           >
             {status.label}

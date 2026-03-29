@@ -28,6 +28,7 @@ import { formatCapabilityIdInput, normalizeCapabilityIdList, parseCapabilityIdIn
 import { actorProfileIdentityKey, actorProfileMatchesRef } from "../utils/actorProfiles";
 import { findPresentationSlot } from "../utils/presentation";
 import { buildPresentationRefForSlot } from "../utils/presentationRefs";
+import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
 import {
   useGroupStore,
   useUIStore,
@@ -103,7 +104,7 @@ export function AppModals({
   fetchContext,
   canManageGroups,
 }: AppModalsProps) {
-  const { t } = useTranslation(['actors', 'chat']);
+  const { t } = useTranslation(['actors', 'chat', 'modals']);
   // Stores
   const {
     groups,
@@ -486,8 +487,7 @@ export function AppModals({
     try {
       const resp = await api.updateSettings(selectedGroupId, settings);
       if (!resp.ok) {
-        const msg = `${resp.error.code}: ${resp.error.message}`;
-        showError(msg);
+        showError(formatGroupSettingsUpdateError(t, resp.error));
         return false;
       }
       await refreshSettings(selectedGroupId);

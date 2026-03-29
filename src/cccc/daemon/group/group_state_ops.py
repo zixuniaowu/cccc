@@ -9,6 +9,7 @@ from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
 from ..pet.review_scheduler import request_pet_review
+from ..pet.profile_refresh import maybe_request_pet_profile_refresh
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -62,6 +63,15 @@ def handle_group_set_state(
             source_event_id=str(event.get("id") or "").strip(),
             immediate=True,
         )
+    except Exception:
+        pass
+    try:
+        if new_state == "active":
+            maybe_request_pet_profile_refresh(
+                group.group_id,
+                source_event_id=str(event.get("id") or "").strip(),
+                reason="group_state_active",
+            )
     except Exception:
         pass
     return DaemonResponse(ok=True, result={"group_id": group.group_id, "state": new_state, "event": event})

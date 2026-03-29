@@ -1,22 +1,27 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getReminderActionButtons } from "./reminderActions";
+import { getPetReminderPrimaryText } from "./reminderText";
 import type { PetReminder } from "./types";
 
 interface PetReminderBubbleProps {
   reminder: PetReminder | null;
   message?: string;
-  onDismiss: (fingerprint: string, opts?: { outcome?: "dismissed" | "snoozed" | null; cooldownMs?: number }) => void;
+  additionalCount?: number;
+  onDismiss: (fingerprint: string, opts?: { outcome?: "dismissed" | null; cooldownMs?: number }) => void;
   onCloseMessage?: () => void;
   onAction?: (reminder: PetReminder) => void;
+  onOpenPanel?: () => void;
 }
 
 export function PetReminderBubble({
   reminder,
   message,
+  additionalCount = 0,
   onDismiss,
   onCloseMessage,
   onAction,
+  onOpenPanel,
 }: PetReminderBubbleProps) {
   const { t } = useTranslation("webPet");
 
@@ -73,10 +78,9 @@ export function PetReminderBubble({
         }),
       )
     : "";
-  const suggestion = String(reminder?.suggestion || "").trim();
-  const suggestionPreview = String(reminder?.suggestionPreview || "").trim();
-  const bodyText = plainMessage || suggestionPreview || suggestion || label;
-  const showMeta = !!reminder && !suggestion && !suggestionPreview;
+  const primaryReminderText = getPetReminderPrimaryText(reminder);
+  const bodyText = plainMessage || primaryReminderText || label;
+  const showMeta = !!reminder && !primaryReminderText;
   const isPlainMessage = !reminder && !!plainMessage;
 
   return (
@@ -149,11 +153,25 @@ export function PetReminderBubble({
                   </div>
                 ) : null}
                 <div
-                  className={`${showMeta ? "mt-1" : ""} text-sm leading-5 text-[var(--color-text-primary)]`}
+                  className={`${showMeta ? "mt-1" : ""} cursor-pointer text-sm leading-5 text-[var(--color-text-primary)]`}
                   title={bodyText}
+                  onClick={(event) => {
+                    if (!onOpenPanel) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onOpenPanel();
+                  }}
                 >
                   {bodyText}
                 </div>
+                {additionalCount > 0 ? (
+                  <div className="mt-1 text-[11px] font-medium text-[var(--color-text-secondary)]">
+                    {t("moreCount", {
+                      defaultValue: "+{{count}} more",
+                      count: additionalCount,
+                    })}
+                  </div>
+                ) : null}
                 <div className="mt-1.5 flex gap-1.5">
                   {actionButtons.map((btn) => (
                     <button
@@ -172,7 +190,7 @@ export function PetReminderBubble({
                       {btn.label}
                     </button>
                   ))}
-                  {suggestion ? (
+                  {primaryReminderText ? (
                     <button
                       type="button"
                       className="rounded-md bg-white/5 px-2 py-0.5 text-xs font-medium text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)] active:bg-white/15"

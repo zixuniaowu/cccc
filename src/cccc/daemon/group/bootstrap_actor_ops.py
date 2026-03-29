@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from ...kernel.context import ContextStorage
-from ...kernel.actors import list_actors
+from ...kernel.actors import list_actors, remove_actor
 from ...kernel.group import load_group
-from ...kernel.pet_actor import sync_pet_actor
+from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor, sync_pet_actor
 from ...kernel.runtime import runtime_start_preflight_error
 from ...util.conv import coerce_bool
 from ...runners import headless as headless_runner
@@ -67,6 +67,11 @@ def autostart_running_groups(
             sync_pet_actor(group)
         except Exception as e:
             logger.warning("Pet actor sync failed for %s: %s", group_id, e)
+            try:
+                if get_pet_actor(group) is not None:
+                    remove_actor(group, PET_ACTOR_ID)
+            except Exception:
+                pass
 
         for actor in list_actors(group):
             if not isinstance(actor, dict):

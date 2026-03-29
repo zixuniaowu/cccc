@@ -372,7 +372,7 @@ def _build_proposal_ready_signal(
         ready = True
         focus = "reply_pressure"
         severity = "high"
-        summary = "Reply loop is overdue; prioritize one follow-up suggestion that closes the waiting thread."
+        summary = "Reply loop is overdue; prioritize one follow-up action that closes the waiting thread."
     elif waiting_user_count > 0:
         ready = True
         focus = "waiting_user"

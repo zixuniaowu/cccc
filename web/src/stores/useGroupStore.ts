@@ -108,6 +108,7 @@ const GROUP_VIEW_CACHE_TTL_MS = 300_000;
 
 // localStorage key for group order
 const GROUP_ORDER_KEY = "cccc-group-order";
+const SELECTED_GROUP_ID_KEY = "cccc-selected-group-id";
 
 function loadGroupOrder(): string[] {
   try {
@@ -127,6 +128,28 @@ function saveGroupOrder(order: string[]): void {
     localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(order));
   } catch (e) {
     console.warn("Failed to persist group order to localStorage:", e);
+  }
+}
+
+function loadSelectedGroupId(): string {
+  try {
+    return String(localStorage.getItem(SELECTED_GROUP_ID_KEY) || "").trim();
+  } catch (e) {
+    console.warn("Failed to read selected group from localStorage:", e);
+  }
+  return "";
+}
+
+function saveSelectedGroupId(groupId: string): void {
+  try {
+    const gid = String(groupId || "").trim();
+    if (!gid) {
+      localStorage.removeItem(SELECTED_GROUP_ID_KEY);
+      return;
+    }
+    localStorage.setItem(SELECTED_GROUP_ID_KEY, gid);
+  } catch (e) {
+    console.warn("Failed to persist selected group to localStorage:", e);
   }
 }
 
@@ -542,7 +565,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   // Initial state
   groups: [],
   groupOrder: loadGroupOrder(),
-  selectedGroupId: "",
+  selectedGroupId: loadSelectedGroupId(),
   chatByGroup: {},
   groupDoc: null,
   events: [],
@@ -589,9 +612,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }
     return ordered;
   },
-  setSelectedGroupId: (id) =>
+  setSelectedGroupId: (id) => {
+    const gid = String(id || "").trim();
+    saveSelectedGroupId(gid);
     set((state) => {
-      const gid = String(id || "").trim();
       const prevGid = String(state.selectedGroupId || "").trim();
 
       // 切组前先把当前视图快照落到缓存，回切时才能做到秒开。
@@ -605,7 +629,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         chatByGroup: nextChatByGroup,
         ...buildPrimedGroupState(gid, state.groups),
       };
-    }),
+    });
+  },
   setGroupDoc: (doc) => set({ groupDoc: doc }),
   setEvents: (events, groupId) =>
     set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { events }) ?? state),
@@ -835,13 +860,17 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         // Use setGroups to ensure groupOrder is updated
         get().setGroups(next);
 
-        const cur = get().selectedGroupId;
+        const cur = String(get().selectedGroupId || "").trim();
         const curExists = !!cur && next.some((g) => String(g.group_id || "") === cur);
         if (!curExists) {
           if (next.length > 0) {
-            // Selected group disappeared (or none selected): switch to first group
-            // and clear stale per-group caches so UI does not render old data while switching.
-            const nextGroupId = String(next[0].group_id || "");
+            // Selected group disappeared (or none selected): restore the persisted
+            // selection when it still exists, otherwise fall back to the first group.
+            // Also clear stale per-group caches so UI does not render old data while switching.
+            const persisted = loadSelectedGroupId();
+            const persistedExists = !!persisted && next.some((g) => String(g.group_id || "") === persisted);
+            const nextGroupId = persistedExists ? persisted : String(next[0].group_id || "");
+            saveSelectedGroupId(nextGroupId);
             const nextChatByGroup = ensureGroupChatBucket(get().chatByGroup, nextGroupId);
             set({
               selectedGroupId: nextGroupId,
@@ -851,6 +880,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           } else {
             // No groups remain: clear selection + per-group caches.
             groupViewCache.clear();
+            saveSelectedGroupId("");
             set({
               selectedGroupId: "",
               chatByGroup: {},
@@ -868,6 +898,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           }
           return;
         }
+
+        saveSelectedGroupId(cur);
 
         // Keep groupDoc's basic fields in sync with the group list. This matters when
         // group state/title/topic is changed externally (CLI/MCP/etc.), since groupDoc

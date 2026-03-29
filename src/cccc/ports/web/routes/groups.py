@@ -36,7 +36,7 @@ from ....kernel.pet_prompt import build_pet_prompt_parts, build_pet_snapshot_tex
 from ....kernel.pet_outcomes import append_pet_decision_outcome
 from ....kernel.pet_actor import get_pet_actor, is_desktop_pet_enabled
 from ....kernel.pet_signals import load_pet_signals
-from ....daemon.pet.review_scheduler import request_pet_review
+from ....daemon.pet.review_scheduler import request_manual_pet_review
 from ...mcp.utils.help_markdown import parse_help_markdown
 from ....kernel.access_tokens import list_access_tokens
 from ....kernel.pet_decisions import load_pet_decisions
@@ -1184,17 +1184,18 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
         if not is_desktop_pet_enabled(group):
             return {"ok": False, "error": {"code": "desktop_pet_disabled", "message": "desktop pet is disabled"}}
-        if get_group_state(group) != "active":
-            return {"ok": False, "error": {"code": "group_not_active", "message": "pet review requires active group state"}}
+        if get_group_state(group) not in {"active", "idle"}:
+            return {"ok": False, "error": {"code": "group_not_active", "message": "pet review requires active or idle group state"}}
         pet_actor = get_pet_actor(group)
         if not isinstance(pet_actor, dict) or not bool(pet_actor.get("enabled", True)):
             return {"ok": False, "error": {"code": "pet_actor_unavailable", "message": "pet actor is unavailable"}}
-        await run_in_threadpool(
-            request_pet_review,
+        accepted = await run_in_threadpool(
+            request_manual_pet_review,
             group_id,
             reason="bubble_click",
-            immediate=True,
         )
+        if not accepted:
+            return {"ok": False, "error": {"code": "pet_review_unavailable", "message": "pet review is currently unavailable"}}
         return {"ok": True, "result": {"accepted": True}}
 
     @group_router.post("/pet-decisions/outcome")

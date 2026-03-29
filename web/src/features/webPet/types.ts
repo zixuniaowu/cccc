@@ -21,7 +21,7 @@ export type ReminderKind =
 
 export type ReminderAction =
   | {
-      type: "send_suggestion";
+      type: "draft_message";
       groupId: string;
       text: string;
       to?: string[];
@@ -55,8 +55,6 @@ export interface PetReminder {
   kind: ReminderKind;
   priority: number;
   summary: string;
-  suggestion?: string;
-  suggestionPreview?: string;
   agent: string;
   ephemeral?: boolean;
   source: {

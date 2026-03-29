@@ -4,6 +4,13 @@
   "dismissReminderAria": "Dismiss reminder",
   "bubbleAria": "Web Pet",
   "bubbleAriaHint": "Web Pet. {{hint}}",
+  "panelTitle": "Web Pet",
+  "panelIdle": "No current reminders",
+  "reminderCount": "{{count}} reminders",
+  "reviewNow": "Review now",
+  "reviewing": "Reviewing…",
+  "moreReminders": "More reminders",
+  "moreCount": "+{{count}} more",
   "teamFallback": "Team",
   "systemAgent": "System",
   "taskFallback": "this task",
@@ -15,17 +22,18 @@
   "countWorking": "{{count}} working",
   "countBusy": "{{count}} busy",
   "petPeerLabel": "Pet Peer",
-  "petPersonaSourceHelp": "persona loaded",
-  "petPersonaSourceDefault": "default seed",
+  "petPersonaSourceHelp": "Persona loaded",
+  "petPersonaSourceDefault": "Default seed",
   "noActionItems": "No suggestions or issues right now.",
+  "hintPetContextLoading": "Syncing pet context…",
+  "hintPetContextUnavailable": "Pet context unavailable",
   "kind": {
     "suggestion": "suggestion",
     "actor_down": "actor down",
     "mention": "mention"
   },
   "action": {
-    "send": "Send",
-    "askForeman": "Ask foreman",
+    "draft": "Draft in chat",
     "applyRule": "Apply rule",
     "restart": "Restart",
     "restartPeer": "Restart peer",
@@ -33,22 +41,24 @@
     "dismiss": "Dismiss"
   },
   "notice": {
-    "suggestionSent": "Suggestion sent",
-    "suggestionSendFailed": "Failed to send suggestion",
+    "suggestionDrafted": "Draft added to composer",
     "restartRequested": "Restart requested",
     "actorRestartFailed": "Failed to restart actor",
-    "taskProposalSent": "Task proposal sent to foreman",
-    "taskProposalSendFailed": "Failed to send task proposal",
     "automationProposalApplied": "Automation proposal applied",
-    "automationProposalApplyFailed": "Failed to apply automation proposal"
+    "automationProposalApplyFailed": "Failed to apply automation proposal",
+    "reviewRequested": "Pet review requested",
+    "reviewNoReminders": "No current reminders",
+    "reviewPetUnavailable": "Pet runtime is unavailable",
+    "reviewPetNotRunning": "Pet runtime is not running",
+    "reviewPetAuthExpired": "Pet runtime authentication expired. Re-login and retry."
   },
   "suggestionLabel": "Suggestion",
   "taskProgress": "{{done}}/{{total}} done",
   "taskActive": "{{count}} active",
   "hintTaskProgress": "{{done}}/{{total}} tasks done",
   "reminderSummary": {
-    "mention": "{{actor}} provided a suggestion you can send directly.",
-    "replyRequired": "{{actor}} provided a reply suggestion you can send directly."
+    "mention": "{{actor}} prepared a draft you can review in chat.",
+    "replyRequired": "{{actor}} prepared a reply draft you can review in chat."
   },
   "snapshot": {
     "group": "Group: {{value}}",

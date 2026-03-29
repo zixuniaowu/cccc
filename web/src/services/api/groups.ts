@@ -471,8 +471,6 @@ export type PetPeerContextResponse = {
     kind?: string;
     priority?: number;
     summary?: string | null;
-    suggestion?: string | null;
-    suggestion_preview?: string | null;
     agent?: string | null;
     fingerprint?: string | null;
     ephemeral?: boolean;
@@ -485,7 +483,7 @@ export type PetPeerContextResponse = {
       suggestion_kind?: "mention" | "reply_required" | string | null;
     };
     action?: {
-      type?: "send_suggestion" | "restart_actor" | "task_proposal" | "automation_proposal" | string;
+      type?: "draft_message" | "restart_actor" | "task_proposal" | "automation_proposal" | string;
       group_id?: string | null;
       actor_id?: string | null;
       text?: string | null;
@@ -602,7 +600,7 @@ export async function recordPetDecisionOutcome(
   groupId: string,
   payload: {
     fingerprint: string;
-    outcome: "executed" | "dismissed" | "snoozed" | "expired";
+    outcome: "executed" | "dismissed";
     decisionId?: string;
     actionType?: string;
     cooldownMs?: number;

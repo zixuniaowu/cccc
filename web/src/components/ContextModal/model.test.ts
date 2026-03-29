@@ -4,6 +4,7 @@ import {
   alignTaskDraftTaskType,
   emptyTaskDraft,
   getWaitingOnOptions,
+  isVisibleContextAgent,
   petPersonaDraftDirty,
   petPersonaDraftMatches,
   resolvePetPersonaDraft,
@@ -96,5 +97,12 @@ describe("ContextModal task draft task type", () => {
     expect(alignTaskDraftTaskType("optimization", "T001", "")).toBe("optimization");
     expect(alignTaskDraftTaskType("free", "T001", "")).toBe("free");
     expect(alignTaskDraftTaskType("optimization", "")).toBe("optimization");
+  });
+});
+
+describe("ContextModal visible agents", () => {
+  it("hides pet-peer from the default agents view", () => {
+    expect(isVisibleContextAgent({ id: "pet-peer" })).toBe(false);
+    expect(isVisibleContextAgent({ id: "foreman-1" })).toBe(true);
   });
 });

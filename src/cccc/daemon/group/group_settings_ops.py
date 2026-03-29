@@ -18,11 +18,29 @@ from ..pet.pet_runtime_ops import (
     stop_pet_actor_runtime,
 )
 from ..pet.review_scheduler import cancel_pet_review, request_pet_review
+from ..pet.profile_refresh import maybe_request_pet_profile_refresh
 from ...util.conv import coerce_bool
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
+
+
+def _group_settings_error_details(exc: Exception) -> Optional[Dict[str, Any]]:
+    message = str(exc or "").strip()
+    if not message:
+        return None
+    if message == "desktop pet requires an enabled foreman actor":
+        return {"reason": "desktop_pet_requires_enabled_foreman"}
+    if message.startswith("failed to start pet actor:"):
+        cause = message.partition(":")[2].strip()
+        return {"reason": "pet_actor_start_failed", "cause": cause}
+    if message == "failed to start pet actor":
+        return {"reason": "pet_actor_start_failed"}
+    if message.startswith("pet start failed and rollback restart failed:"):
+        cause = message.partition(":")[2].strip()
+        return {"reason": "pet_actor_rollback_restart_failed", "cause": cause}
+    return None
 
 
 def _safe_int(value: Any, *, default: int, min_value: int = 0, max_value: Optional[int] = None) -> int:
@@ -187,7 +205,10 @@ def handle_group_settings_update(
                                     by=by,
                                 )
                                 if not bool(start_result.get("success")):
-                                    raise RuntimeError(str(start_result.get("error") or "failed to start pet actor"))
+                                    start_error = str(start_result.get("error") or "").strip()
+                                    if start_error:
+                                        raise RuntimeError(f"failed to start pet actor: {start_error}")
+                                    raise RuntimeError("failed to start pet actor")
                             pet_review_after_save = True
                 except Exception:
                     features["desktop_pet_enabled"] = desktop_pet_enabled_before
@@ -215,8 +236,12 @@ def handle_group_settings_update(
                 request_pet_review(group.group_id, reason="pet_enabled", immediate=True)
             except Exception:
                 pass
+            try:
+                maybe_request_pet_profile_refresh(group.group_id, reason="pet_enabled")
+            except Exception:
+                pass
     except Exception as e:
-        return _error("group_settings_update_failed", str(e))
+        return _error("group_settings_update_failed", str(e), details=_group_settings_error_details(e))
 
     automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
     delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}

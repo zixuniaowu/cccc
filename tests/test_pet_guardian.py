@@ -22,11 +22,11 @@ class TestPetDecisionsOps(unittest.TestCase):
             "id": "decision-1",
             "kind": "suggestion",
             "priority": 80,
-            "summary": "Send the suggested reply.",
+            "summary": "Draft the reply in chat.",
             "agent": "Pet Peer",
             "fingerprint": f"group:{group_id}:suggestion:evt-1",
             "action": {
-                "type": "send_suggestion",
+                "type": "draft_message",
                 "group_id": group_id,
                 "text": "Please follow up with the user.",
                 "to": ["user"],
@@ -37,8 +37,6 @@ class TestPetDecisionsOps(unittest.TestCase):
                 "suggestion_kind": "reply_required",
             },
             "updated_at": "",
-            "suggestion": "Please follow up with the user.",
-            "suggestion_preview": "Please follow up...",
         }
 
     def test_replace_load_and_clear_pet_decisions(self) -> None:
@@ -72,7 +70,7 @@ class TestPetDecisionsOps(unittest.TestCase):
                 "id": "",
                 "kind": "suggestion",
                 "summary": "missing required fields",
-                "action": {"type": "send_suggestion"},
+                "action": {"type": "draft_message"},
             }
 
             stored = replace_pet_decisions(
@@ -129,7 +127,7 @@ class TestPetDecisionsOps(unittest.TestCase):
             self.assertEqual(stored[0]["action"]["actions"][0]["type"], "create_rule")
             self.assertEqual(load_pet_decisions(group)[0]["action"]["type"], "automation_proposal")
 
-    def test_replace_compacts_foreman_send_suggestion_to_next_step_message(self) -> None:
+    def test_replace_compacts_foreman_draft_message_to_next_step_message(self) -> None:
         from cccc.kernel.pet_decisions import replace_pet_decisions
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -142,7 +140,7 @@ class TestPetDecisionsOps(unittest.TestCase):
                 "agent": "Pet Peer",
                 "fingerprint": f"group:{group.group_id}:suggestion:reply-pressure",
                 "action": {
-                    "type": "send_suggestion",
+                    "type": "draft_message",
                     "group_id": group.group_id,
                     "to": ["@foreman"],
                     "text": (
@@ -159,9 +157,10 @@ class TestPetDecisionsOps(unittest.TestCase):
 
             action_text = str(stored[0]["action"]["text"] or "")
             self.assertEqual(action_text, "prioritize the oldest overdue reply thread.")
-            self.assertEqual(str(stored[0].get("suggestion") or ""), action_text)
+            self.assertNotIn("suggestion", stored[0])
+            self.assertNotIn("suggestion_preview", stored[0])
 
-    def test_replace_keeps_non_foreman_send_suggestion_text(self) -> None:
+    def test_replace_keeps_non_foreman_draft_message_text(self) -> None:
         from cccc.kernel.pet_decisions import replace_pet_decisions
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -174,7 +173,7 @@ class TestPetDecisionsOps(unittest.TestCase):
                 "agent": "Pet Peer",
                 "fingerprint": f"group:{group.group_id}:suggestion:user-followup",
                 "action": {
-                    "type": "send_suggestion",
+                    "type": "draft_message",
                     "group_id": group.group_id,
                     "to": ["user"],
                     "text": "Please share reproduction steps and the error screenshot.",
@@ -265,7 +264,7 @@ class TestPetDecisionsOps(unittest.TestCase):
             second["id"] = "decision-2"
             second["summary"] = "Ask foreman to clarify the next step."
             second["action"] = {
-                "type": "send_suggestion",
+                "type": "draft_message",
                 "group_id": group.group_id,
                 "text": "Please clarify the next step.",
                 "to": ["@foreman"],
@@ -275,6 +274,23 @@ class TestPetDecisionsOps(unittest.TestCase):
             self.assertEqual(len(stored), 2)
             self.assertNotEqual(str(stored[0]["fingerprint"]), str(stored[1]["fingerprint"]))
             self.assertTrue(str(stored[1]["fingerprint"]).startswith(str(first["fingerprint"])))
+
+    def test_replace_filters_removed_send_suggestion_alias(self) -> None:
+        from cccc.kernel.pet_decisions import replace_pet_decisions
+
+        with tempfile.TemporaryDirectory() as tmp:
+            group = _FakeGroup("g-demo", Path(tmp))
+            legacy = self._sample_decision(group.group_id)
+            legacy["action"] = {
+                "type": "send_suggestion",
+                "group_id": group.group_id,
+                "text": "Please follow up with the user.",
+                "to": ["user"],
+            }
+
+            stored = replace_pet_decisions(group, decisions=[legacy], actor_id="pet-peer")
+
+            self.assertEqual(stored, [])
 
     def test_replace_rolls_back_when_ledger_append_fails(self) -> None:
         from cccc.daemon.pet.pet_decision_ops import handle_pet_decisions_replace
@@ -380,14 +396,14 @@ class TestPetDecisionsOps(unittest.TestCase):
 
 
 class TestPetActorSeed(unittest.TestCase):
-    def test_pet_actor_seed_uses_existing_pet_actor_as_fallback(self) -> None:
+    def test_pet_actor_seed_uses_foreman_settings(self) -> None:
         from cccc.kernel.pet_actor import _pet_actor_seed
 
         with tempfile.TemporaryDirectory() as tmp:
             group = _FakeGroup("g-demo", Path(tmp))
-            seed = _pet_actor_seed(
-                group,
-                fallback_actor={
+            group.doc["actors"] = [
+                {
+                    "id": "foreman-1",
                     "runtime": "gpt-5.4",
                     "runner": "headless",
                     "command": ["codex"],
@@ -395,24 +411,23 @@ class TestPetActorSeed(unittest.TestCase):
                     "default_scope_key": "scope-a",
                     "submit": "ctrl-enter",
                 },
-            )
+            ]
+            seed = _pet_actor_seed(group)
             self.assertEqual(seed["runtime"], "gpt-5.4")
             self.assertEqual(seed["runner"], "headless")
             self.assertEqual(seed["default_scope_key"], "scope-a")
             self.assertEqual(seed["submit"], "ctrl-enter")
+            self.assertEqual(seed["env"], {"FOO": "bar"})
 
-    def test_pet_actor_seed_logs_when_falling_back_to_defaults(self) -> None:
+    def test_pet_actor_seed_requires_enabled_foreman(self) -> None:
         from cccc.kernel.pet_actor import _pet_actor_seed
 
-        with tempfile.TemporaryDirectory() as tmp, self.assertLogs("cccc.kernel.pet_actor", level="WARNING") as logs:
+        with tempfile.TemporaryDirectory() as tmp:
             group = _FakeGroup("g-demo", Path(tmp))
-            seed = _pet_actor_seed(group)
+            with self.assertRaisesRegex(ValueError, "desktop pet requires an enabled foreman actor"):
+                _pet_actor_seed(group)
 
-        self.assertEqual(seed["runtime"], "codex")
-        self.assertEqual(seed["runner"], "pty")
-        self.assertTrue(any("fell back to defaults" in line for line in logs.output))
-
-    def test_pet_actor_seed_uses_available_runtime_when_seed_runtime_missing(self) -> None:
+    def test_pet_actor_seed_uses_available_runtime_when_foreman_runtime_missing(self) -> None:
         from cccc.kernel.pet_actor import _pet_actor_seed
 
         with tempfile.TemporaryDirectory() as tmp, patch(
@@ -421,16 +436,20 @@ class TestPetActorSeed(unittest.TestCase):
         ), patch(
             "cccc.kernel.pet_actor.detect_runtime",
             side_effect=lambda name: type("RuntimeInfo", (), {"available": name == "claude"})(),
+        ), patch(
+            "cccc.kernel.pet_actor.get_runtime_command_with_flags",
+            side_effect=lambda name: [name, "--dangerously-skip-permissions"],
         ):
             group = _FakeGroup("g-demo", Path(tmp))
-            seed = _pet_actor_seed(
-                group,
-                fallback_actor={
+            group.doc["actors"] = [
+                {
+                    "id": "foreman-1",
                     "runtime": "codex",
                     "runner": "pty",
                     "command": ["codex"],
                 },
-            )
+            ]
+            seed = _pet_actor_seed(group)
 
         self.assertEqual(seed["runtime"], "claude")
         self.assertEqual(seed["command"], ["claude", "--dangerously-skip-permissions"])
@@ -449,6 +468,10 @@ class TestPetPromptContract(unittest.TestCase):
         self.assertIn("action.text must already be the final message", prompt)
         self.assertIn("short next-step message", prompt)
         self.assertIn("task_proposal, summary and action.text must both read like natural next-step guidance", prompt)
+        self.assertIn("pet_profile_refresh", prompt)
+        self.assertIn("data.context.kind=pet_profile_refresh", prompt)
+        self.assertIn("do not touch cccc_pet_decisions", prompt)
+        self.assertIn('cccc_agent_state(action=update, actor_id=pet-peer, user_model=...)', prompt)
 
 
 if __name__ == "__main__":

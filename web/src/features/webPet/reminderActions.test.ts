@@ -3,18 +3,17 @@ import { getReminderActionButtons } from "./reminderActions";
 import type { PetReminder } from "./types";
 
 describe("getReminderActionButtons", () => {
-  it("prefers send for reply_required reminders with suggestion", () => {
+  it("prefers drafting in chat for reply_required reminders with a draft action", () => {
     const reminder: PetReminder = {
       id: "reply_required:evt-1",
       kind: "suggestion",
       priority: 80,
       summary: "请先回复用户",
-      suggestion: "收到，我来跟进这条，稍后给你同步进展。",
       agent: "foreman",
       source: { eventId: "evt-1", suggestionKind: "reply_required" },
       fingerprint: "group:g-1:suggestion:reply_required:evt-1",
       action: {
-        type: "send_suggestion",
+        type: "draft_message",
         groupId: "g-1",
         text: "收到，我来跟进这条，稍后给你同步进展。",
         to: ["foreman"],
@@ -24,35 +23,35 @@ describe("getReminderActionButtons", () => {
 
     expect(getReminderActionButtons(reminder)).toEqual([
       {
-        labelKey: "send",
-        fallback: "Send",
+        labelKey: "draft",
+        fallback: "Draft in chat",
         action: reminder.action,
       },
     ]);
   });
 
-  it("returns send when action text exists without suggestion", () => {
+  it("returns draft when action text exists", () => {
     const reminder: PetReminder = {
       id: "reply_required:evt-2",
       kind: "suggestion",
       priority: 80,
       summary: "请直接发送这条回复",
-      agent: "foreman",
-      source: { eventId: "evt-2", suggestionKind: "reply_required" },
-      fingerprint: "group:g-1:suggestion:reply_required:evt-2",
-      action: {
-        type: "send_suggestion",
-        groupId: "g-1",
-        text: "我先处理这条，稍后同步结果。",
-        to: ["foreman"],
+        agent: "foreman",
+        source: { eventId: "evt-2", suggestionKind: "reply_required" },
+        fingerprint: "group:g-1:suggestion:reply_required:evt-2",
+        action: {
+          type: "draft_message",
+          groupId: "g-1",
+          text: "我先处理这条，稍后同步结果。",
+          to: ["foreman"],
         replyTo: "evt-2",
       },
     };
 
     expect(getReminderActionButtons(reminder)).toEqual([
       {
-        labelKey: "send",
-        fallback: "Send",
+        labelKey: "draft",
+        fallback: "Draft in chat",
         action: reminder.action,
       },
     ]);
@@ -108,7 +107,7 @@ describe("getReminderActionButtons", () => {
     ]);
   });
 
-  it("returns ask foreman button for task proposals", () => {
+  it("returns draft button for task proposals", () => {
     const reminder: PetReminder = {
       id: "task-proposal:T315",
       kind: "suggestion",
@@ -128,8 +127,8 @@ describe("getReminderActionButtons", () => {
 
     expect(getReminderActionButtons(reminder)).toEqual([
       {
-        labelKey: "askForeman",
-        fallback: "Ask foreman",
+        labelKey: "draft",
+        fallback: "Draft in chat",
         action: reminder.action,
       },
     ]);

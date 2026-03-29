@@ -65,6 +65,46 @@ class TestPetReviewScheduler(unittest.TestCase):
         self.assertEqual(len(emitted), 1)
         self.assertLess(emitted[0] - started_at, 0.15)
 
+    def test_manual_review_allows_idle_group(self) -> None:
+        fake_group = object()
+        with patch.object(review_scheduler, "load_group", return_value=fake_group), patch.object(
+            review_scheduler,
+            "is_desktop_pet_enabled",
+            return_value=True,
+        ), patch.object(review_scheduler, "get_group_state", return_value="idle"), patch.object(
+            review_scheduler,
+            "get_pet_actor",
+            return_value={"id": "pet-peer", "enabled": True},
+        ), patch.object(review_scheduler, "emit_system_notify") as emit_notify:
+            accepted = review_scheduler.request_manual_pet_review(
+                "g-test",
+                reason="bubble_click",
+                source_event_id="evt-idle",
+            )
+
+        self.assertTrue(accepted)
+        emit_notify.assert_called_once()
+
+    def test_manual_review_rejects_paused_group(self) -> None:
+        fake_group = object()
+        with patch.object(review_scheduler, "load_group", return_value=fake_group), patch.object(
+            review_scheduler,
+            "is_desktop_pet_enabled",
+            return_value=True,
+        ), patch.object(review_scheduler, "get_group_state", return_value="paused"), patch.object(
+            review_scheduler,
+            "get_pet_actor",
+            return_value={"id": "pet-peer", "enabled": True},
+        ), patch.object(review_scheduler, "emit_system_notify") as emit_notify:
+            accepted = review_scheduler.request_manual_pet_review(
+                "g-test",
+                reason="bubble_click",
+                source_event_id="evt-paused",
+            )
+
+        self.assertFalse(accepted)
+        emit_notify.assert_not_called()
+
     def test_pending_review_is_persisted_to_disk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.object(
             review_scheduler,

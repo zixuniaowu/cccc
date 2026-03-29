@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, Optional
 
 from ..util.conv import coerce_bool
-from .actors import INTERNAL_KIND_PET, add_actor, find_actor, find_foreman, list_visible_actors, remove_actor, update_actor
+from .actors import INTERNAL_KIND_PET, add_actor, find_actor, find_foreman, remove_actor, update_actor
 from .group import Group
 from .runtime import PRIMARY_RUNTIMES, detect_runtime, get_runtime_command_with_flags, runtime_start_preflight_error
 
 PET_ACTOR_ID = "pet-peer"
 PET_ACTOR_TITLE = "Pet Peer"
-LOGGER = logging.getLogger(__name__)
 
 
 def is_desktop_pet_enabled(group: Group) -> bool:
@@ -27,17 +25,15 @@ def get_pet_actor(group: Group) -> Optional[Dict[str, Any]]:
     return actor
 
 
-def _pet_actor_seed(group: Group, *, fallback_actor: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    source = find_foreman(group)
-    if not isinstance(source, dict):
-        visible = list_visible_actors(group)
-        source = visible[0] if visible else fallback_actor if isinstance(fallback_actor, dict) else {}
-    if not isinstance(source, dict) or not source:
-        LOGGER.warning(
-            "pet actor seed fell back to defaults: no foreman, visible actor, or existing pet actor (group_id=%s)",
-            group.group_id,
-        )
-        source = {}
+def require_pet_foreman(group: Group) -> Dict[str, Any]:
+    foreman = find_foreman(group)
+    if not isinstance(foreman, dict):
+        raise ValueError("desktop pet requires an enabled foreman actor")
+    return foreman
+
+
+def _pet_actor_seed(group: Group) -> Dict[str, Any]:
+    source = require_pet_foreman(group)
 
     runtime_value = str(source.get("runtime") or "").strip()
     runner_value = str(source.get("runner") or "").strip()
@@ -68,7 +64,7 @@ def _pet_actor_seed(group: Group, *, fallback_actor: Optional[Dict[str, Any]] = 
 
 def ensure_pet_actor(group: Group) -> Dict[str, Any]:
     current = get_pet_actor(group)
-    seed = _pet_actor_seed(group, fallback_actor=current)
+    seed = _pet_actor_seed(group)
     if current is None:
         return add_actor(
             group,

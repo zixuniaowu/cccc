@@ -77,6 +77,12 @@ export function resolvePetPersonaDraft(savedPetPersona: string): string {
   return getDefaultPetPersonaSeed();
 }
 
+export function isVisibleContextAgent(agent: AgentState | null | undefined): boolean {
+  const id = String(agent?.id || "").trim();
+  if (!id) return false;
+  return id !== "pet-peer";
+}
+
 export function petPersonaDraftMatches(savedPetPersona: string, draft: string): boolean {
   return String(draft || "") === resolvePetPersonaDraft(savedPetPersona);
 }

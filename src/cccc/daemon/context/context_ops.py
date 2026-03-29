@@ -56,6 +56,8 @@ from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
 from ..space.group_space_projection import sync_group_space_projection
 from ..space.group_space_store import enqueue_space_job, get_space_binding, get_space_provider_state
+from ..pet.profile_refresh import mark_pet_profile_refresh_applied
+from ..pet.review_scheduler import request_pet_review
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 
@@ -224,6 +226,54 @@ def _task_to_summary_dict(task: Task) -> Dict[str, Any]:
     if result.get("task_type") is None:
         result.pop("task_type", None)
     return result
+
+
+_EMPTY_TASK_PET_SIGNATURE: Tuple[str, str, Tuple[str, ...], str] = ("", "", (), "")
+_EMPTY_TASK_PET_REASONS: frozenset[str] = frozenset()
+
+
+def _task_pet_profile(task: Optional[Task]) -> Tuple[Tuple[str, str, Tuple[str, ...], str], frozenset[str]]:
+    if task is None:
+        return _EMPTY_TASK_PET_SIGNATURE, _EMPTY_TASK_PET_REASONS
+    status = _status_value(getattr(task, "status", ""))
+    waiting_on = _status_value(getattr(task, "waiting_on", ""))
+    blocked_by = tuple(
+        item
+        for item in (str(raw or "").strip() for raw in list(getattr(task, "blocked_by", []) or []))
+        if item
+    )
+    handoff_to = str(getattr(task, "handoff_to", "") or "").strip()
+    signature = (status, waiting_on, blocked_by, handoff_to)
+    if status in {"done", "completed", "archived"}:
+        return signature, _EMPTY_TASK_PET_REASONS
+    reasons: set[str] = set()
+    if waiting_on == "user":
+        reasons.add("task_waiting_user")
+    if blocked_by or waiting_on in {"actor", "external"}:
+        reasons.add("task_blocked")
+    if handoff_to:
+        reasons.add("task_handoff")
+    return signature, frozenset(reasons)
+
+
+def _task_pet_review_delta(
+    before: Tuple[Tuple[str, str, Tuple[str, ...], str], frozenset[str]],
+    after: Tuple[Tuple[str, str, Tuple[str, ...], str], frozenset[str]],
+) -> Tuple[set[str], bool]:
+    before_signature, before_reasons = before
+    after_signature, after_reasons = after
+    if not before_reasons and not after_reasons:
+        return set(), False
+    if before_signature == after_signature and before_reasons == after_reasons:
+        return set(), False
+    after_status = str(after_signature[0] or "").strip().lower()
+    immediate = False
+    if after_reasons:
+        if not before_reasons or after_reasons != before_reasons:
+            immediate = True
+        elif before_signature != after_signature and after_status == TaskStatus.ACTIVE.value:
+            immediate = True
+    return set(before_reasons | after_reasons), immediate
 
 
 def _agent_state_to_dict(agent: AgentState) -> Dict[str, Any]:
@@ -1008,6 +1058,9 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     agents_dirty = False
     dirty_task_ids: List[str] = []
     deleted_task_ids: List[str] = []
+    pet_user_model_updates: Dict[str, str] = {}
+    pet_review_reasons: Set[str] = set()
+    pet_review_immediate = False
     changes: List[Dict[str, Any]] = []
     tasks_changed = False
     agents_changed = False
@@ -1050,6 +1103,8 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     brief.updated_at = _utc_now_iso()
                     context.coordination.brief = brief
                     context_dirty = True
+                    pet_review_reasons.add("coordination_brief_changed")
+                    pet_review_immediate = True
                     _mark_change(idx, op_name, "Updated coordination brief")
                 continue
 
@@ -1133,6 +1188,13 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 tasks_by_id[task.id] = task
                 dirty_task_ids.append(task.id)
                 tasks_changed = True
+                review_reasons, review_immediate = _task_pet_review_delta(
+                    (_EMPTY_TASK_PET_SIGNATURE, _EMPTY_TASK_PET_REASONS),
+                    _task_pet_profile(task),
+                )
+                if review_reasons:
+                    pet_review_reasons.update(review_reasons)
+                    pet_review_immediate = pet_review_immediate or review_immediate
                 _mark_change(idx, op_name, f"Created task {task.id}: {task.title}")
                 continue
 
@@ -1144,6 +1206,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 perm_err = _check_permission(by, op_name, group_id, task=task)
                 if perm_err:
                     raise ValueError(perm_err)
+                before_pet_profile = _task_pet_profile(task)
                 updated = False
                 if "title" in raw:
                     value = _normalize_text(raw.get("title"), max_len=240)
@@ -1215,6 +1278,13 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     if task.id not in dirty_task_ids:
                         dirty_task_ids.append(task.id)
                     tasks_changed = True
+                    review_reasons, review_immediate = _task_pet_review_delta(
+                        before_pet_profile,
+                        _task_pet_profile(task),
+                    )
+                    if review_reasons:
+                        pet_review_reasons.update(review_reasons)
+                        pet_review_immediate = pet_review_immediate or review_immediate
                     _mark_change(idx, op_name, f"Updated task {task.id}")
                 continue
 
@@ -1237,6 +1307,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 perm_err = _check_permission(by, op_name, group_id, task=task)
                 if perm_err:
                     raise ValueError(perm_err)
+                before_pet_profile = _task_pet_profile(task)
                 new_status = _parse_task_status(raw.get("status"))
                 prev_status = task.status
                 if prev_status == new_status:
@@ -1250,6 +1321,13 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if task.id not in dirty_task_ids:
                     dirty_task_ids.append(task.id)
                 tasks_changed = True
+                review_reasons, review_immediate = _task_pet_review_delta(
+                    before_pet_profile,
+                    _task_pet_profile(task),
+                )
+                if review_reasons:
+                    pet_review_reasons.update(review_reasons)
+                    pet_review_immediate = pet_review_immediate or review_immediate
                 _mark_change(idx, op_name, f"Moved task {task.id} to {new_status.value}")
 
                 assignee_id = str(task.assignee or "").strip()
@@ -1341,6 +1419,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     raise ValueError(perm_err)
                 if task.status != TaskStatus.ARCHIVED:
                     raise ValueError(f"op[{idx}] task.restore requires archived task")
+                before_pet_profile = _task_pet_profile(task)
                 restore_to = str(task.archived_from or TaskStatus.PLANNED.value).strip().lower() or TaskStatus.PLANNED.value
                 try:
                     task.status = TaskStatus(restore_to)
@@ -1351,6 +1430,13 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if task.id not in dirty_task_ids:
                     dirty_task_ids.append(task.id)
                 tasks_changed = True
+                review_reasons, review_immediate = _task_pet_review_delta(
+                    before_pet_profile,
+                    _task_pet_profile(task),
+                )
+                if review_reasons:
+                    pet_review_reasons.update(review_reasons)
+                    pet_review_immediate = pet_review_immediate or review_immediate
                 _mark_change(idx, op_name, f"Restored task {task.id}")
                 continue
 
@@ -1365,6 +1451,10 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 delete_targets, delete_reason = _task_delete_plan(task, tasks_by_id, group_id=group_id, by=by)
                 if delete_reason:
                     raise ValueError(f"op[{idx}] task.delete rejected: {delete_reason}")
+                delete_pet_reasons: Set[str] = set()
+                for delete_task in delete_targets:
+                    _, reasons = _task_pet_profile(delete_task)
+                    delete_pet_reasons.update(reasons)
 
                 delete_ids = {item.id for item in delete_targets}
                 delete_titles = {str(item.title or "").strip() for item in delete_targets if str(item.title or "").strip()}
@@ -1394,6 +1484,8 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                         dirty_task_ids.remove(delete_task.id)
                     deleted_task_ids.append(delete_task.id)
                 tasks_changed = True
+                if delete_pet_reasons:
+                    pet_review_reasons.update(delete_pet_reasons)
                 if len(delete_targets) == 1:
                     _mark_change(idx, op_name, f"Deleted task {task_id}")
                 else:
@@ -1458,6 +1550,8 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     if warm.user_model != value:
                         warm.user_model = value
                         updated = True
+                        if value:
+                            pet_user_model_updates[actor_id] = value
                 if "persona_notes" in raw or "notes" in raw:
                     source = raw.get("persona_notes") if "persona_notes" in raw else raw.get("notes")
                     value = _normalize_text(source, max_len=600)
@@ -1576,6 +1670,19 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
             if agents_dirty:
                 storage.save_agents(agents_state)
                 _sync_agents_mind_context_runtime(storage, agents_state)
+                for actor_id, user_model in pet_user_model_updates.items():
+                    try:
+                        mark_pet_profile_refresh_applied(
+                            group_id,
+                            actor_id=actor_id,
+                            user_model=user_model,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "pet_profile_refresh_apply_mark_failed group_id=%s actor_id=%s",
+                            group_id,
+                            actor_id,
+                        )
             if context_dirty or tasks_changed or agents_changed:
                 storage.bump_version_state(
                     context_changed=context_dirty,
@@ -1585,9 +1692,10 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
 
         version = storage.compute_version() if not dry_run else current_version
 
+        sync_event_id = ""
         if not dry_run and changes:
             try:
-                append_event(
+                event = append_event(
                     storage.group.ledger_path,
                     kind="context.sync",
                     group_id=group_id,
@@ -1595,8 +1703,22 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     by=by,
                     data={"version": version, "changes": changes},
                 )
+                if isinstance(event, dict):
+                    sync_event_id = str(event.get("id") or "").strip()
             except Exception:
                 pass
+
+        if not dry_run and pet_review_reasons:
+            for reason in sorted(pet_review_reasons):
+                try:
+                    request_pet_review(
+                        group_id,
+                        reason=reason,
+                        source_event_id=sync_event_id,
+                        immediate=pet_review_immediate,
+                    )
+                except Exception:
+                    logger.exception("pet_review_request_failed group_id=%s reason=%s", group_id, reason)
 
         space_sync: Optional[Dict[str, Any]] = None
         if not dry_run and changes and _should_trigger_group_space_context_sync(changes):

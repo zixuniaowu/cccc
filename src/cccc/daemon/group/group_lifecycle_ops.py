@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.actors import list_actors, update_actor
+from ...kernel.actors import list_actors, remove_actor, update_actor
 from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
-from ...kernel.pet_actor import sync_pet_actor
+from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor, sync_pet_actor
 from ...kernel.permissions import require_group_permission
 from ...kernel.runtime import runtime_start_preflight_error
 from ...runners import headless as headless_runner
@@ -18,6 +19,9 @@ from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 from ..actors.actor_profile_runtime import resolve_linked_actor_before_start
 from ..pet.review_scheduler import cancel_pet_review, request_pet_review
+from ..pet.profile_refresh import maybe_request_pet_profile_refresh
+
+logger = logging.getLogger(__name__)
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -61,7 +65,15 @@ def handle_group_start(
         )
     try:
         require_group_permission(group, by=by, action="group.start")
-        sync_pet_actor(group)
+        try:
+            sync_pet_actor(group)
+        except Exception as e:
+            logger.warning("Pet actor sync skipped for %s during group start: %s", group.group_id, e)
+            try:
+                if get_pet_actor(group) is not None:
+                    remove_actor(group, PET_ACTOR_ID)
+            except Exception:
+                pass
         actors = list_actors(group)
         start_specs: list[tuple[str, Path, list[str], dict[str, str], Dict[str, Any], str]] = []
         for actor in actors:
@@ -220,6 +232,14 @@ def handle_group_start(
             reason="group_start",
             source_event_id=str(event.get("id") or "").strip(),
             immediate=True,
+        )
+    except Exception:
+        pass
+    try:
+        maybe_request_pet_profile_refresh(
+            group.group_id,
+            source_event_id=str(event.get("id") or "").strip(),
+            reason="group_start",
         )
     except Exception:
         pass

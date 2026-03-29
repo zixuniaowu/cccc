@@ -2,6 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pydantic import ValidationError
+
 
 class _FakeGroup:
     def __init__(self, group_id: str, root: Path) -> None:
@@ -28,7 +30,7 @@ class TestPetOutcomes(unittest.TestCase):
                 fingerprint="fp-1",
                 outcome="dismissed",
                 decision_id="dec-1",
-                action_type="send_suggestion",
+                action_type="draft_message",
             )
             events = list(iter_events(group.ledger_path))
 
@@ -78,6 +80,27 @@ class TestPetOutcomes(unittest.TestCase):
 
         self.assertEqual(str((suppressed.get("fp-executed") or {}).get("outcome") or ""), "executed")
         self.assertEqual(str((suppressed.get("fp-dismissed") or {}).get("outcome") or ""), "dismissed")
+
+    def test_append_pet_decision_outcome_rejects_removed_snoozed_outcome(self) -> None:
+        from cccc.kernel.pet_outcomes import append_pet_decision_outcome
+
+        with tempfile.TemporaryDirectory() as tmp:
+            group = _FakeGroup("g-demo", Path(tmp))
+            with self.assertRaises(ValueError):
+                append_pet_decision_outcome(
+                    group,
+                    by="user",
+                    fingerprint="fp-1",
+                    outcome="snoozed",
+                )
+
+    def test_web_pet_outcome_request_rejects_internal_or_removed_outcomes(self) -> None:
+        from cccc.ports.web.schemas import PetDecisionOutcomeRequest
+
+        with self.assertRaises(ValidationError):
+            PetDecisionOutcomeRequest(fingerprint="fp-1", outcome="snoozed")
+        with self.assertRaises(ValidationError):
+            PetDecisionOutcomeRequest(fingerprint="fp-1", outcome="expired")
 
 
 if __name__ == "__main__":

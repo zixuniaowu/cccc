@@ -11,10 +11,11 @@ if TYPE_CHECKING:
 
 
 PET_DECISION_OUTCOME_KIND = "pet.decision.outcome"
-PET_DECISION_OUTCOMES = {"executed", "dismissed", "snoozed", "expired"}
+PET_USER_DECISION_OUTCOMES = {"executed", "dismissed"}
+PET_INTERNAL_DECISION_OUTCOMES = {"expired"}
+PET_DECISION_OUTCOMES = PET_USER_DECISION_OUTCOMES | PET_INTERNAL_DECISION_OUTCOMES
 _EXECUTED_SUPPRESS_MS = 30 * 60 * 1000
 _DISMISSED_SUPPRESS_MS = 60 * 1000
-_SNOOZED_SUPPRESS_MS = 60 * 1000
 
 
 def normalize_pet_outcome(value: Any) -> str:
@@ -28,8 +29,6 @@ def _default_outcome_cooldown_ms(outcome: str) -> int:
         return _EXECUTED_SUPPRESS_MS
     if normalized == "dismissed":
         return _DISMISSED_SUPPRESS_MS
-    if normalized == "snoozed":
-        return _SNOOZED_SUPPRESS_MS
     return 0
 
 
@@ -56,7 +55,7 @@ def load_suppressed_pet_fingerprints(group: Group) -> Dict[str, Dict[str, Any]]:
     for fingerprint, event in _latest_outcomes_by_fingerprint(group).items():
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         outcome = normalize_pet_outcome(data.get("outcome"))
-        if outcome not in {"executed", "dismissed", "snoozed"}:
+        if outcome not in PET_USER_DECISION_OUTCOMES:
             continue
         event_dt = parse_utc_iso(str(event.get("ts") or "").strip())
         if event_dt is None:

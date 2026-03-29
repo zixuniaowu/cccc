@@ -127,7 +127,7 @@ def _compact_foreman_message(text: str) -> str:
     return _normalize_text("，".join(picked) or raw)
 
 
-def _normalize_send_suggestion_text(raw_text: Any, *, raw_to: Any) -> str:
+def _normalize_draft_message_text(raw_text: Any, *, raw_to: Any) -> str:
     text = _normalize_text(raw_text)
     if not text:
         return ""
@@ -164,10 +164,10 @@ def _normalize_action(raw: Any, *, fingerprint: str = "", source: Dict[str, Any]
         out["group_id"] = str(raw.get("group_id") or "").strip()
         out["actor_id"] = str(raw.get("actor_id") or "").strip()
         return out
-    if action_type == "send_suggestion":
+    if action_type == "draft_message":
         out["group_id"] = str(raw.get("group_id") or "").strip()
         normalized_to = [str(item or "").strip() for item in raw.get("to") if str(item or "").strip()] if isinstance(raw.get("to"), list) else []
-        out["text"] = _normalize_send_suggestion_text(raw.get("text"), raw_to=normalized_to)
+        out["text"] = _normalize_draft_message_text(raw.get("text"), raw_to=normalized_to)
         if isinstance(raw.get("to"), list):
             out["to"] = normalized_to
         reply_to = str(raw.get("reply_to") or "").strip()
@@ -253,6 +253,18 @@ def _normalize_decision(raw: Any) -> Dict[str, Any] | None:
     action_type = str(action.get("type") or "").strip()
     if not decision_id or not fingerprint or not kind or not summary or not action_type:
         return None
+    if action_type == "draft_message":
+        if not str(action.get("group_id") or "").strip() or not str(action.get("text") or "").strip():
+            return None
+    elif action_type == "restart_actor":
+        if not str(action.get("group_id") or "").strip() or not str(action.get("actor_id") or "").strip():
+            return None
+    elif action_type == "task_proposal":
+        if not str(action.get("group_id") or "").strip():
+            return None
+    elif action_type == "automation_proposal":
+        if not str(action.get("group_id") or "").strip() or not isinstance(action.get("actions"), list) or len(action.get("actions") or []) == 0:
+            return None
     if action_type == "task_proposal":
         summary = _normalize_task_proposal_summary(summary, fingerprint=fingerprint, source=source)
     out: Dict[str, Any] = {
@@ -266,16 +278,6 @@ def _normalize_decision(raw: Any) -> Dict[str, Any] | None:
         "source": source,
         "updated_at": str(raw.get("updated_at") or "").strip(),
     }
-    suggestion = str(raw.get("suggestion") or "").strip()
-    if action_type == "send_suggestion":
-        suggestion = _normalize_send_suggestion_text(suggestion or action.get("text") or "", raw_to=action.get("to"))
-    if suggestion:
-        out["suggestion"] = suggestion
-    suggestion_preview = str(raw.get("suggestion_preview") or "").strip()
-    if action_type == "send_suggestion" and not suggestion_preview:
-        suggestion_preview = suggestion
-    if suggestion_preview:
-        out["suggestion_preview"] = suggestion_preview
     if bool(raw.get("ephemeral")):
         out["ephemeral"] = True
     return out
@@ -305,8 +307,6 @@ def _decision_signature(decision: Dict[str, Any]) -> str:
         "agent": str(decision.get("agent") or "").strip(),
         "source": source,
         "action": action,
-        "suggestion": str(decision.get("suggestion") or "").strip(),
-        "suggestion_preview": str(decision.get("suggestion_preview") or "").strip(),
     }
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
