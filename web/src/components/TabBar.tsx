@@ -4,7 +4,7 @@ import { Actor } from "../types";
 import { classNames } from "../utils/classNames";
 import { useTerminalSignalsStore, getTerminalSignalKey } from "../stores";
 import { getActorDisplayWorkingState } from "../utils/terminalWorkingState";
-import { getRuntimeIndicatorState } from "../utils/statusIndicators";
+import { getActorTabIndicatorState } from "./tabBarIndicator";
 
 interface TabBarProps {
   groupId: string;
@@ -13,31 +13,24 @@ interface TabBarProps {
   onTabChange: (tab: string) => void;
   unreadChatCount: number;
   isDark: boolean;
+  selectedGroupRunning?: boolean;
+  selectedGroupActorsHydrating?: boolean;
   onAddAgent?: () => void;
   canAddAgent?: boolean;
 }
 
-type ActorTabIndicator = {
-  dotClass: string;
-  labelClass: string;
-  pulse: boolean;
-  strongPulse: boolean;
-};
-
-export function getActorTabIndicatorState(input: {
-  isRunning: boolean;
-  workingState: string;
-}): ActorTabIndicator {
-  const indicator = getRuntimeIndicatorState(input);
-  return {
-    dotClass: indicator.dotClass,
-    labelClass: indicator.labelClass,
-    pulse: indicator.pulse,
-    strongPulse: indicator.strongPulse,
-  };
-}
-
-export function TabBar({ groupId, actors, activeTab, onTabChange, unreadChatCount, isDark: _isDark, onAddAgent, canAddAgent = true }: TabBarProps) {
+export function TabBar({
+  groupId,
+  actors,
+  activeTab,
+  onTabChange,
+  unreadChatCount,
+  isDark: _isDark,
+  selectedGroupRunning = false,
+  selectedGroupActorsHydrating = false,
+  onAddAgent,
+  canAddAgent = true,
+}: TabBarProps) {
   const { t } = useTranslation("layout");
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -143,13 +136,14 @@ export function TabBar({ groupId, actors, activeTab, onTabChange, unreadChatCoun
     const terminalSignal = terminalSignals[getTerminalSignalKey(groupId, actor.id)];
     const workingState = getActorDisplayWorkingState(actor, terminalSignal);
     const isRunning = actor.running ?? actor.enabled ?? false;
-    return getActorTabIndicatorState({ isRunning: Boolean(isRunning), workingState });
+    const assumeRunning = selectedGroupRunning && selectedGroupActorsHydrating && !isRunning;
+    return getActorTabIndicatorState({ isRunning: Boolean(isRunning), workingState, assumeRunning });
   };
 
   return (
     <div
       ref={rootRef}
-      className="glass-header flex items-center sticky top-0 z-10"
+      className="glass-header sticky top-0 z-10 flex flex-shrink-0 items-center"
       role="tablist"
       aria-label={t("navigationTabs")}
     >

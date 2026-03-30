@@ -41,7 +41,6 @@ describe("getActorDisplayWorkingState", () => {
       ),
     ).toBe("waiting");
   });
-
   it("keeps idle when the visible prompt says the actor is waiting for input", () => {
     expect(
       getActorDisplayWorkingState(

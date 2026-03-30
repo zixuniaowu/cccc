@@ -10,7 +10,7 @@ export async function fetchLedgerTail(groupId: string, lines = 120, init?: Reque
     with_obligation_status: "true",
   });
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`,
+    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?${params.toString()}`,
     init,
   );
 }

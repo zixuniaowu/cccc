@@ -51,6 +51,7 @@ export default function App() {
   const actors = useGroupStore((state) => state.actors);
   const groupContext = useGroupStore((state) => state.groupContext);
   const groupSettings = useGroupStore((state) => state.groupSettings);
+  const selectedGroupActorsHydrating = useGroupStore((state) => state.selectedGroupActorsHydrating);
   const setSelectedGroupId = useGroupStore((state) => state.setSelectedGroupId);
   const refreshGroups = useGroupStore((state) => state.refreshGroups);
   const refreshActors = useGroupStore((state) => state.refreshActors);
@@ -349,10 +350,13 @@ export default function App() {
 
   return (
     <div
-      className={`relative w-full overflow-hidden ${
+      className={`relative min-h-0 w-full overflow-hidden ${
         isDark ? "bg-black text-slate-100" : "bg-gradient-to-br from-slate-50 via-white to-slate-100"
       }`}
-      style={{ height: "calc(100% - var(--vk-offset, 0px))" }}
+      style={{
+        height: "calc(100dvh - var(--vk-offset, 0px))",
+        maxHeight: "calc(100dvh - var(--vk-offset, 0px))",
+      }}
     >
       <AppBackground isDark={isDark} />
 
@@ -379,6 +383,7 @@ export default function App() {
         isSmallScreen={isSmallScreen}
         webReadOnly={webReadOnly}
         selectedGroupRunning={selectedGroupRunning}
+        selectedGroupActorsHydrating={selectedGroupActorsHydrating}
         theme={theme}
         sseStatus={sseStatus}
         groupLabelById={groupLabelById}

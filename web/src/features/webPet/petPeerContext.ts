@@ -5,6 +5,9 @@ import type { PetReminder } from "./types";
 
 export type PetPeerContextStatus = "idle" | "loading" | "loaded" | "error";
 
+const PET_CONTEXT_INITIAL_FETCH_DELAY_MS = 800;
+const petPeerContextCache = new Map<string, Partial<PetPeerContextResponse> | null>();
+
 export type PetPeerContext = {
   decisions: PetReminder[];
   signals: {
@@ -225,54 +228,63 @@ export function usePetPeerContext(input: {
 }): PetPeerContext {
   const groupId = String(input.groupId || "").trim();
   const refreshToken = Number(input.refreshToken || 0);
+  const cachedContext = groupId ? (petPeerContextCache.get(groupId) ?? null) : null;
   const [state, setState] = useState<{
     groupId: string;
     rawContext: Partial<PetPeerContextResponse> | null;
     status: PetPeerContextStatus;
   }>({
-    groupId: "",
-    rawContext: null,
-    status: "idle",
+    groupId,
+    rawContext: cachedContext,
+    status: groupId ? (cachedContext ? "loaded" : "loading") : "idle",
   });
 
   useEffect(() => {
     if (!groupId) return;
 
     let cancelled = false;
+    const cached = petPeerContextCache.get(groupId) ?? null;
     // 同步更新 state.groupId 以避免在 fetch 期间产生 state.groupId !== groupId 的
     // "中间态"，该中间态会导致每次重渲染创建新对象，引发 VirtualMessageList 级联刷新
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 有意为之的同步状态机转换
     setState({
       groupId,
-      rawContext: null,
-      status: "loading",
+      rawContext: cached,
+      status: cached ? "loaded" : "loading",
     });
-    void fetchPetPeerContext(groupId)
-      .then((resp) => {
-        if (cancelled) return;
-        setState({
-          groupId,
-          rawContext: resp.ok ? resp.result || null : null,
-          status: resp.ok ? "loaded" : "error",
+    const timeout = window.setTimeout(() => {
+      void fetchPetPeerContext(groupId)
+        .then((resp) => {
+          if (cancelled) return;
+          const nextRawContext = resp.ok ? resp.result || null : cached;
+          if (resp.ok) {
+            petPeerContextCache.set(groupId, nextRawContext);
+          }
+          setState({
+            groupId,
+            rawContext: nextRawContext,
+            status: resp.ok ? "loaded" : cached ? "loaded" : "error",
+          });
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn("failed to load pet peer context", error);
+          setState({
+            groupId,
+            rawContext: cached,
+            status: cached ? "loaded" : "error",
+          });
         });
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.warn("failed to load pet peer context", error);
-        setState({
-          groupId,
-          rawContext: null,
-          status: "error",
-        });
-      });
+    }, refreshToken > 0 ? 0 : PET_CONTEXT_INITIAL_FETCH_DELAY_MS);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
     };
   }, [groupId, refreshToken]);
 
   if (!groupId || state.groupId !== groupId) {
-    return buildPetPeerContext(null, { status: !groupId ? "idle" : "loading" });
+    return buildPetPeerContext(cachedContext, { status: !groupId ? "idle" : (cachedContext ? "loaded" : "loading") });
   }
 
   return buildPetPeerContext(state.rawContext, { status: state.status });

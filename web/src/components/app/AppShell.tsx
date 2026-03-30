@@ -31,6 +31,7 @@ type AppShellProps = {
   isSmallScreen: boolean;
   webReadOnly: boolean;
   selectedGroupRunning: boolean;
+  selectedGroupActorsHydrating: boolean;
   theme: "light" | "dark" | "system";
   sseStatus: "connected" | "connecting" | "disconnected";
   groupLabelById: Record<string, string>;
@@ -101,6 +102,7 @@ export function AppShell({
   isSmallScreen,
   webReadOnly,
   selectedGroupRunning,
+  selectedGroupActorsHydrating,
   theme,
   sseStatus,
   groupLabelById,
@@ -153,7 +155,7 @@ export function AppShell({
 
   return (
     <div
-      className="relative h-full transition-[grid-template-columns] duration-300 ease-out md:grid md:[grid-template-columns:var(--sidebar-width)_minmax(0,1fr)]"
+      className="relative h-full min-h-0 transition-[grid-template-columns] duration-300 ease-out md:grid md:[grid-template-columns:var(--sidebar-width)_minmax(0,1fr)]"
       style={shellStyle}
     >
       <GroupSidebar
@@ -177,7 +179,7 @@ export function AppShell({
       />
 
       <main
-        className={`absolute inset-0 flex h-full flex-col overflow-hidden md:relative md:inset-auto ${
+        className={`absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden md:relative md:inset-auto ${
           isDark ? "bg-black/75" : "bg-white/80"
         }`}
       >
@@ -211,6 +213,8 @@ export function AppShell({
             onTabChange={onTabChange}
             unreadChatCount={chatUnreadCount}
             isDark={isDark}
+            selectedGroupRunning={selectedGroupRunning}
+            selectedGroupActorsHydrating={selectedGroupActorsHydrating}
             onAddAgent={onAddAgent}
             canAddAgent={!webReadOnly && !!selectedGroupId}
           />
@@ -236,6 +240,7 @@ export function AppShell({
                 isSmallScreen={isSmallScreen}
                 readOnly={webReadOnly}
                 selectedGroupId={selectedGroupId}
+                selectedGroupRunning={selectedGroupRunning}
                 groupLabelById={groupLabelById}
                 actors={actors}
                 groups={groups}

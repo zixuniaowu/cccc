@@ -33,6 +33,7 @@ export interface ChatTabProps {
 
   // Core data (must be passed from App)
   selectedGroupId: string;
+  selectedGroupRunning: boolean;
   groupLabelById: Record<string, string>;
   actors: Actor[];
   groups: GroupMeta[];
@@ -69,6 +70,7 @@ export function ChatTab({
   isSmallScreen,
   readOnly,
   selectedGroupId,
+  selectedGroupRunning,
   groupLabelById,
   actors,
   groups,
@@ -155,6 +157,7 @@ export function ChatTab({
     addAgent,
   } = useChatTab({
     selectedGroupId,
+    selectedGroupRunning,
     actors,
     recipientActors,
     composerRef,

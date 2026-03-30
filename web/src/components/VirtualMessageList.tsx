@@ -1,4 +1,4 @@
-import { memo, useRef, useEffect, useCallback, useMemo } from "react";
+import { memo, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { LedgerEvent, Actor, AgentState, PresentationMessageRef } from "../types";
@@ -689,13 +689,13 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const prevTailId = prevTailMessageIdRef.current;
     const nextTailId = messages[messages.length - 1]?.id ? String(messages[messages.length - 1]?.id) : "";
 
-    // Only auto-follow when the tail actually advances while the user is still
-    // considered at the bottom. Re-renders, re-measurement, or same-size list
-    // replacements should not steal scroll when the user is trying to read up.
+    // Only auto-follow when the visible tail actually changes.
+    // Prepending older history increases messages.length too, but should never
+    // be treated as a tail append or it will fight with anchor restoration.
     const appendedAtTail =
       messages.length > 0 &&
       (
-        messages.length > prevCount ||
+        prevCount === 0 ||
         (nextTailId !== "" && nextTailId !== prevTailId)
       );
 
@@ -850,7 +850,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     }
   }, [isLoadingHistory, scrollToMessageAnchor, setFollowBottom]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isLoadingHistory) return;
     if (!pendingRestoreRef.current) return;
     restorePendingAnchor();
@@ -909,21 +909,20 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         )
       ) : (
         <>
-          {/* Loading indicator for history - sticky positioned for visibility */}
-          {isLoadingHistory && (
-            <div className="sticky top-0 z-10 flex justify-center py-3">
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full shadow-md ${isDark ? "bg-slate-800 text-slate-300" : "bg-white text-gray-600"
-                }`}>
-                <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
-                <span className="text-xs">Loading...</span>
-              </div>
-            </div>
-          )}
-
-          {/* No more history indicator */}
-          {!hasMoreHistory && !isLoadingHistory && (
-            <div className={`text-center py-4 text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              No more messages
+          {(isLoadingHistory || (!hasMoreHistory && !isLoadingHistory)) && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center py-3">
+              {isLoadingHistory ? (
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full shadow-md ${isDark ? "bg-slate-800 text-slate-300" : "bg-white text-gray-600"
+                  }`}>
+                  <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
+                  <span className="text-xs">Loading...</span>
+                </div>
+              ) : (
+                <div className={`px-3 py-1.5 rounded-full text-sm shadow-sm ${isDark ? "bg-slate-900/85 text-slate-400" : "bg-white/90 text-gray-400"
+                  }`}>
+                  No more messages
+                </div>
+              )}
             </div>
           )}
 

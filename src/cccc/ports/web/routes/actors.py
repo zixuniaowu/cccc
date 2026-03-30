@@ -2,17 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
 import time
 import threading
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
 from ....daemon.server import call_daemon, get_daemon_endpoint
 from ....daemon.actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
+from ....daemon.context.context_ops import _agent_state_to_dict
+from ....daemon.runner_state_ops import pty_state_path
 from ....kernel.group import load_group
 from ....kernel.actors import find_actor
+from ....kernel.context import ContextStorage
+from ....kernel.inbox import get_indexed_unread_counts
+from ....kernel.query_projections import get_actor_list_projection
+from ....kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, derive_effective_working_state
+from ....runners import headless as headless_runner
+from ....runners import pty as pty_runner
+from ....util.fs import read_json
+from ....util.process import pid_is_alive
 from ..actor_avatar import (
     build_actor_web_payload,
     delete_actor_avatar,
@@ -44,30 +57,158 @@ _READONLY_ACTOR_CACHE_LOCK = threading.Lock()
 _READONLY_ACTOR_TTL_S = 0.8
 
 
+def _pid_matches_actor_context(pid: int, *, group_id: str, actor_id: str) -> bool:
+    target_pid = int(pid or 0)
+    gid = str(group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if target_pid <= 0 or not gid or not aid:
+        return False
+
+    expected_group = f"CCCC_GROUP_ID={gid}"
+    expected_actor = f"CCCC_ACTOR_ID={aid}"
+
+    if os.name != "nt":
+        proc_environ = f"/proc/{target_pid}/environ"
+        try:
+            with open(proc_environ, "rb") as handle:
+                raw = handle.read()
+            entries = {
+                chunk.decode("utf-8", errors="ignore")
+                for chunk in raw.split(b"\0")
+                if chunk
+            }
+            if expected_group in entries and expected_actor in entries:
+                return True
+        except Exception:
+            pass
+
+    try:
+        result = subprocess.run(
+            ["ps", "eww", "-p", str(target_pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1.0,
+        )
+        command_parts = [part for part in str(result.stdout or "").strip().split() if part]
+        if expected_group in command_parts and expected_actor in command_parts:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
 async def invalidate_readonly_actor_list(group_id: str) -> None:
     gid = str(group_id or "").strip()
     if not gid:
         return
     with _READONLY_ACTOR_CACHE_LOCK:
-        for include_internal in (False, True):
-            cache_key = f"actors:{gid}:readonly:{int(include_internal)}"
+        for suffix in ("readonly", "unread", "readonly_internal", "unread_internal"):
+            cache_key = f"actors:{gid}:{suffix}"
             _READONLY_ACTOR_GENERATION[cache_key] = int(_READONLY_ACTOR_GENERATION.get(cache_key, 0)) + 1
             _READONLY_ACTOR_CACHE.pop(cache_key, None)
             _READONLY_ACTOR_HANDOFF_ONCE.discard(cache_key)
             _READONLY_ACTOR_INFLIGHT.pop(cache_key, None)
 
 
+def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, Any]:
+    gid = str(group_id or "").strip()
+    if not gid:
+        return {"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id"}}
+    group = load_group(gid)
+    if group is None:
+        return {"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {gid}"}}
+
+    actors = get_actor_list_projection(group)
+    storage = ContextStorage(group)
+    agent_rows = [_agent_state_to_dict(agent) for agent in storage.load_agents().agents]
+    agent_state_by_id = {
+        str(item.get("id") or "").strip(): item
+        for item in agent_rows
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    } if isinstance(agent_rows, list) else {}
+
+    for actor in actors:
+        aid = str(actor.get("id") or "").strip()
+        if not aid:
+            continue
+        runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
+        effective_runner = "headless" if runner_kind == "headless" else "pty"
+        running = False
+        idle_seconds = None
+        headless_state = None
+        if effective_runner == "headless":
+            state = headless_runner.SUPERVISOR.get_state(group_id=gid, actor_id=aid)
+            headless_state = state.model_dump() if state is not None else None
+            running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(gid, aid))
+            actor["idle_seconds"] = None
+        else:
+            running = bool(pty_runner.SUPERVISOR.actor_running(gid, aid))
+            if not running:
+                try:
+                    state_doc = read_json(pty_state_path(gid, aid))
+                    pid = int(state_doc.get("pid") or 0) if isinstance(state_doc, dict) else 0
+                except Exception:
+                    state_doc = {}
+                    pid = 0
+                running = bool(
+                    isinstance(state_doc, dict)
+                    and str(state_doc.get("kind") or "") == "pty"
+                    and str(state_doc.get("group_id") or "") == gid
+                    and str(state_doc.get("actor_id") or "") == aid
+                    and pid > 0
+                    and pid_is_alive(pid)
+                    and _pid_matches_actor_context(pid, group_id=gid, actor_id=aid)
+                )
+            idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=gid, actor_id=aid) if running else None
+            actor["idle_seconds"] = idle_seconds
+        pty_terminal_text = ""
+        if effective_runner == "pty" and running:
+            try:
+                pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
+                    group_id=gid,
+                    actor_id=aid,
+                    max_bytes=DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES,
+                ).decode("utf-8", errors="replace")
+            except Exception:
+                pty_terminal_text = ""
+        actor["running"] = running
+        actor["runner_effective"] = effective_runner
+        actor.update(
+            derive_effective_working_state(
+                running=running,
+                effective_runner=effective_runner,
+                runtime=str(actor.get("runtime") or ""),
+                idle_seconds=idle_seconds,
+                pty_terminal_text=pty_terminal_text,
+                agent_state=agent_state_by_id.get(aid),
+                headless_state=headless_state,
+            )
+        )
+
+    if include_unread:
+        counts = get_indexed_unread_counts(group, actors=actors)
+        for actor in actors:
+            aid = str(actor.get("id") or "").strip()
+            if aid:
+                actor["unread_count"] = counts.get(aid, 0)
+
+    return {"ok": True, "result": {"actors": actors}}
+
+
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
     group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
     global_router = APIRouter(prefix="/api/v1")
 
-    async def _cached_readonly_actor_list(group_id: str, include_internal: bool, fetcher) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
+    async def _cached_actor_list(group_id: str, fetcher, *, cache_suffix: str = "readonly") -> Dict[str, Any]:  # type: ignore[no-untyped-def]
         gid = str(group_id or "").strip()
         if not gid:
             return await fetcher()
 
         ttl_s = _READONLY_ACTOR_TTL_S if ctx.read_only else 0.0
-        cache_key = f"actors:{gid}:readonly:{int(bool(include_internal))}"
+        suffix = str(cache_suffix or "readonly").strip() or "readonly"
+        cache_key = f"actors:{gid}:{suffix}"
         now = time.monotonic()
         inflight_entry: Optional[Dict[str, Any]] = None
         fetch_generation = 0
@@ -107,7 +248,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 if current_generation == fetch_generation and _READONLY_ACTOR_INFLIGHT.get(cache_key) is inflight_entry:
                     if ttl_s > 0:
                         _READONLY_ACTOR_CACHE[cache_key] = (time.monotonic() + ttl_s, val)
-                    else:
+                    elif int(inflight_entry.get("waiters", 1)) <= 1:
                         _READONLY_ACTOR_CACHE[cache_key] = (time.monotonic(), val)
                         _READONLY_ACTOR_HANDOFF_ONCE.add(cache_key)
                 if inflight_entry is not None:
@@ -304,29 +445,23 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         gid = str(group_id or "").strip()
 
         async def _fetch() -> Dict[str, Any]:
-            return await ctx.daemon(
-                {
-                    "op": "actor_list",
-                    "args": {
-                        "group_id": gid,
-                        "include_unread": include_unread,
-                        "include_internal": include_internal,
-                    },
-                }
-            )
+            if include_internal:
+                return await ctx.daemon(
+                    {
+                        "op": "actor_list",
+                        "args": {
+                            "group_id": gid,
+                            "include_unread": include_unread,
+                            "include_internal": True,
+                        },
+                    }
+                )
+            return await run_in_threadpool(_read_actor_list_local, gid, include_unread=include_unread)
 
-        if not include_unread:
-            return _decorate_actor_result(gid, await _cached_readonly_actor_list(gid, include_internal, _fetch))
-
-        ttl = max(0.0, min(5.0, ctx.exhibit_cache_ttl_s))
-        return _decorate_actor_result(
-            gid,
-            await ctx.cached_json(
-                f"actors:{gid}:{int(bool(include_unread))}:{int(bool(include_internal))}",
-                ttl,
-                _fetch,
-            ),
+        cache_suffix = "unread_internal" if include_internal and include_unread else (
+            "readonly_internal" if include_internal else ("unread" if include_unread else "readonly")
         )
+        return _decorate_actor_result(gid, await _cached_actor_list(gid, _fetch, cache_suffix=cache_suffix))
 
     @group_router.post("/actors")
     async def actor_create(request: Request, group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:

@@ -134,6 +134,14 @@ export function SortableGroupItem({
             : "glass-group-item",
           isArchived && !isActive && "opacity-90"
         )}
+        role="button"
+        tabIndex={0}
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          onSelect();
+        }}
       >
         {/* Drag handle */}
         {!dragDisabled && (
@@ -145,16 +153,15 @@ export function SortableGroupItem({
               isDragging && "!block !opacity-100",
               "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
             )}
-            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
           >
             <GripIcon size={14} />
           </div>
         )}
 
-        <button
-          type="button"
+        <div
           className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left"
-          onClick={onSelect}
           onMouseEnter={onWarm}
           onFocus={onWarm}
         >
@@ -183,7 +190,7 @@ export function SortableGroupItem({
           >
             {status.label}
           </span>
-        </button>
+        </div>
 
         {onMenuAction && menuActionLabel && (
           <>
@@ -199,6 +206,12 @@ export function SortableGroupItem({
                 ),
                 "aria-label": menuAriaLabel || menuActionLabel,
                 title: menuAriaLabel || menuActionLabel,
+                onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+                },
+                onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+                },
               })}
             >
               <MoreIcon size={16} />

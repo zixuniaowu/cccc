@@ -520,6 +520,8 @@ export function AgentTab({
             kind: signal.signalKind,
             updatedAt: Date.now(),
           });
+        } else {
+          clearTerminalSignal(groupId, actor.id);
         }
         try {
           term.write(safe);

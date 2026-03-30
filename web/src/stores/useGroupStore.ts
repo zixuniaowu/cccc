@@ -55,6 +55,7 @@ interface GroupState {
   groupSettings: GroupSettings | null;
   groupPresentation: GroupPresentation | null;
   runtimes: RuntimeInfo[];
+  selectedGroupActorsHydrating: boolean;
   hasMoreHistory: boolean;
   isLoadingHistory: boolean;
   isChatWindowLoading: boolean;
@@ -643,6 +644,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   groupSettings: null,
   groupPresentation: null,
   runtimes: [],
+  selectedGroupActorsHydrating: false,
   hasMoreHistory: true,
   isLoadingHistory: false,
   isChatWindowLoading: false,
@@ -716,6 +718,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       return {
         selectedGroupId: gid,
         chatByGroup: nextChatByGroup,
+        selectedGroupActorsHydrating: !!gid,
         ...buildPrimedGroupState(gid, state.groups),
       };
     });
@@ -964,6 +967,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
             set({
               selectedGroupId: nextGroupId,
               chatByGroup: nextChatByGroup,
+              selectedGroupActorsHydrating: !!nextGroupId,
               ...buildPrimedGroupState(nextGroupId, next),
             });
           } else {
@@ -979,6 +983,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
               groupContext: null,
               groupSettings: null,
               groupPresentation: null,
+              selectedGroupActorsHydrating: false,
               chatWindow: null,
               hasMoreHistory: false,
               isLoadingHistory: false,
@@ -1040,7 +1045,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           : mergeActorUnreadCounts(resp.result.actors || [], prevActors);
         saveGroupView(gid, { actors: nextActors });
         if (get().selectedGroupId === gid) {
-          set({ actors: nextActors });
+          set({ actors: nextActors, selectedGroupActorsHydrating: false });
         }
       }
     } catch (e) {
@@ -1134,13 +1139,15 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         hasMoreHistory: chatBucket.hasMoreHistory,
       });
       if (isLatestSelection()) {
-        set({ chatByGroup: nextChatByGroup, ...primedState });
+        set({ chatByGroup: nextChatByGroup, selectedGroupActorsHydrating: true, ...primedState });
       }
     }
 
     const showPromise = api.fetchGroup(gid);
     const tailPromise = api.fetchLedgerTail(gid);
     const actorsPromise = api.fetchActors(gid, false);
+    const contextEpoch = beginContextRequest(gid);
+    const settingsEpoch = beginGroupRequestEpoch(settingsRequestEpochByGroup, gid);
 
     void showPromise.then((show) => {
       if (show.ok) {
@@ -1201,6 +1208,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }).catch((error) => {
       console.error(`Failed to load actors for group=${gid}:`, error);
     }).finally(() => {
+      if (isLatestSelection()) {
+        set({ selectedGroupActorsHydrating: false });
+      }
+    }).finally(() => {
       scheduleDeferredUnreadRefresh(gid, () => {
         if (isLatestSelection()) {
           void get().refreshActors(gid, { includeUnread: true });
@@ -1208,61 +1219,66 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       });
     });
 
+    void api.fetchContext(gid, { detail: "summary" }).then((ctx) => {
+      if (!ctx.ok) return;
+      if (!isLatestContextRequest(gid, contextEpoch)) return;
+      const summary = ctx.result as GroupContext;
+      const meta = summary && typeof summary === "object" ? (summary as { meta?: unknown }).meta : null;
+      const summarySnapshot = meta && typeof meta === "object"
+        ? ((meta as { summary_snapshot?: unknown }).summary_snapshot ?? null)
+        : null;
+      const snapshotState = summarySnapshot && typeof summarySnapshot === "object"
+        ? String((summarySnapshot as { state?: unknown }).state || "").trim().toLowerCase()
+        : "";
+      const currentState = get();
+      const hasCachedContext =
+        String(currentState.groupDoc?.group_id || "").trim() === gid &&
+        currentState.groupContext !== null;
+
+      if (snapshotState === "stale" && hasCachedContext) {
+        return;
+      }
+      if (snapshotState === "missing" || (snapshotState === "stale" && !hasCachedContext)) {
+        void api.fetchContext(gid, { detail: "full", fresh: true }).then((fullCtx) => {
+          if (!fullCtx.ok) return;
+          if (!isLatestContextRequest(gid, contextEpoch)) return;
+          commitViewPatch({ groupContext: fullCtx.result as GroupContext });
+        }).catch((error) => {
+          console.error(`Failed to load fresh context for group=${gid}:`, error);
+        });
+        return;
+      }
+
+      commitViewPatch({ groupContext: summary });
+    }).catch((error) => {
+      console.error(`Failed to load context for group=${gid}:`, error);
+    });
+
+    void api.fetchSettings(gid).then((settings) => {
+      if (!settings.ok) return;
+      if (!isLatestGroupRequestEpoch(settingsRequestEpochByGroup, gid, settingsEpoch)) return;
+      commitViewPatch({ groupSettings: settings.result.settings || null });
+    }).catch((error) => {
+      console.error(`Failed to load settings for group=${gid}:`, error);
+    });
+
     const initialLoad = Promise.allSettled([showPromise, tailPromise, actorsPromise]);
     const initialLoadDone = initialLoad.then(() => undefined);
     loadGroupInFlight.set(gid, initialLoadDone);
     void initialLoad.then(() => {
-      const contextEpoch = beginContextRequest(gid);
-      void api.fetchContext(gid, { detail: "summary" }).then((ctx) => {
-        if (!ctx.ok) return;
-        if (!isLatestContextRequest(gid, contextEpoch)) return;
-        const summary = ctx.result as GroupContext;
-        const meta = summary && typeof summary === "object" ? (summary as { meta?: unknown }).meta : null;
-        const summarySnapshot = meta && typeof meta === "object"
-          ? ((meta as { summary_snapshot?: unknown }).summary_snapshot ?? null)
-          : null;
-        const snapshotState = summarySnapshot && typeof summarySnapshot === "object"
-          ? String((summarySnapshot as { state?: unknown }).state || "").trim().toLowerCase()
-          : "";
-        const currentState = get();
-        const hasCachedContext =
-          String(currentState.groupDoc?.group_id || "").trim() === gid &&
-          currentState.groupContext !== null;
-
-        if (snapshotState === "stale" && hasCachedContext) {
-          return;
-        }
-        if (snapshotState === "missing" || (snapshotState === "stale" && !hasCachedContext)) {
-          void api.fetchContext(gid, { detail: "full", fresh: true }).then((fullCtx) => {
-            if (!fullCtx.ok) return;
-            if (!isLatestContextRequest(gid, contextEpoch)) return;
-            commitViewPatch({ groupContext: fullCtx.result as GroupContext });
-          }).catch((error) => {
-            console.error(`Failed to load fresh context for group=${gid}:`, error);
-          });
-          return;
-        }
-
-        commitViewPatch({ groupContext: summary });
-      }).catch((error) => {
-        console.error(`Failed to load context for group=${gid}:`, error);
-      });
-
-      const settingsEpoch = beginGroupRequestEpoch(settingsRequestEpochByGroup, gid);
-      void api.fetchSettings(gid).then((settings) => {
-        if (!settings.ok) return;
-        if (!isLatestGroupRequestEpoch(settingsRequestEpochByGroup, gid, settingsEpoch)) return;
-        commitViewPatch({ groupSettings: settings.result.settings || null });
-      }).catch((error) => {
-        console.error(`Failed to load settings for group=${gid}:`, error);
-      });
-
-      void api.fetchPresentation(gid).then((presentationResp) => {
-        if (!presentationResp.ok) return;
-        commitViewPatch({ groupPresentation: presentationResp.result.presentation || null });
-      }).catch((error) => {
-        console.error(`Failed to load presentation for group=${gid}:`, error);
-      });
+      const timeout = window.setTimeout(() => {
+        const presentationEpoch = beginGroupRequestEpoch(presentationRequestEpochByGroup, gid);
+        void api.fetchPresentation(gid).then((presentationResp) => {
+          if (!presentationResp.ok) return;
+          if (!isLatestGroupRequestEpoch(presentationRequestEpochByGroup, gid, presentationEpoch)) return;
+          commitViewPatch({ groupPresentation: presentationResp.result.presentation || null });
+        }).catch((error) => {
+          console.error(`Failed to load presentation for group=${gid}:`, error);
+        });
+      }, 250);
+      if (!isLatestSelection()) {
+        window.clearTimeout(timeout);
+      }
     }).finally(() => {
       if (loadGroupInFlight.get(gid) === initialLoadDone) {
         loadGroupInFlight.delete(gid);
@@ -1279,11 +1295,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     warmGroupInFlight.add(gid);
     try {
-      const [show, tail, actorsResp, presentationResp] = await Promise.all([
+      const [show, tail, actorsResp] = await Promise.all([
         api.fetchGroup(gid),
         api.fetchLedgerTail(gid),
         api.fetchActors(gid, false),
-        api.fetchPresentation(gid),
       ]);
 
       const patch: Partial<Omit<GroupViewSnapshot, "cachedAt">> = {};
@@ -1299,10 +1314,6 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (actorsResp.ok) {
         patch.actors = actorsResp.result.actors || [];
       }
-      if (presentationResp.ok) {
-        patch.groupPresentation = presentationResp.result.presentation || null;
-      }
-
       saveGroupView(gid, patch);
     } catch (error) {
       console.error(`Failed to warm group=${gid}:`, error);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getActorTabIndicatorState } from "./TabBar";
+import { getActorTabIndicatorState } from "./tabBarIndicator";
 import { QUIET_RUN_INDICATOR_DOT_CLASS } from "../utils/statusIndicators";
 
 describe("getActorTabIndicatorState", () => {
@@ -22,5 +22,13 @@ describe("getActorTabIndicatorState", () => {
       .toBe(QUIET_RUN_INDICATOR_DOT_CLASS);
     expect(getActorTabIndicatorState({ isRunning: true, workingState: "" }).dotClass)
       .toContain("bg-transparent");
+  });
+
+  it("uses quiet running during the selected-group hydration window", () => {
+    expect(getActorTabIndicatorState({
+      isRunning: false,
+      workingState: "stopped",
+      assumeRunning: true,
+    }).dotClass).toBe(QUIET_RUN_INDICATOR_DOT_CLASS);
   });
 });

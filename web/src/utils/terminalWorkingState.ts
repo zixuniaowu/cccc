@@ -35,15 +35,6 @@ export function appendTerminalSignalBuffer(previous: string, chunk: string): str
   return merged.slice(-MAX_TERMINAL_BUFFER_CHARS);
 }
 
-function getLastNonEmptyLine(text: string): string {
-  const lines = String(text || "").split("\n");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index]?.trim() || "";
-    if (line) return line;
-  }
-  return "";
-}
-
 function getRecentNonEmptyLines(text: string, maxLines: number = 4): string[] {
   const result: string[] = [];
   const lines = String(text || "").split("\n");
