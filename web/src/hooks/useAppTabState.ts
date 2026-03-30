@@ -4,6 +4,7 @@ import type { Actor } from "../types";
 type UseAppTabStateOptions = {
   activeTab: string;
   actors: Actor[];
+  runtimeActors: Actor[];
   selectedGroupId: string;
   chatSessionAtBottom: boolean | undefined;
   isSmallScreen: boolean;
@@ -29,6 +30,7 @@ type UseAppTabStateResult = {
 export function useAppTabState({
   activeTab,
   actors,
+  runtimeActors,
   selectedGroupId,
   chatSessionAtBottom,
   isSmallScreen,
@@ -45,7 +47,7 @@ export function useAppTabState({
   const actorsRef = useRef<Actor[]>([]);
   const [mountedActorIds, setMountedActorIds] = useState<string[]>([]);
 
-  const allTabs = useMemo(() => ["chat", ...actors.map((actor) => actor.id)], [actors]);
+  const allTabs = useMemo(() => ["chat", ...runtimeActors.map((actor) => actor.id)], [runtimeActors]);
 
   const handleTabChange = React.useCallback(
     (newTab: string) => {
@@ -92,13 +94,13 @@ export function useAppTabState({
   }, [actors]);
 
   const renderedActorIds = useMemo(() => {
-    const live = new Set(actors.map((actor) => String(actor.id || "")).filter((id) => id));
+    const live = new Set(runtimeActors.map((actor) => String(actor.id || "")).filter((id) => id));
     const mountedLiveIds = mountedActorIds.filter((id) => live.has(id));
     if (activeTab !== "chat" && live.has(activeTab) && !mountedLiveIds.includes(activeTab)) {
       return [...mountedLiveIds, activeTab];
     }
     return mountedLiveIds;
-  }, [mountedActorIds, activeTab, actors]);
+  }, [mountedActorIds, activeTab, runtimeActors]);
 
   const resetMountedActorIds = React.useCallback(() => {
     setMountedActorIds([]);

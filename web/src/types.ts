@@ -124,6 +124,7 @@ export type LedgerEvent = {
 export type Actor = {
   id: string;
   role?: string;
+  internal_kind?: string | null;
   title?: string;
   avatar_url?: string | null;
   has_custom_avatar?: boolean;
@@ -602,6 +603,10 @@ export type WebAccessSession = {
   allowed_groups?: string[];
   access_token_count?: number;
   can_access_global_settings?: boolean;
+  runtime_visibility?: {
+    peer_runtime?: "hidden" | "visible" | string;
+    pet_runtime?: "hidden" | "visible" | string;
+  };
 };
 
 export type WebBranding = {

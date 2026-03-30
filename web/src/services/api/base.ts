@@ -206,8 +206,8 @@ export function clearRecentReadRequest(key: string): void {
   clearSharedReadRequest(key);
 }
 
-export function actorsReadOnlyRequestKey(groupId: string): string {
-  return `actors:${String(groupId || "").trim()}:read-only`;
+export function actorsReadOnlyRequestKey(groupId: string, includeInternal = false): string {
+  return `actors:${String(groupId || "").trim()}:read-only:${includeInternal ? "internal" : "standard"}`;
 }
 
 export function groupsRequestKey(): string {
@@ -256,7 +256,8 @@ export function clearWebAccessSessionReadRequest(): void {
 }
 
 export function clearActorsReadOnlyRequest(groupId: string): void {
-  clearSharedReadRequest(actorsReadOnlyRequestKey(groupId));
+  clearSharedReadRequest(actorsReadOnlyRequestKey(groupId, false));
+  clearSharedReadRequest(actorsReadOnlyRequestKey(groupId, true));
 }
 
 export function clearContextRequest(groupId: string, detail?: ContextDetailLevel): void {

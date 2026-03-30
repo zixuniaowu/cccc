@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.actors import find_actor
+from ...kernel.actors import find_actor, get_effective_role, list_actors
 from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.query_projections import get_actor_list_projection
@@ -28,12 +28,25 @@ def handle_actor_list(
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     include_unread = coerce_bool(args.get("include_unread"), default=False)
+    include_internal = coerce_bool(args.get("include_internal"), default=False)
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
-    actors = get_actor_list_projection(group)
+    if include_internal:
+        actors = []
+        for actor in list_actors(group):
+            if not isinstance(actor, dict):
+                continue
+            aid = str(actor.get("id") or "").strip()
+            if not aid:
+                continue
+            item = dict(actor)
+            item["role"] = get_effective_role(group, aid)
+            actors.append(item)
+    else:
+        actors = get_actor_list_projection(group)
     storage = ContextStorage(group)
     agent_rows = [_agent_state_to_dict(agent) for agent in storage.load_agents().agents]
     agent_state_by_id = {

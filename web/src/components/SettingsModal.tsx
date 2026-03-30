@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform, WebAccessSession } from "../types";
 import * as api from "../services/api";
 import { useObservabilityStore } from "../stores";
+import type { RuntimeVisibilityMode } from "../utils/runtimeVisibility";
 import {
   SettingsScope,
   GroupTabId,
@@ -133,6 +134,8 @@ export function SettingsModal({
   const [logLevel, setLogLevel] = useState<"INFO" | "DEBUG">("INFO");
   const [terminalBacklogMiB, setTerminalBacklogMiB] = useState(10);
   const [terminalScrollbackLines, setTerminalScrollbackLines] = useState(8000);
+  const [peerRuntimeVisibility, setPeerRuntimeVisibility] = useState<RuntimeVisibilityMode>("visible");
+  const [petRuntimeVisibility, setPetRuntimeVisibility] = useState<RuntimeVisibilityMode>("hidden");
   const [obsBusy, setObsBusy] = useState(false);
 
   // Developer-mode debug views
@@ -319,6 +322,12 @@ export function SettingsModal({
         if (Number.isFinite(scrollbackLines) && scrollbackLines > 0) {
           setTerminalScrollbackLines(Math.max(1000, Math.round(scrollbackLines)));
         }
+        setPeerRuntimeVisibility(
+          String(obs.runtime_visibility?.peer_runtime || "").trim().toLowerCase() === "hidden" ? "hidden" : "visible"
+        );
+        setPetRuntimeVisibility(
+          String(obs.runtime_visibility?.pet_runtime || "").trim().toLowerCase() === "visible" ? "visible" : "hidden"
+        );
       }
     } catch (e) {
       console.error("Failed to load observability settings:", e);
@@ -607,6 +616,8 @@ export function SettingsModal({
         logLevel,
         terminalTranscriptPerActorBytes: perActorBytes,
         terminalUiScrollbackLines: scrollbackLines,
+        peerRuntimeVisibility,
+        petRuntimeVisibility,
       });
       if (resp.ok && resp.result?.observability) {
         const obs = resp.result.observability;
@@ -622,6 +633,12 @@ export function SettingsModal({
         if (Number.isFinite(lines) && lines > 0) {
           setTerminalScrollbackLines(Math.max(1000, Math.round(lines)));
         }
+        setPeerRuntimeVisibility(
+          String(obs.runtime_visibility?.peer_runtime || "").trim().toLowerCase() === "hidden" ? "hidden" : "visible"
+        );
+        setPetRuntimeVisibility(
+          String(obs.runtime_visibility?.pet_runtime || "").trim().toLowerCase() === "visible" ? "visible" : "hidden"
+        );
       } else if (resp.ok) {
         await loadObservability();
       }
@@ -1052,6 +1069,10 @@ export function SettingsModal({
                   setTerminalBacklogMiB={setTerminalBacklogMiB}
                   terminalScrollbackLines={terminalScrollbackLines}
                   setTerminalScrollbackLines={setTerminalScrollbackLines}
+                  peerRuntimeVisibility={peerRuntimeVisibility}
+                  setPeerRuntimeVisibility={setPeerRuntimeVisibility}
+                  petRuntimeVisibility={petRuntimeVisibility}
+                  setPetRuntimeVisibility={setPetRuntimeVisibility}
                   obsBusy={obsBusy}
                   onSaveObservability={handleSaveObservability}
                   debugSnapshot={debugSnapshot}

@@ -48,25 +48,26 @@ async def invalidate_readonly_actor_list(group_id: str) -> None:
     gid = str(group_id or "").strip()
     if not gid:
         return
-    cache_key = f"actors:{gid}:readonly"
     with _READONLY_ACTOR_CACHE_LOCK:
-        _READONLY_ACTOR_GENERATION[cache_key] = int(_READONLY_ACTOR_GENERATION.get(cache_key, 0)) + 1
-        _READONLY_ACTOR_CACHE.pop(cache_key, None)
-        _READONLY_ACTOR_HANDOFF_ONCE.discard(cache_key)
-        _READONLY_ACTOR_INFLIGHT.pop(cache_key, None)
+        for include_internal in (False, True):
+            cache_key = f"actors:{gid}:readonly:{int(include_internal)}"
+            _READONLY_ACTOR_GENERATION[cache_key] = int(_READONLY_ACTOR_GENERATION.get(cache_key, 0)) + 1
+            _READONLY_ACTOR_CACHE.pop(cache_key, None)
+            _READONLY_ACTOR_HANDOFF_ONCE.discard(cache_key)
+            _READONLY_ACTOR_INFLIGHT.pop(cache_key, None)
 
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
     group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
     global_router = APIRouter(prefix="/api/v1")
 
-    async def _cached_readonly_actor_list(group_id: str, fetcher) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
+    async def _cached_readonly_actor_list(group_id: str, include_internal: bool, fetcher) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
         gid = str(group_id or "").strip()
         if not gid:
             return await fetcher()
 
         ttl_s = _READONLY_ACTOR_TTL_S if ctx.read_only else 0.0
-        cache_key = f"actors:{gid}:readonly"
+        cache_key = f"actors:{gid}:readonly:{int(bool(include_internal))}"
         now = time.monotonic()
         inflight_entry: Optional[Dict[str, Any]] = None
         fetch_generation = 0
@@ -299,17 +300,33 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.daemon({"op": "actor_profile_upsert", "args": args})
 
     @group_router.get("/actors")
-    async def actors(group_id: str, include_unread: bool = False) -> Dict[str, Any]:
+    async def actors(group_id: str, include_unread: bool = False, include_internal: bool = False) -> Dict[str, Any]:
         gid = str(group_id or "").strip()
 
         async def _fetch() -> Dict[str, Any]:
-            return await ctx.daemon({"op": "actor_list", "args": {"group_id": gid, "include_unread": include_unread}})
+            return await ctx.daemon(
+                {
+                    "op": "actor_list",
+                    "args": {
+                        "group_id": gid,
+                        "include_unread": include_unread,
+                        "include_internal": include_internal,
+                    },
+                }
+            )
 
         if not include_unread:
-            return _decorate_actor_result(gid, await _cached_readonly_actor_list(gid, _fetch))
+            return _decorate_actor_result(gid, await _cached_readonly_actor_list(gid, include_internal, _fetch))
 
         ttl = max(0.0, min(5.0, ctx.exhibit_cache_ttl_s))
-        return _decorate_actor_result(gid, await ctx.cached_json(f"actors:{gid}:{int(bool(include_unread))}", ttl, _fetch))
+        return _decorate_actor_result(
+            gid,
+            await ctx.cached_json(
+                f"actors:{gid}:{int(bool(include_unread))}:{int(bool(include_internal))}",
+                ttl,
+                _fetch,
+            ),
+        )
 
     @group_router.post("/actors")
     async def actor_create(request: Request, group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:

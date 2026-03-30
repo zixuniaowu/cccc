@@ -1,4 +1,5 @@
 import React, { lazy, Suspense, useEffect, useMemo } from "react";
+import * as api from "./services/api";
 import { DropOverlay } from "./components/DropOverlay";
 const AppModals = lazy(() => import("./components/AppModals").then((m) => ({ default: m.AppModals })));
 const WebPet = lazy(() => import("./features/webPet/WebPet").then((m) => ({ default: m.WebPet })));
@@ -26,9 +27,11 @@ import {
   useModalStore,
   useComposerStore,
   useFormStore,
+  useObservabilityStore,
 } from "./stores";
 import { useChatOutboxStore } from "./stores/chatOutboxStore";
-import type { ChatMessageData, LedgerEvent } from "./types";
+import type { Actor, ChatMessageData, LedgerEvent } from "./types";
+import { filterVisibleRuntimeActors, isPetRuntimeActor } from "./utils/runtimeVisibility";
 
 // ============ Main App Component ============
 
@@ -87,6 +90,8 @@ export default function App() {
   const openModal = useModalStore((s) => s.openModal);
   const modalFlags = useModalStore((s) => s.modals);
   const editingActor = useModalStore((s) => s.editingActor);
+  const peerRuntimeVisibility = useObservabilityStore((state) => state.peerRuntimeVisibility);
+  const petRuntimeVisibility = useObservabilityStore((state) => state.petRuntimeVisibility);
 
   const {
     activeGroupId,
@@ -122,6 +127,23 @@ export default function App() {
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [_mentionFilter, setMentionFilter] = React.useState("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
+  const [internalRuntimeActors, setInternalRuntimeActors] = React.useState<Actor[]>([]);
+  const visibleRuntimeActors = useMemo(
+    () =>
+      filterVisibleRuntimeActors(
+        [
+          ...actors,
+          ...internalRuntimeActors.filter(
+            (actor) => !actors.some((existing) => String(existing.id || "") === String(actor.id || ""))
+          ),
+        ],
+        {
+        peerRuntimeVisibility,
+        petRuntimeVisibility,
+      }
+      ),
+    [actors, internalRuntimeActors, peerRuntimeVisibility, petRuntimeVisibility]
+  );
 
   useEffect(() => {
     const handlePageHide = () => clearAllOutbox();
@@ -147,6 +169,7 @@ export default function App() {
   } = useAppTabState({
     activeTab,
     actors,
+    runtimeActors: visibleRuntimeActors,
     selectedGroupId,
     chatSessionAtBottom,
     isSmallScreen,
@@ -154,6 +177,39 @@ export default function App() {
     setShowScrollButton,
     setChatUnreadCount,
   });
+
+  useEffect(() => {
+    if (activeTab === "chat") return;
+    if (visibleRuntimeActors.some((actor) => String(actor.id || "") === activeTab)) return;
+    setActiveTab("chat");
+  }, [activeTab, setActiveTab, visibleRuntimeActors]);
+
+  useEffect(() => {
+    const gid = String(selectedGroupId || "").trim();
+    if (!gid || petRuntimeVisibility !== "visible") {
+      setInternalRuntimeActors([]);
+      return;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    void api
+      .fetchActors(gid, false, { noCache: true, signal: controller.signal }, { includeInternal: true })
+      .then((resp) => {
+        if (cancelled || !resp.ok) return;
+        const next = Array.isArray(resp.result?.actors)
+          ? resp.result.actors.filter((actor) => isPetRuntimeActor(actor))
+          : [];
+        setInternalRuntimeActors(next);
+      })
+      .catch((error) => {
+        if (cancelled || controller.signal.aborted) return;
+        console.error(`Failed to load internal runtime actors for group=${gid}:`, error);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [selectedGroupId, petRuntimeVisibility, groupSettings?.desktop_pet_enabled]);
 
   // Custom hooks
   const { connectStream, fetchContext, cleanup: cleanupSSE } = useSSE({
@@ -308,6 +364,7 @@ export default function App() {
         groupDoc={groupDoc}
         groupContext={groupContext}
         actors={actors}
+        runtimeActors={visibleRuntimeActors}
         recipientActors={recipientActors}
         recipientActorsBusy={recipientActorsBusy}
         destGroupScopeLabel={destGroupScopeLabel}

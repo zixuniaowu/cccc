@@ -16,6 +16,7 @@ type AppShellProps = {
   groupDoc: GroupDoc | null;
   groupContext: GroupContext | null;
   actors: Actor[];
+  runtimeActors: Actor[];
   recipientActors: Actor[];
   recipientActorsBusy: boolean;
   destGroupScopeLabel: string;
@@ -85,6 +86,7 @@ export function AppShell({
   groupDoc,
   groupContext,
   actors,
+  runtimeActors,
   recipientActors,
   recipientActorsBusy,
   destGroupScopeLabel,
@@ -204,7 +206,7 @@ export function AppShell({
         {selectedGroupId ? (
           <TabBar
             groupId={selectedGroupId}
-            actors={actors}
+            actors={runtimeActors}
             activeTab={activeTab}
             onTabChange={onTabChange}
             unreadChatCount={chatUnreadCount}
@@ -262,7 +264,7 @@ export function AppShell({
             aria-hidden={activeTab === "chat"}
           >
             {renderedActorIds.map((actorId) => {
-              const actor = actors.find((item) => item.id === actorId) || null;
+              const actor = runtimeActors.find((item) => item.id === actorId) || null;
               const isVisible = activeTab === actorId && activeTab !== "chat";
               const agentState =
                 (groupContext?.agent_states || []).find((item) => item.id === (actor?.id || "")) || null;

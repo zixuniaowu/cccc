@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ....kernel.access_tokens import list_access_tokens
 from ....kernel.scope import detect_scope
-from ....kernel.settings import get_web_branding_settings
+from ....kernel.settings import get_observability_settings, get_web_branding_settings
 from ..branding import (
     build_branding_payload,
     delete_branding_asset,
@@ -155,6 +155,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         principal_kind = str(getattr(principal, "kind", "anonymous") or "anonymous")
         is_admin = bool(getattr(principal, "is_admin", False))
         can_access_global_settings = access_token_count == 0 or (principal_kind == "user" and is_admin)
+        observability = get_observability_settings()
+        runtime_visibility = observability.get("runtime_visibility") if isinstance(observability, dict) else {}
         return {
             "ok": True,
             "result": {
@@ -167,6 +169,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "allowed_groups": groups,
                     "access_token_count": access_token_count,
                     "can_access_global_settings": can_access_global_settings,
+                    "runtime_visibility": {
+                        "peer_runtime": str(
+                            (runtime_visibility or {}).get("peer_runtime") or "visible"
+                        ).strip().lower()
+                        or "visible",
+                        "pet_runtime": str(
+                            (runtime_visibility or {}).get("pet_runtime") or "hidden"
+                        ).strip().lower()
+                        or "hidden",
+                    },
                 }
             },
         }
@@ -419,6 +431,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             patch.setdefault("terminal_transcript", {})["per_actor_bytes"] = int(req.terminal_transcript_per_actor_bytes)
         if req.terminal_ui_scrollback_lines is not None:
             patch.setdefault("terminal_ui", {})["scrollback_lines"] = int(req.terminal_ui_scrollback_lines)
+        if req.peer_runtime_visibility is not None:
+            patch.setdefault("runtime_visibility", {})["peer_runtime"] = str(req.peer_runtime_visibility)
+        if req.pet_runtime_visibility is not None:
+            patch.setdefault("runtime_visibility", {})["pet_runtime"] = str(req.pet_runtime_visibility)
 
         resp = await ctx.daemon({"op": "observability_update", "args": {"by": req.by, "patch": patch}})
 

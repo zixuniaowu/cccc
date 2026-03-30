@@ -138,6 +138,11 @@ DEFAULT_OBSERVABILITY: Dict[str, Any] = {
     "terminal_ui": {
         "scrollback_lines": 8000,
     },
+    # Runtime surfaces exposed in the standard Web UI.
+    "runtime_visibility": {
+        "peer_runtime": "visible",
+        "pet_runtime": "hidden",
+    },
 }
 
 
@@ -201,6 +206,13 @@ def _as_str(v: Any, default: str) -> str:
     return s or default
 
 
+def _as_runtime_visibility(v: Any, default: str) -> str:
+    s = str(v or "").strip().lower()
+    if s in {"hidden", "visible"}:
+        return s
+    return default
+
+
 def _merge_observability(raw: Any) -> Dict[str, Any]:
     """Merge/validate observability settings with defaults."""
     base = dict(DEFAULT_OBSERVABILITY)
@@ -233,6 +245,19 @@ def _merge_observability(raw: Any) -> Dict[str, Any]:
             max_value=200_000,
         )
     base["terminal_ui"] = tui_base
+
+    runtime_visibility = raw.get("runtime_visibility")
+    runtime_visibility_base = dict(DEFAULT_OBSERVABILITY["runtime_visibility"])
+    if isinstance(runtime_visibility, dict):
+        runtime_visibility_base["peer_runtime"] = _as_runtime_visibility(
+            runtime_visibility.get("peer_runtime"),
+            str(runtime_visibility_base["peer_runtime"]),
+        )
+        runtime_visibility_base["pet_runtime"] = _as_runtime_visibility(
+            runtime_visibility.get("pet_runtime"),
+            str(runtime_visibility_base["pet_runtime"]),
+        )
+    base["runtime_visibility"] = runtime_visibility_base
 
     return base
 
@@ -325,6 +350,21 @@ def update_observability_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
                     max_value=200_000,
                 )
             merged["terminal_ui"] = tui
+    if "runtime_visibility" in patch:
+        runtime_visibility_patch = patch.get("runtime_visibility")
+        if isinstance(runtime_visibility_patch, dict):
+            runtime_visibility = dict(merged.get("runtime_visibility") or {})
+            if "peer_runtime" in runtime_visibility_patch:
+                runtime_visibility["peer_runtime"] = _as_runtime_visibility(
+                    runtime_visibility_patch.get("peer_runtime"),
+                    str(runtime_visibility.get("peer_runtime", "visible")),
+                )
+            if "pet_runtime" in runtime_visibility_patch:
+                runtime_visibility["pet_runtime"] = _as_runtime_visibility(
+                    runtime_visibility_patch.get("pet_runtime"),
+                    str(runtime_visibility.get("pet_runtime", "hidden")),
+                )
+            merged["runtime_visibility"] = runtime_visibility
 
     settings["observability"] = merged
     save_settings(settings)

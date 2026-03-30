@@ -274,6 +274,8 @@ class ObservabilityUpdateRequest(BaseModel):
     log_level: Optional[str] = None
     terminal_transcript_per_actor_bytes: Optional[int] = None
     terminal_ui_scrollback_lines: Optional[int] = None
+    peer_runtime_visibility: Optional[Literal["hidden", "visible"]] = None
+    pet_runtime_visibility: Optional[Literal["hidden", "visible"]] = None
 
 
 class RegistryReconcileRequest(BaseModel):
