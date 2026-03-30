@@ -2,6 +2,7 @@ import type { Actor, ActorProfile, ActorProfileUsage } from "../../types";
 import { actorProfileIdentityKey } from "../../utils/actorProfiles";
 import {
   actorsReadOnlyRequestKey,
+  apiForm,
   apiJson,
   ApiResponse,
   clearActorsReadOnlyRequest,
@@ -123,6 +124,21 @@ export async function updateActor(
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`, {
     method: "POST",
     body: JSON.stringify(body),
+  });
+}
+
+export async function uploadActorAvatar(groupId: string, actorId: string, file: File) {
+  clearActorsReadOnlyRequest(groupId);
+  const form = new FormData();
+  form.set("by", "user");
+  form.set("file", file);
+  return apiForm<{ actor: Actor }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/avatar`, form);
+}
+
+export async function clearActorAvatar(groupId: string, actorId: string) {
+  clearActorsReadOnlyRequest(groupId);
+  return apiJson<{ actor: Actor }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/avatar?by=user`, {
+    method: "DELETE",
   });
 }
 

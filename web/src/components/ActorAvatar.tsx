@@ -1,5 +1,6 @@
 import { memo, useMemo } from "react";
 import { classNames } from "../utils/classNames";
+import { withAuthToken } from "../services/api/base";
 
 const RUNTIME_LOGO_BASE = import.meta.env.BASE_URL;
 const RUNTIME_LOGO: Record<string, string> = {
@@ -9,6 +10,8 @@ const RUNTIME_LOGO: Record<string, string> = {
 };
 
 export type ActorAvatarProps = {
+  avatarUrl?: string | null;
+  previewUrl?: string | null;
   runtime?: string | null;
   title?: string | null;
   isUser?: boolean;
@@ -20,6 +23,8 @@ export type ActorAvatarProps = {
 };
 
 export const ActorAvatar = memo(function ActorAvatar({
+  avatarUrl,
+  previewUrl,
   runtime,
   title,
   isUser = false,
@@ -29,6 +34,18 @@ export const ActorAvatar = memo(function ActorAvatar({
   textClassName = "text-xs",
   className,
 }: ActorAvatarProps) {
+  const previewSrc = useMemo(() => {
+    if (isUser) return null;
+    const raw = String(previewUrl || "").trim();
+    return raw || null;
+  }, [previewUrl, isUser]);
+
+  const customAvatarSrc = useMemo(() => {
+    if (isUser) return null;
+    const raw = String(avatarUrl || "").trim();
+    return raw ? withAuthToken(raw) : null;
+  }, [avatarUrl, isUser]);
+
   const logoSrc = useMemo(() => {
     if (isUser) return null;
     const normalizedRuntime = String(runtime || "").trim().toLowerCase();
@@ -52,7 +69,15 @@ export const ActorAvatar = memo(function ActorAvatar({
         className,
       )}
     >
-      {logoSrc ? <img src={logoSrc} alt="" className="h-full w-full object-cover" /> : fallbackText}
+      {previewSrc ? (
+        <img src={previewSrc} alt="" className="h-full w-full object-contain" />
+      ) : customAvatarSrc ? (
+        <img src={customAvatarSrc} alt="" className="h-full w-full object-contain" />
+      ) : logoSrc ? (
+        <img src={logoSrc} alt="" className="h-full w-full object-cover" />
+      ) : (
+        fallbackText
+      )}
     </div>
   );
 });

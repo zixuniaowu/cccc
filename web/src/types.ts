@@ -125,6 +125,8 @@ export type Actor = {
   id: string;
   role?: string;
   title?: string;
+  avatar_url?: string | null;
+  has_custom_avatar?: boolean;
   enabled?: boolean;
   running?: boolean;  // Actual process running status
   idle_seconds?: number | null;  // Seconds since last PTY output (null if not running/headless)

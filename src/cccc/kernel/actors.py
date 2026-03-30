@@ -316,6 +316,9 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
         title = str(patch.get("title") or "").strip()
         item["title"] = title
 
+    if "avatar_asset_path" in patch:
+        item["avatar_asset_path"] = str(patch.get("avatar_asset_path") or "").strip()
+
     if "command" in patch:
         cmd = patch.get("command")
         if cmd is None:

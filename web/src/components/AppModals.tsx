@@ -798,7 +798,7 @@ export function AppModals({
     if (!actorId) return;
     const latest = actors.find((item) => String(item.id || "").trim() === actorId);
     if (!latest) return;
-    const changed =
+    const configChanged =
       String(editingActor.profile_id || "").trim() !== String(latest.profile_id || "").trim() ||
       Number(editingActor.profile_revision_applied || 0) !== Number(latest.profile_revision_applied || 0) ||
       String(editingActor.runtime || "").trim() !== String(latest.runtime || "").trim() ||
@@ -813,8 +813,19 @@ export function AppModals({
         String(
           normalizeCapabilityIdList((latest as { capability_autoload?: unknown[] }).capability_autoload).join("\u0000")
         );
-    if (changed) applyEditingActor(latest as Record<string, unknown>);
-  }, [actors, editingActor, applyEditingActor]);
+    if (configChanged) {
+      applyEditingActor(latest as Record<string, unknown>);
+      return;
+    }
+
+    const avatarChanged =
+      String(editingActor.avatar_url || "") !== String(latest.avatar_url || "") ||
+      Boolean(editingActor.has_custom_avatar) !== Boolean(latest.has_custom_avatar);
+
+    if (avatarChanged) {
+      setEditingActor(latest);
+    }
+  }, [actors, editingActor, applyEditingActor, setEditingActor]);
 
   const handleSaveEditActorAsProfile = async (): Promise<SaveActorProfileResult | void> => {
     if (!editingActor || !selectedGroupId) return;
@@ -953,8 +964,8 @@ export function AppModals({
     }
   };
 
-  const handleAddActor = async () => {
-    if (!selectedGroupId) return;
+  const handleAddActor = async (avatarFile?: File | null): Promise<boolean> => {
+    if (!selectedGroupId) return false;
     const actorId = newActorId.trim();
     const secretsText = String(newActorSecretsSetText || "");
     const roleNotes = String(newActorRoleNotes || "").trim();
@@ -963,7 +974,7 @@ export function AppModals({
 
     if (newActorUseProfile && !selectedProfile) {
       setAddActorError(t("selectProfileFirst"));
-      return;
+      return false;
     }
 
     let secretsSetVars: Record<string, string> = {};
@@ -971,7 +982,7 @@ export function AppModals({
       const parsedSecrets = parsePrivateEnvSetText(secretsText);
       if (!parsedSecrets.ok) {
         setAddActorError(parsedSecrets.error);
-        return;
+        return false;
       }
       secretsSetVars = parsedSecrets.setVars;
     }
@@ -1000,7 +1011,7 @@ export function AppModals({
       );
       if (!resp.ok) {
         setAddActorError(resp.error?.message || t('failedToAddAgent'));
-        return;
+        return false;
       }
 
       const createdActorId = String(
@@ -1008,6 +1019,8 @@ export function AppModals({
           ? (resp.result as { actor?: { id?: string } }).actor?.id
           : "") || actorId || suggestedActorId
       ).trim();
+
+      const postCreateErrors: string[] = [];
 
       if (roleNotes && createdActorId) {
         const roleNotesResp = await persistActorRoleNotes(
@@ -1017,17 +1030,29 @@ export function AppModals({
           [...actors.map((item) => String(item.id || "").trim()).filter(Boolean), createdActorId]
         );
         if (!roleNotesResp.ok) {
-          closeModal("addActor");
-          resetAddActorForm();
-          await refreshActors();
-          showError(t("actorCreatedRoleNotesSaveFailed", { actor: createdActorId, message: roleNotesResp.error }));
-          return;
+          postCreateErrors.push(`${t("roleNotes")}: ${roleNotesResp.error}`);
+        }
+      }
+
+      if (avatarFile && createdActorId) {
+        const avatarResp = await api.uploadActorAvatar(selectedGroupId, createdActorId, avatarFile);
+        if (!avatarResp.ok) {
+          postCreateErrors.push(`${t("avatarTitle")}: ${avatarResp.error?.message || t("avatarUploadFailed")}`);
         }
       }
 
       closeModal("addActor");
       resetAddActorForm();
       await refreshActors();
+      if (postCreateErrors.length > 0) {
+        showError(
+          t("actorCreatedSetupFailed", {
+            actor: createdActorId,
+            details: postCreateErrors.join(" · "),
+          })
+        );
+      }
+      return true;
     } finally {
       setBusy("");
     }
@@ -1558,6 +1583,8 @@ export function AppModals({
         busy={busy}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
         actorId={editingActor?.id || ""}
+        avatarUrl={editingActor?.avatar_url || undefined}
+        hasCustomAvatar={!!editingActor?.has_custom_avatar}
         isRunning={!!(editingActor && (editingActor.running ?? editingActor.enabled ?? false))}
         runtimes={runtimes}
         runtime={editActorRuntime}
@@ -1579,6 +1606,7 @@ export function AppModals({
         actorProfiles={actorProfiles}
         actorProfilesBusy={actorProfilesBusy}
         onSaveAsProfile={handleSaveEditActorAsProfile}
+        onAvatarChanged={refreshActors}
         onCancel={handleCancelEditActor}
       />
 

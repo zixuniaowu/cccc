@@ -42,6 +42,7 @@ export default function App() {
   // Zustand stores
   const groups = useGroupStore((state) => state.groups);
   const groupOrder = useGroupStore((state) => state.groupOrder);
+  const archivedGroupIds = useGroupStore((state) => state.archivedGroupIds);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groupDoc = useGroupStore((state) => state.groupDoc);
   const actors = useGroupStore((state) => state.actors);
@@ -54,7 +55,9 @@ export default function App() {
   const warmGroup = useGroupStore((state) => state.warmGroup);
   const openChatWindow = useGroupStore((state) => state.openChatWindow);
   const closeChatWindow = useGroupStore((state) => state.closeChatWindow);
-  const reorderGroups = useGroupStore((state) => state.reorderGroups);
+  const reorderGroupsInSection = useGroupStore((state) => state.reorderGroupsInSection);
+  const archiveGroup = useGroupStore((state) => state.archiveGroup);
+  const restoreGroup = useGroupStore((state) => state.restoreGroup);
   const getOrderedGroups = useGroupStore((state) => state.getOrderedGroups);
 
   const busy = useUIStore((s) => s.busy);
@@ -299,7 +302,7 @@ export default function App() {
 
       <AppShell
         orderedGroups={orderedGroups}
-        groupOrder={groupOrder}
+        archivedGroupIds={archivedGroupIds}
         groups={groups}
         selectedGroupId={selectedGroupId}
         groupDoc={groupDoc}
@@ -344,7 +347,9 @@ export default function App() {
         onCloseSidebar={() => setSidebarOpen(false)}
         onToggleSidebar={toggleSidebarCollapsed}
         onResizeSidebar={setSidebarWidth}
-        onReorderGroups={reorderGroups}
+        onReorderGroupsInSection={reorderGroupsInSection}
+        onArchiveGroup={archiveGroup}
+        onRestoreGroup={restoreGroup}
         onOpenSidebar={() => setSidebarOpen(true)}
         onOpenGroupEdit={
           canManageGroups

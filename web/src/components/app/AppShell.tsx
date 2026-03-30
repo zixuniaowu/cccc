@@ -10,7 +10,7 @@ import { SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
 
 type AppShellProps = {
   orderedGroups: GroupMeta[];
-  groupOrder: string[];
+  archivedGroupIds: string[];
   groups: GroupMeta[];
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
@@ -48,7 +48,9 @@ type AppShellProps = {
   onCloseSidebar: () => void;
   onToggleSidebar: () => void;
   onResizeSidebar: (width: number) => void;
-  onReorderGroups: (fromIndex: number, toIndex: number) => void;
+  onReorderGroupsInSection: (section: "working" | "archived", fromIndex: number, toIndex: number) => void;
+  onArchiveGroup: (groupId: string) => void;
+  onRestoreGroup: (groupId: string) => void;
   onOpenSidebar: () => void;
   onOpenGroupEdit: (() => void) | undefined;
   onOpenSearch: () => void;
@@ -77,7 +79,7 @@ type AppShellProps = {
 
 export function AppShell({
   orderedGroups,
-  groupOrder,
+  archivedGroupIds,
   groups,
   selectedGroupId,
   groupDoc,
@@ -115,7 +117,9 @@ export function AppShell({
   onCloseSidebar,
   onToggleSidebar,
   onResizeSidebar,
-  onReorderGroups,
+  onReorderGroupsInSection,
+  onArchiveGroup,
+  onRestoreGroup,
   onOpenSidebar,
   onOpenGroupEdit,
   onOpenSearch,
@@ -152,7 +156,7 @@ export function AppShell({
     >
       <GroupSidebar
         orderedGroups={orderedGroups}
-        groupOrder={groupOrder}
+        archivedGroupIds={archivedGroupIds}
         selectedGroupId={selectedGroupId}
         isOpen={sidebarOpen}
         isCollapsed={sidebarCollapsed}
@@ -165,7 +169,9 @@ export function AppShell({
         onClose={onCloseSidebar}
         onToggleCollapse={onToggleSidebar}
         onResizeWidth={onResizeSidebar}
-        onReorder={onReorderGroups}
+        onReorderSection={onReorderGroupsInSection}
+        onArchiveGroup={onArchiveGroup}
+        onRestoreGroup={onRestoreGroup}
       />
 
       <main

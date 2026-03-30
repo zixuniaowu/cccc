@@ -85,6 +85,7 @@ class RequestDispatchDeps:
     private_env_max_keys: int
     start_actor_process: Callable[..., dict[str, Any]]
     delete_actor_private_env: Callable[[str, str], None]
+    delete_actor_avatar: Callable[[str], None]
     get_actor_profile: Callable[[str], dict[str, Any] | None]
     load_actor_profile_secrets: Callable[[str], dict[str, str]]
     remove_headless_state: Callable[[str, str], None]
@@ -287,6 +288,7 @@ def dispatch_request(
         remove_pty_state_if_pid=deps.remove_pty_state_if_pid,
         throttle_clear_actor=deps.throttle_clear_actor,
         delete_actor_private_env=deps.delete_actor_private_env,
+        delete_actor_avatar=deps.delete_actor_avatar,
     )
     if actor_membership_resp is not None:
         return actor_membership_resp, False

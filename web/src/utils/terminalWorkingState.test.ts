@@ -22,6 +22,26 @@ describe("getActorDisplayWorkingState", () => {
     expect(getActorDisplayWorkingState(makeActor(), null)).toBe("idle");
   });
 
+  it("promotes fresh working output to working without waiting for the next daemon tick", () => {
+    expect(
+      getActorDisplayWorkingState(
+        makeActor({ effective_working_state: "waiting" }),
+        { kind: "working_output", updatedAt: 10_000 },
+        12_000,
+      ),
+    ).toBe("working");
+  });
+
+  it("does not keep stale working output elevated forever", () => {
+    expect(
+      getActorDisplayWorkingState(
+        makeActor({ effective_working_state: "waiting" }),
+        { kind: "working_output", updatedAt: 10_000 },
+        20_500,
+      ),
+    ).toBe("waiting");
+  });
+
   it("keeps idle when the visible prompt says the actor is waiting for input", () => {
     expect(
       getActorDisplayWorkingState(

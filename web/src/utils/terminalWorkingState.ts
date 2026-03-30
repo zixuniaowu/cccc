@@ -3,6 +3,7 @@ import type { TerminalSignal } from "../stores/useTerminalSignalsStore";
 
 const MAX_TERMINAL_BUFFER_CHARS = 4000;
 const CODEX_TERMINAL_SIGNAL_WINDOW_CHARS = 1600;
+const WORKING_OUTPUT_TTL_MS = 5000;
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
 const ANSI_ESCAPE_RE = new RegExp(
@@ -126,6 +127,7 @@ export function getTerminalSignalFromChunk(
 export function getActorDisplayWorkingState(
   actor: Actor,
   signal: TerminalSignal | null | undefined,
+  now: number = Date.now(),
 ): string {
   const backendState = String(actor.effective_working_state || "").trim().toLowerCase() || "idle";
   const effectiveRunner = String(actor.runner_effective || actor.runner || "pty").trim().toLowerCase() || "pty";
@@ -137,6 +139,10 @@ export function getActorDisplayWorkingState(
 
   if (signal?.kind === "idle_prompt") {
     return "idle";
+  }
+
+  if (signal?.kind === "working_output" && now - signal.updatedAt <= WORKING_OUTPUT_TTL_MS) {
+    return "working";
   }
 
   return backendState;

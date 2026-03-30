@@ -52,6 +52,7 @@ describe("useGroupStore actors fetch policy", () => {
     useGroupStore.setState({
       groups: [{ group_id: "g-demo", title: "Demo", topic: "", state: "active" }],
       groupOrder: ["g-demo"],
+      archivedGroupIds: [],
       selectedGroupId: "g-demo",
       chatByGroup: {},
       groupDoc: null,

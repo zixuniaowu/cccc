@@ -17,14 +17,14 @@ import {
 } from "@dnd-kit/sortable";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { CloseIcon, FolderIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "../Icons";
+import { CloseIcon, FolderIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "../Icons";
 import { SortableGroupItem } from "./SortableGroupItem";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../../stores/useUIStore";
 import { useBrandingStore } from "../../stores";
 
 export interface GroupSidebarProps {
   orderedGroups: GroupMeta[];
-  groupOrder: string[];
+  archivedGroupIds: string[];
   selectedGroupId: string;
   isOpen: boolean;
   isCollapsed: boolean;
@@ -37,12 +37,14 @@ export interface GroupSidebarProps {
   onClose: () => void;
   onToggleCollapse: () => void;
   onResizeWidth: (width: number) => void;
-  onReorder: (fromIndex: number, toIndex: number) => void;
+  onReorderSection: (section: "working" | "archived", fromIndex: number, toIndex: number) => void;
+  onArchiveGroup: (groupId: string) => void;
+  onRestoreGroup: (groupId: string) => void;
 }
 
 export function GroupSidebar({
   orderedGroups,
-  groupOrder,
+  archivedGroupIds,
   selectedGroupId,
   isOpen,
   isCollapsed,
@@ -55,18 +57,39 @@ export function GroupSidebar({
   onClose,
   onToggleCollapse,
   onResizeWidth,
-  onReorder,
+  onReorderSection,
+  onArchiveGroup,
+  onRestoreGroup,
 }: GroupSidebarProps) {
   const { t } = useTranslation('layout');
   const branding = useBrandingStore((s) => s.branding);
   const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [isResizing, setIsResizing] = useState(false);
-
-  // Memoize sortable item IDs to avoid unnecessary re-renders
-  const sortableIds = useMemo(
-    () => orderedGroups.map((g) => String(g.group_id || "")),
-    [orderedGroups]
+  const archivedSet = useMemo(() => new Set(archivedGroupIds), [archivedGroupIds]);
+  const workingGroups = useMemo(
+    () => orderedGroups.filter((g) => !archivedSet.has(String(g.group_id || "").trim())),
+    [archivedSet, orderedGroups]
   );
+  const archivedGroups = useMemo(
+    () => orderedGroups.filter((g) => archivedSet.has(String(g.group_id || "").trim())),
+    [archivedSet, orderedGroups]
+  );
+  const collapsedGroups = useMemo(() => {
+    if (!isCollapsed) return workingGroups;
+    const selectedArchived = archivedGroups.find((g) => String(g.group_id || "").trim() === String(selectedGroupId || "").trim());
+    return selectedArchived ? [...workingGroups, selectedArchived] : workingGroups;
+  }, [archivedGroups, isCollapsed, selectedGroupId, workingGroups]);
+  const [archivedOpen, setArchivedOpen] = useState(
+    () =>
+      archivedGroups.some((g) => String(g.group_id || "").trim() === String(selectedGroupId || "").trim()) ||
+      (orderedGroups.length > 0 && workingGroups.length === 0 && archivedGroups.length > 0)
+  );
+  const selectedArchived = useMemo(
+    () => archivedGroups.some((g) => String(g.group_id || "").trim() === String(selectedGroupId || "").trim()),
+    [archivedGroups, selectedGroupId]
+  );
+  const autoArchivedOpen = selectedArchived || (orderedGroups.length > 0 && workingGroups.length === 0 && archivedGroups.length > 0);
+  const archivedPanelOpen = archivedOpen || autoArchivedOpen;
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -85,16 +108,19 @@ export function GroupSidebar({
     })
   );
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      const oldIndex = groupOrder.indexOf(String(active.id));
-      const newIndex = groupOrder.indexOf(String(over.id));
+  const handleDragEnd = useCallback(
+    (section: "working" | "archived", groups: GroupMeta[]) => (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const ids = groups.map((g) => String(g.group_id || ""));
+      const oldIndex = ids.indexOf(String(active.id));
+      const newIndex = ids.indexOf(String(over.id));
       if (oldIndex !== -1 && newIndex !== -1) {
-        onReorder(oldIndex, newIndex);
+        onReorderSection(section, oldIndex, newIndex);
       }
-    }
-  };
+    },
+    [onReorderSection]
+  );
 
   useEffect(() => {
     if (!isResizing) return undefined;
@@ -135,6 +161,63 @@ export function GroupSidebar({
     document.body.style.setProperty("cursor", "col-resize");
     document.body.style.setProperty("user-select", "none");
   }, [isCollapsed, sidebarWidth]);
+
+  const renderGroupList = useCallback(
+    (groups: GroupMeta[], section: "working" | "archived") => {
+      const sortableIds = groups.map((g) => String(g.group_id || ""));
+      const isArchivedSection = section === "archived";
+      return (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd(section, groups)}
+        >
+          <SortableContext
+            items={sortableIds}
+            strategy={verticalListSortingStrategy}
+          >
+            <div className={classNames(
+              isCollapsed ? "flex flex-col items-center gap-2" : "space-y-1"
+            )}>
+              {groups.map((g) => {
+                const gid = String(g.group_id || "");
+                const active = gid === selectedGroupId;
+                return (
+                  <SortableGroupItem
+                    key={gid}
+                    group={g}
+                    isActive={active}
+                    isDark={isDark}
+                    isCollapsed={isCollapsed}
+                    isArchived={isArchivedSection}
+                    dragDisabled={!!readOnly}
+                    menuActionLabel={isArchivedSection ? t("restoreGroup") : t("archiveGroup")}
+                    menuAriaLabel={`${t("groupActions")} · ${g.title || gid}`}
+                    onMenuAction={
+                      isCollapsed
+                        ? undefined
+                        : isArchivedSection
+                          ? () => onRestoreGroup(gid)
+                          : () => {
+                              setArchivedOpen(true);
+                              onArchiveGroup(gid);
+                            }
+                    }
+                    onSelect={() => {
+                      onSelectGroup(gid);
+                      if (window.matchMedia("(max-width: 767px)").matches) onClose();
+                    }}
+                    onWarm={active ? undefined : () => onWarmGroup?.(gid)}
+                  />
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
+      );
+    },
+    [handleDragEnd, isCollapsed, isDark, onArchiveGroup, onClose, onRestoreGroup, onSelectGroup, onWarmGroup, readOnly, selectedGroupId, sensors, t]
+  );
 
   return (
     <>
@@ -261,40 +344,39 @@ export function GroupSidebar({
             </div>
           )}
 
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={sortableIds}
-              strategy={verticalListSortingStrategy}
-            >
-              <div className={classNames(
-                isCollapsed ? "flex flex-col items-center gap-2" : "space-y-1"
-              )}>
-                {orderedGroups.map((g) => {
-                  const gid = String(g.group_id || "");
-                  const active = gid === selectedGroupId;
-                  return (
-                    <SortableGroupItem
-                      key={gid}
-                      group={g}
-                      isActive={active}
-                      isDark={isDark}
-                      isCollapsed={isCollapsed}
-                      dragDisabled={!!readOnly}
-                      onSelect={() => {
-                        onSelectGroup(gid);
-                        if (window.matchMedia("(max-width: 767px)").matches) onClose();
-                      }}
-                      onWarm={active ? undefined : () => onWarmGroup?.(gid)}
-                    />
-                  );
-                })}
-              </div>
-            </SortableContext>
-          </DndContext>
+          {renderGroupList(isCollapsed ? collapsedGroups : workingGroups, "working")}
+
+          {!isCollapsed && archivedGroups.length > 0 && (
+            <div className="mt-4">
+              <button
+                type="button"
+                className={classNames(
+                  "w-full flex items-center justify-between rounded-xl px-2 py-2 transition-colors",
+                  "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                )}
+                onClick={() => setArchivedOpen((prev) => !prev)}
+                aria-expanded={archivedPanelOpen}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[var(--color-text-tertiary)]">
+                    {t("archivedGroups")}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
+                    {archivedGroups.length}
+                  </span>
+                </div>
+                <ChevronDownIcon
+                  size={16}
+                  className={classNames("transition-transform", archivedPanelOpen ? "rotate-180" : "")}
+                />
+              </button>
+              {archivedPanelOpen && (
+                <div className="mt-2">
+                  {renderGroupList(archivedGroups, "archived")}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Empty state */}
           {!orderedGroups.length && !isCollapsed && (

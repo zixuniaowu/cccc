@@ -44,6 +44,7 @@ interface GroupState {
   // Data
   groups: GroupMeta[];
   groupOrder: string[]; // Group IDs in user-defined order
+  archivedGroupIds: string[]; // Local-only sidebar archive bucket
   selectedGroupId: string;
   chatByGroup: Record<string, GroupChatBucket>;
   groupDoc: GroupDoc | null;
@@ -61,7 +62,9 @@ interface GroupState {
   // Actions
   setGroups: (groups: GroupMeta[]) => void;
   setGroupOrder: (order: string[]) => void;
-  reorderGroups: (fromIndex: number, toIndex: number) => void;
+  reorderGroupsInSection: (section: "working" | "archived", fromIndex: number, toIndex: number) => void;
+  archiveGroup: (groupId: string) => void;
+  restoreGroup: (groupId: string) => void;
   getOrderedGroups: () => GroupMeta[];
   setSelectedGroupId: (id: string) => void;
   setGroupDoc: (doc: GroupDoc | null) => void;
@@ -108,14 +111,27 @@ const GROUP_VIEW_CACHE_TTL_MS = 300_000;
 
 // localStorage key for group order
 const GROUP_ORDER_KEY = "cccc-group-order";
+const ARCHIVED_GROUP_IDS_KEY = "cccc-archived-group-ids";
 const SELECTED_GROUP_ID_KEY = "cccc-selected-group-id";
+
+function normalizeGroupIdList(ids: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of ids) {
+    const id = String(raw || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
 
 function loadGroupOrder(): string[] {
   try {
     const stored = localStorage.getItem(GROUP_ORDER_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) return normalizeGroupIdList(parsed);
     }
   } catch (e) {
     console.warn("Failed to read group order from localStorage:", e);
@@ -123,11 +139,37 @@ function loadGroupOrder(): string[] {
   return [];
 }
 
+function loadArchivedGroupIds(): string[] {
+  try {
+    const stored = localStorage.getItem(ARCHIVED_GROUP_IDS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) return normalizeGroupIdList(parsed);
+    }
+  } catch (e) {
+    console.warn("Failed to read archived groups from localStorage:", e);
+  }
+  return [];
+}
+
 function saveGroupOrder(order: string[]): void {
   try {
-    localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(order));
+    localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(normalizeGroupIdList(order)));
   } catch (e) {
     console.warn("Failed to persist group order to localStorage:", e);
+  }
+}
+
+function saveArchivedGroupIds(groupIds: string[]): void {
+  try {
+    const next = normalizeGroupIdList(groupIds);
+    if (next.length === 0) {
+      localStorage.removeItem(ARCHIVED_GROUP_IDS_KEY);
+      return;
+    }
+    localStorage.setItem(ARCHIVED_GROUP_IDS_KEY, JSON.stringify(next));
+  } catch (e) {
+    console.warn("Failed to persist archived groups to localStorage:", e);
   }
 }
 
@@ -164,6 +206,31 @@ function mergeGroupOrder(storedOrder: string[], groups: GroupMeta[]): string[] {
     .map((g) => String(g.group_id || ""))
     .filter((id) => id && !orderedSet.has(id));
   return [...validOrder, ...newIds];
+}
+
+function mergeArchivedGroupIds(storedIds: string[], groups: GroupMeta[]): string[] {
+  const currentIds = new Set(groups.map((g) => String(g.group_id || "").trim()).filter(Boolean));
+  return normalizeGroupIdList(storedIds).filter((id) => currentIds.has(id));
+}
+
+function reorderGroupSubset(globalOrder: string[], subsetIds: string[], fromIndex: number, toIndex: number): string[] {
+  if (fromIndex === toIndex) return globalOrder;
+  if (fromIndex < 0 || toIndex < 0) return globalOrder;
+  if (fromIndex >= subsetIds.length || toIndex >= subsetIds.length) return globalOrder;
+
+  const nextSubset = subsetIds.slice();
+  const [moved] = nextSubset.splice(fromIndex, 1);
+  if (!moved) return globalOrder;
+  nextSubset.splice(toIndex, 0, moved);
+
+  const subsetSet = new Set(subsetIds);
+  let cursor = 0;
+  return globalOrder.map((id) => {
+    if (!subsetSet.has(id)) return id;
+    const replacement = nextSubset[cursor];
+    cursor += 1;
+    return replacement || id;
+  });
 }
 
 // In-flight guards
@@ -565,6 +632,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   // Initial state
   groups: [],
   groupOrder: loadGroupOrder(),
+  archivedGroupIds: loadArchivedGroupIds(),
   selectedGroupId: loadSelectedGroupId(),
   chatByGroup: {},
   groupDoc: null,
@@ -582,20 +650,41 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   // Sync actions
   setGroups: (groups) => {
     const storedOrder = get().groupOrder;
+    const storedArchived = get().archivedGroupIds;
     const mergedOrder = mergeGroupOrder(storedOrder, groups);
+    const mergedArchived = mergeArchivedGroupIds(storedArchived, groups);
     saveGroupOrder(mergedOrder);
-    set({ groups, groupOrder: mergedOrder });
+    saveArchivedGroupIds(mergedArchived);
+    set({ groups, groupOrder: mergedOrder, archivedGroupIds: mergedArchived });
   },
   setGroupOrder: (order) => {
     saveGroupOrder(order);
     set({ groupOrder: order });
   },
-  reorderGroups: (fromIndex, toIndex) => {
-    const order = get().groupOrder.slice();
-    const [moved] = order.splice(fromIndex, 1);
-    order.splice(toIndex, 0, moved);
-    saveGroupOrder(order);
-    set({ groupOrder: order });
+  reorderGroupsInSection: (section, fromIndex, toIndex) => {
+    const { groupOrder, archivedGroupIds } = get();
+    const archivedSet = new Set(archivedGroupIds);
+    const subsetIds = groupOrder.filter((id) =>
+      section === "archived" ? archivedSet.has(id) : !archivedSet.has(id)
+    );
+    const nextOrder = reorderGroupSubset(groupOrder, subsetIds, fromIndex, toIndex);
+    if (nextOrder === groupOrder) return;
+    saveGroupOrder(nextOrder);
+    set({ groupOrder: nextOrder });
+  },
+  archiveGroup: (groupId) => {
+    const gid = String(groupId || "").trim();
+    if (!gid) return;
+    const next = normalizeGroupIdList([...get().archivedGroupIds, gid]);
+    saveArchivedGroupIds(next);
+    set({ archivedGroupIds: next });
+  },
+  restoreGroup: (groupId) => {
+    const gid = String(groupId || "").trim();
+    if (!gid) return;
+    const next = get().archivedGroupIds.filter((id) => id !== gid);
+    saveArchivedGroupIds(next);
+    set({ archivedGroupIds: next });
   },
   getOrderedGroups: () => {
     const { groups, groupOrder } = get();

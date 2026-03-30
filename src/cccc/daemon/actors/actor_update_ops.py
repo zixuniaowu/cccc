@@ -74,6 +74,7 @@ def handle_actor_update(
     allowed = {
         "role",
         "title",
+        "avatar_asset_path",
         "command",
         "env",
         "default_scope_key",

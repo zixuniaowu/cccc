@@ -103,6 +103,7 @@ class ActorUpdateRequest(BaseModel):
     by: str = Field(default="user")
     # Note: role is ignored - auto-determined by position
     title: Optional[str] = None
+    avatar_asset_path: Optional[str] = None
     command: Optional[Union[str, list[str]]] = None
     env: Optional[Dict[str, str]] = None
     capability_autoload: Optional[list[str]] = None

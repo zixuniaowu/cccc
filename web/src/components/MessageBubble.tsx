@@ -370,6 +370,7 @@ export const MessageBubble = memo(function MessageBubble({
                     aria-label={canShowAgentState ? t('agentStateTooltipLabel', { defaultValue: 'View agent state' }) : undefined}
                 >
                     <ActorAvatar
+                        avatarUrl={senderActor?.avatar_url}
                         runtime={senderActor?.runtime}
                         title={senderDisplayName}
                         isUser={isUserMessage}
@@ -454,6 +455,7 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 >
                     <ActorAvatar
+                        avatarUrl={senderActor?.avatar_url}
                         runtime={senderActor?.runtime}
                         title={senderDisplayName}
                         isUser={isUserMessage}

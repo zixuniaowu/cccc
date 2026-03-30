@@ -6,11 +6,19 @@ import time
 import threading
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 
 from ....daemon.server import call_daemon, get_daemon_endpoint
 from ....daemon.actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
 from ....kernel.group import load_group
+from ....kernel.actors import find_actor
+from ..actor_avatar import (
+    build_actor_web_payload,
+    delete_actor_avatar,
+    resolve_actor_avatar_path,
+    store_actor_avatar,
+)
 from .groups import invalidate_context_read
 from ..schemas import (
     ActorCreateRequest,
@@ -239,6 +247,29 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             ]
         return resp
 
+    def _actor_or_404(group_id: str, actor_id: str) -> tuple[Any, Dict[str, Any]]:
+        group = load_group(str(group_id or "").strip())
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        actor = find_actor(group, str(actor_id or "").strip())
+        if not isinstance(actor, dict):
+            raise HTTPException(status_code=404, detail={"code": "actor_not_found", "message": f"actor not found: {actor_id}"})
+        return group, actor
+
+    def _decorate_actor_result(group_id: str, resp: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(resp.get("ok")):
+            return resp
+        result = resp.get("result")
+        if not isinstance(result, dict):
+            return resp
+        actor = result.get("actor")
+        if isinstance(actor, dict):
+            result["actor"] = build_actor_web_payload(group_id, actor)
+        actors = result.get("actors")
+        if isinstance(actors, list):
+            result["actors"] = [build_actor_web_payload(group_id, item) for item in actors if isinstance(item, dict)]
+        return resp
+
     async def _actor_profile_upsert_impl(
         request: Request,
         *,
@@ -275,10 +306,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return await ctx.daemon({"op": "actor_list", "args": {"group_id": gid, "include_unread": include_unread}})
 
         if not include_unread:
-            return await _cached_readonly_actor_list(gid, _fetch)
+            return _decorate_actor_result(gid, await _cached_readonly_actor_list(gid, _fetch))
 
         ttl = max(0.0, min(5.0, ctx.exhibit_cache_ttl_s))
-        return await ctx.cached_json(f"actors:{gid}:{int(bool(include_unread))}", ttl, _fetch)
+        return _decorate_actor_result(gid, await ctx.cached_json(f"actors:{gid}:{int(bool(include_unread))}", ttl, _fetch))
 
     @group_router.post("/actors")
     async def actor_create(request: Request, group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:
@@ -319,7 +350,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
         if bool(resp.get("ok")):
             await invalidate_context_read(group_id)
-        return resp
+        return _decorate_actor_result(group_id, resp)
 
     @group_router.post("/actors/{actor_id}")
     async def actor_update(request: Request, group_id: str, actor_id: str, req: ActorUpdateRequest) -> Dict[str, Any]:
@@ -352,6 +383,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             patch["runtime"] = req.runtime
         if req.enabled is not None:
             patch["enabled"] = bool(req.enabled)
+        if req.avatar_asset_path is not None:
+            patch["avatar_asset_path"] = str(req.avatar_asset_path or "").strip()
         args: Dict[str, Any] = {
             "group_id": group_id,
             "actor_id": actor_id,
@@ -365,13 +398,114 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if req.profile_action is not None:
             args["profile_action"] = str(req.profile_action or "").strip()
         resp = await ctx.daemon({"op": "actor_update", "args": args})
-        return resp
+        return _decorate_actor_result(group_id, resp)
+
+    @group_router.get("/actors/{actor_id}/avatar")
+    async def actor_avatar_get(group_id: str, actor_id: str) -> FileResponse:
+        _, actor = _actor_or_404(group_id, actor_id)
+        rel_path = str(actor.get("avatar_asset_path") or "").strip()
+        if not rel_path:
+            raise HTTPException(status_code=404, detail={"code": "actor_avatar_not_found", "message": "actor avatar not found"})
+        try:
+            return FileResponse(resolve_actor_avatar_path(rel_path))
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail={"code": "actor_avatar_not_found", "message": "actor avatar not found"}) from exc
+
+    @group_router.post("/actors/{actor_id}/avatar")
+    async def actor_avatar_upload(
+        request: Request,
+        group_id: str,
+        actor_id: str,
+        by: str = Form("user"),
+        file: UploadFile = File(...),
+    ) -> Dict[str, Any]:
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Actor avatar write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        await invalidate_readonly_actor_list(group_id)
+        _, actor = _actor_or_404(group_id, actor_id)
+        old_rel_path = str(actor.get("avatar_asset_path") or "").strip()
+        raw_bytes = await file.read()
+        try:
+            stored = store_actor_avatar(
+                group_id=group_id,
+                data=raw_bytes,
+                content_type=str(getattr(file, "content_type", "") or ""),
+                filename=str(getattr(file, "filename", "") or ""),
+            )
+        except ValueError as exc:
+            message = str(exc)
+            status_code = 413 if "too large" in message else 400
+            raise HTTPException(status_code=status_code, detail={"code": "invalid_request", "message": message}) from exc
+        resp = await ctx.daemon(
+            {
+                "op": "actor_update",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "patch": {"avatar_asset_path": str(stored.get("rel_path") or "")},
+                    "by": str(by or "user"),
+                    **_profile_auth_args(request),
+                },
+            }
+        )
+        if not bool(resp.get("ok")):
+            delete_actor_avatar(str(stored.get("rel_path") or ""))
+            return resp
+        new_rel_path = str(stored.get("rel_path") or "").strip()
+        if old_rel_path and old_rel_path != new_rel_path:
+            delete_actor_avatar(old_rel_path)
+        return _decorate_actor_result(group_id, resp)
+
+    @group_router.delete("/actors/{actor_id}/avatar")
+    async def actor_avatar_clear(request: Request, group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Actor avatar write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        await invalidate_readonly_actor_list(group_id)
+        _, actor = _actor_or_404(group_id, actor_id)
+        old_rel_path = str(actor.get("avatar_asset_path") or "").strip()
+        resp = await ctx.daemon(
+            {
+                "op": "actor_update",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "patch": {"avatar_asset_path": ""},
+                    "by": str(by or "user"),
+                    **_profile_auth_args(request),
+                },
+            }
+        )
+        if not bool(resp.get("ok")):
+            return resp
+        if old_rel_path:
+            delete_actor_avatar(old_rel_path)
+        return _decorate_actor_result(group_id, resp)
 
     @group_router.delete("/actors/{actor_id}")
     async def actor_delete(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
         await invalidate_readonly_actor_list(group_id)
+        old_rel_path = ""
+        try:
+            _, actor = _actor_or_404(group_id, actor_id)
+            old_rel_path = str(actor.get("avatar_asset_path") or "").strip()
+        except HTTPException:
+            old_rel_path = ""
         resp = await ctx.daemon({"op": "actor_remove", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
         if bool(resp.get("ok")):
+            if old_rel_path:
+                delete_actor_avatar(old_rel_path)
             await invalidate_context_read(group_id)
         return resp
 
