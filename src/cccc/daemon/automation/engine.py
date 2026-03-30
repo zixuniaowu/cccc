@@ -25,7 +25,13 @@ from ...contracts.v1 import AutomationRule, AutomationRuleSet, SystemNotifyData
 from ...kernel.actors import find_foreman, list_visible_actors
 from ...kernel.agent_state_hygiene import evaluate_agent_state_hygiene, sync_mind_context_runtime_state
 from ...kernel.context import ContextStorage
-from ...kernel.group import Group, load_group, get_group_state, set_group_state
+from ...kernel.group import (
+    Group,
+    effective_automation_snippets,
+    get_group_state,
+    load_group,
+    set_group_state,
+)
 from ...kernel.inbox import iter_events, is_message_for_actor, get_cursor, get_obligation_status_batch
 from ...kernel.ledger import append_event
 from ...kernel.terminal_transcript import get_terminal_transcript_settings
@@ -151,19 +157,7 @@ def _rule_state(doc: Dict[str, Any], rule_id: str) -> Dict[str, Any]:
 def _load_ruleset(group: Group) -> AutomationRuleSet:
     doc = group.doc.get("automation")
     d = doc if isinstance(doc, dict) else {}
-
-    raw_snippets = d.get("snippets")
-    snippets_in = raw_snippets if isinstance(raw_snippets, dict) else {}
-    snippets: Dict[str, str] = {}
-    for k, v in snippets_in.items():
-        if not isinstance(k, str):
-            continue
-        key = k.strip()
-        if not key:
-            continue
-        if not isinstance(v, str):
-            continue
-        snippets[key] = v
+    snippets = effective_automation_snippets(d)
 
     raw_rules = d.get("rules")
     rules_in = raw_rules if isinstance(raw_rules, list) else []

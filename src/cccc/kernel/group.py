@@ -20,19 +20,110 @@ from .ledger_segments import ensure_ledger_layout
 from .registry import Registry
 from .scope import ScopeIdentity
 
-_DEFAULT_AUTOMATION_STANDUP_SNIPPET = """{{interval_minutes}} minutes have passed. Stand-up reminder (foreman only).
+_DEFAULT_AUTOMATION_STANDUP_SNIPPET = """{{interval_minutes}} minutes have passed. Stand-up checkpoint (foreman only).
 
-Use MCP chat for any visible update.
+Use MCP chat for any visible update. Keep this short.
 
-Checklist:
-1. Recall: check `cccc_bootstrap().memory_recall_gate`, then `cccc_memory(search/get)` if needed.
-2. Alignment: confirm objective, blockers, owners, and next actions.
-3. Gaps: close information gaps first; use `cccc_capability_use(...)` before declaring blocked.
-4. State: sync `cccc_coordination` / `cccc_task` and refresh `cccc_agent_state`.
-5. Consolidation: write durable memory only for stable outcomes; use `cccc_help` if you need the full playbook.
+Goal:
+1. Collect exactly three short lines from each active owner: current status, next step, blocker.
+2. Treat this as a coordination interrupt, not a task switch.
+3. Do not answer from fuzzy memory. If current status, next step, or blocker is not grounded in fresh context, run `cccc_bootstrap`, follow `memory_recall_gate`, and open `cccc_help` before replying.
+4. After the checkpoint, return to your prior active task unless priority changed or a real blocker appeared.
+
+Only update shared state if the checkpoint changed shared truth.
 """
 
 LOGGER = logging.getLogger(__name__)
+
+_DEFAULT_AUTOMATION_BUILTIN_SNIPPETS = {
+    "standup": _DEFAULT_AUTOMATION_STANDUP_SNIPPET,
+}
+
+
+def _normalize_automation_snippet_map(raw: Any) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key_raw, value_raw in raw.items():
+        if not isinstance(key_raw, str):
+            continue
+        key = key_raw.strip()
+        if not key or not isinstance(value_raw, str):
+            continue
+        out[key] = value_raw
+    return out
+
+
+def default_automation_builtin_snippets() -> Dict[str, str]:
+    return copy.deepcopy(_DEFAULT_AUTOMATION_BUILTIN_SNIPPETS)
+
+
+def split_automation_snippets_for_storage(snippets: Any) -> tuple[Dict[str, str], Dict[str, str]]:
+    built_in = default_automation_builtin_snippets()
+    normalized = _normalize_automation_snippet_map(snippets)
+    custom: Dict[str, str] = {}
+    built_in_overrides: Dict[str, str] = {}
+    for key, value in normalized.items():
+        if key in built_in:
+            if value != built_in[key]:
+                built_in_overrides[key] = value
+            continue
+        custom[key] = value
+    return custom, built_in_overrides
+
+
+def normalize_automation_snippet_storage(automation: Any) -> tuple[Dict[str, str], Dict[str, str]]:
+    built_in = default_automation_builtin_snippets()
+    raw_custom = _normalize_automation_snippet_map(automation.get("snippets") if isinstance(automation, dict) else {})
+    raw_overrides = _normalize_automation_snippet_map(
+        automation.get("snippet_overrides") if isinstance(automation, dict) else {}
+    )
+
+    custom: Dict[str, str] = {key: value for key, value in raw_overrides.items() if key not in built_in}
+    custom.update({key: value for key, value in raw_custom.items() if key not in built_in})
+    built_in_overrides: Dict[str, str] = {}
+
+    for key, value in raw_custom.items():
+        if key not in built_in:
+            continue
+        if value != built_in[key]:
+            built_in_overrides[key] = value
+
+    for key, value in raw_overrides.items():
+        if key not in built_in:
+            continue
+        if value != built_in[key]:
+            built_in_overrides[key] = value
+        else:
+            built_in_overrides.pop(key, None)
+
+    return custom, built_in_overrides
+
+
+def stored_automation_snippets(automation: Any) -> Dict[str, str]:
+    custom, built_in_overrides = normalize_automation_snippet_storage(automation)
+    out = dict(custom)
+    out.update(built_in_overrides)
+    return out
+
+
+def effective_automation_snippets(automation: Any) -> Dict[str, str]:
+    built_in = default_automation_builtin_snippets()
+    custom, built_in_overrides = normalize_automation_snippet_storage(automation)
+    out = dict(built_in)
+    out.update(built_in_overrides)
+    out.update(custom)
+    return out
+
+
+def automation_snippet_catalog(automation: Any) -> Dict[str, Dict[str, str]]:
+    custom, built_in_overrides = normalize_automation_snippet_storage(automation)
+    return {
+        "built_in": default_automation_builtin_snippets(),
+        "built_in_overrides": built_in_overrides,
+        "custom": custom,
+    }
+
 
 def _default_automation_ruleset() -> Dict[str, Any]:
     # Stored in group.yaml; must not share mutable objects across groups.
@@ -56,9 +147,8 @@ def _default_automation_ruleset() -> Dict[str, Any]:
                 },
             }
         ],
-        "snippets": {
-            "standup": _DEFAULT_AUTOMATION_STANDUP_SNIPPET,
-        },
+        "snippets": {},
+        "snippet_overrides": {},
     }
 
 

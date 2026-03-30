@@ -68,14 +68,15 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 
 ### Agent State
 
-- `cccc_agent_state` is per-actor working memory, not just task status.
-- Refresh hot fields at key transitions: `focus`, `next_action`, `what_changed`, `active_task_id` when needed, and real `blockers`.
-- Mind context is your current model of environment, user, and stance: `environment_summary`, `user_model`, `persona_notes`.
-- Use warm recovery fields when they improve continuity: `open_loops`, `commitments`, `resume_hint`.
+- `cccc_agent_state` is per-actor working memory, not just status.
+- Refresh hot fields at key transitions: `focus`, `next_action`, `what_changed`, `active_task_id`, and real `blockers`.
+- `standup` and `help_nudge` are coordination interrupts, not task switches. Reply, then resume work unless priority changed. Do not overwrite `active_task_id`, `focus`, or `next_action` with the interrupt.
+- Mind context models environment, user, and stance: `environment_summary`, `user_model`, `persona_notes`.
+- Use warm recovery fields when they help continuity: `open_loops`, `commitments`, `resume_hint`.
 - If `context_hygiene.execution_health.status != "ready"`, refresh execution fields first.
 - If execution is healthy but `context_hygiene.mind_context_health.status` is `missing`, `partial`, or `stale`, refresh it.
-- If a mind-context line is too generic to change your next decision, rewrite it.
-- `cccc_bootstrap().recovery.self_state.mind_context_mini` is a tiny continuity projection under token pressure, not full `agent_state`.
+- Rewrite mind-context lines that are too generic to change your next decision.
+- `cccc_bootstrap().recovery.self_state.mind_context_mini` is a tiny continuity projection, not full `agent_state`.
 - Execution update: `cccc_agent_state(action="update", actor_id="<self>", focus="...", next_action="...", what_changed="...")`
 - Mind-context update: `cccc_agent_state(action="update", actor_id="<self>", environment_summary="...", user_model="...", persona_notes="...")`
 

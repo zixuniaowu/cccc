@@ -836,6 +836,12 @@ export type AutomationRuleSet = {
   snippets: Record<string, string>;
 };
 
+export type AutomationSnippetCatalog = {
+  built_in: Record<string, string>;
+  built_in_overrides: Record<string, string>;
+  custom: Record<string, string>;
+};
+
 export type AutomationRuleStatus = {
   last_fired_at?: string;
   last_error_at?: string;
@@ -847,6 +853,7 @@ export type AutomationRuleStatus = {
 
 export type GroupAutomation = {
   ruleset: AutomationRuleSet;
+  snippet_catalog?: AutomationSnippetCatalog;
   status: Record<string, AutomationRuleStatus>;
   config_path: string;
   supported_vars: string[];
