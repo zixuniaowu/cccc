@@ -7,6 +7,7 @@ from typing import Any, Dict, Literal, Optional
 EffectiveWorkingState = Literal["stopped", "idle", "working", "waiting", "stuck"]
 
 DEFAULT_PTY_STUCK_IDLE_SECONDS = 300.0
+DEFAULT_PTY_WORKING_IDLE_SECONDS = 5.0
 DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES = 12_000
 DEFAULT_CODEX_TERMINAL_SIGNAL_WINDOW_CHARS = 1_600
 
@@ -28,12 +29,30 @@ def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))", "", str(text or "")).replace("\r", "")
 
 
-def _last_non_empty_line(text: str) -> str:
+def _recent_non_empty_lines(text: str, *, max_lines: int = 4) -> list[str]:
+    lines: list[str] = []
     for raw_line in reversed(str(text or "").split("\n")):
         line = raw_line.strip()
-        if line:
-            return line
-    return ""
+        if not line:
+            continue
+        lines.append(line)
+        if len(lines) >= max_lines:
+            break
+    return lines
+
+
+def _last_non_empty_line(text: str) -> str:
+    lines = _recent_non_empty_lines(text, max_lines=1)
+    return lines[0] if lines else ""
+
+
+def _is_terminal_footer_line(line: str) -> bool:
+    value = str(line or "").strip()
+    if not value:
+        return False
+    return bool(re.match(r"^gpt-[\w.-]+\s+default\b", value, re.IGNORECASE)) or (
+        "/Desktop/" in value and bool(re.search(r"\bleft\b", value, re.IGNORECASE))
+    )
 
 
 def _is_terminal_prompt_line(line: str) -> bool:
@@ -46,6 +65,14 @@ def _is_terminal_prompt_line(line: str) -> bool:
         return True
     if re.match(r"^[\w.@:/~-]+\s*(?:\$|%|#)\s*$", value):
         return True
+    return False
+
+
+def _has_terminal_prompt_visible(text: str) -> bool:
+    for line in _recent_non_empty_lines(text):
+        if _is_terminal_footer_line(line):
+            continue
+        return _is_terminal_prompt_line(line)
     return False
 
 
@@ -64,24 +91,34 @@ def _tail_window(text: str, *, max_chars: int = DEFAULT_CODEX_TERMINAL_SIGNAL_WI
     return value[-max_chars:]
 
 
+def _has_visible_terminal_output(text: str) -> bool:
+    cleaned = _strip_ansi(str(text or ""))
+    for ch in cleaned:
+        code = ord(ch)
+        if code in (9, 10):
+            continue
+        if 32 <= code <= 126 or code > 159:
+            return True
+    return False
+
+
 def _derive_pty_terminal_override(*, runtime: str, terminal_text: str) -> Optional[Dict[str, Any]]:
     runtime_id = _clean_text(runtime).lower()
     cleaned = _strip_ansi(terminal_text)
     if runtime_id != "codex":
         return None
 
+    if _has_terminal_prompt_visible(cleaned):
+        return {
+            "effective_working_state": "idle",
+            "effective_working_reason": "pty_terminal_prompt_visible",
+        }
+
     tail_text = _tail_window(cleaned)
     if _tail_window_has_codex_working_banner(tail_text):
         return {
             "effective_working_state": "working",
             "effective_working_reason": "pty_terminal_codex_working_banner",
-        }
-
-    last_line = _last_non_empty_line(cleaned)
-    if _is_terminal_prompt_line(last_line):
-        return {
-            "effective_working_state": "idle",
-            "effective_working_reason": "pty_terminal_prompt_visible",
         }
 
     return None
@@ -129,25 +166,33 @@ def derive_effective_working_state(
             "effective_active_task_id": active_task_id or None,
         }
 
-    idle_value = _safe_float(idle_seconds)
-    if active_task_id:
-        if idle_value is not None and idle_value >= max(30.0, float(pty_stuck_idle_seconds or DEFAULT_PTY_STUCK_IDLE_SECONDS)):
+    idle = _safe_float(idle_seconds)
+    has_visible_output = _has_visible_terminal_output(pty_terminal_text)
+    if idle is not None:
+        if has_visible_output and idle < DEFAULT_PTY_WORKING_IDLE_SECONDS:
             return {
-                "effective_working_state": "stuck",
-                "effective_working_reason": "pty_idle_timeout_with_active_task",
+                "effective_working_state": "working",
+                "effective_working_reason": "pty_no_prompt_recent_output",
                 "effective_working_updated_at": updated_at or None,
-                "effective_active_task_id": active_task_id,
+                "effective_active_task_id": active_task_id or None,
+            }
+        if idle < float(pty_stuck_idle_seconds):
+            return {
+                "effective_working_state": "waiting",
+                "effective_working_reason": "pty_no_prompt_waiting",
+                "effective_working_updated_at": updated_at or None,
+                "effective_active_task_id": active_task_id or None,
             }
         return {
-            "effective_working_state": "working",
-            "effective_working_reason": "agent_active_task",
+            "effective_working_state": "stuck",
+            "effective_working_reason": "pty_no_prompt_stuck",
             "effective_working_updated_at": updated_at or None,
-            "effective_active_task_id": active_task_id,
+            "effective_active_task_id": active_task_id or None,
         }
 
     return {
-        "effective_working_state": "idle",
-        "effective_working_reason": "pty_running_without_active_task",
+        "effective_working_state": "waiting",
+        "effective_working_reason": "pty_running_state_unknown",
         "effective_working_updated_at": updated_at or None,
-        "effective_active_task_id": None,
+        "effective_active_task_id": active_task_id or None,
     }

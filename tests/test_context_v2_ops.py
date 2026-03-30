@@ -103,7 +103,7 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_context_get_includes_actor_runtime_projection(self) -> None:
+    def test_context_get_marks_running_pty_without_prompt_as_waiting(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -129,7 +129,8 @@ class TestContextV2Ops(unittest.TestCase):
             actors_runtime = ctx.result.get("actors_runtime") if isinstance(ctx.result, dict) else []
             self.assertEqual(len(actors_runtime), 1)
             self.assertEqual(actors_runtime[0]["id"], "peer1")
-            self.assertEqual(actors_runtime[0]["effective_working_state"], "working")
+            self.assertEqual(actors_runtime[0]["effective_working_state"], "waiting")
+            self.assertEqual(actors_runtime[0]["effective_working_reason"], "pty_no_prompt_waiting")
             self.assertEqual(actors_runtime[0]["effective_active_task_id"], "T123")
         finally:
             cleanup()
@@ -161,6 +162,68 @@ class TestContextV2Ops(unittest.TestCase):
             self.assertEqual(len(actors_runtime), 1)
             self.assertEqual(actors_runtime[0]["effective_working_state"], "working")
             self.assertEqual(actors_runtime[0]["effective_working_reason"], "pty_terminal_codex_working_banner")
+        finally:
+            cleanup()
+
+    def test_context_get_prefers_terminal_prompt_over_older_codex_working_banner(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            from cccc.kernel.actors import add_actor
+            from cccc.kernel.group import load_group
+
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="peer1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            with (
+                patch("cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.actor_running", return_value=True),
+                patch("cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.idle_seconds", return_value=1.0),
+                patch(
+                    "cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.tail_output",
+                    return_value=(
+                        "◦ Working (49s • esc to interrupt)\n"
+                        "stream disconnected before completion\n"
+                        "› Find and fix a bug in @filename\n"
+                        "gpt-5.4 default · 41% left · ~/Desktop/waterbang/ai/hr-agent\n"
+                    ).encode("utf-8"),
+                ),
+            ):
+                ctx, _ = self._context(gid)
+
+            self.assertTrue(ctx.ok, getattr(ctx, "error", None))
+            actors_runtime = ctx.result.get("actors_runtime") if isinstance(ctx.result, dict) else []
+            self.assertEqual(len(actors_runtime), 1)
+            self.assertEqual(actors_runtime[0]["effective_working_state"], "idle")
+            self.assertEqual(actors_runtime[0]["effective_working_reason"], "pty_terminal_prompt_visible")
+        finally:
+            cleanup()
+
+    def test_context_get_does_not_mark_fresh_running_pty_without_output_as_working(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            from cccc.kernel.actors import add_actor
+            from cccc.kernel.group import load_group
+
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="peer1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            with (
+                patch("cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.actor_running", return_value=True),
+                patch("cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.idle_seconds", return_value=0.6),
+                patch("cccc.daemon.context.context_ops.pty_runner.SUPERVISOR.tail_output", return_value=b""),
+            ):
+                ctx, _ = self._context(gid)
+
+            self.assertTrue(ctx.ok, getattr(ctx, "error", None))
+            actors_runtime = ctx.result.get("actors_runtime") if isinstance(ctx.result, dict) else []
+            self.assertEqual(len(actors_runtime), 1)
+            self.assertEqual(actors_runtime[0]["effective_working_state"], "waiting")
+            self.assertEqual(actors_runtime[0]["effective_working_reason"], "pty_no_prompt_waiting")
         finally:
             cleanup()
 
@@ -378,7 +441,8 @@ class TestContextV2Ops(unittest.TestCase):
                     rebuilt_counts,
                     counts_after_sync,
                 )
-                mock_schedule.assert_called_once_with(gid)
+                self.assertEqual(mock_schedule.call_count, 2)
+                mock_schedule.assert_any_call(gid)
         finally:
             cleanup()
 
@@ -408,6 +472,39 @@ class TestContextV2Ops(unittest.TestCase):
                 self.assertEqual(mock_load_agents.call_count, 0)
                 self.assertEqual(mock_load_context.call_count, 0)
                 mock_schedule.assert_called_once_with(gid)
+        finally:
+            cleanup()
+
+    def test_context_sync_schedules_summary_snapshot_rebuild_after_write(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            with patch("cccc.daemon.context.context_ops._schedule_summary_snapshot_rebuild", return_value=True) as mock_schedule:
+                resp, _ = self._sync(
+                    gid,
+                    [{"op": "coordination.brief.update", "objective": "Schedule rebuild"}],
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            mock_schedule.assert_called_once_with(gid)
+        finally:
+            cleanup()
+
+    def test_context_sync_dry_run_does_not_schedule_summary_snapshot_rebuild(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            with patch("cccc.daemon.context.context_ops._schedule_summary_snapshot_rebuild", return_value=True) as mock_schedule:
+                resp, _ = self._call(
+                    "context_sync",
+                    {
+                        "group_id": gid,
+                        "by": "user",
+                        "dry_run": True,
+                        "ops": [{"op": "coordination.brief.update", "objective": "Dry run only"}],
+                    },
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            mock_schedule.assert_not_called()
         finally:
             cleanup()
 

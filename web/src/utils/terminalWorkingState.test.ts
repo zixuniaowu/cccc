@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Actor } from "../types";
-import { getActorDisplayWorkingState } from "./terminalWorkingState";
+import { getActorDisplayWorkingState, getTerminalSignalFromChunk } from "./terminalWorkingState";
 
 function makeActor(overrides: Partial<Actor> = {}): Actor {
   return {
@@ -18,8 +18,8 @@ function makeActor(overrides: Partial<Actor> = {}): Actor {
 }
 
 describe("getActorDisplayWorkingState", () => {
-  it("treats recently active PTY actors as working even before a local terminal signal exists", () => {
-    expect(getActorDisplayWorkingState(makeActor(), null)).toBe("working");
+  it("keeps PTY actors idle without a visible working banner", () => {
+    expect(getActorDisplayWorkingState(makeActor(), null)).toBe("idle");
   });
 
   it("keeps idle when the visible prompt says the actor is waiting for input", () => {
@@ -31,12 +31,28 @@ describe("getActorDisplayWorkingState", () => {
     ).toBe("idle");
   });
 
-  it("does not apply the PTY heuristic to headless actors", () => {
+  it("does not apply PTY prompt overrides to headless actors", () => {
     expect(
       getActorDisplayWorkingState(
         makeActor({ runner: "headless", runner_effective: "headless" }),
         null,
       ),
     ).toBe("idle");
+  });
+});
+
+describe("getTerminalSignalFromChunk", () => {
+  it("can detect a visible codex working banner from a freshly fetched terminal tail", () => {
+    const signal = getTerminalSignalFromChunk("", "◦ Working (13s • esc to interrupt)\n", "codex");
+    expect(signal.signalKind).toBe("working_output");
+  });
+
+  it("prefers the visible prompt over an older codex working banner", () => {
+    const signal = getTerminalSignalFromChunk(
+      "",
+      "◦ Working (13s • esc to interrupt)\nstream disconnected before completion\n› Find and fix a bug in @filename\ngpt-5.4 default · 41% left · ~/Desktop/waterbang/ai/hr-agent\n",
+      "codex",
+    );
+    expect(signal.signalKind).toBe("idle_prompt");
   });
 });

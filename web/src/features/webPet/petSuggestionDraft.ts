@@ -1,5 +1,5 @@
 import { useComposerStore, useGroupStore, useUIStore } from "../../stores";
-import type { ChatMessageData, LedgerEvent, ReplyTarget } from "../../types";
+import type { ChatMessageData, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
 import type { PetReminder } from "./types";
 import { getPetReminderDraftText } from "./reminderText";
 import { buildTaskProposalMessage } from "./taskProposal";
@@ -38,8 +38,13 @@ function findReplyTarget(groupId: string, replyTo: string): ReplyTarget {
   };
 }
 
-function hasMeaningfulComposerDraft(): boolean {
-  const state = useComposerStore.getState();
+function hasMeaningfulComposerDraft(state: {
+  composerText: string;
+  composerFiles: File[];
+  toText: string;
+  replyTarget: ReplyTarget;
+  quotedPresentationRef: PresentationMessageRef | null;
+}): boolean {
   return Boolean(
     String(state.composerText || "").trim()
       || state.composerFiles.length > 0
@@ -92,9 +97,39 @@ export function stagePetReminderDraft(reminder: PetReminder): boolean {
   const groupStore = useGroupStore.getState();
   const uiStore = useUIStore.getState();
   const composerStore = useComposerStore.getState();
-  const shouldPreserveDraft = hasMeaningfulComposerDraft();
+  const selectedGroupId = String(groupStore.selectedGroupId || "").trim();
+  const isCrossGroup = selectedGroupId !== groupId;
+  const targetDraft = isCrossGroup ? composerStore.drafts[groupId] || null : composerStore;
+  const shouldPreserveDraft = targetDraft ? hasMeaningfulComposerDraft(targetDraft) : false;
 
-  if (String(groupStore.selectedGroupId || "").trim() !== groupId) {
+  if (isCrossGroup) {
+    composerStore.upsertDraft(groupId, (draft) => {
+      const currentDraft = draft || {
+        composerText: "",
+        composerFiles: [],
+        toText: "",
+        replyTarget: null,
+        quotedPresentationRef: null,
+        priority: "normal" as const,
+        replyRequired: false,
+        destGroupId: groupId,
+      };
+      return {
+        ...currentDraft,
+        composerText: mergeComposerText(currentDraft.composerText, text),
+        toText: shouldPreserveDraft ? currentDraft.toText : payload.toText,
+        replyTarget: shouldPreserveDraft
+          ? currentDraft.replyTarget
+          : (payload.replyTo ? findReplyTarget(groupId, payload.replyTo) : null),
+        quotedPresentationRef: shouldPreserveDraft ? currentDraft.quotedPresentationRef : null,
+        priority: shouldPreserveDraft ? currentDraft.priority : "normal",
+        replyRequired: shouldPreserveDraft ? currentDraft.replyRequired : false,
+        destGroupId: groupId,
+      };
+    });
+  }
+
+  if (isCrossGroup) {
     groupStore.setSelectedGroupId(groupId);
   }
 
@@ -102,7 +137,7 @@ export function stagePetReminderDraft(reminder: PetReminder): boolean {
   uiStore.setChatMobileSurface(groupId, "messages");
   composerStore.setDestGroupId(groupId);
 
-  if (!shouldPreserveDraft) {
+  if (!isCrossGroup && !shouldPreserveDraft) {
     composerStore.setToText(payload.toText);
     composerStore.setReplyTarget(
       payload.replyTo ? findReplyTarget(groupId, payload.replyTo) : null,
@@ -112,7 +147,9 @@ export function stagePetReminderDraft(reminder: PetReminder): boolean {
     composerStore.setReplyRequired(false);
   }
 
-  const currentText = useComposerStore.getState().composerText;
-  composerStore.setComposerText(mergeComposerText(currentText, text));
+  if (!isCrossGroup) {
+    const currentText = useComposerStore.getState().composerText;
+    composerStore.setComposerText(mergeComposerText(currentText, text));
+  }
   return true;
 }

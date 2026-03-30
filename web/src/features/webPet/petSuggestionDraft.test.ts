@@ -181,4 +181,68 @@ describe("stagePetReminderDraft", () => {
       "Pet task proposal: please use cccc_task to move this task (task_id=T315, status=active).",
     );
   });
+
+  it("preserves cross-group pet drafts by prewriting the target group draft before switching", async () => {
+    const { useComposerStore } = await import("../../stores/useComposerStore");
+    const { useGroupStore } = await import("../../stores/useGroupStore");
+    const { useUIStore } = await import("../../stores/useUIStore");
+    const { stagePetReminderDraft } = await import("./petSuggestionDraft");
+
+    useGroupStore.setState({
+      selectedGroupId: "g-1",
+      events: [],
+      chatByGroup: {
+        "g-2": {
+          events: [
+            {
+              id: "evt-2",
+              kind: "chat.message",
+              by: "user",
+              data: { text: "target message" },
+            },
+          ],
+          chatWindow: null,
+          hasMoreHistory: false,
+          hasLoadedTail: true,
+          isLoadingHistory: false,
+          isChatWindowLoading: false,
+        },
+      },
+    });
+    useUIStore.setState({ activeTab: "developer", chatSessions: {} });
+    useComposerStore.setState({
+      composerText: "old group draft",
+      toText: "",
+      replyTarget: null,
+      destGroupId: "g-1",
+    });
+
+    const staged = stagePetReminderDraft({
+      id: "d3",
+      kind: "suggestion",
+      priority: 80,
+      summary: "reply across groups",
+      agent: "pet-peer",
+      source: { eventId: "evt-2", suggestionKind: "reply_required" },
+      fingerprint: "fp-3",
+      action: {
+        type: "draft_message",
+        groupId: "g-2",
+        text: "Cross-group PET suggestion",
+        to: ["@foreman"],
+        replyTo: "evt-2",
+      },
+    });
+
+    expect(staged).toBe(true);
+    expect(useGroupStore.getState().selectedGroupId).toBe("g-2");
+    useComposerStore.getState().switchGroup("g-1", "g-2");
+    expect(useComposerStore.getState().composerText).toBe("Cross-group PET suggestion");
+    expect(useComposerStore.getState().toText).toBe("@foreman");
+    expect(useComposerStore.getState().replyTarget).toEqual({
+      eventId: "evt-2",
+      by: "user",
+      text: "target message",
+    });
+  });
 });

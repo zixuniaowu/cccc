@@ -457,6 +457,27 @@ export function AgentTab({
           }
         }, TERMINAL_SHOW_DELAY_MS);
 
+        // Rebuild terminal signal from the current visible tail so the working badge
+        // does not depend on catching a later incremental chunk.
+        void fetchTerminalTail(groupId, actor.id, 4000, true, true)
+          .then((resp) => {
+            if (disposed || !resp.ok) return;
+            const tailText = String(resp.result?.text || "");
+            const signal = getTerminalSignalFromChunk("", tailText, actor.runtime);
+            terminalSignalBufferRef.current = signal.nextBuffer;
+            if (signal.signalKind) {
+              setTerminalSignal(groupId, actor.id, {
+                kind: signal.signalKind,
+                updatedAt: Date.now(),
+              });
+              return;
+            }
+            clearTerminalSignal(groupId, actor.id);
+          })
+          .catch(() => {
+            if (disposed) return;
+          });
+
         // Send initial resize (ops mode only). Exhibit should be view-only and not affect PTY size.
         // Guard against sending tiny cols (layout not yet complete) which would break line wrapping.
         if (canControlRef.current) {

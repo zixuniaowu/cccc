@@ -2,9 +2,7 @@ import type { Actor } from "../types";
 import type { TerminalSignal } from "../stores/useTerminalSignalsStore";
 
 const MAX_TERMINAL_BUFFER_CHARS = 4000;
-const WORKING_OUTPUT_TTL_MS = 5000;
 const CODEX_TERMINAL_SIGNAL_WINDOW_CHARS = 1600;
-const PTY_RECENT_ACTIVITY_WORKING_SECONDS = 4;
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
 const ANSI_ESCAPE_RE = new RegExp(
@@ -45,12 +43,34 @@ function getLastNonEmptyLine(text: string): string {
   return "";
 }
 
+function getRecentNonEmptyLines(text: string, maxLines: number = 4): string[] {
+  const result: string[] = [];
+  const lines = String(text || "").split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]?.trim() || "";
+    if (!line) continue;
+    result.push(line);
+    if (result.length >= maxLines) break;
+  }
+  return result;
+}
+
+function isTerminalFooterLine(line: string): boolean {
+  const value = String(line || "").trim();
+  if (!value) return false;
+  return /^gpt-[\w.-]+\s+default\b/i.test(value)
+    || (value.includes("/Desktop/") && /\bleft\b/i.test(value));
+}
+
 export function isTerminalPromptVisible(buffer: string): boolean {
-  const line = getLastNonEmptyLine(buffer);
-  if (!line) return false;
-  if (/^(?:>|›)\s?.*/.test(line)) return true;
-  if (/^(?:\$|%|#|❯|➜|›)\s+.*$/.test(line)) return true;
-  if (/^[\w.@:/~-]+\s*(?:\$|%|#)\s*$/.test(line)) return true;
+  const lines = getRecentNonEmptyLines(buffer);
+  for (const line of lines) {
+    if (isTerminalFooterLine(line)) continue;
+    if (/^(?:>|›)\s?.*/.test(line)) return true;
+    if (/^(?:\$|%|#|❯|➜|›)\s+.*$/.test(line)) return true;
+    if (/^[\w.@:/~-]+\s*(?:\$|%|#)\s*$/.test(line)) return true;
+    return false;
+  }
   return false;
 }
 
@@ -85,12 +105,12 @@ export function getTerminalSignalFromChunk(
   const nextBuffer = appendTerminalSignalBuffer(previousBuffer, chunk);
   const runtimeId = String(runtime || "").trim().toLowerCase();
   if (runtimeId === "codex") {
+    if (isTerminalPromptVisible(nextBuffer)) {
+      return { nextBuffer, signalKind: "idle_prompt" };
+    }
     const tailWindow = getTailWindow(nextBuffer);
     if (tailWindowHasCodexWorkingBanner(tailWindow)) {
       return { nextBuffer, signalKind: "working_output" };
-    }
-    if (isTerminalPromptVisible(nextBuffer)) {
-      return { nextBuffer, signalKind: "idle_prompt" };
     }
     return { nextBuffer, signalKind: null };
   }
@@ -106,15 +126,10 @@ export function getTerminalSignalFromChunk(
 export function getActorDisplayWorkingState(
   actor: Actor,
   signal: TerminalSignal | null | undefined,
-  now: number = Date.now(),
 ): string {
   const backendState = String(actor.effective_working_state || "").trim().toLowerCase() || "idle";
   const effectiveRunner = String(actor.runner_effective || actor.runner || "pty").trim().toLowerCase() || "pty";
   const isRunning = actor.running ?? actor.enabled ?? false;
-  const idleSeconds =
-    typeof actor.idle_seconds === "number" && Number.isFinite(actor.idle_seconds)
-      ? Math.max(0, actor.idle_seconds)
-      : null;
 
   if (!isRunning || effectiveRunner === "headless") {
     return backendState;
@@ -122,18 +137,6 @@ export function getActorDisplayWorkingState(
 
   if (signal?.kind === "idle_prompt") {
     return "idle";
-  }
-
-  if (signal?.kind === "working_output" && now - signal.updatedAt <= WORKING_OUTPUT_TTL_MS) {
-    if (backendState === "idle") return "working";
-  }
-
-  if (
-    backendState === "idle" &&
-    idleSeconds !== null &&
-    idleSeconds <= PTY_RECENT_ACTIVITY_WORKING_SECONDS
-  ) {
-    return "working";
   }
 
   return backendState;

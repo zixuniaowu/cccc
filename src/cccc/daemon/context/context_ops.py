@@ -1689,6 +1689,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     tasks_changed=tasks_changed,
                     agents_changed=agents_changed,
                 )
+                _schedule_summary_snapshot_rebuild(group_id)
 
         version = storage.compute_version() if not dry_run else current_version
 
