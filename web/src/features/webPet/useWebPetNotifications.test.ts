@@ -32,8 +32,8 @@ describe("shouldProjectReminderForGroupState", () => {
     expect(shouldProjectReminderForGroupState(makeReminder(), "active")).toBe(true);
   });
 
-  it("hides draft_message when group is idle", () => {
-    expect(shouldProjectReminderForGroupState(makeReminder(), "idle")).toBe(false);
+  it("keeps draft_message when group is idle", () => {
+    expect(shouldProjectReminderForGroupState(makeReminder(), "idle")).toBe(true);
   });
 
   it("keeps restart_actor when group is idle", () => {
@@ -48,20 +48,15 @@ describe("shouldProjectReminderForGroupState", () => {
     ).toBe(true);
   });
 
-  it("keeps automation_proposal when group is paused", () => {
+  it("hides reminders when group is paused", () => {
     expect(
       shouldProjectReminderForGroupState(
         makeReminder({
-          action: {
-            type: "automation_proposal",
-            groupId: "g-1",
-            title: "Apply follow-up",
-            actions: [{ type: "create_rule" }],
-          },
+          action: { type: "restart_actor", groupId: "g-1", actorId: "peer-1" },
         }),
         "paused",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

@@ -3,13 +3,11 @@ import { useGroupStore, useUIStore } from "../../stores";
 import { getWebPetPosition, useWebPetStore } from "../../stores/useWebPetStore";
 import {
   fetchActors,
-  fetchAutomation,
   fetchContext,
   fetchGroup,
   fetchLedgerTail,
   fetchPetPeerContext,
   fetchSettings,
-  manageAutomation,
   recordPetDecisionOutcome,
   requestPetPeerReview,
   restartActor,
@@ -64,7 +62,7 @@ function handleReminderAction(
       });
       onExecuted?.();
       useUIStore.getState().showNotice({
-        message: tPet("notice.suggestionDrafted", "Draft added to composer"),
+        message: tPet("notice.suggestionDrafted", "Filled into chat composer"),
       });
       break;
     }
@@ -92,39 +90,6 @@ function handleReminderAction(
           error instanceof Error
             ? error.message
             : tPet("notice.actorRestartFailed", "Failed to restart actor");
-        useUIStore.getState().showError(message);
-      });
-      break;
-    }
-    case "automation_proposal": {
-      void fetchAutomation(action.groupId).then((automationResp) => {
-        if (!automationResp.ok) {
-          useUIStore.getState().showError(`${automationResp.error.code}: ${automationResp.error.message}`);
-          return;
-        }
-        const expectedVersion = Number(automationResp.result?.version || 0) || undefined;
-        return manageAutomation(action.groupId, action.actions, expectedVersion).then((resp) => {
-          if (!resp.ok) {
-            useUIStore.getState().showError(`${resp.error.code}: ${resp.error.message}`);
-            return;
-          }
-          void recordPetDecisionOutcome(action.groupId, {
-            fingerprint: reminder.fingerprint,
-            outcome: "executed",
-            decisionId: reminder.id,
-            actionType: action.type,
-            sourceEventId: reminder.source.eventId,
-          });
-          onExecuted?.();
-          useUIStore.getState().showNotice({
-            message: tPet("notice.automationProposalApplied", "Automation proposal applied"),
-          });
-        });
-      }).catch((error) => {
-        const message =
-          error instanceof Error
-            ? error.message
-            : tPet("notice.automationProposalApplyFailed", "Failed to apply automation proposal");
         useUIStore.getState().showError(message);
       });
       break;

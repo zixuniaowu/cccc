@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { getPetReminderDraftText, getPetReminderPrimaryText } from "./reminderText";
+import {
+  getPetReminderActionPreviewText,
+  getPetReminderDraftText,
+  getPetReminderPrimaryText,
+  getPetReminderRouteInfo,
+} from "./reminderText";
 import type { PetReminder } from "./types";
 
 function makeSendSuggestionReminder(overrides: Partial<PetReminder> = {}): PetReminder {
@@ -55,20 +60,6 @@ describe("getPetReminderPrimaryText", () => {
         }),
       ),
     ).toBe("Move T1 to active");
-
-    expect(
-      getPetReminderPrimaryText(
-        makeSendSuggestionReminder({
-          action: {
-            type: "automation_proposal",
-            groupId: "g-1",
-            summary: "Apply the temporary rule",
-            actions: [{ type: "create_rule" }],
-          },
-          summary: "",
-        }),
-      ),
-    ).toBe("Apply the temporary rule");
   });
 });
 
@@ -99,5 +90,52 @@ describe("getPetReminderDraftText", () => {
         }),
       ),
     ).toBe("");
+  });
+});
+
+describe("getPetReminderActionPreviewText", () => {
+  it("returns the prepared outbound text for draft and task proposal actions", () => {
+    expect(getPetReminderActionPreviewText(makeSendSuggestionReminder())).toBe("action text");
+
+    expect(
+      getPetReminderActionPreviewText(
+        makeSendSuggestionReminder({
+          summary: "summary text",
+          action: {
+            type: "task_proposal",
+            groupId: "g-1",
+            operation: "move",
+            taskId: "T315",
+            status: "active",
+          },
+        }),
+      ),
+    ).toBe("Pet task proposal: please use cccc_task to move this task (task_id=T315, status=active).");
+  });
+});
+
+describe("getPetReminderRouteInfo", () => {
+  it("derives routing metadata for draft_message and task_proposal reminders", () => {
+    expect(getPetReminderRouteInfo(makeSendSuggestionReminder())).toEqual({
+      toText: "@foreman",
+      replyInThread: true,
+    });
+
+    expect(
+      getPetReminderRouteInfo(
+        makeSendSuggestionReminder({
+          action: {
+            type: "task_proposal",
+            groupId: "g-1",
+            operation: "move",
+            taskId: "T315",
+            status: "active",
+          },
+        }),
+      ),
+    ).toEqual({
+      toText: "@foreman",
+      replyInThread: false,
+    });
   });
 });

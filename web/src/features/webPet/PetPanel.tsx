@@ -1,7 +1,11 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getReminderActionButtons } from "./reminderActions";
-import { getPetReminderPrimaryText } from "./reminderText";
+import {
+  getPetReminderActionPreviewText,
+  getPetReminderPrimaryText,
+  getPetReminderRouteInfo,
+} from "./reminderText";
 import type { PetReminder } from "./types";
 
 interface PetPanelProps {
@@ -42,6 +46,9 @@ export function PetPanel({
   );
 
   const bodyText = buildReminderBody(reminder);
+  const previewText = reminder ? getPetReminderActionPreviewText(reminder) : "";
+  const routeInfo = reminder ? getPetReminderRouteInfo(reminder) : { toText: "", replyInThread: false };
+  const showPreview = !!previewText && previewText !== bodyText;
   const otherReminders = reminder
     ? reminders.filter((item) => item.fingerprint !== reminder.fingerprint)
     : reminders;
@@ -88,7 +95,7 @@ export function PetPanel({
           >
             {reviewInFlight
               ? t("reviewing", { defaultValue: "Reviewing…" })
-              : t("reviewNow", { defaultValue: "Review now" })}
+              : t("reviewNow", { defaultValue: "Refresh now" })}
           </button>
         </div>
 
@@ -103,6 +110,33 @@ export function PetPanel({
               <div className="mt-2 text-sm leading-6 text-[var(--color-text-primary)]">
                 {bodyText}
               </div>
+              {showPreview ? (
+                <div className="mt-3 rounded-2xl bg-white/6 px-3 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
+                    {t("previewLabel", { defaultValue: "Prepared message" })}
+                  </div>
+                  {routeInfo.toText || routeInfo.replyInThread ? (
+                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[var(--color-text-secondary)]">
+                      {routeInfo.toText ? (
+                        <span className="rounded-full bg-white/8 px-2 py-1">
+                          {t("routeTo", {
+                            defaultValue: "To: {{value}}",
+                            value: routeInfo.toText,
+                          })}
+                        </span>
+                      ) : null}
+                      {routeInfo.replyInThread ? (
+                        <span className="rounded-full bg-white/8 px-2 py-1">
+                          {t("routeReply", { defaultValue: "Reply in thread" })}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-[var(--color-text-primary)]">
+                    {previewText}
+                  </div>
+                </div>
+              ) : null}
               <div className="mt-3 flex flex-wrap gap-2">
                 {actionButtons.map((button) => (
                   <button

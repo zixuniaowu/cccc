@@ -1,4 +1,5 @@
 import type { PetReminder } from "./types";
+import { buildTaskProposalMessage } from "./taskProposal";
 
 export function getPetReminderDraftText(reminder: PetReminder | null | undefined): string {
   if (!reminder || reminder.action.type !== "draft_message") return "";
@@ -15,8 +16,37 @@ export function getPetReminderPrimaryText(reminder: PetReminder | null | undefin
   if (reminder.action.type === "task_proposal") {
     return String(reminder.action.text || reminder.action.title || "").trim();
   }
-  if (reminder.action.type === "automation_proposal") {
-    return String(reminder.action.summary || reminder.action.title || "").trim();
+  return "";
+}
+
+export function getPetReminderActionPreviewText(reminder: PetReminder | null | undefined): string {
+  if (!reminder) return "";
+  if (reminder.action.type === "draft_message") {
+    return getPetReminderDraftText(reminder);
+  }
+  if (reminder.action.type === "task_proposal") {
+    return buildTaskProposalMessage(reminder.action);
   }
   return "";
+}
+
+export function getPetReminderRouteInfo(
+  reminder: PetReminder | null | undefined,
+): { toText: string; replyInThread: boolean } {
+  if (!reminder) {
+    return { toText: "", replyInThread: false };
+  }
+  if (reminder.action.type === "draft_message") {
+    return {
+      toText: Array.isArray(reminder.action.to) ? reminder.action.to.join(", ") : "",
+      replyInThread: !!String(reminder.action.replyTo || "").trim(),
+    };
+  }
+  if (reminder.action.type === "task_proposal") {
+    return {
+      toText: "@foreman",
+      replyInThread: false,
+    };
+  }
+  return { toText: "", replyInThread: false };
 }

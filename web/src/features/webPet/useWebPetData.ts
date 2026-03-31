@@ -5,7 +5,7 @@ import type { GroupContext, GroupDoc, LedgerEvent } from "../../types";
 import { aggregateWebPetState } from "./aggregateWebPetState";
 import { useWebPetNotifications } from "./useWebPetNotifications";
 import type { PetPeerContext } from "./petPeerContext";
-import { getPetReminderDraftText } from "./reminderText";
+import { getPetReminderActionPreviewText, getPetReminderDraftText } from "./reminderText";
 import type { PanelData, PetReminder } from "./types";
 
 export function shouldSurfaceReminder(
@@ -16,12 +16,7 @@ export function shouldSurfaceReminder(
   }
   if (reminder.action.type === "task_proposal") {
     return !!reminder.action.groupId &&
-      (!!reminder.action.text?.trim() || !!reminder.summary.trim());
-  }
-  if (reminder.action.type === "automation_proposal") {
-    return !!reminder.action.groupId &&
-      reminder.action.actions.length > 0 &&
-      (!!reminder.action.summary?.trim() || !!reminder.action.title?.trim() || !!reminder.summary.trim());
+      !!getPetReminderActionPreviewText(reminder);
   }
   return reminder.action.type === "draft_message" &&
     !!getPetReminderDraftText(reminder);

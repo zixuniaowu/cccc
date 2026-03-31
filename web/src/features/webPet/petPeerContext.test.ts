@@ -124,7 +124,7 @@ describe("petPeerContext", () => {
     }
   });
 
-  it("maps automation proposal decisions", () => {
+  it("ignores unsupported automation proposal decisions in the V1 web surface", () => {
     const context = buildPetPeerContext({
       decisions: [
         {
@@ -158,12 +158,7 @@ describe("petPeerContext", () => {
       source: "default",
     });
 
-    expect(context.decisions[0]?.action.type).toBe("automation_proposal");
-    if (context.decisions[0]?.action.type === "automation_proposal") {
-      expect(context.decisions[0].action.groupId).toBe("g-1");
-      expect(context.decisions[0].action.title).toBe("Temporary nudge");
-      expect(context.decisions[0].action.actions).toHaveLength(1);
-    }
+    expect(context.decisions).toEqual([]);
   });
 
   it("preserves explicit loading and error status", () => {

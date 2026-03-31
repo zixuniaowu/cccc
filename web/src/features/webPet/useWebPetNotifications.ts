@@ -31,12 +31,14 @@ export interface UseWebPetNotificationsResult {
 }
 
 export function shouldProjectReminderForGroupState(
-  reminder: PetReminder,
+  _reminder: PetReminder,
   groupState: string,
 ): boolean {
   const normalizedState = String(groupState || "").trim().toLowerCase();
-  if (normalizedState === "active") return true;
-  return reminder.action.type === "restart_actor" || reminder.action.type === "automation_proposal";
+  if (!normalizedState || normalizedState === "active" || normalizedState === "idle") {
+    return true;
+  }
+  return false;
 }
 
 function normalizeCompareText(value: string): string {

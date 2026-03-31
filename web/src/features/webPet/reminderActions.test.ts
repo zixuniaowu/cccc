@@ -23,8 +23,8 @@ describe("getReminderActionButtons", () => {
 
     expect(getReminderActionButtons(reminder)).toEqual([
       {
-        labelKey: "draft",
-        fallback: "Draft in chat",
+        labelKey: "fillChat",
+        fallback: "Fill into chat",
         action: reminder.action,
       },
     ]);
@@ -50,8 +50,8 @@ describe("getReminderActionButtons", () => {
 
     expect(getReminderActionButtons(reminder)).toEqual([
       {
-        labelKey: "draft",
-        fallback: "Draft in chat",
+        labelKey: "fillChat",
+        fallback: "Fill into chat",
         action: reminder.action,
       },
     ]);
@@ -127,8 +127,8 @@ describe("getReminderActionButtons", () => {
 
     expect(getReminderActionButtons(reminder)).toEqual([
       {
-        labelKey: "draft",
-        fallback: "Draft in chat",
+        labelKey: "fillChat",
+        fallback: "Fill into chat",
         action: reminder.action,
       },
     ]);

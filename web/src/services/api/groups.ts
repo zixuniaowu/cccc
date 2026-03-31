@@ -483,7 +483,7 @@ export type PetPeerContextResponse = {
       suggestion_kind?: "mention" | "reply_required" | string | null;
     };
     action?: {
-      type?: "draft_message" | "restart_actor" | "task_proposal" | "automation_proposal" | string;
+      type?: "draft_message" | "restart_actor" | "task_proposal" | string;
       group_id?: string | null;
       actor_id?: string | null;
       text?: string | null;
@@ -494,8 +494,6 @@ export type PetPeerContextResponse = {
       title?: string | null;
       status?: string | null;
       assignee?: string | null;
-      summary?: string | null;
-      actions?: Array<Record<string, unknown>>;
     };
     updated_at?: string | null;
   }>;

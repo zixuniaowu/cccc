@@ -86,24 +86,17 @@ describe("shouldSurfaceReminder", () => {
     ).toBe(true);
   });
 
-  it("keeps automation proposal reminders when they have executable actions", () => {
+  it("keeps task proposal reminders when the action can synthesize the prepared message", () => {
     expect(
       shouldSurfaceReminder(
         makeReminder({
-          summary: "建议创建一条一次性提醒规则。",
+          summary: "",
           action: {
-            type: "automation_proposal",
+            type: "task_proposal",
             groupId: "g-1",
-            title: "One-shot follow-up",
-            summary: "稍后检查 waiting_user 是否已推进。",
-            actions: [
-              {
-                type: "create_rule",
-                rule: {
-                  id: "pet-user-dependency-followup-once",
-                },
-              },
-            ],
+            operation: "move",
+            taskId: "T315",
+            status: "active",
           },
         }),
       ),

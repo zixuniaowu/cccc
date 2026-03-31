@@ -1065,8 +1065,12 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     tasks_changed = False
     agents_changed = False
 
-    def _mark_change(index: int, op_name: str, detail: str) -> None:
-        changes.append({"index": index, "op": op_name, "detail": detail})
+    def _mark_change(index: int, op_name: str, detail: str, *, task_id: str = "") -> None:
+        entry: Dict[str, Any] = {"index": index, "op": op_name, "detail": detail}
+        normalized_task_id = str(task_id or "").strip()
+        if normalized_task_id:
+            entry["task_id"] = normalized_task_id
+        changes.append(entry)
 
     try:
         for idx, raw in enumerate(ops):
@@ -1195,7 +1199,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if review_reasons:
                     pet_review_reasons.update(review_reasons)
                     pet_review_immediate = pet_review_immediate or review_immediate
-                _mark_change(idx, op_name, f"Created task {task.id}: {task.title}")
+                _mark_change(idx, op_name, f"Created task {task.id}: {task.title}", task_id=task.id)
                 continue
 
             if op_name == "task.update":
@@ -1285,7 +1289,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     if review_reasons:
                         pet_review_reasons.update(review_reasons)
                         pet_review_immediate = pet_review_immediate or review_immediate
-                    _mark_change(idx, op_name, f"Updated task {task.id}")
+                    _mark_change(idx, op_name, f"Updated task {task.id}", task_id=task.id)
                 continue
 
             if op_name == "task.move":
@@ -1328,7 +1332,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if review_reasons:
                     pet_review_reasons.update(review_reasons)
                     pet_review_immediate = pet_review_immediate or review_immediate
-                _mark_change(idx, op_name, f"Moved task {task.id} to {new_status.value}")
+                _mark_change(idx, op_name, f"Moved task {task.id} to {new_status.value}", task_id=task.id)
 
                 assignee_id = str(task.assignee or "").strip()
                 if assignee_id:
@@ -1437,7 +1441,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if review_reasons:
                     pet_review_reasons.update(review_reasons)
                     pet_review_immediate = pet_review_immediate or review_immediate
-                _mark_change(idx, op_name, f"Restored task {task.id}")
+                _mark_change(idx, op_name, f"Restored task {task.id}", task_id=task.id)
                 continue
 
             if op_name == "task.delete":
@@ -1487,9 +1491,9 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if delete_pet_reasons:
                     pet_review_reasons.update(delete_pet_reasons)
                 if len(delete_targets) == 1:
-                    _mark_change(idx, op_name, f"Deleted task {task_id}")
+                    _mark_change(idx, op_name, f"Deleted task {task_id}", task_id=task_id)
                 else:
-                    _mark_change(idx, op_name, f"Deleted task subtree {task_id} ({len(delete_targets)} tasks)")
+                    _mark_change(idx, op_name, f"Deleted task subtree {task_id} ({len(delete_targets)} tasks)", task_id=task_id)
                 continue
 
             if op_name == "agent_state.update":

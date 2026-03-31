@@ -152,16 +152,6 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
             assignee: String(raw?.action?.assignee || "").trim() || undefined,
             text: String(raw?.action?.text || "").trim() || undefined,
           }
-      : actionType === "automation_proposal"
-        ? {
-            type: "automation_proposal" as const,
-            groupId: String(raw?.action?.group_id || "").trim(),
-            title: String(raw?.action?.title || "").trim() || undefined,
-            summary: String(raw?.action?.summary || "").trim() || undefined,
-            actions: Array.isArray(raw?.action?.actions)
-              ? raw.action.actions.filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
-              : [],
-          }
       : actionType === "draft_message"
         ? {
           type: "draft_message" as const,
@@ -179,7 +169,6 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
   if (action.type === "restart_actor" && (!action.groupId || !action.actorId)) return null;
   if (action.type === "draft_message" && !action.text) return null;
   if (action.type === "task_proposal" && !action.groupId) return null;
-  if (action.type === "automation_proposal" && (!action.groupId || action.actions.length === 0)) return null;
 
   return {
     id,

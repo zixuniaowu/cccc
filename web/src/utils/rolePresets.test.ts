@@ -75,5 +75,7 @@ describe("rolePresets", () => {
     expect(seed).toContain("You are the Web Pet for this group.");
     expect(seed).toContain("Every pet review must end with exactly one decision write");
     expect(seed).toContain("low-noise");
+    expect(seed).toContain("one current highest-value recommendation");
+    expect(seed).not.toContain("full current reminder list");
   });
 });

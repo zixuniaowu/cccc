@@ -8,6 +8,21 @@ import json
 from cccc.daemon.pet import review_scheduler
 
 
+class _FakeGroup:
+    def __init__(self, group_id: str, root: Path) -> None:
+        self.group_id = group_id
+        self.path = root
+        self.doc = {"title": "demo", "state": "active", "actors": []}
+
+    @property
+    def ledger_path(self) -> Path:
+        self.path.mkdir(parents=True, exist_ok=True)
+        path = self.path / "ledger.jsonl"
+        if not path.exists():
+            path.write_text("", encoding="utf-8")
+        return path
+
+
 class TestPetReviewScheduler(unittest.TestCase):
     def tearDown(self) -> None:
         review_scheduler.cancel_pet_review("g-test")
@@ -84,6 +99,200 @@ class TestPetReviewScheduler(unittest.TestCase):
 
         self.assertTrue(accepted)
         emit_notify.assert_called_once()
+
+    def test_review_packet_prefers_reason_bound_focus_task(self) -> None:
+        from cccc.kernel.context import Context, ContextStorage, Coordination, CoordinationBrief, Task, TaskStatus, WaitingOn
+        from cccc.kernel.ledger import append_event
+
+        with tempfile.TemporaryDirectory() as tmp:
+            group = _FakeGroup("g-demo", Path(tmp) / "groups" / "g-demo")
+            storage = ContextStorage(group)
+            storage.save_context(
+                Context(
+                    coordination=Coordination(
+                        brief=CoordinationBrief(
+                            current_focus="Keep the waiting_user task open until the user confirms next direction.",
+                        )
+                    )
+                )
+            )
+            storage.save_task(
+                Task(
+                    id="T031",
+                    title="Confirm whether to continue or close after user feedback arrives",
+                    status=TaskStatus.ACTIVE,
+                    assignee="foreman",
+                    waiting_on=WaitingOn.USER,
+                    task_type="standard",
+                )
+            )
+            source_event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={
+                    "text": "Please keep T031 open for now. I will review the latest evidence first.",
+                    "reply_required": True,
+                },
+            )
+
+            packet = review_scheduler._build_review_packet(group, {"task_waiting_user", "chat_reply"}, str(source_event["id"]))
+
+        self.assertEqual(str(packet.get("primary_reason") or ""), "task_waiting_user")
+        self.assertEqual(packet.get("reasons"), ["task_waiting_user", "chat_reply"])
+        self.assertEqual(str(packet.get("group_state") or ""), "active")
+        self.assertEqual(
+            packet.get("attention"),
+            {
+                "waiting_user_count": 1,
+                "blocked_count": 0,
+                "handoff_count": 0,
+                "planned_count": 0,
+            },
+        )
+        self.assertEqual(
+            packet.get("focus_task"),
+            {
+                "id": "T031",
+                "title": "Confirm whether to continue or close after user feedback arrives",
+                "status": "active",
+                "assignee": "foreman",
+                "waiting_on": "user",
+                "task_type": "standard",
+            },
+        )
+        self.assertEqual(str((packet.get("source_event") or {}).get("id") or ""), str(source_event["id"]))
+        self.assertEqual(str((packet.get("source_event") or {}).get("kind") or ""), "chat.message")
+        self.assertTrue(bool((packet.get("source_event") or {}).get("reply_required")))
+        self.assertIn("keep T031 open", str((packet.get("source_event") or {}).get("text") or ""))
+
+    def test_review_packet_prefers_structured_source_task_id_over_generic_reason_pick(self) -> None:
+        from cccc.kernel.context import Context, ContextStorage, Coordination, CoordinationBrief, Task, TaskStatus, WaitingOn
+        from cccc.kernel.ledger import append_event
+
+        with tempfile.TemporaryDirectory() as tmp:
+            group = _FakeGroup("g-demo", Path(tmp) / "groups" / "g-demo")
+            storage = ContextStorage(group)
+            storage.save_context(
+                Context(
+                    coordination=Coordination(
+                        brief=CoordinationBrief(
+                            current_focus="Handle the current user dependency, but keep the latest touched task in view.",
+                        )
+                    )
+                )
+            )
+            storage.save_task(
+                Task(
+                    id="T030",
+                    title="Old waiting-user task that would win by generic reason ranking",
+                    status=TaskStatus.ACTIVE,
+                    assignee="foreman",
+                    waiting_on=WaitingOn.USER,
+                    task_type="standard",
+                )
+            )
+            storage.save_task(
+                Task(
+                    id="T031",
+                    title="Newly touched task from context sync",
+                    status=TaskStatus.PLANNED,
+                    assignee="foreman",
+                    task_type="optimization",
+                )
+            )
+            source_event = append_event(
+                group.ledger_path,
+                kind="context.sync",
+                group_id=group.group_id,
+                scope_key="",
+                by="foreman",
+                data={
+                    "changes": [
+                        {
+                            "op": "task.update",
+                            "detail": "Updated task T031",
+                            "task_id": "T031",
+                        }
+                    ]
+                },
+            )
+
+            packet = review_scheduler._build_review_packet(group, {"task_waiting_user", "chat_message"}, str(source_event["id"]))
+
+        self.assertEqual(str((packet.get("source_event") or {}).get("kind") or ""), "context.sync")
+        self.assertEqual(str((packet.get("source_event") or {}).get("task_id") or ""), "T031")
+        self.assertEqual(
+            packet.get("focus_task"),
+            {
+                "id": "T031",
+                "title": "Newly touched task from context sync",
+                "status": "planned",
+                "assignee": "foreman",
+                "task_type": "optimization",
+            },
+        )
+
+    def test_automatic_review_allows_idle_group(self) -> None:
+        emitted: list[tuple[str, set[str], str]] = []
+
+        def _capture(group_id: str, reasons: set[str], source_event_id: str) -> None:
+            emitted.append((group_id, set(reasons), source_event_id))
+
+        fake_group = object()
+        with patch.object(review_scheduler, "load_group", return_value=fake_group), patch.object(
+            review_scheduler,
+            "is_desktop_pet_enabled",
+            return_value=True,
+        ), patch.object(review_scheduler, "get_group_state", return_value="idle"), patch.object(
+            review_scheduler,
+            "get_pet_actor",
+            return_value={"id": "pet-peer", "enabled": True},
+        ), patch.object(
+            review_scheduler,
+            "_emit_pet_review",
+            side_effect=_capture,
+        ), patch.object(review_scheduler, "PET_REVIEW_DEBOUNCE_SECONDS", 0.05), patch.object(
+            review_scheduler,
+            "PET_REVIEW_MIN_INTERVAL_SECONDS",
+            0.01,
+        ), patch.object(review_scheduler, "PET_REVIEW_MAX_DELAY_SECONDS", 0.2):
+            review_scheduler.request_pet_review("g-test", reason="chat_message", source_event_id="evt-idle")
+            time.sleep(0.12)
+
+        self.assertEqual(emitted, [("g-test", {"chat_message"}, "evt-idle")])
+
+    def test_manual_review_notify_includes_review_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_group = _FakeGroup("g-test", Path(tmp) / "groups" / "g-test")
+            with patch.object(review_scheduler, "load_group", return_value=fake_group), patch.object(
+                review_scheduler,
+                "is_desktop_pet_enabled",
+                return_value=True,
+            ), patch.object(review_scheduler, "get_group_state", return_value="idle"), patch.object(
+                review_scheduler,
+                "get_pet_actor",
+                return_value={"id": "pet-peer", "enabled": True},
+            ), patch.object(
+                review_scheduler,
+                "_build_review_packet",
+                return_value={"schema": 1, "primary_reason": "bubble_click", "group_state": "idle"},
+            ), patch.object(review_scheduler, "emit_system_notify") as emit_notify:
+                accepted = review_scheduler.request_manual_pet_review(
+                    "g-test",
+                    reason="bubble_click",
+                    source_event_id="evt-idle",
+                )
+
+            self.assertTrue(accepted)
+            emit_notify.assert_called_once()
+            notify = emit_notify.call_args.kwargs["notify"]
+            self.assertEqual(
+                (notify.context or {}).get("review_packet"),
+                {"schema": 1, "primary_reason": "bubble_click", "group_state": "idle"},
+            )
 
     def test_manual_review_rejects_paused_group(self) -> None:
         fake_group = object()
