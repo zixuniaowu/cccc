@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { LedgerEvent } from "../../../src/types";
 import {
   getUnseenReminders,
+  mergeTaskProposalReminders,
   selectAutoPeekReminder,
   shouldProjectReminderForGroupState,
   shouldSuppressTaskProposalEcho,
   sortProjectedReminders,
 } from "../../../src/features/webPet/useWebPetNotifications";
-import { buildLocalTaskProposalReminders } from "../../../src/features/webPet/localTaskAdvisor";
 import type { PetReminder } from "../../../src/features/webPet/types";
 
 function makeReminder(overrides: Partial<PetReminder> = {}): PetReminder {
@@ -190,6 +190,68 @@ describe("shouldSuppressTaskProposalEcho", () => {
         Date.parse("2026-03-27T16:03:00.000Z"),
       ),
     ).toBe(false);
+  });
+
+  it("suppresses task proposal when explicit custom text was already sent to foreman", () => {
+    const reminder = makeReminder({
+      action: {
+        type: "task_proposal",
+        groupId: "g-1",
+        operation: "update",
+        taskId: "T192",
+        text: "请用 cccc_task 把 T192 标记成 waiting_on=user。",
+      },
+    });
+    const events: LedgerEvent[] = [
+      {
+        id: "evt-1",
+        ts: "2026-03-27T16:00:00.000Z",
+        kind: "chat.message",
+        by: "user",
+        data: {
+          text: "请用 cccc_task 把 T192 标记成 waiting_on=user。",
+          to: ["@foreman"],
+        },
+      },
+    ];
+
+    expect(
+      shouldSuppressTaskProposalEcho(
+        reminder,
+        events,
+        Date.parse("2026-03-27T16:03:00.000Z"),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("mergeTaskProposalReminders", () => {
+  it("prefers remote pet task proposals over local proposals for the same task", () => {
+    const localReminder = makeReminder({
+      id: "local-task-proposal:T192",
+      fingerprint: "local-task-proposal:g-1:T192:move-active",
+      action: {
+        type: "task_proposal",
+        groupId: "g-1",
+        operation: "move",
+        taskId: "T192",
+        status: "active",
+      },
+    });
+    const remoteReminder = makeReminder({
+      id: "pet-decision:T192",
+      fingerprint: "pet-decision:g-1:T192",
+      summary: "pet 认为应该先同步 owner。",
+      action: {
+        type: "task_proposal",
+        groupId: "g-1",
+        operation: "update",
+        taskId: "T192",
+        assignee: "peer-1",
+      },
+    });
+
+    expect(mergeTaskProposalReminders([localReminder], [remoteReminder])).toEqual([remoteReminder]);
   });
 });
 

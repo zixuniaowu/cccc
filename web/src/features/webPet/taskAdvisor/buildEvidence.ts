@@ -1,5 +1,10 @@
 import type { TaskAdvisorContext, TaskAdvisorEvidence } from "./types";
-import { getTaskAdvisorHistoryEntry, upsertTaskAdvisorHistoryEntry } from "./history";
+import {
+  cloneTaskAdvisorHistory,
+  getTaskAdvisorHistoryEntry,
+  upsertTaskAdvisorHistoryEntry,
+  type TaskAdvisorHistoryState,
+} from "./history";
 
 function parseIsoMs(value: string): number | null {
   const raw = String(value || "").trim();
@@ -22,10 +27,14 @@ function looksLikeWaitingUser(text: string): boolean {
   return /waiting[_\s-]?user|need user|await user|user input|user reply|clarify with user|approval/.test(normalized);
 }
 
-export function buildTaskAdvisorEvidence(context: TaskAdvisorContext): TaskAdvisorEvidence[] {
+export function buildTaskAdvisorEvidence(
+  context: TaskAdvisorContext,
+  history: TaskAdvisorHistoryState,
+): { evidenceList: TaskAdvisorEvidence[]; nextHistory: TaskAdvisorHistoryState } {
   const evidenceList: TaskAdvisorEvidence[] = [];
   const nowMs = Date.now();
   const agentById = new Map(context.agentStates.map((agent) => [String(agent?.id || "").trim(), agent]));
+  const nextHistory = cloneTaskAdvisorHistory(history);
 
   for (const agent of context.agentStates) {
     const actorId = String(agent?.id || "").trim();
@@ -45,7 +54,7 @@ export function buildTaskAdvisorEvidence(context: TaskAdvisorContext): TaskAdvis
       ? agent.hot.blockers.map((item) => String(item || "").trim()).filter(Boolean)
       : [];
     const taskUpdatedAt = String(task.updated_at || "").trim();
-    const previous = getTaskAdvisorHistoryEntry(context.groupId, actorId, taskId);
+    const previous = getTaskAdvisorHistoryEntry(context.groupId, actorId, taskId, history);
     const focusUnchangedCycles =
       previous && previous.lastFocus === actorFocus
         ? previous.focusUnchangedCycles + 1
@@ -102,7 +111,7 @@ export function buildTaskAdvisorEvidence(context: TaskAdvisorContext): TaskAdvis
       lastTaskUpdatedAt: taskUpdatedAt,
       lastTaskStatus: taskStatus,
       focusUnchangedCycles,
-    });
+    }, nextHistory);
   }
 
   for (const task of context.tasks) {
@@ -156,5 +165,5 @@ export function buildTaskAdvisorEvidence(context: TaskAdvisorContext): TaskAdvis
     });
   }
 
-  return evidenceList;
+  return { evidenceList, nextHistory };
 }
