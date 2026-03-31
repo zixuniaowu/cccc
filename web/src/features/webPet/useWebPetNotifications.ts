@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GroupContext, LedgerEvent } from "../../types";
 import { recordPetDecisionOutcome } from "../../services/api";
 import type { PetReminder } from "./types";
-import { buildTaskProposalMessage } from "./taskProposal";
+import { buildLocalTaskProposalReminders } from "./localTaskAdvisor";
+import { deriveTaskProposalStylePolicy } from "./taskProposalStylePolicy";
 import {
   createMentionReaction,
   createTaskReactionSnapshot,
@@ -61,8 +62,17 @@ function eventTextMentionsTask(reminder: PetReminder, text: string): boolean {
   if (reminder.action.type !== "task_proposal") return false;
   const normalizedText = normalizeCompareText(text);
   if (!normalizedText) return false;
-  const expectedText = normalizeCompareText(buildTaskProposalMessage(reminder.action));
-  return !!expectedText && normalizedText === expectedText;
+  const expectedTokens = [
+    "cccc_task",
+    `${String(reminder.action.operation || "").trim()} this task`,
+    reminder.action.taskId ? `task_id=${String(reminder.action.taskId).trim()}` : "",
+    reminder.action.title ? `title="${String(reminder.action.title).trim()}"` : "",
+    reminder.action.status ? `status=${String(reminder.action.status).trim()}` : "",
+    reminder.action.assignee ? `assignee=${String(reminder.action.assignee).trim()}` : "",
+  ]
+    .map(normalizeCompareText)
+    .filter(Boolean);
+  return expectedTokens.every((token) => normalizedText.includes(token));
 }
 
 export function shouldSuppressTaskProposalEcho(
@@ -268,6 +278,11 @@ export function useWebPetNotifications(input: {
   groupContext: GroupContext | null;
   events: LedgerEvent[];
   decisions?: PetReminder[];
+  petContext?: {
+    persona?: string;
+    help?: string;
+    prompt?: string;
+  } | null;
 }): UseWebPetNotificationsResult {
   const groupId = String(input.groupId || "").trim();
   const groupState = String(input.groupState || "").trim().toLowerCase();
@@ -291,13 +306,15 @@ export function useWebPetNotifications(input: {
 
   const projected = useMemo(() => {
     const decisions = Array.isArray(input.decisions) ? input.decisions : [];
+    const stylePolicy = deriveTaskProposalStylePolicy(input.petContext);
+    const localTaskProposals = buildLocalTaskProposalReminders(groupId, groupContext, stylePolicy);
     return sortProjectedReminders(
-      decisions.filter((reminder) =>
+      [...localTaskProposals, ...decisions].filter((reminder) =>
         shouldProjectReminderForGroupState(reminder, groupState) &&
         !shouldSuppressTaskProposalEcho(reminder, events),
       ),
     );
-  }, [events, groupState, input.decisions]);
+  }, [events, groupContext, groupId, groupState, input.decisions, input.petContext]);
 
   const reminderByFingerprint = useMemo(
     () => new Map(projected.map((reminder) => [reminder.fingerprint, reminder])),

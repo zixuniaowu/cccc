@@ -695,7 +695,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const appendedAtTail =
       messages.length > 0 &&
       (
-        prevCount === 0 ||
+        prevCount > 0 &&
         (nextTailId !== "" && nextTailId !== prevTailId)
       );
 

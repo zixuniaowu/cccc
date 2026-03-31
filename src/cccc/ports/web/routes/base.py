@@ -427,6 +427,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             patch["developer_mode"] = bool(req.developer_mode)
         if req.log_level is not None:
             patch["log_level"] = str(req.log_level or "").strip().upper()
+        if req.logger_levels is not None:
+            patch["logger_levels"] = {
+                str(name): str(level).strip().upper()
+                for name, level in req.logger_levels.items()
+                if str(name).strip() and str(level).strip()
+            }
         if req.terminal_transcript_per_actor_bytes is not None:
             patch.setdefault("terminal_transcript", {})["per_actor_bytes"] = int(req.terminal_transcript_per_actor_bytes)
         if req.terminal_ui_scrollback_lines is not None:
@@ -442,10 +448,24 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         try:
             obs = (resp.get("result") or {}).get("observability") if resp.get("ok") else None
             if isinstance(obs, dict):
-                level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"
-                if obs.get("developer_mode") and level == "INFO":
-                    level = "DEBUG"
-                ctx.apply_web_logging(home=ctx.home, level=level)
+                requested_level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"
+                effective_level = "DEBUG" if obs.get("developer_mode") and requested_level == "INFO" else requested_level
+                level = "INFO" if effective_level == "DEBUG" else effective_level
+                logger_levels = {
+                    str(name): str(value)
+                    for name, value in obs.get("logger_levels", {}).items()
+                } if isinstance(obs.get("logger_levels"), dict) else {}
+                if effective_level == "DEBUG":
+                    logger_levels.setdefault("cccc", "DEBUG")
+                    for noisy_logger in (
+                        "asyncio",
+                        "httpcore",
+                        "httpx",
+                        "cccc.delivery",
+                        "cccc.providers.notebooklm._vendor.notebooklm",
+                    ):
+                        logger_levels.setdefault(noisy_logger, "INFO")
+                ctx.apply_web_logging(home=ctx.home, level=level, logger_levels=logger_levels)
         except Exception:
             pass
 

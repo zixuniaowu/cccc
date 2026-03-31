@@ -6,6 +6,7 @@ Settings are stored in ~/.cccc/settings.yaml and include:
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -126,6 +127,9 @@ DEFAULT_OBSERVABILITY: Dict[str, Any] = {
     "log_level": "INFO",
     # Components are informational today; filtering can be implemented later.
     "components": ["daemon", "web", "delivery", "im", "pty", "mcp"],
+    # Per-logger overrides let us keep local diagnostics without turning on
+    # root-level DEBUG for every third-party dependency.
+    "logger_levels": {},
     # Terminal transcript is captured in-memory only (no persistence) by default.
     "terminal_transcript": {
         "enabled": False,
@@ -206,6 +210,16 @@ def _as_str(v: Any, default: str) -> str:
     return s or default
 
 
+def _as_log_level_name(v: Any, default: str) -> str:
+    s = str(v or "").strip().upper()
+    if not s:
+        return default
+    level = getattr(logging, s, None)
+    if isinstance(level, int):
+        return s
+    return default
+
+
 def _as_runtime_visibility(v: Any, default: str) -> str:
     s = str(v or "").strip().lower()
     if s in {"hidden", "visible"}:
@@ -220,11 +234,23 @@ def _merge_observability(raw: Any) -> Dict[str, Any]:
         return base
 
     base["developer_mode"] = _as_bool(raw.get("developer_mode"), bool(base["developer_mode"]))
-    base["log_level"] = _as_str(raw.get("log_level"), str(base["log_level"])).upper()
+    base["log_level"] = _as_log_level_name(raw.get("log_level"), str(base["log_level"]))
 
     comps = raw.get("components")
     if isinstance(comps, list) and comps:
         base["components"] = [str(x).strip() for x in comps if str(x).strip()]
+
+    logger_levels_raw = raw.get("logger_levels")
+    logger_levels: Dict[str, str] = {}
+    if isinstance(logger_levels_raw, dict):
+        for name, level in logger_levels_raw.items():
+            logger_name = str(name or "").strip()
+            if not logger_name:
+                continue
+            normalized = _as_log_level_name(level, "")
+            if normalized:
+                logger_levels[logger_name] = normalized
+    base["logger_levels"] = logger_levels
 
     tt = raw.get("terminal_transcript")
     tt_base = dict(DEFAULT_OBSERVABILITY["terminal_transcript"])
@@ -320,11 +346,23 @@ def update_observability_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
     if "developer_mode" in patch:
         merged["developer_mode"] = _as_bool(patch.get("developer_mode"), bool(merged["developer_mode"]))
     if "log_level" in patch:
-        merged["log_level"] = _as_str(patch.get("log_level"), str(merged["log_level"])).upper()
+        merged["log_level"] = _as_log_level_name(patch.get("log_level"), str(merged["log_level"]))
     if "components" in patch:
         comps = patch.get("components")
         if isinstance(comps, list):
             merged["components"] = [str(x).strip() for x in comps if str(x).strip()]
+    if "logger_levels" in patch:
+        logger_levels_patch = patch.get("logger_levels")
+        logger_levels: Dict[str, str] = {}
+        if isinstance(logger_levels_patch, dict):
+            for name, level in logger_levels_patch.items():
+                logger_name = str(name or "").strip()
+                if not logger_name:
+                    continue
+                normalized = _as_log_level_name(level, "")
+                if normalized:
+                    logger_levels[logger_name] = normalized
+        merged["logger_levels"] = logger_levels
     if "terminal_transcript" in patch:
         tt_patch = patch.get("terminal_transcript")
         if isinstance(tt_patch, dict):

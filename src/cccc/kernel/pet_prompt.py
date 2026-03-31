@@ -5,6 +5,7 @@ from typing import Any, Dict
 from .context import ContextStorage
 from .group import Group
 from .pet_actor import PET_ACTOR_ID
+from .pet_profile import build_pet_profile
 from .pet_signals import build_pet_signal_summary_lines, load_pet_signals
 from .pet_task_triage import build_task_triage_payload, join_task_briefs
 from .prompt_files import HELP_FILENAME, load_builtin_help_markdown, read_group_prompt_file
@@ -104,11 +105,34 @@ def build_pet_prompt_parts(
     help_markdown: str,
     context_payload: Dict[str, Any],
     include_snapshot: bool = True,
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     parsed = parse_help_markdown(help_markdown)
     persona = str(parsed.get("pet") or "").strip()
+    profile = build_pet_profile(group, persona=persona)
     snapshot = build_pet_snapshot_text(group, context_payload) if include_snapshot else ""
     title = str(group.doc.get("title") or group.group_id or "").strip() or "unknown-group"
+    persona_contract = "\n".join(
+        [
+            "Pet Persona Contract:",
+            f"- Stable companion identity: {profile['name']} is a {profile['species']} companion.",
+            f"- Identity: {profile['identity']}",
+            f"- Temperament: {profile['temperament']}",
+            f"- Speech style: {profile['speech_style']}",
+            f"- Care style: {profile['care_style']}",
+            "- Keep continuity stronger than novelty. Sound like the same nearby companion across sessions.",
+            "- Be warm and observant, but never so theatrical that the next step becomes blurry.",
+        ]
+    )
+    wording_contract = "\n".join(
+        [
+            "Pet Wording Contract:",
+            "- Prefer one short observation plus one direct next step.",
+            "- Sound like a companion beside the user, not a dashboard reading metrics aloud.",
+            "- Avoid internal telemetry labels, raw status bundles, and board-state dumps in user-facing text.",
+            "- Default to concise, lightly human wording. Expand only when needed to make the reminder actionable.",
+            "- Do not sound like a second foreman. Nudge clearly, then get out of the way.",
+        ]
+    )
     decision_contract = "\n".join(
         [
             "Pet Contract:",
@@ -134,12 +158,15 @@ def build_pet_prompt_parts(
     sections = ["\n".join(header_lines).strip()]
     if persona:
         sections.append("Pet Persona:\n" + persona)
+    sections.append(persona_contract)
+    sections.append(wording_contract)
     sections.append(decision_contract)
     prompt = "\n\n".join(sections).strip()
     return {
         "persona": persona,
         "help": "Pet Persona:\n" + persona if persona else "",
         "snapshot": snapshot,
+        "profile": profile,
         "prompt": prompt,
         "source": "help" if persona else "default",
     }

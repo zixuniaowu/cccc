@@ -33,7 +33,7 @@ from ..paths import ensure_home
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
 from ..util.conv import coerce_bool
-from ..util.obslog import setup_root_json_logging
+from ..util.obslog import apply_logger_levels, setup_root_json_logging
 from ..util.process import best_effort_signal_pid, pid_is_alive
 from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
@@ -183,13 +183,28 @@ def _apply_observability_settings(home: Path, obs: Dict[str, Any]) -> None:
         _OBSERVABILITY.update(copy.deepcopy(obs))
         _OBSERVABILITY_HOME = home
 
-    # Logging: keep simple; configure root JSONL logger to stderr.
-    level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"
-    if coerce_bool(obs.get("developer_mode"), default=False):
-        # Developer mode typically wants more detail.
-        if level == "INFO":
-            level = "DEBUG"
-    setup_root_json_logging(component="daemon", level=level, force=True)
+    # Keep root conservative and express targeted DEBUG via logger overrides.
+    requested_level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"
+    effective_level = requested_level
+    if coerce_bool(obs.get("developer_mode"), default=False) and requested_level == "INFO":
+        effective_level = "DEBUG"
+    root_level = "INFO" if effective_level == "DEBUG" else effective_level
+    logger_levels = {
+        str(name): str(level)
+        for name, level in (obs.get("logger_levels") or {}).items()
+    } if isinstance(obs.get("logger_levels"), dict) else {}
+    if effective_level == "DEBUG":
+        logger_levels.setdefault("cccc", "DEBUG")
+        for noisy_logger in (
+            "asyncio",
+            "httpcore",
+            "httpx",
+            "cccc.delivery",
+            "cccc.providers.notebooklm._vendor.notebooklm",
+        ):
+            logger_levels.setdefault(noisy_logger, "INFO")
+    setup_root_json_logging(component="daemon", level=root_level, force=True)
+    apply_logger_levels(logger_levels)
 
 
 def _apply_space_provider_runtime_flags_from_state() -> None:

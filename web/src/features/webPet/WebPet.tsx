@@ -22,6 +22,7 @@ import { stagePetReminderDraft } from "./petSuggestionDraft";
 import { getBackgroundRefreshDelayMs } from "./reviewTiming";
 import { WEB_PET_BUBBLE_SIZE } from "./constants";
 import { getLatestPetContextRefreshMarker } from "./petContextRefresh";
+import { shouldProjectReminderForGroupState } from "./useWebPetNotifications";
 import type { PetReminder } from "./types";
 import type { Actor, GroupContext, GroupDoc, GroupSettings, LedgerEvent } from "../../types";
 import i18n from "../../i18n";
@@ -42,6 +43,10 @@ type RemotePetGroupState = {
 
 function tPet(key: string, fallback: string, vars?: Record<string, unknown>): string {
   return String(i18n.t(`webPet:${key}`, { defaultValue: fallback, ...(vars || {}) }));
+}
+
+export function isManualReviewReminderReady(reminder: PetReminder, groupState: string): boolean {
+  return shouldSurfaceReminder(reminder) && shouldProjectReminderForGroupState(reminder, groupState);
 }
 
 function handleReminderAction(
@@ -150,6 +155,8 @@ export function WebPet({
   );
   const {
     catState,
+    panelData,
+    taskSummaries,
     hint,
     reminders,
     activeReminder,
@@ -223,7 +230,7 @@ export function WebPet({
         if (contextResp.ok) {
           const refreshedContext = buildPetPeerContext(contextResp.result, { status: "loaded" });
           const refreshedReminder =
-            refreshedContext.decisions.find((decision) => shouldSurfaceReminder(decision)) || null;
+            refreshedContext.decisions.find((decision) => isManualReviewReminderReady(decision, groupDoc?.state || "")) || null;
           if (refreshedReminder) {
             reminderReady = true;
             setPetContextRefreshToken((current) => current + 1);
@@ -494,6 +501,8 @@ export function WebPet({
         <PetPanel
           reminder={selectedReminder}
           reminders={reminders}
+          companion={petContext.companion}
+          taskSummaries={taskSummaries.length > 0 ? taskSummaries : panelData.agents.map((agent) => agent.focus).filter(Boolean)}
           reviewInFlight={reviewInFlight}
           onDismiss={dismissReminder}
           onAction={handleReminderActionWithDismiss}
@@ -510,6 +519,7 @@ export function WebPet({
         groupId={groupId}
         stackIndex={stackIndex}
         state={catState}
+        companion={petContext.companion}
         hint={hint}
         reaction={reaction}
         onPress={handleBubblePress}

@@ -30,9 +30,12 @@ function makeStorage() {
 
 const localStorageMock = makeStorage();
 vi.stubGlobal("localStorage", localStorageMock);
+vi.stubGlobal("window", { setTimeout, clearTimeout });
 
 let useGroupStore: typeof import("../../src/stores/useGroupStore").useGroupStore;
 let api: typeof import("../../src/services/api");
+const SELECTED_GROUP_ID_KEY = "cccc-selected-group-id";
+const ARCHIVED_GROUP_IDS_KEY = "cccc-archived-group-ids";
 
 async function flushDeferredUnreadRefresh() {
   await Promise.resolve();
@@ -40,9 +43,149 @@ async function flushDeferredUnreadRefresh() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function importFreshStore() {
+  vi.resetModules();
+  api = await import("../../src/services/api");
+  const mod = await import("../../src/stores/useGroupStore");
+  useGroupStore = mod.useGroupStore;
+  return mod;
+}
+
 beforeAll(async () => {
   api = await import("../../src/services/api");
   ({ useGroupStore } = await import("../../src/stores/useGroupStore"));
+});
+
+describe("useGroupStore selection and archive persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorageMock.clear();
+  });
+
+  it("initializes selectedGroupId from localStorage", async () => {
+    localStorageMock.setItem(SELECTED_GROUP_ID_KEY, "g-2");
+    const mod = await importFreshStore();
+    expect(mod.useGroupStore.getState().selectedGroupId).toBe("g-2");
+  });
+
+  it("persists explicit group selection changes", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().setSelectedGroupId("g-9");
+    expect(localStorageMock.getItem(SELECTED_GROUP_ID_KEY)).toBe("g-9");
+    expect(mod.useGroupStore.getState().selectedGroupId).toBe("g-9");
+  });
+
+  it("refreshGroups prefers the persisted selection when current state is empty", async () => {
+    localStorageMock.setItem(SELECTED_GROUP_ID_KEY, "g-2");
+    vi.mocked(api.fetchGroups).mockResolvedValue({
+      ok: true,
+      result: {
+        groups: [
+          { group_id: "g-1", title: "One", state: "idle", topic: "" },
+          { group_id: "g-2", title: "Two", state: "active", topic: "" },
+        ],
+      },
+    } as Awaited<ReturnType<typeof api.fetchGroups>>);
+
+    const mod = await importFreshStore();
+    mod.useGroupStore.setState({ selectedGroupId: "" });
+    await mod.useGroupStore.getState().refreshGroups();
+    expect(mod.useGroupStore.getState().selectedGroupId).toBe("g-2");
+  });
+
+  it("refreshGroups falls back to the first group when the persisted one no longer exists", async () => {
+    localStorageMock.setItem(SELECTED_GROUP_ID_KEY, "g-missing");
+    vi.mocked(api.fetchGroups).mockResolvedValue({
+      ok: true,
+      result: {
+        groups: [
+          { group_id: "g-1", title: "One", state: "idle", topic: "" },
+          { group_id: "g-2", title: "Two", state: "active", topic: "" },
+        ],
+      },
+    } as Awaited<ReturnType<typeof api.fetchGroups>>);
+
+    const mod = await importFreshStore();
+    await mod.useGroupStore.getState().refreshGroups();
+    expect(mod.useGroupStore.getState().selectedGroupId).toBe("g-1");
+    expect(localStorageMock.getItem(SELECTED_GROUP_ID_KEY)).toBe("g-1");
+  });
+
+  it("clears the persisted selection when no groups remain", async () => {
+    localStorageMock.setItem(SELECTED_GROUP_ID_KEY, "g-2");
+    vi.mocked(api.fetchGroups).mockResolvedValue({
+      ok: true,
+      result: { groups: [] },
+    } as Awaited<ReturnType<typeof api.fetchGroups>>);
+
+    const mod = await importFreshStore();
+    await mod.useGroupStore.getState().refreshGroups();
+    expect(mod.useGroupStore.getState().selectedGroupId).toBe("");
+    expect(localStorageMock.getItem(SELECTED_GROUP_ID_KEY)).toBeNull();
+  });
+
+  it("initializes archivedGroupIds from localStorage", async () => {
+    localStorageMock.setItem(ARCHIVED_GROUP_IDS_KEY, JSON.stringify(["g-2", "g-3"]));
+    const mod = await importFreshStore();
+    expect(mod.useGroupStore.getState().archivedGroupIds).toEqual(["g-2", "g-3"]);
+  });
+
+  it("cleans stale archived ids when the group list refreshes", async () => {
+    localStorageMock.setItem(ARCHIVED_GROUP_IDS_KEY, JSON.stringify(["g-2", "g-missing"]));
+    vi.mocked(api.fetchGroups).mockResolvedValue({
+      ok: true,
+      result: {
+        groups: [
+          { group_id: "g-1", title: "One", state: "idle", topic: "" },
+          { group_id: "g-2", title: "Two", state: "active", topic: "" },
+        ],
+      },
+    } as Awaited<ReturnType<typeof api.fetchGroups>>);
+
+    const mod = await importFreshStore();
+    await mod.useGroupStore.getState().refreshGroups();
+    expect(mod.useGroupStore.getState().archivedGroupIds).toEqual(["g-2"]);
+    expect(localStorageMock.getItem(ARCHIVED_GROUP_IDS_KEY)).toBe(JSON.stringify(["g-2"]));
+  });
+
+  it("persists archive and restore actions", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.setState({
+      groups: [
+        { group_id: "g-1", title: "One", state: "idle", topic: "" },
+        { group_id: "g-2", title: "Two", state: "active", topic: "" },
+      ],
+      groupOrder: ["g-1", "g-2"],
+    });
+
+    mod.useGroupStore.getState().archiveGroup("g-2");
+    expect(mod.useGroupStore.getState().archivedGroupIds).toEqual(["g-2"]);
+    expect(localStorageMock.getItem(ARCHIVED_GROUP_IDS_KEY)).toBe(JSON.stringify(["g-2"]));
+
+    mod.useGroupStore.getState().restoreGroup("g-2");
+    expect(mod.useGroupStore.getState().archivedGroupIds).toEqual([]);
+    expect(localStorageMock.getItem(ARCHIVED_GROUP_IDS_KEY)).toBeNull();
+  });
+
+  it("reorders only within the requested sidebar section", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.setState({
+      groups: [
+        { group_id: "g-1", title: "One", state: "idle", topic: "" },
+        { group_id: "g-2", title: "Two", state: "active", topic: "" },
+        { group_id: "g-3", title: "Three", state: "paused", topic: "" },
+        { group_id: "g-4", title: "Four", state: "idle", topic: "" },
+      ],
+      groupOrder: ["g-1", "g-2", "g-3", "g-4"],
+      archivedGroupIds: ["g-2", "g-4"],
+    });
+
+    mod.useGroupStore.getState().reorderGroupsInSection("working", 1, 0);
+    expect(mod.useGroupStore.getState().groupOrder).toEqual(["g-3", "g-2", "g-1", "g-4"]);
+
+    mod.useGroupStore.getState().reorderGroupsInSection("archived", 1, 0);
+    expect(mod.useGroupStore.getState().groupOrder).toEqual(["g-3", "g-4", "g-1", "g-2"]);
+  });
 });
 
 describe("useGroupStore actors fetch policy", () => {

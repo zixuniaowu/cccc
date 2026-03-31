@@ -1,12 +1,13 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useUIStore } from "../../stores";
+import { useTerminalSignalsStore, useUIStore } from "../../stores";
 import type { GroupContext, GroupDoc, LedgerEvent } from "../../types";
 import { aggregateWebPetState } from "./aggregateWebPetState";
+import { buildPetVoiceHint, buildPetVoiceReminderSummary } from "./petVoice";
 import { useWebPetNotifications } from "./useWebPetNotifications";
 import type { PetPeerContext } from "./petPeerContext";
 import { getPetReminderActionPreviewText, getPetReminderDraftText } from "./reminderText";
-import type { PanelData, PetReminder } from "./types";
+import type { AgentSummary, PanelData, PetReminder } from "./types";
 
 export function shouldSurfaceReminder(
   reminder: PetReminder,
@@ -37,6 +38,7 @@ function localizeConnectionMessage(
 
 function localizeReminder(
   reminder: PetReminder,
+  petContext: PetPeerContext,
   tr: (key: string, fallback: string, vars?: Record<string, unknown>) => string,
 ): PetReminder {
   const agentLabel =
@@ -47,17 +49,19 @@ function localizeReminder(
   let summary = reminder.summary;
   if (!summary.trim()) {
     if (reminder.kind === "suggestion" && reminder.source.suggestionKind === "reply_required") {
-      summary = tr(
-        "reminderSummary.replyRequired",
-        "{{actor}} prepared a reply draft you can review in chat.",
-        { actor: agentLabel },
-      );
+      summary = buildPetVoiceReminderSummary({
+        companion: petContext.companion,
+        reminder,
+        actorLabel: agentLabel,
+        tr,
+      });
     } else if (reminder.kind === "suggestion") {
-      summary = tr(
-        "reminderSummary.mention",
-        "{{actor}} prepared a draft you can review in chat.",
-        { actor: agentLabel },
-      );
+      summary = buildPetVoiceReminderSummary({
+        companion: petContext.companion,
+        reminder,
+        actorLabel: agentLabel,
+        tr,
+      });
     }
   }
 
@@ -84,6 +88,31 @@ function localizePanelData(
   };
 }
 
+export function getPreferredAgentTaskHint(agents: AgentSummary[]): string {
+  for (const agent of agents) {
+    const activeTaskId = String(agent.activeTaskId || "").trim();
+    const focus = String(agent.focus || "").trim();
+    if (activeTaskId && focus) return `${activeTaskId} | ${focus}`;
+    if (activeTaskId) return activeTaskId;
+    if (focus) return focus;
+  }
+  return "";
+}
+
+export function getAgentTaskSummaries(agents: AgentSummary[], limit: number = 3): string[] {
+  const summaries: string[] = [];
+  const maxItems = Math.max(0, Number(limit || 0));
+  if (maxItems <= 0) return summaries;
+  for (const agent of agents) {
+    const activeTaskId = String(agent.activeTaskId || "").trim();
+    const focus = String(agent.focus || "").trim();
+    if (!activeTaskId && !focus) continue;
+    summaries.push(activeTaskId && focus ? `${activeTaskId} | ${focus}` : activeTaskId || focus);
+    if (summaries.length >= maxItems) break;
+  }
+  return summaries;
+}
+
 export function useWebPetData(input: {
   groupId: string;
   groupDoc: GroupDoc | null;
@@ -99,6 +128,7 @@ export function useWebPetData(input: {
   const events = input.events;
   const petContext = input.petContext;
   const sseStatus = useUIStore((state) => state.sseStatus);
+  const terminalSignals = useTerminalSignalsStore((state) => state.signals);
   const {
     reminders,
     activeReminder,
@@ -114,6 +144,11 @@ export function useWebPetData(input: {
       groupContext,
       events,
       decisions: petContext.decisions,
+      petContext: {
+        persona: petContext.persona,
+        help: petContext.help,
+        prompt: petContext.prompt,
+      },
     });
   const tr = useCallback(
     (key: string, fallback: string, vars?: Record<string, unknown>) =>
@@ -129,19 +164,20 @@ export function useWebPetData(input: {
       groupState,
       teamName: groupDocTitle || groupId || "",
       groupId: groupId || "",
+      terminalSignals,
     });
     const localizedPanelData = localizePanelData(rawPanelData, sseStatus, tr);
     const localizedReminders = reminders.map((reminder) =>
-      localizeReminder(reminder, tr),
+      localizeReminder(reminder, petContext, tr),
     );
     const filteredReminders = localizedReminders.filter((reminder) =>
       shouldSurfaceReminder(reminder),
     );
     const localizedActiveReminder = activeReminder
-      ? localizeReminder(activeReminder, tr)
+      ? localizeReminder(activeReminder, petContext, tr)
       : null;
     const localizedAutoPeekReminder = autoPeekReminder
-      ? localizeReminder(autoPeekReminder, tr)
+      ? localizeReminder(autoPeekReminder, petContext, tr)
       : null;
     const filteredActiveReminder =
       localizedActiveReminder && shouldSurfaceReminder(localizedActiveReminder)
@@ -157,31 +193,51 @@ export function useWebPetData(input: {
     if (!localizedPanelData.connection.connected) {
       hint = localizedPanelData.connection.message;
     } else if (filteredActiveReminder?.summary) {
-      hint = filteredActiveReminder.summary;
+      hint = buildPetVoiceHint({
+        companion: petContext.companion,
+        summary: filteredActiveReminder.summary,
+        tr,
+      });
     } else if (petContext.status === "loading") {
-      hint = tr("hintPetContextLoading", "Syncing pet context…");
+      hint = buildPetVoiceHint({
+        companion: petContext.companion,
+        status: "loading",
+        tr,
+      });
     } else if (petContext.status === "error") {
-      hint = tr("hintPetContextUnavailable", "Pet context unavailable");
+      hint = buildPetVoiceHint({
+        companion: petContext.companion,
+        status: "error",
+        tr,
+      });
     } else if (
       localizedPanelData.taskProgress &&
       localizedPanelData.taskProgress.total > 0
     ) {
       const { done, total } = localizedPanelData.taskProgress;
-      hint = tr(
-        "hintTaskProgress",
-        "{{done}}/{{total}} tasks done",
-        { done, total },
-      );
+      hint = buildPetVoiceHint({
+        companion: petContext.companion,
+        status: "progress",
+        tr,
+        done,
+        total,
+      });
     } else {
-      hint =
-        localizedPanelData.agents.find((agent) => agent.focus.trim())?.focus ||
-        petContext.snapshot.split("\n")[0]?.trim() ||
-        localizedPanelData.teamName;
+      hint = buildPetVoiceHint({
+        companion: petContext.companion,
+        status: "idle",
+        tr,
+        fallback:
+          getPreferredAgentTaskHint(localizedPanelData.agents) ||
+          petContext.snapshot.split("\n")[0]?.trim() ||
+          localizedPanelData.teamName,
+      });
     }
 
     return {
       catState,
       panelData: localizedPanelData,
+      taskSummaries: getAgentTaskSummaries(localizedPanelData.agents),
       petContext,
       hint,
       reminders: filteredReminders,
@@ -204,6 +260,7 @@ export function useWebPetData(input: {
     reaction,
     groupId,
     sseStatus,
+    terminalSignals,
     tr,
     petContext,
     unseenReminderCount,

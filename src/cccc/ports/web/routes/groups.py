@@ -209,6 +209,7 @@ def _build_pet_context_payload(
     help_content = str(help_prompt.get("content") or "")
     persona = str(help_prompt.get("persona") or "").strip()
     source = str(help_prompt.get("pet_source") or "default").strip() or "default"
+    parts = build_pet_prompt_parts(group, help_markdown=help_content, context_payload=context_payload)
     decisions = load_pet_decisions(group)
     signals = load_pet_signals(group, context_payload=context_payload)
     payload = {
@@ -216,17 +217,16 @@ def _build_pet_context_payload(
         "snapshot": build_pet_snapshot_text(group, context_payload),
         "decisions": decisions,
         "signals": signals,
-        "source": source,
+        "source": str(parts.get("source") or source),
+        "companion": parts.get("profile") or {},
     }
     if not verbose:
         return payload
-    parts = build_pet_prompt_parts(group, help_markdown=help_content, context_payload=context_payload)
     payload.update(
         {
             "help": str(parts.get("help") or ""),
             "prompt": str(parts.get("prompt") or ""),
             "help_prompt": help_prompt,
-            "source": str(parts.get("source") or payload["source"]),
         }
     )
     return payload
@@ -1557,36 +1557,48 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if group is None:
                 raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
             effective_limit = int(limit) if limit is not None else int(lines)
-            raw_lines = read_last_lines(group.ledger_path, effective_limit)
-            events = []
-            for ln in raw_lines:
-                try:
-                    events.append(json.loads(ln))
-                except Exception:
-                    continue
-
+            if effective_limit <= 0:
+                return {"ok": True, "result": {"events": [], "has_more": False, "count": 0}}
             kind_filter = str(kind or "all").strip().lower()
             if kind_filter in {"chat", "notify"}:
-                wanted = "chat.message" if kind_filter == "chat" else "system.notify"
-                events = [ev for ev in events if isinstance(ev, dict) and str(ev.get("kind") or "").strip() == wanted]
+                from ....kernel.inbox import search_messages
 
-            events = events[-effective_limit:] if effective_limit > 0 else events
-            has_more = False
-            if effective_limit > 0 and events:
-                first_event_id = str(events[0].get("id") or "").strip()
-                if first_event_id:
-                    from ....kernel.inbox import search_messages
+                events, has_more = search_messages(
+                    group,
+                    query="",
+                    kind_filter=kind_filter,  # type: ignore[arg-type]
+                    by_filter="",
+                    before_id="",
+                    after_id="",
+                    limit=effective_limit,
+                )
+                events = list(reversed(events))
+            else:
+                raw_lines = read_last_lines(group.ledger_path, effective_limit)
+                events = []
+                for ln in raw_lines:
+                    try:
+                        events.append(json.loads(ln))
+                    except Exception:
+                        continue
 
-                    older_events, older_has_more = search_messages(
-                        group,
-                        query="",
-                        kind_filter=kind_filter if kind_filter in {"all", "chat", "notify"} else "all",  # type: ignore[arg-type]
-                        by_filter="",
-                        before_id=first_event_id,
-                        after_id="",
-                        limit=1,
-                    )
-                    has_more = bool(older_has_more or older_events)
+                events = events[-effective_limit:] if effective_limit > 0 else events
+                has_more = False
+                if effective_limit > 0 and events:
+                    first_event_id = str(events[0].get("id") or "").strip()
+                    if first_event_id:
+                        from ....kernel.inbox import search_messages
+
+                        older_events, older_has_more = search_messages(
+                            group,
+                            query="",
+                            kind_filter="all",
+                            by_filter="",
+                            before_id=first_event_id,
+                            after_id="",
+                            limit=1,
+                        )
+                        has_more = bool(older_has_more or older_events)
 
             if with_read_status:
                 from ....kernel.inbox import get_read_status_batch

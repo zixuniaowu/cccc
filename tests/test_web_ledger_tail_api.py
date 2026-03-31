@@ -115,3 +115,96 @@ class TestWebLedgerTailApi(unittest.TestCase):
             self.assertEqual(int(result.get("count") or 0), 2)
         finally:
             cleanup()
+
+    def test_ledger_tail_kind_chat_reads_last_chat_messages_not_last_raw_lines(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "ledger-tail-chat-tail", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            for idx in range(3):
+                send, _ = self._call(
+                    "send",
+                    {"group_id": group_id, "by": "user", "to": ["peer1"], "text": f"chat-{idx}"},
+                )
+                self.assertTrue(send.ok, getattr(send, "error", None))
+                notify, _ = self._call(
+                    "system_notify",
+                    {
+                        "group_id": group_id,
+                        "by": "system",
+                        "kind": "info",
+                        "priority": "normal",
+                        "title": f"notify-{idx}",
+                        "message": f"notify-{idx}",
+                        "target_actor_id": "peer1",
+                        "requires_ack": False,
+                    },
+                )
+                self.assertTrue(notify.ok, getattr(notify, "error", None))
+
+            with self._client() as client:
+                resp = client.get(f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&limit=2")
+
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(bool(body.get("ok")), body)
+            result = body.get("result") or {}
+            events = result.get("events") or []
+            self.assertEqual([((event.get("data") or {}).get("text")) for event in events], ["chat-1", "chat-2"])
+            self.assertEqual(result.get("has_more"), True)
+            self.assertEqual(int(result.get("count") or 0), 2)
+        finally:
+            cleanup()
+
+    def test_ledger_tail_kind_chat_limit_zero_returns_empty_result(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "ledger-tail-zero", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            send, _ = self._call("send", {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "hello"})
+            self.assertTrue(send.ok, getattr(send, "error", None))
+
+            with self._client() as client:
+                resp = client.get(f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&limit=0")
+
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(bool(body.get("ok")), body)
+            result = body.get("result") or {}
+            self.assertEqual(result.get("events"), [])
+            self.assertEqual(result.get("has_more"), False)
+            self.assertEqual(int(result.get("count") or 0), 0)
+        finally:
+            cleanup()

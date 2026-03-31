@@ -1,10 +1,11 @@
+import json
 import os
 import tempfile
 import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import patch
+from unittest.mock import MagicMock, mock_open, patch
 
 from fastapi.testclient import TestClient
 
@@ -67,6 +68,31 @@ class TestWebActorRoutesCache(unittest.TestCase):
             }
         )
         self.assertTrue(bool(created.get("ok")), created)
+
+    def test_pid_matches_actor_context_requires_exact_proc_environ_match(self) -> None:
+        from cccc.ports.web.routes.actors import _pid_matches_actor_context
+
+        environ_text = b"CCCC_GROUP_ID=group-1\0CCCC_ACTOR_ID=peer-10\0"
+        with patch("builtins.open", mock_open(read_data=environ_text)), patch(
+            "cccc.ports.web.routes.actors.subprocess.run",
+            return_value=MagicMock(stdout=""),
+        ):
+            self.assertFalse(_pid_matches_actor_context(43210, group_id="group-1", actor_id="peer-1"))
+
+    def test_pid_matches_actor_context_requires_exact_ps_match(self) -> None:
+        from cccc.ports.web.routes.actors import _pid_matches_actor_context
+
+        with patch("builtins.open", side_effect=OSError("proc unavailable")), patch(
+            "cccc.ports.web.routes.actors.subprocess.run",
+            return_value=MagicMock(stdout="CCCC_GROUP_ID=group-1 CCCC_ACTOR_ID=peer-10 /bin/sh"),
+        ):
+            self.assertFalse(_pid_matches_actor_context(43210, group_id="group-1", actor_id="peer-1"))
+
+        with patch("builtins.open", side_effect=OSError("proc unavailable")), patch(
+            "cccc.ports.web.routes.actors.subprocess.run",
+            return_value=MagicMock(stdout="CCCC_GROUP_ID=group-1 CCCC_ACTOR_ID=peer-1 /bin/sh"),
+        ):
+            self.assertTrue(_pid_matches_actor_context(43210, group_id="group-1", actor_id="peer-1"))
 
     def test_normal_mode_readonly_actor_list_uses_inflight_without_ttl(self) -> None:
         _, cleanup = self._with_home()
@@ -291,6 +317,9 @@ class TestWebActorRoutesCache(unittest.TestCase):
             ), patch(
                 "cccc.ports.web.routes.actors.pid_is_alive",
                 return_value=True,
+            ), patch(
+                "cccc.ports.web.routes.actors._pid_matches_actor_context",
+                return_value=True,
             ):
                 with self._client() as client:
                     resp = client.get(f"/api/v1/groups/{group_id}/actors")
@@ -300,6 +329,41 @@ class TestWebActorRoutesCache(unittest.TestCase):
             self.assertTrue(bool(actor["running"]))
             self.assertEqual(actor["effective_working_state"], "waiting")
             self.assertEqual(actor["effective_working_reason"], "pty_running_state_unknown")
+        finally:
+            cleanup()
+
+    def test_actor_list_route_ignores_stale_pty_state_file_when_supervisor_is_not_running(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runner_state_ops import pty_state_path, write_pty_state
+
+            os.environ.pop("CCCC_WEB_MODE", None)
+            group_id = self._create_group()
+            self._add_actor(group_id)
+            write_pty_state(group_id, "peer-1", pid=43210)
+            state_path = pty_state_path(group_id, "peer-1")
+            state_doc = json.loads(state_path.read_text(encoding="utf-8"))
+            state_doc["pid"] = 43210
+            state_path.write_text(json.dumps(state_doc), encoding="utf-8")
+
+            with patch(
+                "cccc.ports.web.routes.actors.pty_runner.SUPERVISOR.actor_running",
+                return_value=False,
+            ), patch(
+                "cccc.ports.web.routes.actors.pid_is_alive",
+                return_value=True,
+            ), patch(
+                "cccc.ports.web.routes.actors._pid_matches_actor_context",
+                return_value=False,
+            ):
+                with self._client() as client:
+                    resp = client.get(f"/api/v1/groups/{group_id}/actors")
+
+            self.assertEqual(resp.status_code, 200)
+            actor = resp.json()["result"]["actors"][0]
+            self.assertFalse(bool(actor["running"]))
+            self.assertEqual(actor["effective_working_state"], "stopped")
+            self.assertEqual(actor["effective_working_reason"], "runner_not_running")
         finally:
             cleanup()
 

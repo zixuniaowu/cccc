@@ -272,6 +272,7 @@ class ObservabilityUpdateRequest(BaseModel):
     by: str = Field(default="user")
     developer_mode: Optional[bool] = None
     log_level: Optional[str] = None
+    logger_levels: Optional[Dict[str, str]] = None
     terminal_transcript_per_actor_bytes: Optional[int] = None
     terminal_ui_scrollback_lines: Optional[int] = None
     peer_runtime_visibility: Optional[Literal["hidden", "visible"]] = None

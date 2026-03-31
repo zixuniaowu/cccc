@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useTranslation } from "react-i18next";
 import { Actor, AgentState, getRuntimeColor, RUNTIME_INFO } from "../types";
+import { useActorDisplayState } from "../hooks/useActorDisplayState";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
 import { formatFullTime, formatTime } from "../utils/time";
@@ -12,7 +13,7 @@ import { useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { withAuthToken, fetchTerminalTail } from "../services/api";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
-import { getActorDisplayWorkingState, getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
+import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
 import { getTerminalSignalKey } from "../stores/useTerminalSignalsStore";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 
@@ -66,7 +67,7 @@ export function AgentTab({
 }: AgentTabProps) {
   const { t } = useTranslation('actors');
   // Derived state (must be defined before refs that use them)
-  const isRunning = actor.running ?? actor.enabled ?? false;
+  const { isRunning, workingState } = useActorDisplayState({ groupId, actor });
   const effectiveRunner = String(actor.runner_effective || actor.runner || "pty").trim() || "pty";
   const isHeadless = effectiveRunner === "headless";
   const canControl = !readOnly;
@@ -77,7 +78,6 @@ export function AgentTab({
   const setTerminalSignal = useTerminalSignalsStore((s) => s.setSignal);
   const clearTerminalSignal = useTerminalSignalsStore((s) => s.clearSignal);
   const terminalSignal = terminalSignals[getTerminalSignalKey(groupId, actor.id)];
-  const workingState = getActorDisplayWorkingState(actor, terminalSignal);
 
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -520,8 +520,6 @@ export function AgentTab({
             kind: signal.signalKind,
             updatedAt: Date.now(),
           });
-        } else {
-          clearTerminalSignal(groupId, actor.id);
         }
         try {
           term.write(safe);

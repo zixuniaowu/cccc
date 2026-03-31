@@ -466,6 +466,14 @@ export type GroupPromptsResponse = {
 };
 
 export type PetPeerContextResponse = {
+  companion?: {
+    name?: string | null;
+    species?: string | null;
+    identity?: string | null;
+    temperament?: string | null;
+    speech_style?: string | null;
+    care_style?: string | null;
+  };
   decisions?: Array<{
     id?: string;
     kind?: string;

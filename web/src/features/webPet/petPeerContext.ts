@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { PetPeerContextResponse } from "../../services/api";
 import { fetchPetPeerContext } from "../../services/api";
-import type { PetReminder } from "./types";
+import type { PetCompanionProfile, PetReminder } from "./types";
 
 export type PetPeerContextStatus = "idle" | "loading" | "loaded" | "error";
 
@@ -9,6 +9,7 @@ const PET_CONTEXT_INITIAL_FETCH_DELAY_MS = 800;
 const petPeerContextCache = new Map<string, Partial<PetPeerContextResponse> | null>();
 
 export type PetPeerContext = {
+  companion: PetCompanionProfile;
   decisions: PetReminder[];
   signals: {
     replyPressure: {
@@ -64,6 +65,15 @@ export type PetPeerContext = {
   snapshot: string;
   source: "help" | "default";
   status: PetPeerContextStatus;
+};
+
+const DEFAULT_COMPANION: PetCompanionProfile = {
+  name: "Momo",
+  species: "cat",
+  identity: "Momo is a small desk-side companion who watches team flow quietly.",
+  temperament: "steady",
+  speechStyle: "short, plain sentences",
+  careStyle: "prefers the smallest next step that unblocks progress",
 };
 
 function mapTaskProposalOperation(value: unknown): "create" | "update" | "move" | "handoff" | "archive" {
@@ -198,6 +208,23 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
   };
 }
 
+function mapCompanion(raw?: PetPeerContextResponse["companion"] | null): PetCompanionProfile {
+  const name = String(raw?.name || "").trim();
+  const species = String(raw?.species || "").trim();
+  const identity = String(raw?.identity || "").trim();
+  const temperament = String(raw?.temperament || "").trim();
+  const speechStyle = String(raw?.speech_style || "").trim();
+  const careStyle = String(raw?.care_style || "").trim();
+  return {
+    name: name || DEFAULT_COMPANION.name,
+    species: species || DEFAULT_COMPANION.species,
+    identity: identity || DEFAULT_COMPANION.identity,
+    temperament: temperament || DEFAULT_COMPANION.temperament,
+    speechStyle: speechStyle || DEFAULT_COMPANION.speechStyle,
+    careStyle: careStyle || DEFAULT_COMPANION.careStyle,
+  };
+}
+
 export function buildPetPeerContext(
   raw?: Partial<PetPeerContextResponse> | null,
   opts?: { status?: PetPeerContextStatus },
@@ -211,6 +238,7 @@ export function buildPetPeerContext(
     : [];
 
   return {
+    companion: mapCompanion(raw?.companion),
     decisions,
     signals: mapSignals(raw?.signals),
     persona,
