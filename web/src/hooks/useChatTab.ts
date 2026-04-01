@@ -730,7 +730,7 @@ export function useChatTab({
       setChatUnreadCount(selectedGroupId, 0);
       setChatScrollSnapshot(selectedGroupId, { atBottom: true, anchorId: "", offsetPx: 0 });
     }
-  }, [selectedGroupId, chatAtBottomRef, setShowScrollButton, setChatUnreadCount, setChatScrollSnapshot]);
+  }, [chatAtBottomRef, selectedGroupId, setShowScrollButton, setChatUnreadCount, setChatScrollSnapshot]);
 
   const handleScrollChange = useCallback(
     (isAtBottom: boolean) => {

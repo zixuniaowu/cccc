@@ -10,10 +10,11 @@ Handles:
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import re
+import shlex
 import signal
 import sys
 import time
@@ -1360,6 +1361,8 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
     dingtalk_app_key: str = ""
     dingtalk_app_secret: str = ""
     dingtalk_robot_code: str = ""
+    weixin_account_id: str = ""
+    weixin_command: List[str] = []
 
     def _resolve_secret(*, value_key: str, env_key: str, default_env: str) -> str:
         raw = str(im_config.get(value_key) or "").strip()
@@ -1495,6 +1498,29 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
                 "[error] WeCom requires bot_id + secret (set via group IM config or WECOM_BOT_ID/WECOM_SECRET)."
             )
             sys.exit(1)
+    elif platform.lower() == "weixin":
+        weixin_account_id = str(
+            im_config.get("weixin_account_id")
+            or os.environ.get("CCCC_IM_WEIXIN_ACCOUNT_ID")
+            or ""
+        ).strip()
+        raw_weixin_command = str(
+            im_config.get("weixin_command")
+            or os.environ.get("CCCC_IM_WEIXIN_COMMAND")
+            or ""
+        ).strip()
+        if raw_weixin_command:
+            weixin_command = [part for part in shlex.split(raw_weixin_command) if part]
+        else:
+            repo_root = Path(__file__).resolve().parents[4]
+            default_script = repo_root / "scripts" / "im" / "weixin_sidecar.mjs"
+            if not default_script.exists():
+                print(
+                    "[error] Default weixin sidecar script not found. "
+                    "Set weixin_command in group IM config or CCCC_IM_WEIXIN_COMMAND."
+                )
+                sys.exit(1)
+            weixin_command = ["node", str(default_script)]
     else:
         # Telegram/Discord: single token
         token_env_raw = str(im_config.get("token_env") or im_config.get("bot_token_env") or "").strip()
@@ -1530,6 +1556,8 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         lock_identity = f"dingtalk|app_key={dingtalk_app_key}"
     elif platform.lower() == "wecom":
         lock_identity = f"wecom|bot_id={wecom_bot_id}"
+    elif platform.lower() == "weixin":
+        lock_identity = f"weixin|account={weixin_account_id}|cmd={' '.join(weixin_command)}"
     else:
         lock_identity = f"{platform.lower()}|token={bot_token or ''}"
     token_material = lock_identity
@@ -1592,6 +1620,13 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
             log_path=log_path,
             ws_url=str(im_config.get("wecom_ws_url") or ""),
         )
+    elif platform.lower() == "weixin":
+        from .adapters.weixin import WeixinAdapter
+        adapter = WeixinAdapter(
+            command=weixin_command,
+            account_id=weixin_account_id,
+            log_path=log_path,
+        )
     else:
         print(f"[error] Unsupported platform: {platform}")
         sys.exit(1)
@@ -1651,7 +1686,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python -m cccc.ports.im.bridge <group_id> [platform]")
-        print("  platform: telegram (default), slack, discord, feishu (Feishu/Lark), dingtalk, wecom")
+        print("  platform: telegram (default), slack, discord, feishu (Feishu/Lark), dingtalk, wecom, weixin")
         print("")
         print("Environment variables:")
         print("  Telegram: TELEGRAM_BOT_TOKEN")
@@ -1660,6 +1695,7 @@ if __name__ == "__main__":
         print("  Feishu/Lark: FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_DOMAIN (optional: feishu|lark|https://...)")
         print("  DingTalk: DINGTALK_APP_KEY, DINGTALK_APP_SECRET, DINGTALK_ROBOT_CODE (optional)")
         print("  WeCom:    WECOM_BOT_ID, WECOM_SECRET")
+        print("  Weixin:   CCCC_IM_WEIXIN_ACCOUNT_ID (optional), CCCC_IM_WEIXIN_COMMAND (optional)")
         sys.exit(1)
 
     _group_id = sys.argv[1]

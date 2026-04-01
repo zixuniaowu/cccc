@@ -866,7 +866,7 @@ export type GroupAutomation = {
   server_now?: string;
 };
 
-export type IMPlatform = "telegram" | "slack" | "discord" | "feishu" | "dingtalk" | "wecom";
+export type IMPlatform = "telegram" | "slack" | "discord" | "feishu" | "dingtalk" | "wecom" | "weixin";
 
 export type IMConfig = {
   platform?: IMPlatform;
@@ -895,6 +895,9 @@ export type IMConfig = {
   // WeCom fields
   wecom_bot_id?: string;
   wecom_secret?: string;
+  // Weixin fields
+  weixin_account_id?: string;
+  weixin_command?: string;
 };
 
 export type IMStatus = {
@@ -904,6 +907,18 @@ export type IMStatus = {
   running: boolean;
   pid?: number;
   subscribers: number;
+};
+
+export type WeixinLoginStatus = {
+  status: string;
+  logged_in: boolean;
+  account_id?: string;
+  qrcode_url?: string;
+  qr_ascii?: string;
+  error?: string;
+  running: boolean;
+  pid?: number | null;
+  updated_at?: string;
 };
 
 export type DirItem = { name: string; path: string; is_dir: boolean };

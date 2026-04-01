@@ -1,7 +1,7 @@
 // SettingsModal renders the settings modal.
 import { lazy, Suspense, useState, useEffect, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform, WebAccessSession } from "../types";
+import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform, WebAccessSession, WeixinLoginStatus } from "../types";
 import * as api from "../services/api";
 import { useObservabilityStore } from "../stores";
 import type { RuntimeVisibilityMode } from "../utils/runtimeVisibility";
@@ -123,8 +123,13 @@ export function SettingsModal({
   // WeCom fields
   const [imWecomBotId, setImWecomBotId] = useState("");
   const [imWecomSecret, setImWecomSecret] = useState("");
+  // Weixin fields
+  const [imWeixinAccountId, setImWeixinAccountId] = useState("");
+  const [imWeixinCommand, setImWeixinCommand] = useState("");
+  const [weixinLoginStatus, setWeixinLoginStatus] = useState<WeixinLoginStatus | null>(null);
   const [imBusy, setImBusy] = useState(false);
   const imLoadSeq = useRef(0);
+  const weixinAutoStartRef = useRef(false);
 
   // IM config drafts cache (per-platform local edits, not yet saved to server)
   const [imConfigDrafts, setImConfigDrafts] = useState<Partial<Record<IMPlatform, IMConfigDraft>>>({});
@@ -221,6 +226,59 @@ export function SettingsModal({
   }, [isOpen, groupId]);
 
   useEffect(() => {
+    if (!isOpen || !groupId || imPlatform !== "weixin") return;
+    let cancelled = false;
+    const loadWeixinStatus = async () => {
+      try {
+        const resp = await api.fetchWeixinLoginStatus(groupId);
+        if (!cancelled && resp.ok) {
+          setWeixinLoginStatus(resp.result ?? null);
+        }
+      } catch {
+        if (!cancelled) setWeixinLoginStatus(null);
+      }
+    };
+    void loadWeixinStatus();
+    const timer = window.setInterval(() => {
+      void loadWeixinStatus();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isOpen, groupId, imPlatform]);
+
+  useEffect(() => {
+    if (imPlatform !== "weixin") {
+      weixinAutoStartRef.current = false;
+      return;
+    }
+    if (!groupId) return;
+    if (!weixinLoginStatus?.logged_in) return;
+    if (!imStatus?.configured || String(imStatus.platform || "") !== "weixin") return;
+    if (imStatus.running) {
+      weixinAutoStartRef.current = false;
+      return;
+    }
+    if (weixinAutoStartRef.current) return;
+
+    weixinAutoStartRef.current = true;
+    void (async () => {
+      setImBusy(true);
+      try {
+        const resp = await api.startIMBridge(groupId);
+        if (resp.ok) {
+          await loadIMStatus();
+        }
+      } catch (e) {
+        console.error("Failed to auto-start weixin bridge:", e);
+      } finally {
+        setImBusy(false);
+      }
+    })();
+  }, [groupId, imPlatform, imStatus, weixinLoginStatus]);
+
+  useEffect(() => {
     if (isOpen && canAccessGlobalSettings === true) loadObservability();
   }, [isOpen, canAccessGlobalSettings]);
 
@@ -256,6 +314,8 @@ export function SettingsModal({
     setImDingtalkRobotCode("");
     setImWecomBotId("");
     setImWecomSecret("");
+    setImWeixinAccountId("");
+    setImWeixinCommand("");
   };
 
   const loadIMStatus = async (opts?: { resetFirst?: boolean }) => {
@@ -299,6 +359,9 @@ export function SettingsModal({
         // WeCom fields
         setImWecomBotId(im.wecom_bot_id || "");
         setImWecomSecret(im.wecom_secret || "");
+        // Weixin fields
+        setImWeixinAccountId(im.weixin_account_id || "");
+        setImWeixinCommand(im.weixin_command || "");
       }
     } catch (e) {
       console.error("Failed to load IM status:", e);
@@ -488,6 +551,8 @@ export function SettingsModal({
     dingtalkRobotCode: imDingtalkRobotCode,
     wecomBotId: imWecomBotId,
     wecomSecret: imWecomSecret,
+    weixinAccountId: imWeixinAccountId,
+    weixinCommand: imWeixinCommand,
   });
 
   // Apply a draft to current IM config fields
@@ -502,6 +567,8 @@ export function SettingsModal({
     setImDingtalkRobotCode(draft.dingtalkRobotCode);
     setImWecomBotId(draft.wecomBotId);
     setImWecomSecret(draft.wecomSecret);
+    setImWeixinAccountId(draft.weixinAccountId);
+    setImWeixinCommand(draft.weixinCommand);
   };
 
   const getCurrentIMSaveRequest = () => ({
@@ -536,6 +603,8 @@ export function SettingsModal({
       setImDingtalkRobotCode("");
       setImWecomBotId("");
       setImWecomSecret("");
+      setImWeixinAccountId("");
+      setImWeixinCommand("");
     }
 
     // 3. Set new platform
@@ -571,6 +640,8 @@ export function SettingsModal({
         setImDingtalkRobotCode("");
         setImWecomBotId("");
         setImWecomSecret("");
+        setImWeixinAccountId("");
+        setImWeixinCommand("");
         await loadIMStatus();
       }
     } catch (e) {
@@ -601,6 +672,37 @@ export function SettingsModal({
       await loadIMStatus();
     } catch (e) {
       console.error("Failed to stop bridge:", e);
+    } finally {
+      setImBusy(false);
+    }
+  };
+
+  const handleStartWeixinLogin = async () => {
+    if (!groupId) return;
+    setImBusy(true);
+    try {
+      const saveResp = await saveIMConfigDraft(getCurrentIMSaveRequest());
+      if (!saveResp.ok) return;
+      await loadIMStatus();
+      weixinAutoStartRef.current = false;
+      const resp = await api.startWeixinLogin(groupId);
+      if (resp.ok) setWeixinLoginStatus(resp.result ?? null);
+    } catch (e) {
+      console.error("Failed to start weixin login:", e);
+    } finally {
+      setImBusy(false);
+    }
+  };
+
+  const handleLogoutWeixin = async () => {
+    if (!groupId) return;
+    setImBusy(true);
+    try {
+      weixinAutoStartRef.current = false;
+      const resp = await api.logoutWeixin(groupId);
+      if (resp.ok) setWeixinLoginStatus(resp.result ?? null);
+    } catch (e) {
+      console.error("Failed to logout weixin:", e);
     } finally {
       setImBusy(false);
     }
@@ -964,6 +1066,13 @@ export function SettingsModal({
                   setImWecomBotId={setImWecomBotId}
                   imWecomSecret={imWecomSecret}
                   setImWecomSecret={setImWecomSecret}
+                  imWeixinAccountId={imWeixinAccountId}
+                  setImWeixinAccountId={setImWeixinAccountId}
+                  imWeixinCommand={imWeixinCommand}
+                  setImWeixinCommand={setImWeixinCommand}
+                  weixinLoginStatus={weixinLoginStatus}
+                  onStartWeixinLogin={handleStartWeixinLogin}
+                  onLogoutWeixin={handleLogoutWeixin}
                   imBusy={imBusy}
                   onSaveConfig={handleSaveIMConfig}
                   onRemoveConfig={handleRemoveIMConfig}

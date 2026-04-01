@@ -66,18 +66,8 @@ export function useAppTabState({
     const el = eventContainerRef.current;
     if (!el) return;
 
-    if (chatSessionAtBottom ?? chatAtBottomRef.current) {
-      chatAtBottomRef.current = true;
-      requestAnimationFrame(() => {
-        el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
-      });
-      setShowScrollButton(selectedGroupId, false);
-      setChatUnreadCount(selectedGroupId, 0);
-      return;
-    }
-
     const threshold = 100;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    const atBottom = (chatSessionAtBottom ?? false) || (el.scrollHeight - el.scrollTop - el.clientHeight < threshold);
     chatAtBottomRef.current = atBottom;
     setShowScrollButton(selectedGroupId, !atBottom);
     if (atBottom) setChatUnreadCount(selectedGroupId, 0);

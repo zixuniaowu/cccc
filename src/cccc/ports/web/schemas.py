@@ -385,7 +385,7 @@ class GroupSpaceProviderAuthRequest(BaseModel):
 
 class IMSetRequest(BaseModel):
     group_id: str
-    platform: Literal["telegram", "slack", "discord", "feishu", "dingtalk", "wecom"]
+    platform: Literal["telegram", "slack", "discord", "feishu", "dingtalk", "wecom", "weixin"]
     # Legacy single token field (backward compat for telegram/discord)
     token_env: str = ""
     token: str = ""
@@ -403,6 +403,9 @@ class IMSetRequest(BaseModel):
     # WeCom fields
     wecom_bot_id: str = ""
     wecom_secret: str = ""
+    # Weixin fields
+    weixin_account_id: str = ""
+    weixin_command: str = ""
 
 
 class IMActionRequest(BaseModel):

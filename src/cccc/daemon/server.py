@@ -139,6 +139,11 @@ _DAEMON_CLIENT_WARN_LOCK = threading.Lock()
 _DAEMON_CLIENT_WARN_SEEN: Dict[tuple[str, str, str], float] = {}
 _SPACE_SYNC_RUN_QUEUE: Optional[GroupSpaceSyncRunQueue] = None
 _REQUEST_FAST_QUEUE_OPS = {"send", "reply", "chat_ack"}
+_REQUEST_FAST_QUEUE_READ_OPS = {
+    "group_space_status",
+    "im_list_authorized",
+    "im_list_pending",
+}
 
 
 def _should_log_daemon_client_warning(*, op: str, phase: str, reason: str) -> bool:
@@ -252,8 +257,14 @@ def _request_queue_for(
     slow_queue: DaemonRequestExecutionQueue,
 ) -> DaemonRequestExecutionQueue:
     op = str(getattr(req, "op", "") or "").strip()
+    args = getattr(req, "args", None)
+    if op in _REQUEST_FAST_QUEUE_READ_OPS:
+        return fast_queue
+    if op == "group_space_provider_auth":
+        action = str(args.get("action") or "").strip().lower() if isinstance(args, dict) else ""
+        if action == "status":
+            return fast_queue
     if op in _REQUEST_FAST_QUEUE_OPS:
-        args = getattr(req, "args", None)
         group_id = str(args.get("group_id") or "").strip() if isinstance(args, dict) else ""
         if group_id:
             group = load_group(group_id)
