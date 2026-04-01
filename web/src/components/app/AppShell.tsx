@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useEffect, type CSSProperties } from "react";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { TabBar } from "../TabBar";
 import { AppHeader } from "../layout/AppHeader";
@@ -152,6 +152,46 @@ export function AppShell({
   const shellStyle = {
     "--sidebar-width": `${sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth}px`,
   } as CSSProperties;
+
+  useEffect(() => {
+    if (!selectedGroupId || runtimeActors.length === 0) return;
+    if (typeof window === "undefined") return;
+
+    const nav = navigator as Navigator & {
+      connection?: {
+        saveData?: boolean;
+        effectiveType?: string;
+      };
+    };
+    const connection = nav.connection;
+    if (connection?.saveData) return;
+    if (typeof connection?.effectiveType === "string" && /(^|-)2g$/.test(connection.effectiveType)) return;
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
+    let idleId: number | null = null;
+    const preloadActorTab = () => {
+      void import("../AgentTab").then(() => {
+        if (cancelled) return;
+      });
+    };
+
+    if ("requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(() => preloadActorTab(), { timeout: 1500 });
+    } else {
+      timeoutId = globalThis.setTimeout(() => preloadActorTab(), 600);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId !== null && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId);
+      }
+    };
+  }, [selectedGroupId, runtimeActors.length]);
 
   return (
     <div

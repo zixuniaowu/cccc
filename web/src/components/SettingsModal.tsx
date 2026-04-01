@@ -130,6 +130,7 @@ export function SettingsModal({
   const [imBusy, setImBusy] = useState(false);
   const imLoadSeq = useRef(0);
   const weixinAutoStartRef = useRef(false);
+  const contentScrollRef = useRef<HTMLDivElement | null>(null);
 
   // IM config drafts cache (per-platform local edits, not yet saved to server)
   const [imConfigDrafts, setImConfigDrafts] = useState<Partial<Record<IMPlatform, IMConfigDraft>>>({});
@@ -910,19 +911,6 @@ export function SettingsModal({
     }
   }, [globalTab, globalTabs, scope]);
 
-  // ============ Render ============
-
-  if (!isOpen) return null;
-
-  const scopeRootUrl = (() => {
-    if (!groupDoc || String(groupDoc.group_id || "") !== String(groupId || "")) return "";
-    const scopes = Array.isArray(groupDoc.scopes) ? groupDoc.scopes : [];
-    const activeKey = String(groupDoc.active_scope_key || "");
-    const active = scopes.find((s) => String(s?.scope_key || "") === activeKey && String(s?.url || "").trim());
-    const first = scopes.find((s) => String(s?.url || "").trim());
-    return String((active || first)?.url || "").trim();
-  })();
-
   const groupTabs: { id: GroupTabId; label: string }[] = [
     { id: "guidance", label: t("tabs.guidance") },
     { id: "automation", label: t("tabs.automation") },
@@ -939,6 +927,27 @@ export function SettingsModal({
     if (scope === "group") setGroupTab(tab as GroupTabId);
     else setGlobalTab(tab as GlobalTabId);
   };
+
+  useEffect(() => {
+    const el = contentScrollRef.current;
+    if (!isOpen || !el) return;
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: 0, behavior: "auto" });
+    });
+  }, [isOpen, scope, activeTab]);
+
+  // ============ Render ============
+
+  if (!isOpen) return null;
+
+  const scopeRootUrl = (() => {
+    if (!groupDoc || String(groupDoc.group_id || "") !== String(groupId || "")) return "";
+    const scopes = Array.isArray(groupDoc.scopes) ? groupDoc.scopes : [];
+    const activeKey = String(groupDoc.active_scope_key || "");
+    const active = scopes.find((s) => String(s?.scope_key || "") === activeKey && String(s?.url || "").trim());
+    const first = scopes.find((s) => String(s?.url || "").trim());
+    return String((active || first)?.url || "").trim();
+  })();
 
   return (
     <ModalFrame
@@ -964,7 +973,10 @@ export function SettingsModal({
         />
 
         {/* Main Content Area */}
-        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-subtle flex flex-col [scrollbar-gutter:stable]">
+        <div
+          ref={contentScrollRef}
+          className="min-h-0 flex-1 overflow-y-auto scrollbar-subtle flex flex-col [scrollbar-gutter:stable]"
+        >
           <div className="p-5 pb-8 sm:p-8 sm:pb-10 space-y-6">
             {scope === "global" && !globalSettingsEnabled && !currentBrowserSignedIn ? (
               <div className={`rounded-xl border p-6 ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
