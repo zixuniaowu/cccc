@@ -113,6 +113,8 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
   const [hint, setHint] = useState("");
   const [err, setErr] = useState("");
   const connectHintedFlowRef = useRef("");
+  const loadSeqRef = useRef(0);
+  const pollInFlightRef = useRef(false);
 
   const providerState = status?.provider || null;
   const workBinding = status?.bindings?.work || null;
@@ -167,17 +169,22 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     window.setTimeout(() => setHint(""), 2400);
   };
 
-  const loadAll = async () => {
+  const loadAll = async (opts?: { refreshSpaces?: boolean }) => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
+    const loadSeq = loadSeqRef.current + 1;
+    loadSeqRef.current = loadSeq;
     setLoading(true);
     setErr("");
     try {
       let nextStatus: GroupSpaceStatus | null = null;
-      let nextAuth: GroupSpaceProviderAuthStatus | null = null;
       let nextSpaces: GroupSpaceRemoteSpace[] = [];
+      const [statusResp, authResp] = await Promise.all([
+        api.fetchGroupSpaceStatus(gid, provider),
+        api.controlGroupSpaceProviderAuth({ provider, action: "status" }),
+      ]);
+      if (loadSeqRef.current !== loadSeq) return;
 
-      const statusResp = await api.fetchGroupSpaceStatus(gid, provider);
       if (!statusResp.ok) {
         setErr(statusResp.error?.message || t("groupSpace.loadFailed"));
       } else {
@@ -185,19 +192,20 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         setStatus(nextStatus);
       }
 
-      const authResp = await api.controlGroupSpaceProviderAuth({ provider, action: "status" });
       if (authResp.ok) {
-        nextAuth = authResp.result?.auth || null;
-        setAuthFlow(nextAuth);
+        setAuthFlow(authResp.result?.auth || null);
       } else {
         setAuthFlow(null);
       }
 
-      const shouldLoadSpaces = Boolean(nextStatus?.provider?.write_ready);
+      const shouldLoadSpaces =
+        Boolean(nextStatus?.provider?.write_ready) &&
+        (Boolean(opts?.refreshSpaces) || spaces.length <= 0);
       if (shouldLoadSpaces) {
         setSpacesBusy(true);
         try {
           const spacesResp = await api.fetchGroupSpaceSpaces(gid, provider);
+          if (loadSeqRef.current !== loadSeq) return;
           if (spacesResp.ok) {
             nextSpaces = normalizeNotebookSpaces(spacesResp.result?.spaces);
             setSpaces(nextSpaces);
@@ -216,21 +224,26 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
       setWorkBindRemoteId((prev) => resolveDraftNotebookId(prev, nextWorkBoundRemoteId, nextSpaces));
       setMemoryBindRemoteId((prev) => resolveDraftNotebookId(prev, nextMemoryBoundRemoteId, nextSpaces));
     } catch (e) {
+      if (loadSeqRef.current !== loadSeq) return;
       setErr(e instanceof Error ? e.message : t("groupSpace.loadFailed"));
     } finally {
-      setLoading(false);
+      if (loadSeqRef.current === loadSeq) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     if (!isActive || !groupId) return;
-    void loadAll();
+    void loadAll({ refreshSpaces: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when active/group changes
   }, [isActive, groupId]);
 
   useEffect(() => {
     if (!isActive || !groupId || !connectionRunning) return;
     const pollOnce = async () => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
       try {
         const resp = await api.controlGroupSpaceProviderAuth({ provider, action: "status" });
         if (!resp.ok) {
@@ -241,7 +254,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         setAuthFlow(nextAuth);
         const nextState = String(nextAuth?.state || "").trim();
         if (nextState && nextState !== "running") {
-          await loadAll();
+          await loadAll({ refreshSpaces: nextState === "succeeded" });
           if (nextState === "succeeded") {
             const flowKey = String(nextAuth?.session_id || nextAuth?.started_at || "succeeded").trim();
             if (flowKey && connectHintedFlowRef.current !== flowKey) {
@@ -252,6 +265,8 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         }
       } catch (e) {
         setErr(e instanceof Error ? e.message : t("groupSpace.loadFailed"));
+      } finally {
+        pollInFlightRef.current = false;
       }
     };
     void pollOnce();
@@ -369,7 +384,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
       if (lane === "work") setWorkBindRemoteId(nextRemoteId);
       else setMemoryBindRemoteId(nextRemoteId);
       setHintWithTimeout(t("groupSpace.bindCreated"));
-      await loadAll();
+      await loadAll({ refreshSpaces: true });
     } catch {
       setErr(t("groupSpace.bindFailed"));
     } finally {

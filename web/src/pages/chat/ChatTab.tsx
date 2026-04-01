@@ -485,7 +485,6 @@ export function ChatTab({
                   initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
                   highlightEventId={chatHighlightEventId}
                   scrollRef={scrollRef}
-                  followBottomRef={chatAtBottomRef}
                   onReply={startReply}
                   onShowRecipients={showRecipients}
                   onCopyLink={copyMessageLink}
