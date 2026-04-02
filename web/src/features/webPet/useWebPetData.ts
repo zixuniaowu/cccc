@@ -144,6 +144,7 @@ export function useWebPetData(input: {
       groupContext,
       events,
       decisions: petContext.decisions,
+      petContextStatus: petContext.status,
       petContext: {
         persona: petContext.persona,
         help: petContext.help,

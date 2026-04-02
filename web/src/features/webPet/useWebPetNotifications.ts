@@ -326,6 +326,7 @@ export function useWebPetNotifications(input: {
   groupContext: GroupContext | null;
   events: LedgerEvent[];
   decisions?: PetReminder[];
+  petContextStatus?: "idle" | "loading" | "loaded" | "error";
   petContext?: {
     persona?: string;
     help?: string;
@@ -336,6 +337,8 @@ export function useWebPetNotifications(input: {
   const groupState = String(input.groupState || "").trim().toLowerCase();
   const groupContext = input.groupContext;
   const events = input.events;
+  const petContextStatus = String(input.petContextStatus || "loaded").trim().toLowerCase();
+  const allowLocalTaskFallback = petContextStatus === "error";
   const initialState = useMemo(() => getInitialNotificationState(groupId), [groupId]);
 
   const [reaction, setReaction] = useState<PetReaction | null>(null);
@@ -367,7 +370,7 @@ export function useWebPetNotifications(input: {
 
   const projected = useMemo(() => {
     const decisions = Array.isArray(input.decisions) ? input.decisions : [];
-    const localReminders = localTaskProposalEvaluation.groupId === groupId
+    const localReminders = allowLocalTaskFallback && localTaskProposalEvaluation.groupId === groupId
       ? localTaskProposalEvaluation.evaluation.reminders
       : [];
     const mergedReminders = mergeTaskProposalReminders(localReminders, decisions);
@@ -377,7 +380,7 @@ export function useWebPetNotifications(input: {
         !shouldSuppressTaskProposalEcho(reminder, events),
       ),
     );
-  }, [events, groupId, groupState, input.decisions, localTaskProposalEvaluation]);
+  }, [allowLocalTaskFallback, events, groupId, groupState, input.decisions, localTaskProposalEvaluation]);
 
   const reminderByFingerprint = useMemo(
     () => new Map(projected.map((reminder) => [reminder.fingerprint, reminder])),
@@ -424,6 +427,27 @@ export function useWebPetNotifications(input: {
   }, [groupId]);
 
   useEffect(() => {
+    if (!allowLocalTaskFallback) {
+      const emptyEvaluation: LocalTaskProposalEvaluation = {
+        reminders: [],
+        nextHistory: cloneTaskAdvisorHistory(new Map()),
+        signature: "",
+      };
+      advisorHistoryRef.current = cloneTaskAdvisorHistory(new Map());
+      advisorCommittedSignatureRef.current = "";
+      const frame = window.requestAnimationFrame(() => {
+        setLocalTaskProposalEvaluation((current) => {
+          if (current.groupId === groupId && current.evaluation.signature === "") {
+            return current;
+          }
+          return {
+            groupId,
+            evaluation: emptyEvaluation,
+          };
+        });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
     const stylePolicy = deriveTaskProposalStylePolicy(input.petContext);
     const nextEvaluation = evaluateLocalTaskProposalReminders(
       groupId,
@@ -436,19 +460,22 @@ export function useWebPetNotifications(input: {
       advisorHistoryRef.current = cloneTaskAdvisorHistory(nextEvaluation.nextHistory);
       advisorCommittedSignatureRef.current = signature;
     }
-    setLocalTaskProposalEvaluation((current) => {
-      if (
-        current.groupId === groupId
-        && current.evaluation.signature === nextEvaluation.signature
-      ) {
-        return current;
-      }
-      return {
-        groupId,
-        evaluation: nextEvaluation,
-      };
+    const frame = window.requestAnimationFrame(() => {
+      setLocalTaskProposalEvaluation((current) => {
+        if (
+          current.groupId === groupId
+          && current.evaluation.signature === nextEvaluation.signature
+        ) {
+          return current;
+        }
+        return {
+          groupId,
+          evaluation: nextEvaluation,
+        };
+      });
     });
-  }, [groupContext, groupId, input.petContext]);
+    return () => window.cancelAnimationFrame(frame);
+  }, [allowLocalTaskFallback, groupContext, groupId, input.petContext]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

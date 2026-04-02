@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 from pathlib import Path
 import time
@@ -38,6 +39,7 @@ from ....kernel.pet_prompt import build_pet_prompt_parts, build_pet_snapshot_tex
 from ....kernel.pet_outcomes import append_pet_decision_outcome
 from ....kernel.pet_actor import get_pet_actor, is_desktop_pet_enabled
 from ....kernel.pet_signals import load_pet_signals
+from ....kernel.pet_task_evidence import build_pet_task_evidence
 from ....daemon.pet.review_scheduler import request_manual_pet_review
 from ...mcp.utils.help_markdown import parse_help_markdown
 from ....kernel.access_tokens import list_access_tokens
@@ -78,6 +80,7 @@ _PRESENTATION_BROWSER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
 _CONTEXT_INFLIGHT: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
 _CONTEXT_GENERATION: Dict[str, int] = {}
 _CONTEXT_LOCK = asyncio.Lock()
+logger = logging.getLogger("cccc.web.groups")
 
 
 def _group_running_local(group_id: str) -> bool:
@@ -209,13 +212,27 @@ def _build_pet_context_payload(
     help_content = str(help_prompt.get("content") or "")
     persona = str(help_prompt.get("persona") or "").strip()
     source = str(help_prompt.get("pet_source") or "default").strip() or "default"
-    parts = build_pet_prompt_parts(group, help_markdown=help_content, context_payload=context_payload)
-    decisions = load_pet_decisions(group)
     signals = load_pet_signals(group, context_payload=context_payload)
+    enriched_context_payload = dict(context_payload)
+    enriched_context_payload["pet_signals"] = signals
+    parts = build_pet_prompt_parts(group, help_markdown=help_content, context_payload=enriched_context_payload)
+    decisions = load_pet_decisions(group)
+    task_evidence: list[dict[str, Any]] = []
+    try:
+        storage = ContextStorage(group)
+        task_evidence = build_pet_task_evidence(
+            storage.list_tasks(),
+            getattr(storage.load_agents(), "agents", []) or [],
+            limit=4,
+        )
+    except Exception:
+        task_evidence = []
+    snapshot = str(parts.get("snapshot") or "").strip() or build_pet_snapshot_text(group, enriched_context_payload)
     payload = {
         "persona": persona,
-        "snapshot": build_pet_snapshot_text(group, context_payload),
+        "snapshot": snapshot,
         "decisions": decisions,
+        "task_evidence": task_evidence,
         "signals": signals,
         "source": str(parts.get("source") or source),
         "companion": parts.get("profile") or {},
@@ -230,6 +247,115 @@ def _build_pet_context_payload(
         }
     )
     return payload
+
+
+def _collect_ledger_event_statuses(
+    group: Any,
+    events: list[dict[str, Any]],
+    *,
+    with_read_status: bool = True,
+    with_ack_status: bool = True,
+    with_obligation_status: bool = True,
+) -> dict[str, dict[str, Any]]:
+    started_at = time.perf_counter()
+    status_by_event_id: dict[str, dict[str, Any]] = {}
+    if not events:
+        return status_by_event_id
+    chat_events = [event for event in events if str(event.get("kind") or "") == "chat.message"]
+    cached_statuses: dict[str, dict[str, Any]] = {}
+    cached_ids: set[str] = set()
+    if chat_events:
+        from ....kernel.ledger_status_cache import get_cached_message_status_batch
+
+        cached_statuses = get_cached_message_status_batch(
+            group,
+            [str(event.get("id") or "").strip() for event in chat_events],
+        )
+        cached_ids = set(cached_statuses.keys())
+        for event_id, payload in cached_statuses.items():
+            event_payload = status_by_event_id.setdefault(str(event_id), {})
+            if with_read_status and "read_status" in payload:
+                event_payload["read_status"] = payload["read_status"]
+            if with_ack_status and "ack_status" in payload:
+                event_payload["ack_status"] = payload["ack_status"]
+            if with_obligation_status and "obligation_status" in payload:
+                event_payload["obligation_status"] = payload["obligation_status"]
+
+    missing_events = [
+        event for event in chat_events
+        if str(event.get("id") or "").strip() and str(event.get("id") or "").strip() not in cached_ids
+    ]
+    cache_hit_count = len(cached_ids)
+    cache_miss_count = len(missing_events)
+    if missing_events:
+        read_status_by_event: dict[str, dict[str, bool]] = {}
+        ack_status_by_event: dict[str, dict[str, bool]] = {}
+        obligation_status_by_event: dict[str, dict[str, dict[str, bool]]] = {}
+
+        if with_read_status:
+            from ....kernel.inbox import get_read_status_batch
+
+            read_status_by_event = get_read_status_batch(group, missing_events)
+            for event_id, read_status in read_status_by_event.items():
+                status_by_event_id.setdefault(str(event_id), {})["read_status"] = read_status
+
+        if with_ack_status:
+            from ....kernel.inbox import get_ack_status_batch
+
+            ack_status_by_event = get_ack_status_batch(group, missing_events)
+            for event_id, ack_status in ack_status_by_event.items():
+                status_by_event_id.setdefault(str(event_id), {})["ack_status"] = ack_status
+
+        if with_obligation_status:
+            from ....kernel.inbox import get_obligation_status_batch
+
+            obligation_status_by_event = get_obligation_status_batch(group, missing_events)
+            for event_id, obligation_status in obligation_status_by_event.items():
+                status_by_event_id.setdefault(str(event_id), {})["obligation_status"] = obligation_status
+
+        if with_read_status and with_ack_status and with_obligation_status:
+            try:
+                from ....kernel.ledger_status_cache import store_message_status_batch
+
+                store_message_status_batch(
+                    group,
+                    missing_events,
+                    read_status_by_event=read_status_by_event,
+                    ack_status_by_event=ack_status_by_event,
+                    obligation_status_by_event=obligation_status_by_event,
+                )
+            except Exception:
+                pass
+
+    logger.debug(
+        "ledger_statuses group_id=%s total=%d chat=%d cache_hit=%d cache_miss=%d elapsed_ms=%.1f",
+        str(getattr(group, "group_id", "") or ""),
+        len(events),
+        len(chat_events),
+        cache_hit_count,
+        cache_miss_count,
+        (time.perf_counter() - started_at) * 1000.0,
+    )
+
+    return status_by_event_id
+
+
+def _apply_ledger_event_statuses(events: list[dict[str, Any]], status_by_event_id: dict[str, dict[str, Any]]) -> None:
+    if not events or not status_by_event_id:
+        return
+    for ev in events:
+        event_id = str(ev.get("id") or "").strip()
+        if not event_id:
+            continue
+        payload = status_by_event_id.get(event_id)
+        if not isinstance(payload, dict):
+            continue
+        if "read_status" in payload:
+            ev["_read_status"] = payload["read_status"]
+        if "ack_status" in payload:
+            ev["_ack_status"] = payload["ack_status"]
+        if "obligation_status" in payload:
+            ev["_obligation_status"] = payload["obligation_status"]
 
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
@@ -1600,29 +1726,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         )
                         has_more = bool(older_has_more or older_events)
 
-            if with_read_status:
-                from ....kernel.inbox import get_read_status_batch
-                status_map = get_read_status_batch(group, events)
-                for ev in events:
-                    event_id = str(ev.get("id") or "")
-                    if event_id in status_map:
-                        ev["_read_status"] = status_map[event_id]
-
-            if with_ack_status:
-                from ....kernel.inbox import get_ack_status_batch
-                ack_map = get_ack_status_batch(group, events)
-                for ev in events:
-                    event_id = str(ev.get("id") or "")
-                    if event_id in ack_map:
-                        ev["_ack_status"] = ack_map[event_id]
-
-            if with_obligation_status:
-                from ....kernel.inbox import get_obligation_status_batch
-                obligation_map = get_obligation_status_batch(group, events)
-                for ev in events:
-                    event_id = str(ev.get("id") or "")
-                    if event_id in obligation_map:
-                        ev["_obligation_status"] = obligation_map[event_id]
+            if with_read_status or with_ack_status or with_obligation_status:
+                _apply_ledger_event_statuses(
+                    events,
+                    _collect_ledger_event_statuses(
+                        group,
+                        events,
+                        with_read_status=with_read_status,
+                        with_ack_status=with_ack_status,
+                        with_obligation_status=with_obligation_status,
+                    ),
+                )
 
             return {"ok": True, "result": {"events": events, "has_more": has_more, "count": len(events)}}
 
@@ -1662,28 +1776,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 limit=clamped_limit,
             )
 
-            if with_read_status:
-                status_map = get_read_status_batch(group, events)
-                for ev in events:
-                    event_id = str(ev.get("id") or "")
-                    if event_id in status_map:
-                        ev["_read_status"] = status_map[event_id]
-
-            if with_ack_status:
-                from ....kernel.inbox import get_ack_status_batch
-                ack_map = get_ack_status_batch(group, events)
-                for ev in events:
-                    event_id = str(ev.get("id") or "")
-                    if event_id in ack_map:
-                        ev["_ack_status"] = ack_map[event_id]
-
-            if with_obligation_status:
-                from ....kernel.inbox import get_obligation_status_batch
-                obligation_map = get_obligation_status_batch(group, events)
-                for ev in events:
-                    event_id = str(ev.get("id") or "")
-                    if event_id in obligation_map:
-                        ev["_obligation_status"] = obligation_map[event_id]
+            if with_read_status or with_ack_status or with_obligation_status:
+                _apply_ledger_event_statuses(
+                    events,
+                    _collect_ledger_event_statuses(
+                        group,
+                        events,
+                        with_read_status=with_read_status,
+                        with_ack_status=with_ack_status,
+                        with_obligation_status=with_obligation_status,
+                    ),
+                )
 
             return {
                 "ok": True,
@@ -1747,28 +1850,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
             events = [*before_events, center_event, *after_events]
 
-            if with_read_status:
-                status_map = get_read_status_batch(group, events)
-                for ev in events:
-                    event_id = str(ev.get("id") or "")
-                    if event_id in status_map:
-                        ev["_read_status"] = status_map[event_id]
-
-            if with_ack_status:
-                from ....kernel.inbox import get_ack_status_batch
-                ack_map = get_ack_status_batch(group, events)
-                for ev in events:
-                    event_id = str(ev.get("id") or "")
-                    if event_id in ack_map:
-                        ev["_ack_status"] = ack_map[event_id]
-
-            if with_obligation_status:
-                from ....kernel.inbox import get_obligation_status_batch
-                obligation_map = get_obligation_status_batch(group, events)
-                for ev in events:
-                    event_id = str(ev.get("id") or "")
-                    if event_id in obligation_map:
-                        ev["_obligation_status"] = obligation_map[event_id]
+            if with_read_status or with_ack_status or with_obligation_status:
+                _apply_ledger_event_statuses(
+                    events,
+                    _collect_ledger_event_statuses(
+                        group,
+                        events,
+                        with_read_status=with_read_status,
+                        with_ack_status=with_ack_status,
+                        with_obligation_status=with_obligation_status,
+                    ),
+                )
 
             return {
                 "ok": True,
@@ -1798,6 +1890,45 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return {"ok": True, "result": {"event_id": event_id, "read_status": status}}
 
         return await run_in_threadpool(_load)
+
+    @group_router.post("/ledger/statuses")
+    async def ledger_statuses(group_id: str, request: Request) -> Dict[str, Any]:
+        """Batch load read/ack/obligation status for specific event ids."""
+
+        def _load(event_ids: list[str]) -> Dict[str, Any]:
+            group = load_group(group_id)
+            if group is None:
+                raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+            from ....kernel.ledger_index import lookup_events_by_ids
+
+            normalized_ids: list[str] = []
+            seen_ids: set[str] = set()
+            for item in event_ids:
+                event_id = str(item or "").strip()
+                if not event_id or event_id in seen_ids:
+                    continue
+                seen_ids.add(event_id)
+                normalized_ids.append(event_id)
+            if not normalized_ids:
+                return {"ok": True, "result": {"statuses": {}}}
+
+            events = [
+                ev
+                for ev in lookup_events_by_ids(group.ledger_path, normalized_ids)
+                if isinstance(ev, dict) and str(ev.get("kind") or "") == "chat.message"
+            ]
+            statuses = _collect_ledger_event_statuses(group, events)
+            return {"ok": True, "result": {"statuses": statuses}}
+
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        event_ids = payload.get("event_ids") if isinstance(payload, dict) else []
+        if not isinstance(event_ids, list):
+            raise HTTPException(status_code=400, detail={"code": "invalid_event_ids", "message": "event_ids must be a list"})
+        return await run_in_threadpool(_load, [str(item or "") for item in event_ids])
 
     @global_router.websocket("/groups/{group_id}/presentation/browser_surface/ws")
     async def group_presentation_browser_surface_ws(websocket: WebSocket, group_id: str) -> None:

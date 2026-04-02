@@ -41,10 +41,16 @@ _ACTION_PREFIX_RE = re.compile(r"^(please|prioritize|follow up|check|review|ask|
 _STRUCTURED_TOKEN_RE = re.compile(r"\b[a-z0-9]+(?:[_/-][a-z0-9]+)+\b", re.IGNORECASE)
 _LONG_ASCII_TOKEN_RE = re.compile(r"\b[a-z]{5,}\b", re.IGNORECASE)
 _BULLET_PREFIX_RE = re.compile(r"^((?:[-*])|(?:\d+\.))\s+")
+_CONFIDENCE_LEVELS = {"low", "medium", "high"}
 
 
 def _normalize_text(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def _normalize_confidence(value: Any) -> str:
+    normalized = _normalize_text(value).lower()
+    return normalized if normalized in _CONFIDENCE_LEVELS else ""
 
 
 def _is_foreman_target(raw: Any) -> bool:
@@ -294,6 +300,12 @@ def _normalize_decision(raw: Any) -> Dict[str, Any] | None:
         "source": source,
         "updated_at": str(raw.get("updated_at") or "").strip(),
     }
+    confidence = _normalize_confidence(raw.get("confidence"))
+    if confidence:
+        out["confidence"] = confidence
+    reasoning_brief = _normalize_text(raw.get("reasoning_brief"))
+    if reasoning_brief:
+        out["reasoning_brief"] = reasoning_brief
     if bool(raw.get("ephemeral")):
         out["ephemeral"] = True
     return out

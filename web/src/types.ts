@@ -121,6 +121,12 @@ export type LedgerEvent = {
   _obligation_status?: Record<string, ObligationStatus>;
 };
 
+export type LedgerEventStatusPayload = {
+  read_status?: Record<string, boolean>;
+  ack_status?: Record<string, boolean>;
+  obligation_status?: Record<string, ObligationStatus>;
+};
+
 export type Actor = {
   id: string;
   role?: string;

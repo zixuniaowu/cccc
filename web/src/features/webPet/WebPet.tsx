@@ -6,6 +6,7 @@ import {
   fetchContext,
   fetchGroup,
   fetchLedgerTail,
+  fetchLedgerStatuses,
   fetchPetPeerContext,
   fetchSettings,
   recordPetDecisionOutcome,
@@ -22,13 +23,15 @@ import { stagePetReminderDraft } from "./petSuggestionDraft";
 import { getBackgroundRefreshDelayMs } from "./reviewTiming";
 import { WEB_PET_BUBBLE_SIZE } from "./constants";
 import { getLatestPetContextRefreshMarker } from "./petContextRefresh";
-import { shouldProjectReminderForGroupState } from "./useWebPetNotifications";
+import { isManualReviewReminderReady } from "./manualReviewReminder";
 import type { PetReminder } from "./types";
-import type { Actor, GroupContext, GroupDoc, GroupSettings, LedgerEvent } from "../../types";
+import type { Actor, GroupContext, GroupDoc, GroupSettings, LedgerEvent, LedgerEventStatusPayload } from "../../types";
+import { mergeLedgerEvents } from "../../utils/mergeLedgerEvents";
 import i18n from "../../i18n";
 
 const lastKnownDesktopPetEnabledByGroup: Record<string, boolean> = {};
 const BACKGROUND_REFRESH_TIMEOUT_MS = 10_000;
+const BACKGROUND_LEDGER_TAIL_LIMIT = 60;
 const MANUAL_PET_REVIEW_POLL_MS = 900;
 const MANUAL_PET_REVIEW_MAX_ATTEMPTS = 8;
 const EMPTY_EVENTS: LedgerEvent[] = [];
@@ -43,10 +46,6 @@ type RemotePetGroupState = {
 
 function tPet(key: string, fallback: string, vars?: Record<string, unknown>): string {
   return String(i18n.t(`webPet:${key}`, { defaultValue: fallback, ...(vars || {}) }));
-}
-
-export function isManualReviewReminderReady(reminder: PetReminder, groupState: string): boolean {
-  return shouldSurfaceReminder(reminder) && shouldProjectReminderForGroupState(reminder, groupState);
 }
 
 function handleReminderAction(
@@ -134,6 +133,7 @@ export function WebPet({
   const [reviewInFlight, setReviewInFlight] = useState(false);
   const [petContextRefreshToken, setPetContextRefreshToken] = useState(0);
   const [remoteState, setRemoteState] = useState<RemotePetGroupState>(() => buildEmptyRemoteState());
+  const remoteStateRef = useRef<RemotePetGroupState>(buildEmptyRemoteState());
   const remoteRefreshEpochRef = useRef(0);
   const remoteRefreshInFlightRef = useRef(false);
   const remoteRefreshFailureCountRef = useRef(0);
@@ -176,6 +176,10 @@ export function WebPet({
   const selectedReminder = reminders.find(
     (reminder) => reminder.fingerprint === selectedReminderFingerprint,
   ) || activeReminder || null;
+
+  useEffect(() => {
+    remoteStateRef.current = remoteState;
+  }, [remoteState]);
   const handleReminderActionWithDismiss = useCallback(
     (reminder: PetReminder) => {
       handleReminderAction(reminder, () => {
@@ -351,7 +355,11 @@ export function WebPet({
             fetchGroup(gid, { noCache: true, signal: controller.signal }),
             fetchActors(gid, false, { noCache: true, signal: controller.signal }),
             fetchContext(gid, { detail: "summary", noCache: true, signal: controller.signal }),
-            fetchLedgerTail(gid, 120, { noCache: true, signal: controller.signal }),
+            fetchLedgerTail(gid, BACKGROUND_LEDGER_TAIL_LIMIT, {
+              noCache: true,
+              signal: controller.signal,
+              includeStatuses: false,
+            }),
             fetchSettings(gid, { noCache: true, signal: controller.signal }),
           ]);
         if (cancelled || controller.signal.aborted || remoteRefreshEpochRef.current !== epoch) return;
@@ -361,13 +369,40 @@ export function WebPet({
           ? remoteRefreshFailureCountRef.current + 1
           : 0;
 
+        const mergedEvents = ledgerResp.ok
+          ? mergeLedgerEvents(remoteStateRef.current.events, ledgerResp.result.events || [], BACKGROUND_LEDGER_TAIL_LIMIT)
+          : remoteStateRef.current.events;
         setRemoteState({
           groupDoc: groupResp.ok ? groupResp.result.group : null,
           actors: actorsResp.ok ? actorsResp.result.actors || [] : [],
           groupContext: contextResp.ok ? contextResp.result : null,
           groupSettings: settingsResp.ok ? settingsResp.result.settings || null : groupSettings,
-          events: ledgerResp.ok ? ledgerResp.result.events || [] : [],
+          events: mergedEvents,
         });
+        const eventIds = mergedEvents
+          .filter((event) => event.kind === "chat.message")
+          .map((event) => String(event.id || "").trim())
+          .filter((eventId) => eventId);
+        if (eventIds.length > 0) {
+          const statusesResp = await fetchLedgerStatuses(gid, eventIds, { noCache: true, signal: controller.signal });
+          if (!cancelled && !controller.signal.aborted && remoteRefreshEpochRef.current === epoch && statusesResp.ok) {
+            const statusMap: Record<string, LedgerEventStatusPayload> = statusesResp.result.statuses || {};
+            setRemoteState((current) => ({
+              ...current,
+              events: current.events.map((event) => {
+                const eventId = String(event.id || "").trim();
+                const patch = eventId ? statusMap[eventId] : null;
+                if (!patch) return event;
+                return {
+                  ...event,
+                  _read_status: patch.read_status ?? event._read_status,
+                  _ack_status: patch.ack_status ?? event._ack_status,
+                  _obligation_status: patch.obligation_status ?? event._obligation_status,
+                };
+              }),
+            }));
+          }
+        }
       } finally {
         window.clearTimeout(timeout);
         if (remoteRefreshAbortRef.current === controller) {

@@ -8,9 +8,48 @@ export type PetPeerContextStatus = "idle" | "loading" | "loaded" | "error";
 const PET_CONTEXT_INITIAL_FETCH_DELAY_MS = 800;
 const petPeerContextCache = new Map<string, Partial<PetPeerContextResponse> | null>();
 
+export type PetTaskEvidence = {
+  kind: string;
+  priority: number;
+  hypothesis: string;
+  actor: {
+    id: string;
+    activeTaskId?: string;
+    focus?: string;
+    nextAction?: string;
+    blockers: string[];
+  };
+  task: {
+    id: string;
+    title: string;
+    status: string;
+    assignee?: string;
+    waitingOn?: string;
+    blockedBy: string[];
+    handoffTo?: string;
+    updatedAt?: string;
+  };
+  currentActiveTask?: {
+    id: string;
+    title: string;
+    status: string;
+    assignee?: string;
+    waitingOn?: string;
+    blockedBy: string[];
+    handoffTo?: string;
+    updatedAt?: string;
+  };
+  signals: {
+    taskStaleMinutes: number;
+    sameWorkstreamHint: boolean;
+    blockerCount: number;
+  };
+};
+
 export type PetPeerContext = {
   companion: PetCompanionProfile;
   decisions: PetReminder[];
+  taskEvidence: PetTaskEvidence[];
   signals: {
     replyPressure: {
       severity: string;
@@ -188,6 +227,15 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
     kind: kind === "actor_down" ? "actor_down" : "suggestion",
     priority: Number(raw?.priority || 0),
     summary: String(raw?.summary || "").trim(),
+    confidence:
+      String(raw?.confidence || "").trim() === "low"
+        ? "low"
+        : String(raw?.confidence || "").trim() === "high"
+          ? "high"
+          : String(raw?.confidence || "").trim() === "medium"
+            ? "medium"
+            : undefined,
+    reasoningBrief: String(raw?.reasoning_brief || "").trim() || undefined,
     agent: String(raw?.agent || "").trim(),
     ephemeral: !!raw?.ephemeral,
     source: {
@@ -205,6 +253,64 @@ function mapDecision(raw: NonNullable<PetPeerContextResponse["decisions"]>[numbe
     },
     fingerprint,
     action,
+  };
+}
+
+function mapEvidenceTask(
+  raw?: {
+    id?: string | null;
+    title?: string | null;
+    status?: string | null;
+    assignee?: string | null;
+    waiting_on?: string | null;
+    blocked_by?: string[] | null;
+    handoff_to?: string | null;
+    updated_at?: string | null;
+  } | null,
+): PetTaskEvidence["task"] | undefined {
+  const id = String(raw?.id || "").trim();
+  const title = String(raw?.title || "").trim();
+  const status = String(raw?.status || "").trim();
+  if (!id || !status) return undefined;
+  return {
+    id,
+    title,
+    status,
+    assignee: String(raw?.assignee || "").trim() || undefined,
+    waitingOn: String(raw?.waiting_on || "").trim() || undefined,
+    blockedBy: Array.isArray(raw?.blocked_by)
+      ? raw.blocked_by.map((item) => String(item || "").trim()).filter(Boolean)
+      : [],
+    handoffTo: String(raw?.handoff_to || "").trim() || undefined,
+    updatedAt: String(raw?.updated_at || "").trim() || undefined,
+  };
+}
+
+function mapTaskEvidence(raw?: NonNullable<PetPeerContextResponse["task_evidence"]>[number] | null): PetTaskEvidence | null {
+  const kind = String(raw?.kind || "").trim();
+  const actorId = String(raw?.actor?.id || "").trim();
+  const task = mapEvidenceTask(raw?.task);
+  if (!kind || !actorId || !task) return null;
+  return {
+    kind,
+    priority: Number(raw?.priority || 0),
+    hypothesis: String(raw?.hypothesis || "").trim(),
+    actor: {
+      id: actorId,
+      activeTaskId: String(raw?.actor?.active_task_id || "").trim() || undefined,
+      focus: String(raw?.actor?.focus || "").trim() || undefined,
+      nextAction: String(raw?.actor?.next_action || "").trim() || undefined,
+      blockers: Array.isArray(raw?.actor?.blockers)
+        ? raw.actor.blockers.map((item) => String(item || "").trim()).filter(Boolean)
+        : [],
+    },
+    task,
+    currentActiveTask: mapEvidenceTask(raw?.current_active_task),
+    signals: {
+      taskStaleMinutes: Number(raw?.signals?.task_stale_minutes || 0),
+      sameWorkstreamHint: !!raw?.signals?.same_workstream_hint,
+      blockerCount: Number(raw?.signals?.blocker_count || 0),
+    },
   };
 }
 
@@ -236,10 +342,14 @@ export function buildPetPeerContext(
   const decisions = Array.isArray(raw?.decisions)
     ? raw.decisions.map((item) => mapDecision(item)).filter((item): item is PetReminder => item !== null)
     : [];
+  const taskEvidence = Array.isArray(raw?.task_evidence)
+    ? raw.task_evidence.map((item) => mapTaskEvidence(item)).filter((item): item is PetTaskEvidence => item !== null)
+    : [];
 
   return {
     companion: mapCompanion(raw?.companion),
     decisions,
+    taskEvidence,
     signals: mapSignals(raw?.signals),
     persona,
     help,

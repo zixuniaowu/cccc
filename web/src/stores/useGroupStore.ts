@@ -4,6 +4,7 @@ import type {
   GroupMeta,
   GroupDoc,
   LedgerEvent,
+  LedgerEventStatusPayload,
   Actor,
   RuntimeInfo,
   GroupContext,
@@ -39,6 +40,7 @@ const EMPTY_CHAT_BUCKET: GroupChatBucket = {
   isLoadingHistory: false,
   isChatWindowLoading: false,
 };
+const INITIAL_LEDGER_TAIL_LIMIT = 60;
 
 interface GroupState {
   // Data
@@ -70,6 +72,7 @@ interface GroupState {
   setSelectedGroupId: (id: string) => void;
   setGroupDoc: (doc: GroupDoc | null) => void;
   setEvents: (events: LedgerEvent[], groupId?: string) => void;
+  mergeEventStatuses: (statuses: Record<string, LedgerEventStatusPayload>, groupId?: string) => void;
   appendEvent: (event: LedgerEvent, groupId?: string) => void;
   prependEvents: (events: LedgerEvent[], groupId?: string) => void;
   setChatWindow: (w: GroupState["chatWindow"], groupId?: string) => void;
@@ -493,6 +496,25 @@ function resolveChatGroupId(state: GroupState, groupId?: string): string {
   return String(groupId || state.selectedGroupId || "").trim();
 }
 
+function mergeLedgerEventStatuses(events: LedgerEvent[], statuses: Record<string, LedgerEventStatusPayload>): LedgerEvent[] {
+  if (!events.length || !Object.keys(statuses).length) return events;
+  let changed = false;
+  const next = events.map((event) => {
+    const eventId = String(event.id || "").trim();
+    if (!eventId) return event;
+    const patch = statuses[eventId];
+    if (!patch) return event;
+    changed = true;
+    return {
+      ...event,
+      _read_status: patch.read_status ?? event._read_status,
+      _ack_status: patch.ack_status ?? event._ack_status,
+      _obligation_status: patch.obligation_status ?? event._obligation_status,
+    };
+  });
+  return changed ? next : events;
+}
+
 function updateReadThroughIndex(messages: LedgerEvent[], endIndex: number, actorId: string) {
   const next = messages.slice();
   let changed = false;
@@ -726,6 +748,21 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   setGroupDoc: (doc) => set({ groupDoc: doc }),
   setEvents: (events, groupId) =>
     set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { events }) ?? state),
+  mergeEventStatuses: (statuses, groupId) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      if (!gid) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const nextEvents = mergeLedgerEventStatuses(bucket.events, statuses);
+      const nextChatWindow = bucket.chatWindow
+        ? {
+            ...bucket.chatWindow,
+            events: mergeLedgerEventStatuses(bucket.chatWindow.events, statuses),
+          }
+        : bucket.chatWindow;
+      if (nextEvents === bucket.events && nextChatWindow === bucket.chatWindow) return state;
+      return buildChatBucketPatch(state, gid, { events: nextEvents, chatWindow: nextChatWindow }) ?? state;
+    }),
   setChatWindow: (chatWindow, groupId) =>
     set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { chatWindow }) ?? state),
   appendEvent: (event, groupId) =>
@@ -1167,8 +1204,19 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       }
     }
 
+    const hydrateTailStatuses = async (events: LedgerEvent[]) => {
+      const eventIds = events
+        .filter((event) => event.kind === "chat.message")
+        .map((event) => String(event.id || "").trim())
+        .filter((eventId) => eventId);
+      if (eventIds.length === 0) return;
+      const statusesResp = await api.fetchLedgerStatuses(gid, eventIds);
+      if (!statusesResp.ok || !isLatestSelection()) return;
+      get().mergeEventStatuses(statusesResp.result.statuses || {}, gid);
+    };
+
     const showPromise = api.fetchGroup(gid);
-    const tailPromise = api.fetchLedgerTail(gid);
+    const tailPromise = api.fetchLedgerTail(gid, INITIAL_LEDGER_TAIL_LIMIT, { includeStatuses: false });
     const actorsPromise = api.fetchActors(gid, false);
     const contextEpoch = beginContextRequest(gid);
     const settingsEpoch = beginGroupRequestEpoch(settingsRequestEpochByGroup, gid);
@@ -1220,6 +1268,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         events: mergedEvents,
         hasMoreHistory: !!tail.result.has_more,
         hasLoadedTail: true,
+      });
+      void hydrateTailStatuses(mergedEvents).catch((error) => {
+        console.error(`Failed to hydrate ledger statuses for group=${gid}:`, error);
       });
     }).catch((error) => {
       console.error(`Failed to load ledger tail for group=${gid}:`, error);
@@ -1321,7 +1372,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     try {
       const [show, tail, actorsResp] = await Promise.all([
         api.fetchGroup(gid),
-        api.fetchLedgerTail(gid),
+        api.fetchLedgerTail(gid, INITIAL_LEDGER_TAIL_LIMIT, { includeStatuses: false }),
         api.fetchActors(gid, false),
       ]);
 

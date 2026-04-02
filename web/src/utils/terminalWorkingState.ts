@@ -1,4 +1,3 @@
-import type { Actor, ActorRuntimeState } from "../types";
 import type { TerminalSignal } from "../stores/useTerminalSignalsStore";
 
 const MAX_TERMINAL_BUFFER_CHARS = 4000;

@@ -38,6 +38,7 @@ import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
 
 const MAX_RECONCILED_EVENTS = 800;
+const RECONNECT_LEDGER_TAIL_LIMIT = 60;
 
 function mergeCanonicalAttachmentsWithOptimisticPreview(
   ev: Record<string, unknown>,
@@ -158,7 +159,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   }
 
   async function reconcileLedgerTail(groupId: string) {
-    const resp = await api.fetchLedgerTail(groupId);
+    const resp = await api.fetchLedgerTail(groupId, RECONNECT_LEDGER_TAIL_LIMIT, { includeStatuses: false });
     if (!resp.ok || selectedGroupIdRef.current !== groupId) return;
 
     const store = useGroupStore.getState();
@@ -172,6 +173,16 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       groupId
     );
     store.setHasMoreHistory(!!resp.result.has_more, groupId);
+    const eventIds = nextEvents
+      .filter((event) => event.kind === "chat.message")
+      .map((event) => String(event.id || "").trim())
+      .filter((eventId) => eventId);
+    if (eventIds.length > 0) {
+      const statusesResp = await api.fetchLedgerStatuses(groupId, eventIds);
+      if (statusesResp.ok && selectedGroupIdRef.current === groupId) {
+        store.mergeEventStatuses(statusesResp.result.statuses || {}, groupId);
+      }
+    }
   }
 
   async function resyncAfterReconnect(groupId: string) {

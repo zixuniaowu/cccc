@@ -240,6 +240,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     )
   );
   const didInitialScrollRef = useRef(false);
+  const lastAutoFollowSignatureRef = useRef("");
   const scrollTimeoutRef = useRef<number | null>(null);
   const scrollRafRef = useRef<number | null>(null);
   const followupScrollTimeoutRef = useRef<number | null>(null);
@@ -594,6 +595,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
     prevResetKeyRef.current = resetKey;
     latestSnapshotRef.current = null;
+    lastAutoFollowSignatureRef.current = "";
 
     scrollTokenRef.current += 1;
     setAtBottom(true);
@@ -621,6 +623,26 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       virtualizer.measure();
     }
   }, [messages, resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, shouldVirtualize, virtualizer]);
+
+  const tailFollowSignature = useMemo(() => {
+    const lastMessage = messages[messages.length - 1];
+    if (!lastMessage) return "";
+    const data = lastMessage.data && typeof lastMessage.data === "object"
+      ? (lastMessage.data as { text?: unknown; attachments?: unknown[]; client_id?: unknown })
+      : null;
+    const attachmentCount = Array.isArray(data?.attachments) ? data.attachments.length : 0;
+    const textLength = typeof data?.text === "string" ? data.text.length : 0;
+    const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
+    return [
+      messages.length,
+      String(lastMessage.id || "").trim(),
+      String(lastMessage.by || "").trim(),
+      String(lastMessage.ts || "").trim(),
+      clientId,
+      textLength,
+      attachmentCount,
+    ].join("|");
+  }, [messages]);
 
   useEffect(() => {
     if (didInitialScrollRef.current) return;
@@ -655,6 +677,20 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       scrollToBottom();
     });
   }, [initialScrollAnchorId, initialScrollAnchorOffsetPx, initialScrollTargetId, messages, scheduleScroll, scrollToAnchorStable, scrollToBottom, scrollToIndexStable, scrollToMessageAnchor, setAtBottom, shouldVirtualize]);
+
+  useEffect(() => {
+    if (!didInitialScrollRef.current) return;
+    if (!tailFollowSignature) return;
+    if (!isAtBottomRef.current) return;
+    if (isLoadingHistory || pendingRestoreRef.current) return;
+    if (lastAutoFollowSignatureRef.current === tailFollowSignature) return;
+
+    lastAutoFollowSignatureRef.current = tailFollowSignature;
+    scheduleScroll(() => {
+      if (!isAtBottomRef.current || pendingRestoreRef.current) return;
+      scrollToBottom();
+    });
+  }, [isLoadingHistory, scheduleScroll, scrollToBottom, tailFollowSignature]);
 
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 

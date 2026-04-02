@@ -57,6 +57,8 @@ describe("petPeerContext", () => {
           kind: "suggestion",
           priority: 88,
           summary: "建议让 foreman 推进 T315。",
+          confidence: "medium",
+          reasoning_brief: "T315 仍未推进，但当前焦点已经回到这条任务。",
           agent: "pet-peer",
           fingerprint: "group:g-1:suggestion:task-proposal:T315",
           source: {
@@ -84,6 +86,8 @@ describe("petPeerContext", () => {
       expect(context.decisions[0].action.taskId).toBe("T315");
       expect(context.decisions[0].action.status).toBe("active");
     }
+    expect(context.decisions[0]?.confidence).toBe("medium");
+    expect(context.decisions[0]?.reasoningBrief).toContain("T315");
   });
 
   it("maps draft_message decisions from action.text", () => {
@@ -169,6 +173,36 @@ describe("petPeerContext", () => {
   it("maps signal payload", () => {
     const context = buildPetPeerContext({
       decisions: [],
+      task_evidence: [
+        {
+          kind: "ownership_drift",
+          priority: 78,
+          hypothesis: "The assigned task looks stale while the actor is mounted on another task.",
+          actor: {
+            id: "backend-peer",
+            active_task_id: "T107",
+            focus: "Fix 400 bucket issue",
+            blockers: ["waiting sample payload"],
+          },
+          task: {
+            id: "T035",
+            title: "图谱/API 后端 400 分桶与修复",
+            status: "active",
+            assignee: "backend-peer",
+            updated_at: "2026-04-01T10:00:00.000Z",
+          },
+          current_active_task: {
+            id: "T107",
+            title: "Fix 400 bucket issue",
+            status: "active",
+          },
+          signals: {
+            task_stale_minutes: 42,
+            same_workstream_hint: false,
+            blocker_count: 1,
+          },
+        },
+      ],
       persona: "",
       help: "",
       prompt: "",
@@ -232,6 +266,11 @@ describe("petPeerContext", () => {
     expect(context.signals.taskPressure.recentTaskCreateOps).toBe(1);
     expect(context.signals.taskPressure.recentTaskChangeCount).toBe(5);
     expect(context.signals.taskPressure.ledgerTrendScore).toBe(5);
+    expect(context.taskEvidence).toHaveLength(1);
+    expect(context.taskEvidence[0]?.kind).toBe("ownership_drift");
+    expect(context.taskEvidence[0]?.actor.activeTaskId).toBe("T107");
+    expect(context.taskEvidence[0]?.task.id).toBe("T035");
+    expect(context.taskEvidence[0]?.signals.taskStaleMinutes).toBe(42);
     expect(context.signals.proposalReady.ready).toBe(true);
     expect(context.signals.proposalReady.focus).toBe("waiting_user");
     expect(context.signals.proposalReady.severity).toBe("high");
