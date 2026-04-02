@@ -421,7 +421,7 @@ def _flush_due_review(group_id: str) -> None:
     _emit_pet_review(group_id, reasons, source_event_id)
 
 
-def _schedule_locked(group_id: str, state: _PetReviewState, *, immediate: bool) -> None:
+def _schedule_locked(group_id: str, state: _PetReviewState, *, immediate: bool) -> bool:
     now = time.monotonic()
     if state.dirty_since <= 0.0:
         state.dirty_since = now
@@ -436,12 +436,8 @@ def _schedule_locked(group_id: str, state: _PetReviewState, *, immediate: bool) 
     state.due_at = due_at
     if due_at <= now:
         _cancel_timer(state)
-        timer = threading.Timer(0.0, _flush_due_review, args=(group_id,))
-        timer.daemon = True
-        state.timer = timer
         _persist_pending_review(group_id, state)
-        timer.start()
-        return
+        return True
 
     delay = max(0.0, due_at - now)
     _cancel_timer(state)
@@ -450,6 +446,7 @@ def _schedule_locked(group_id: str, state: _PetReviewState, *, immediate: bool) 
     state.timer = timer
     _persist_pending_review(group_id, state)
     timer.start()
+    return False
 
 
 def request_pet_review(
@@ -476,6 +473,7 @@ def request_pet_review(
         }
         persisted_source_event_id = str(payload.get("source_event_id") or "").strip()
     normalized_reason = _normalize_reason(reason)
+    flush_now = False
     with _LOCK:
         state = _STATE_BY_GROUP.setdefault(gid, _PetReviewState())
         state.reasons.update(persisted_reasons)
@@ -484,7 +482,9 @@ def request_pet_review(
         state.reasons.add(normalized_reason)
         if source_event_id:
             state.source_event_id = str(source_event_id).strip()
-        _schedule_locked(gid, state, immediate=immediate)
+        flush_now = _schedule_locked(gid, state, immediate=immediate)
+    if flush_now:
+        _flush_due_review(gid)
 
 
 def cancel_pet_review(group_id: str) -> None:
@@ -528,6 +528,7 @@ def recover_pending_pet_reviews() -> None:
             due_at_wall = float(payload.get("due_at_wall") or 0.0)
             dirty_since_wall = float(payload.get("dirty_since_wall") or 0.0)
             last_dispatched_wall = float(payload.get("last_dispatched_wall") or 0.0)
+            flush_now = False
             with _LOCK:
                 state = _STATE_BY_GROUP.setdefault(group_id, _PetReviewState())
                 state.reasons = set(reasons)
@@ -540,6 +541,8 @@ def recover_pending_pet_reviews() -> None:
                     state.due_at = now_mono + max(0.0, due_at_wall - now_wall)
                 else:
                     state.due_at = now_mono
-                _schedule_locked(group_id, state, immediate=False)
+                flush_now = _schedule_locked(group_id, state, immediate=False)
+            if flush_now:
+                _flush_due_review(group_id)
         except Exception as exc:
             LOGGER.warning("recover_pending_pet_reviews_failed path=%s err=%s", path, exc)

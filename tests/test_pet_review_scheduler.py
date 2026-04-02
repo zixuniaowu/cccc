@@ -75,10 +75,38 @@ class TestPetReviewScheduler(unittest.TestCase):
                 source_event_id="evt-stop",
                 immediate=True,
             )
-            time.sleep(0.06)
 
         self.assertEqual(len(emitted), 1)
         self.assertLess(emitted[0] - started_at, 0.15)
+
+    def test_immediate_review_finishes_before_return_without_pending_timer(self) -> None:
+        emitted: list[tuple[str, set[str], str]] = []
+
+        def _capture(group_id: str, reasons: set[str], source_event_id: str) -> None:
+            emitted.append((group_id, set(reasons), source_event_id))
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            review_scheduler,
+            "ensure_home",
+            return_value=Path(tmp),
+        ), patch.object(review_scheduler, "_can_review_now", return_value=True), patch.object(
+            review_scheduler,
+            "_emit_pet_review",
+            side_effect=_capture,
+        ), patch.object(review_scheduler, "PET_REVIEW_DEBOUNCE_SECONDS", 0.2), patch.object(
+            review_scheduler,
+            "PET_REVIEW_MIN_INTERVAL_SECONDS",
+            0.01,
+        ), patch.object(review_scheduler, "PET_REVIEW_MAX_DELAY_SECONDS", 0.2):
+            review_scheduler.request_pet_review(
+                "g-test",
+                reason="group_state_changed",
+                source_event_id="evt-sync",
+                immediate=True,
+            )
+            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "pet_review_pending.json"
+            self.assertEqual(emitted, [("g-test", {"group_state_changed"}, "evt-sync")])
+            self.assertFalse(pending_path.exists())
 
     def test_manual_review_allows_idle_group(self) -> None:
         fake_group = object()
