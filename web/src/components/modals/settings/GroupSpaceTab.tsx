@@ -10,6 +10,7 @@ import type {
 import * as api from "../../../services/api";
 import { ProjectedBrowserSurfacePanel } from "../../browser/ProjectedBrowserSurfacePanel";
 import { cardClass, inputClass } from "./types";
+import { resolveNotebookSpacesAfterLoad, shouldRefreshNotebookSpaces } from "./groupSpaceState";
 
 interface GroupSpaceTabProps {
   isDark: boolean;
@@ -174,11 +175,12 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     if (!gid) return;
     const loadSeq = loadSeqRef.current + 1;
     loadSeqRef.current = loadSeq;
+    const currentSpaces = spaces;
     setLoading(true);
     setErr("");
     try {
       let nextStatus: GroupSpaceStatus | null = null;
-      let nextSpaces: GroupSpaceRemoteSpace[] = [];
+      let nextSpaces: GroupSpaceRemoteSpace[] = currentSpaces;
       const [statusResp, authResp] = await Promise.all([
         api.fetchGroupSpaceStatus(gid, provider),
         api.controlGroupSpaceProviderAuth({ provider, action: "status" }),
@@ -198,9 +200,12 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         setAuthFlow(null);
       }
 
-      const shouldLoadSpaces =
-        Boolean(nextStatus?.provider?.write_ready) &&
-        (Boolean(opts?.refreshSpaces) || spaces.length <= 0);
+      const writeReady = Boolean(nextStatus?.provider?.write_ready);
+      const shouldLoadSpaces = shouldRefreshNotebookSpaces(
+        writeReady,
+        Boolean(opts?.refreshSpaces),
+        currentSpaces.length,
+      );
       if (shouldLoadSpaces) {
         setSpacesBusy(true);
         try {
@@ -208,16 +213,16 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
           if (loadSeqRef.current !== loadSeq) return;
           if (spacesResp.ok) {
             nextSpaces = normalizeNotebookSpaces(spacesResp.result?.spaces);
-            setSpaces(nextSpaces);
-          } else {
-            setSpaces([]);
           }
         } finally {
           setSpacesBusy(false);
         }
-      } else {
-        setSpaces([]);
       }
+      nextSpaces = resolveNotebookSpacesAfterLoad(currentSpaces, {
+        writeReady,
+        fetchedSpaces: shouldLoadSpaces ? nextSpaces : null,
+      });
+      setSpaces(nextSpaces);
 
       const nextWorkBoundRemoteId = String(nextStatus?.bindings?.work?.remote_space_id || "").trim();
       const nextMemoryBoundRemoteId = String(nextStatus?.bindings?.memory?.remote_space_id || "").trim();

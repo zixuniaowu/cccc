@@ -49,6 +49,7 @@ class WeixinAdapter(IMAdapter):
         self._queue_lock = threading.Lock()
         self._message_queue: List[Dict[str, Any]] = []
         self._reply_refs: Dict[str, str] = {}
+        self._outbound_ready_chats: set[str] = set()
         self._connected = False
         self._ready = threading.Event()
         self._connect_error: Optional[str] = None
@@ -117,6 +118,7 @@ class WeixinAdapter(IMAdapter):
             return
 
         self._reply_refs[chat_id] = request_id
+        self._outbound_ready_chats.add(chat_id)
         attachment = event.get("attachment")
         attachments: List[Dict[str, Any]] = []
         if isinstance(attachment, dict):
@@ -248,6 +250,7 @@ class WeixinAdapter(IMAdapter):
         with self._queue_lock:
             self._message_queue.clear()
         self._reply_refs.clear()
+        self._outbound_ready_chats.clear()
 
     def poll(self) -> List[Dict[str, Any]]:
         with self._queue_lock:
@@ -271,12 +274,22 @@ class WeixinAdapter(IMAdapter):
         if not self._connected:
             return False
 
-        request_id = self._reply_refs.get(str(chat_id or "").strip(), "")
+        chat_id = str(chat_id or "").strip()
+        request_id = self._reply_refs.get(chat_id, "")
         if not request_id:
-            self._log(f"[send] no pending request for chat={chat_id}")
-            return False
+            if chat_id not in self._outbound_ready_chats:
+                self._log(f"[send] no outbound context for chat={chat_id}")
+                return False
+            return self._write_json(
+                {
+                    "type": "cmd",
+                    "cmd": "send",
+                    "chat_id": chat_id,
+                    "text": self._compose_safe(text),
+                }
+            )
 
-        return self._write_json(
+        ok = self._write_json(
             {
                 "type": "cmd",
                 "cmd": "reply",
@@ -285,12 +298,64 @@ class WeixinAdapter(IMAdapter):
                 "text": self._compose_safe(text),
             }
         )
+        if ok:
+            self._reply_refs.pop(chat_id, None)
+        return ok
 
     def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
         file_path = str(attachment.get("file_path") or "").strip()
         if not file_path:
             raise ValueError("missing weixin attachment file_path")
         return Path(file_path).read_bytes()
+
+    def send_file(
+        self,
+        chat_id: str,
+        *,
+        file_path: Path,
+        filename: str,
+        caption: str = "",
+        thread_id: Optional[int] = None,
+        mention_user_ids: Optional[List[str]] = None,
+    ) -> bool:
+        _ = thread_id
+        _ = mention_user_ids
+
+        if not self._connected:
+            return False
+
+        chat_id = str(chat_id or "").strip()
+        request_id = self._reply_refs.get(chat_id, "")
+        payload = {
+            "type": "cmd",
+            "chat_id": chat_id,
+            "file_path": str(file_path.expanduser().resolve()),
+            "filename": str(filename or file_path.name),
+            "caption": self._compose_safe(caption),
+        }
+
+        if request_id:
+            ok = self._write_json(
+                {
+                    **payload,
+                    "cmd": "reply_file",
+                    "request_id": request_id,
+                }
+            )
+            if ok:
+                self._reply_refs.pop(chat_id, None)
+            return ok
+
+        if chat_id not in self._outbound_ready_chats:
+            self._log(f"[send_file] no outbound context for chat={chat_id}")
+            return False
+
+        return self._write_json(
+            {
+                **payload,
+                "cmd": "send_file",
+            }
+        )
 
     def get_chat_title(self, chat_id: str) -> str:
         return chat_id

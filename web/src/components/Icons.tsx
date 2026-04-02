@@ -242,6 +242,50 @@ export function SearchIcon({ className, size = 18 }: IconProps) {
   );
 }
 
+export function SplitViewIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="9" y1="4" x2="9" y2="20" />
+      <path d="M13 8h4" />
+      <path d="M13 12h4" />
+      <path d="M13 16h3" />
+    </svg>
+  );
+}
+
+export function WindowViewIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 8h18" />
+      <circle cx="6.5" cy="6" r="0.75" fill="currentColor" stroke="none" />
+      <circle cx="9.5" cy="6" r="0.75" fill="currentColor" stroke="none" />
+      <circle cx="12.5" cy="6" r="0.75" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export function CompassIcon({ className, size = 18 }: IconProps) {
   return (
     <svg

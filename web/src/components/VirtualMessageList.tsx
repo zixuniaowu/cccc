@@ -4,6 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { LedgerEvent, Actor, AgentState, PresentationMessageRef } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
+import { getChatTailSnapshot, shouldAutoFollowOnTailAppend } from "../utils/chatAutoFollow";
 
 function getStableMessageKey(message: LedgerEvent | undefined, index: number): string | number {
   if (message?.kind === "chat.message" && message.data && typeof message.data === "object") {
@@ -232,6 +233,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   messagesRef.current = messages;
 
   const isAtBottomRef = useRef(true);
+  const prevTailSnapshotRef = useRef(
+    getChatTailSnapshot(
+      messages.length > 0 ? getStableMessageKey(messages[messages.length - 1], messages.length - 1) : null,
+      messages.length,
+    )
+  );
   const didInitialScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<number | null>(null);
   const scrollRafRef = useRef<number | null>(null);
@@ -602,6 +609,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     anchorMessageIdRef.current = "";
     anchorOffsetRef.current = 0;
     lastScrollTopRef.current = 0;
+    prevTailSnapshotRef.current = getChatTailSnapshot(
+      messages.length > 0 ? getStableMessageKey(messages[messages.length - 1], messages.length - 1) : null,
+      messages.length,
+    );
 
     // Without key-based remount, the virtualizer keeps stale measurement
     // caches from the previous group. Force a full re-measure so item
@@ -609,7 +620,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (shouldVirtualize) {
       virtualizer.measure();
     }
-  }, [resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, shouldVirtualize, virtualizer]);
+  }, [messages, resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, shouldVirtualize, virtualizer]);
 
   useEffect(() => {
     if (didInitialScrollRef.current) return;
@@ -646,6 +657,26 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   }, [initialScrollAnchorId, initialScrollAnchorOffsetPx, initialScrollTargetId, messages, scheduleScroll, scrollToAnchorStable, scrollToBottom, scrollToIndexStable, scrollToMessageAnchor, setAtBottom, shouldVirtualize]);
 
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
+
+  useEffect(() => {
+    const nextSnapshot = getChatTailSnapshot(
+      messages.length > 0 ? getStableMessageKey(messages[messages.length - 1], messages.length - 1) : null,
+      messages.length,
+    );
+    const prevSnapshot = prevTailSnapshotRef.current;
+    prevTailSnapshotRef.current = nextSnapshot;
+
+    if (!didInitialScrollRef.current) return;
+    if (isLoadingHistory || pendingRestoreRef.current) return;
+    if (!isAtBottomRef.current) return;
+    if (!shouldAutoFollowOnTailAppend(prevSnapshot, nextSnapshot)) return;
+
+    scheduleScroll(() => {
+      if (isAtBottomRef.current && !pendingRestoreRef.current) {
+        scrollToBottom();
+      }
+    });
+  }, [isLoadingHistory, messages, scheduleScroll, scrollToBottom]);
 
   useEffect(() => {
     if (!shouldVirtualize) return;

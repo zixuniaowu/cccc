@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import readline from "node:readline";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 function emit(event, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type: "event", event, ...payload })}\n`);
@@ -49,7 +49,7 @@ function writeState(stateFile, patch) {
 }
 
 async function loadWeixinInternalModule(packageEntryUrl, relCandidates) {
-  const entryPath = new URL(packageEntryUrl).pathname;
+  const entryPath = fileURLToPath(packageEntryUrl);
   const packageRoot = path.resolve(path.dirname(entryPath), "..");
   for (const rel of relCandidates) {
     const abs = path.resolve(packageRoot, rel);
@@ -66,13 +66,30 @@ async function loadWeixinInternalModule(packageEntryUrl, relCandidates) {
 async function loadWeixinBundledInternals(packageEntryUrl) {
   if (!packageEntryUrl) return null;
   try {
-    const entryPath = new URL(packageEntryUrl).pathname;
+    const entryPath = fileURLToPath(packageEntryUrl);
     const source = fs.readFileSync(entryPath, "utf8");
     const tempPath = path.join(
       os.tmpdir(),
       `cccc-weixin-sdk-internals-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mjs`,
     );
-    const extra = "\nexport { startWeixinLoginWithQr, waitForWeixinLogin, normalizeAccountId, saveWeixinAccount, registerWeixinAccountId };\nexport const DEFAULT_ILINK_BOT_TYPE = '3';\n";
+    const extra = `
+export {
+  startWeixinLoginWithQr,
+  waitForWeixinLogin,
+  normalizeAccountId,
+  saveWeixinAccount,
+  registerWeixinAccountId,
+  resolveWeixinAccount,
+  listWeixinAccountIds,
+  markdownToPlainText,
+  sendMessageWeixin,
+  sendWeixinMediaFile
+};
+export const DEFAULT_ILINK_BOT_TYPE = '3';
+export function __ccccGetContextToken(accountId, userId) {
+  return contextTokenStore.get(contextTokenKey(accountId, userId)) || "";
+}
+`;
     fs.writeFileSync(tempPath, source + extra, "utf8");
     return await import(pathToFileURL(tempPath).href);
   } catch {
@@ -84,9 +101,11 @@ async function main() {
   const args = parseArgs(process.argv);
   let sdk;
   let sdkEntryUrl = "";
+  let bundledInternals = null;
   try {
     sdkEntryUrl = await import.meta.resolve("weixin-agent-sdk");
     sdk = await import("weixin-agent-sdk");
+    bundledInternals = await loadWeixinBundledInternals(sdkEntryUrl);
   } catch (error) {
     writeState(args.stateFile, {
       status: "error",
@@ -100,7 +119,8 @@ async function main() {
     process.exit(1);
   }
 
-  const { isLoggedIn, start, login, logout } = sdk;
+  const runtimeSdk = bundledInternals || sdk;
+  const { isLoggedIn, start, login, logout } = runtimeSdk;
   if (typeof isLoggedIn !== "function") {
     writeState(args.stateFile, {
       status: "error",
@@ -162,12 +182,12 @@ async function main() {
             "dist/auth/accounts.js",
           ])
         : null;
-      const bundledInternals =
-        !loginQrModule || !accountsModule ? await loadWeixinBundledInternals(sdkEntryUrl) : null;
+      const loginBundledInternals =
+        !loginQrModule || !accountsModule ? bundledInternals : null;
 
       let accountId = "";
-      const loginInternals = loginQrModule || bundledInternals;
-      const accountInternals = accountsModule || bundledInternals;
+      const loginInternals = loginQrModule || loginBundledInternals;
+      const accountInternals = accountsModule || loginBundledInternals;
       if (loginInternals && accountInternals) {
         const startWeixinLoginWithQr = loginInternals.startWeixinLoginWithQr;
         const waitForWeixinLogin = loginInternals.waitForWeixinLogin;
@@ -313,13 +333,168 @@ async function main() {
   const accountId = String(process.env.CCCC_IM_WEIXIN_ACCOUNT_ID || "").trim() || undefined;
   const pendingReplies = new Map();
   const abortController = new AbortController();
+  const sendMessageWeixin = typeof runtimeSdk.sendMessageWeixin === "function"
+    ? runtimeSdk.sendMessageWeixin
+    : null;
+  const sendWeixinMediaFile = typeof runtimeSdk.sendWeixinMediaFile === "function"
+    ? runtimeSdk.sendWeixinMediaFile
+    : null;
+  const resolveWeixinAccount = typeof runtimeSdk.resolveWeixinAccount === "function"
+    ? runtimeSdk.resolveWeixinAccount
+    : null;
+  const listWeixinAccountIds = typeof runtimeSdk.listWeixinAccountIds === "function"
+    ? runtimeSdk.listWeixinAccountIds
+    : null;
+  const markdownToPlainText = typeof runtimeSdk.markdownToPlainText === "function"
+    ? runtimeSdk.markdownToPlainText
+    : (text) => String(text || "");
+  const getContextToken = typeof runtimeSdk.__ccccGetContextToken === "function"
+    ? runtimeSdk.__ccccGetContextToken
+    : null;
+  const runtimeAccountId = (() => {
+    if (accountId) return accountId;
+    if (!listWeixinAccountIds) return "";
+    const ids = listWeixinAccountIds();
+    if (!Array.isArray(ids) || ids.length <= 0) return "";
+    if (ids.length > 1) emitLog(`[weixin] detected multiple accounts, using the first: ${ids[0]}`);
+    return String(ids[0] || "");
+  })();
+  const outboundAccount = (() => {
+    if (!resolveWeixinAccount || !runtimeAccountId) return null;
+    try {
+      return resolveWeixinAccount(runtimeAccountId);
+    } catch (error) {
+      emitLog(
+        `[weixin] failed to resolve outbound account ${runtimeAccountId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  })();
   writeState(args.stateFile, {
     status: "running",
     logged_in: true,
-    account_id: accountId || "",
+    account_id: runtimeAccountId || "",
     qrcode_url: "",
     error: "",
   });
+
+  async function sendDirectText(chatId, text) {
+    if (!sendMessageWeixin || !getContextToken || !outboundAccount?.token) {
+      emitLog("[weixin] proactive text send is unavailable");
+      return;
+    }
+    const contextToken = String(getContextToken(outboundAccount.accountId, chatId) || "").trim();
+    if (!contextToken) {
+      emitLog(`[weixin] missing outbound context token for chat_id=${chatId}`);
+      return;
+    }
+    await sendMessageWeixin({
+      to: chatId,
+      text: markdownToPlainText(String(text || "")),
+      opts: {
+        baseUrl: outboundAccount.baseUrl,
+        token: outboundAccount.token,
+        contextToken,
+      },
+    });
+  }
+
+  async function sendDirectFile(chatId, filePath, caption) {
+    if (!sendWeixinMediaFile || !getContextToken || !outboundAccount?.token) {
+      emitLog("[weixin] proactive file send is unavailable");
+      return;
+    }
+    const contextToken = String(getContextToken(outboundAccount.accountId, chatId) || "").trim();
+    if (!contextToken) {
+      emitLog(`[weixin] missing outbound context token for chat_id=${chatId}`);
+      return;
+    }
+    await sendWeixinMediaFile({
+      filePath,
+      to: chatId,
+      text: markdownToPlainText(String(caption || "")),
+      opts: {
+        baseUrl: outboundAccount.baseUrl,
+        token: outboundAccount.token,
+        contextToken,
+      },
+      cdnBaseUrl: outboundAccount.cdnBaseUrl,
+    });
+  }
+
+  async function handleCommand(payload) {
+    const cmd = String(payload?.cmd || "").trim();
+    if (cmd === "shutdown") {
+      abortController.abort();
+      return;
+    }
+
+    if (cmd === "reply") {
+      const requestId = String(payload.request_id || "").trim();
+      if (!requestId) return;
+      const pending = pendingReplies.get(requestId);
+      if (!pending) {
+        emitLog(`missing pending reply handle for request_id=${requestId}`);
+        return;
+      }
+      pendingReplies.delete(requestId);
+      pending.resolve({
+        text: String(payload.text || ""),
+      });
+      return;
+    }
+
+    if (cmd === "reply_file") {
+      const requestId = String(payload.request_id || "").trim();
+      const filePath = String(payload.file_path || "").trim();
+      if (!requestId || !filePath) return;
+      const pending = pendingReplies.get(requestId);
+      if (!pending) {
+        emitLog(`missing pending reply handle for request_id=${requestId}`);
+        return;
+      }
+      pendingReplies.delete(requestId);
+      pending.resolve({
+        text: String(payload.caption || ""),
+        media: {
+          url: path.resolve(filePath),
+        },
+      });
+      return;
+    }
+
+    if (cmd === "send") {
+      const chatId = String(payload.chat_id || "").trim();
+      if (!chatId) return;
+      try {
+        await sendDirectText(chatId, String(payload.text || ""));
+      } catch (error) {
+        emitLog(
+          `[weixin] proactive send failed for ${chatId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      return;
+    }
+
+    if (cmd === "send_file") {
+      const chatId = String(payload.chat_id || "").trim();
+      const filePath = String(payload.file_path || "").trim();
+      if (!chatId || !filePath) return;
+      try {
+        await sendDirectFile(chatId, path.resolve(filePath), String(payload.caption || ""));
+      } catch (error) {
+        emitLog(
+          `[weixin] proactive file send failed for ${chatId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+  }
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -337,24 +512,7 @@ async function main() {
       return;
     }
     if (!payload || payload.type !== "cmd") return;
-
-    if (payload.cmd === "shutdown") {
-      abortController.abort();
-      return;
-    }
-
-    if (payload.cmd !== "reply") return;
-    const requestId = String(payload.request_id || "").trim();
-    if (!requestId) return;
-    const pending = pendingReplies.get(requestId);
-    if (!pending) {
-      emitLog(`missing pending reply handle for request_id=${requestId}`);
-      return;
-    }
-    pendingReplies.delete(requestId);
-    pending.resolve({
-      text: String(payload.text || ""),
-    });
+    void handleCommand(payload);
   });
 
   process.on("SIGINT", () => abortController.abort());
@@ -413,11 +571,11 @@ async function main() {
     },
   };
 
-  emit("ready", { account_id: accountId || "" });
+  emit("ready", { account_id: runtimeAccountId || "" });
 
   try {
     await start(agent, {
-      accountId,
+      accountId: runtimeAccountId || undefined,
       abortSignal: abortController.signal,
       log: emitLog,
     });
@@ -425,7 +583,7 @@ async function main() {
     writeState(args.stateFile, {
       status: "error",
       logged_in: isLoggedIn(),
-      account_id: accountId || "",
+      account_id: runtimeAccountId || "",
       qrcode_url: "",
       error: error instanceof Error ? error.message : String(error),
     });

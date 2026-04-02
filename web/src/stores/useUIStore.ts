@@ -1,5 +1,6 @@
 // UI state store (tabs, sidebar, toasts, etc.).
 import { create } from "zustand";
+import { clampPresentationSplitWidth, PRESENTATION_SPLIT_DEFAULT_WIDTH } from "../utils/presentationSplitLayout";
 
 export const SIDEBAR_COLLAPSED_WIDTH = 60;
 export const SIDEBAR_DEFAULT_WIDTH = 280;
@@ -27,6 +28,7 @@ export interface ChatSessionState {
   scrollSnapshot: ChatScrollSnapshot | null;
   mobileSurface: "messages" | "presentation";
   presentationDockOpen: boolean;
+  presentationDisplayMode: "modal" | "split";
 }
 
 const DEFAULT_CHAT_SESSION: ChatSessionState = {
@@ -36,6 +38,7 @@ const DEFAULT_CHAT_SESSION: ChatSessionState = {
   scrollSnapshot: null,
   mobileSurface: "messages",
   presentationDockOpen: false,
+  presentationDisplayMode: "modal",
 };
 
 export function getChatSession(groupId: string | null | undefined, sessions: Record<string, ChatSessionState>): ChatSessionState {
@@ -55,6 +58,7 @@ interface UIState {
   sidebarCollapsed: boolean; // Desktop sidebar collapsed state
   sidebarWidth: number;
   isSmallScreen: boolean;
+  presentationSplitWidth: number;
   chatSessions: Record<string, ChatSessionState>;
   webReadOnly: boolean;
   sseStatus: "connected" | "connecting" | "disconnected";
@@ -76,10 +80,12 @@ interface UIState {
   setChatUnreadCount: (groupId: string, v: number) => void;
   incrementChatUnread: (groupId: string) => void;
   setSmallScreen: (v: boolean) => void;
+  setPresentationSplitWidth: (v: number) => void;
   setChatFilter: (groupId: string, v: ChatFilter) => void;
   setChatScrollSnapshot: (groupId: string, snap: ChatScrollSnapshot | null) => void;
   setChatMobileSurface: (groupId: string, v: "messages" | "presentation") => void;
   setChatPresentationDockOpen: (groupId: string, v: boolean) => void;
+  setChatPresentationDisplayMode: (groupId: string, v: "modal" | "split") => void;
   setWebReadOnly: (v: boolean) => void;
   setSSEStatus: (v: "connected" | "connecting" | "disconnected") => void;
 }
@@ -90,6 +96,7 @@ let noticeTimeoutId: number | null = null;
 // localStorage key for sidebar collapsed state
 const SIDEBAR_COLLAPSED_KEY = "cccc-sidebar-collapsed";
 const SIDEBAR_WIDTH_KEY = "cccc-sidebar-width";
+const PRESENTATION_SPLIT_WIDTH_KEY = "cccc-presentation-split-width";
 
 export function clampSidebarWidth(value: number): number {
   const numeric = Number(value);
@@ -131,6 +138,23 @@ function saveSidebarWidth(width: number): void {
   }
 }
 
+function loadPresentationSplitWidth(): number {
+  try {
+    return clampPresentationSplitWidth(Number(localStorage.getItem(PRESENTATION_SPLIT_WIDTH_KEY)));
+  } catch (e) {
+    console.warn("Failed to read presentation split width from localStorage:", e);
+    return PRESENTATION_SPLIT_DEFAULT_WIDTH;
+  }
+}
+
+function savePresentationSplitWidth(width: number): void {
+  try {
+    localStorage.setItem(PRESENTATION_SPLIT_WIDTH_KEY, String(clampPresentationSplitWidth(width)));
+  } catch (e) {
+    console.warn("Failed to persist presentation split width to localStorage:", e);
+  }
+}
+
 function updateChatSession(
   sessions: Record<string, ChatSessionState>,
   groupId: string,
@@ -158,6 +182,7 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarCollapsed: loadSidebarCollapsed(),
   sidebarWidth: loadSidebarWidth(),
   isSmallScreen: false,
+  presentationSplitWidth: loadPresentationSplitWidth(),
   chatSessions: {},
   webReadOnly: false,
   sseStatus: "disconnected" as const,
@@ -240,6 +265,11 @@ export const useUIStore = create<UIState>((set) => ({
       };
     }),
   setSmallScreen: (v) => set({ isSmallScreen: v }),
+  setPresentationSplitWidth: (v) => {
+    const next = clampPresentationSplitWidth(v);
+    savePresentationSplitWidth(next);
+    set({ presentationSplitWidth: next });
+  },
   setChatFilter: (groupId, v) =>
     set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { chatFilter: v }) })),
   setChatScrollSnapshot: (groupId, snap) =>
@@ -248,6 +278,8 @@ export const useUIStore = create<UIState>((set) => ({
     set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { mobileSurface: v }) })),
   setChatPresentationDockOpen: (groupId, v) =>
     set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { presentationDockOpen: v }) })),
+  setChatPresentationDisplayMode: (groupId, v) =>
+    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { presentationDisplayMode: v }) })),
   setWebReadOnly: (v) => set({ webReadOnly: v }),
   setSSEStatus: (v) => set({ sseStatus: v }),
 }));

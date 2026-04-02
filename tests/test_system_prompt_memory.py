@@ -68,6 +68,7 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertIn("Prefer silence over low-signal chatter; speak for real changes, not filler or routine @all updates.", prompt)
             self.assertIn("No fabrication. Verify before claiming done.", prompt)
             self.assertIn("Visible replies must go through MCP", prompt)
+            self.assertIn("A status message, plan, or promise is not task progress", prompt)
             self.assertIn("Cold start or resume: call cccc_bootstrap first, then cccc_help.", prompt)
             self.assertIn("At key transitions, sync shared control-plane state and your cccc_agent_state.", prompt)
             self.assertIn("Once scope is approved, finish it end-to-end; do not ask to continue on obvious next steps.", prompt)

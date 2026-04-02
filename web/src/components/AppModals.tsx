@@ -38,6 +38,7 @@ import {
   useFormStore,
 } from "../stores";
 import { getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "../hooks/useSSE";
+import { getChatSession } from "../stores/useUIStore";
 import * as api from "../services/api";
 import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, PresentationMessageRef, SupportedRuntime } from "../types";
 
@@ -132,11 +133,14 @@ export function AppModals({
   const {
     busy,
     isSmallScreen,
+    chatSessions,
     setBusy,
     showError,
     showNotice,
     setActiveTab,
     setChatMobileSurface,
+    setChatPresentationDockOpen,
+    setChatPresentationDisplayMode,
   } = useUIStore();
 
   const {
@@ -160,6 +164,10 @@ export function AppModals({
   const { inboxActorId, inboxMessages, setInboxMessages } = useInboxStore();
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
+
+  const preferredPresentationSurface = selectedGroupId
+    ? (!isSmallScreen && getChatSession(selectedGroupId, chatSessions).presentationDisplayMode === "split" ? "split" : "modal")
+    : "modal";
 
   const {
     editGroupTitle,
@@ -1251,12 +1259,15 @@ export function AppModals({
         }
         setGroupPresentation(resp.result.presentation);
         setPresentationPin(null);
-        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId });
+        if (preferredPresentationSurface === "split") {
+          setChatPresentationDockOpen(gid, true);
+        }
+        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId, surface: preferredPresentationSurface });
       } finally {
         setBusy("");
       }
     },
-    [selectedGroupId, setBusy, setGroupPresentation, setPresentationPin, setPresentationViewer, showError],
+    [preferredPresentationSurface, selectedGroupId, setBusy, setChatPresentationDockOpen, setGroupPresentation, setPresentationPin, setPresentationViewer, showError],
   );
 
   const handlePresentationPublishFile = useCallback(
@@ -1272,12 +1283,15 @@ export function AppModals({
         }
         setGroupPresentation(resp.result.presentation);
         setPresentationPin(null);
-        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId });
+        if (preferredPresentationSurface === "split") {
+          setChatPresentationDockOpen(gid, true);
+        }
+        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId, surface: preferredPresentationSurface });
       } finally {
         setBusy("");
       }
     },
-    [selectedGroupId, setBusy, setGroupPresentation, setPresentationPin, setPresentationViewer, showError],
+    [preferredPresentationSurface, selectedGroupId, setBusy, setChatPresentationDockOpen, setGroupPresentation, setPresentationPin, setPresentationViewer, showError],
   );
 
   const handlePresentationPublishWorkspace = useCallback(
@@ -1293,12 +1307,15 @@ export function AppModals({
         }
         setGroupPresentation(resp.result.presentation);
         setPresentationPin(null);
-        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId });
+        if (preferredPresentationSurface === "split") {
+          setChatPresentationDockOpen(gid, true);
+        }
+        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId, surface: preferredPresentationSurface });
       } finally {
         setBusy("");
       }
     },
-    [selectedGroupId, setBusy, setGroupPresentation, setPresentationPin, setPresentationViewer, showError],
+    [preferredPresentationSurface, selectedGroupId, setBusy, setChatPresentationDockOpen, setGroupPresentation, setPresentationPin, setPresentationViewer, showError],
   );
 
   const handlePresentationClear = useCallback(
@@ -1477,7 +1494,7 @@ export function AppModals({
             return (
               <PresentationViewerModal
                 key={`${selectedGroupId}:${slotId}:${version}`}
-                isOpen={!!presentationViewer && presentationViewer.groupId === selectedGroupId && presentationViewer.slotId === slotId}
+                isOpen={!!presentationViewer && presentationViewer.surface !== "split" && presentationViewer.groupId === selectedGroupId && presentationViewer.slotId === slotId}
                 isDark={isDark}
                 readOnly={readOnly}
                 groupId={selectedGroupId}
@@ -1496,6 +1513,14 @@ export function AppModals({
                   setPresentationPin({ groupId: gid, slotId: nextSlotId });
                 }}
                 onClearSlot={(nextSlotId) => void handlePresentationClear(nextSlotId)}
+                supportsSplit={!isSmallScreen}
+                onOpenSplit={() => {
+                  const gid = String(selectedGroupId || "").trim();
+                  if (!gid || !presentationViewer) return;
+                  setChatPresentationDisplayMode(gid, "split");
+                  setChatPresentationDockOpen(gid, true);
+                  setPresentationViewer({ ...presentationViewer, surface: "split" });
+                }}
                 onClose={() => setPresentationViewer(null)}
               />
             );
