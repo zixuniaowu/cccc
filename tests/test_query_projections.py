@@ -66,6 +66,31 @@ class TestQueryProjections(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
+    def test_groups_projection_marks_codex_group_running(self) -> None:
+        from cccc.daemon.ops.registry_ops import handle_groups
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                reg = load_registry()
+                gid = create_group(reg, title="codex-proj", topic="").group_id
+
+                with patch("cccc.daemon.ops.registry_ops.codex_app_supervisor.group_running", return_value=True):
+                    resp = handle_groups({})
+
+                self.assertTrue(resp.ok)
+                items = (resp.result or {}).get("groups", [])
+                match = next(item for item in items if str(item.get("group_id") or "") == gid)
+                self.assertTrue(bool(match.get("running")))
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_actor_projection_refreshes_after_actor_update(self) -> None:
         from cccc.daemon.actors.actor_ops import handle_actor_list
         from cccc.kernel.actors import add_actor
@@ -80,7 +105,7 @@ class TestQueryProjections(unittest.TestCase):
                 gid = create_group(reg, title="proj", topic="").group_id
                 group = load_group(gid)
                 self.assertIsNotNone(group)
-                add_actor(group, actor_id="peer1", title="Peer One")  # type: ignore[arg-type]
+                add_actor(group, actor_id="peer1", title="Peer One", runtime="claude", runner="pty")  # type: ignore[arg-type]
                 group.save()  # type: ignore[union-attr]
 
                 first = handle_actor_list({"group_id": gid, "include_unread": False}, effective_runner_kind=lambda _: "pty")
@@ -118,7 +143,7 @@ class TestQueryProjections(unittest.TestCase):
                 gid = create_group(reg, title="proj", topic="").group_id
                 group = load_group(gid)
                 self.assertIsNotNone(group)
-                add_actor(group, actor_id="peer1", title="Peer One")  # type: ignore[arg-type]
+                add_actor(group, actor_id="peer1", title="Peer One", runtime="claude", runner="pty")  # type: ignore[arg-type]
                 group.save()  # type: ignore[union-attr]
 
                 first = handle_actor_list({"group_id": gid, "include_unread": False}, effective_runner_kind=lambda _: "pty")
@@ -147,7 +172,7 @@ class TestQueryProjections(unittest.TestCase):
                 gid = create_group(reg, title="proj", topic="").group_id
                 group = load_group(gid)
                 self.assertIsNotNone(group)
-                add_actor(group, actor_id="peer1", title="Peer One")  # type: ignore[arg-type]
+                add_actor(group, actor_id="peer1", title="Peer One", runtime="claude", runner="pty")  # type: ignore[arg-type]
                 add_actor(group, actor_id="pet-peer", title="Pet Peer", internal_kind="pet")  # type: ignore[arg-type]
                 group.save()  # type: ignore[union-attr]
 
@@ -189,7 +214,7 @@ class TestQueryProjections(unittest.TestCase):
                 gid = create_group(reg, title="proj", topic="").group_id
                 group = load_group(gid)
                 self.assertIsNotNone(group)
-                add_actor(group, actor_id="peer1", title="Peer One")  # type: ignore[arg-type]
+                add_actor(group, actor_id="peer1", title="Peer One", runtime="claude", runner="pty")  # type: ignore[arg-type]
                 group.save()  # type: ignore[union-attr]
 
                 storage = ContextStorage(group)  # type: ignore[arg-type]
@@ -213,7 +238,7 @@ class TestQueryProjections(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
-    def test_actor_projection_prefers_terminal_prompt_over_stale_active_task_for_codex(self) -> None:
+    def test_actor_projection_codex_pty_uses_terminal_heuristics(self) -> None:
         from cccc.daemon.actors.actor_ops import handle_actor_list
         from cccc.kernel.actors import add_actor
         from cccc.kernel.context import ContextStorage
@@ -246,6 +271,8 @@ class TestQueryProjections(unittest.TestCase):
 
                 self.assertTrue(resp.ok, getattr(resp, "error", None))
                 actors = (resp.result or {}).get("actors", [])
+                self.assertEqual(actors[0]["runner"], "pty")
+                self.assertIsNone(actors[0].get("runner_effective"))
                 self.assertEqual(actors[0]["effective_working_state"], "idle")
                 self.assertEqual(actors[0]["effective_working_reason"], "pty_terminal_prompt_visible")
 
@@ -269,7 +296,7 @@ class TestQueryProjections(unittest.TestCase):
                 gid = create_group(reg, title="proj", topic="").group_id
                 group = load_group(gid)
                 self.assertIsNotNone(group)
-                add_actor(group, actor_id="peer1", title="Peer One", runtime="codex", runner="pty")  # type: ignore[arg-type]
+                add_actor(group, actor_id="peer1", title="Peer One", runtime="claude", runner="pty")  # type: ignore[arg-type]
                 group.save()  # type: ignore[union-attr]
 
                 with (
@@ -304,7 +331,7 @@ class TestQueryProjections(unittest.TestCase):
                 gid = create_group(reg, title="proj", topic="").group_id
                 group = load_group(gid)
                 self.assertIsNotNone(group)
-                add_actor(group, actor_id="peer1", title="Peer One", runtime="codex", runner="pty")  # type: ignore[arg-type]
+                add_actor(group, actor_id="peer1", title="Peer One", runtime="claude", runner="pty")  # type: ignore[arg-type]
                 group.save()  # type: ignore[union-attr]
 
                 with (

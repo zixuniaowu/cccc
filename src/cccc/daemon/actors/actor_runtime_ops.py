@@ -8,7 +8,8 @@ from typing import Any, Callable, Dict, List, Optional, TypedDict
 from ...kernel.actors import find_actor
 from ...kernel.context import ContextStorage
 from ...kernel.ledger import append_event
-from ...kernel.runtime import runtime_start_preflight_error
+from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...runners.platform_support import pty_support_error_message
@@ -217,13 +218,18 @@ def start_actor_process(
 
     actor = launch_spec["actor"]
     effective_runner = launch_spec["effective_runner"]
-    effective_env = launch_spec["merged_env"]
+    effective_env = inject_runtime_home_env(
+        launch_spec["merged_env"],
+        runtime=launch_spec["runtime"],
+        group_id=group.group_id,
+        actor_id=actor_id,
+    )
     effective_cmd = launch_spec["effective_command"]
     cwd = launch_spec["cwd"]
     runtime = launch_spec["runtime"]
     runner = launch_spec["runner"]
 
-    if effective_runner != "headless":
+    if runtime != "codex" and effective_runner != "headless":
         if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
             error_message = pty_support_error_message() or "PTY runner is not supported in this environment."
             return {"success": False, "error": error_message}
@@ -239,7 +245,14 @@ def start_actor_process(
         return {"success": False, "error": runtime_error}
 
     try:
-        if effective_runner == "headless":
+        if runtime == "codex" and effective_runner == "headless":
+            codex_app_supervisor.start_actor(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+            )
+        elif effective_runner == "headless":
             headless_runner.SUPERVISOR.start_actor(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -257,6 +270,7 @@ def start_actor_process(
                 cwd=cwd,
                 command=effective_cmd,
                 env=prepare_pty_env(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                runtime=runtime,
                 max_backlog_bytes=pty_backlog_bytes(),
             )
             try:

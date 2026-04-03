@@ -10,7 +10,7 @@ import {
 import { beginContextRequest, isLatestContextRequest } from "../stores/useGroupStore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
-import type { Actor, ChatMessageData, GroupContext } from "../types";
+import type { Actor, ChatMessageData, CodexStreamEvent, GroupContext, LedgerEvent, StreamingActivity } from "../types";
 import { runReconnectCatchup, scheduleContextSummaryCatchup } from "./sseCatchup";
 import {
   isContextSyncEvent,
@@ -107,6 +107,13 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const updateReplyStatus = useGroupStore((s) => s.updateReplyStatus);
   const incrementActorUnread = useGroupStore((s) => s.incrementActorUnread);
   const updateActorActivity = useGroupStore((s) => s.updateActorActivity);
+  const upsertStreamingEvent = useGroupStore((s) => s.upsertStreamingEvent);
+  const upsertStreamingText = useGroupStore((s) => s.upsertStreamingText);
+  const upsertStreamingActivities = useGroupStore((s) => s.upsertStreamingActivities);
+  const upsertStreamingActivity = useGroupStore((s) => s.upsertStreamingActivity);
+  const removeStreamingEvent = useGroupStore((s) => s.removeStreamingEvent);
+  const clearStreamingEventsForActor = useGroupStore((s) => s.clearStreamingEventsForActor);
+  const clearStreamingPlaceholder = useGroupStore((s) => s.clearStreamingPlaceholder);
   const setGroupContext = useGroupStore((s) => s.setGroupContext);
   const refreshActors = useGroupStore((s) => s.refreshActors);
   const refreshPresentation = useGroupStore((s) => s.refreshPresentation);
@@ -117,11 +124,32 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const clearPresentationSlotAttention = useModalStore((s) => s.clearPresentationSlotAttention);
 
   const eventSourceRef = useRef<EventSource | null>(null);
+  const codexEventSourceRef = useRef<EventSource | null>(null);
   const contextRefreshTimerRef = useRef<number | null>(null);
   const selectedGroupIdRef = useRef<string>("");
   const reconnectDelayRef = useRef<number>(1000);
   const reconnectTimerRef = useRef<number | null>(null);
+  const codexReconnectDelayRef = useRef<number>(1000);
+  const codexReconnectTimerRef = useRef<number | null>(null);
   const hasConnectedOnceRef = useRef<boolean>(false);
+  const pendingCodexMessageFlushRef = useRef<number | null>(null);
+  const pendingCodexActivityFlushRef = useRef<number | null>(null);
+  const pendingCodexMessagesRef = useRef(new Map<string, {
+    actorId: string;
+    streamId: string;
+    pendingEventId: string;
+    ts: string;
+    explicitText: string | null;
+    deltaText: string;
+    completed: boolean;
+    shouldClearPlaceholder: boolean;
+  }>());
+  const pendingCodexActivitiesRef = useRef(new Map<string, {
+    actorId: string;
+    groupId: string;
+    match: { pendingEventId?: string; streamId?: string };
+    activities: Map<string, StreamingActivity>;
+  }>());
 
   useEffect(() => {
     selectedGroupIdRef.current = selectedGroupId;
@@ -194,14 +222,258 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     });
   }
 
+  function flushPendingCodexMessages(groupId: string) {
+    pendingCodexMessageFlushRef.current = null;
+    const pendingEntries = pendingCodexMessagesRef.current;
+    if (pendingEntries.size <= 0) return;
+
+    const streamingEvents = useGroupStore.getState().chatByGroup[groupId]?.streamingEvents || [];
+    for (const [key, entry] of pendingEntries.entries()) {
+      const placeholder = entry.pendingEventId
+        ? streamingEvents.find((item) => {
+            if (String(item.by || "").trim() !== entry.actorId) return false;
+            const itemData = item.data && typeof item.data === "object"
+              ? item.data as { pending_event_id?: unknown; pending_placeholder?: unknown }
+              : undefined;
+            return Boolean(itemData?.pending_placeholder) && String(itemData?.pending_event_id || "").trim() === entry.pendingEventId;
+          })
+        : undefined;
+      const existing = streamingEvents.find((item) => {
+        const itemStreamId = item.data && typeof item.data === "object"
+          ? String((item.data as { stream_id?: unknown }).stream_id || "").trim()
+          : "";
+        return itemStreamId === entry.streamId;
+      });
+      const previousText = existing?.data && typeof existing.data === "object"
+        ? String((existing.data as { text?: unknown }).text || "")
+        : "";
+      const previousActivities = (() => {
+        const source = existing ?? placeholder;
+        if (!source?.data || typeof source.data !== "object") return [];
+        const activities = (source.data as { activities?: unknown }).activities;
+        return Array.isArray(activities) ? activities : [];
+      })();
+      if (entry.shouldClearPlaceholder && entry.pendingEventId) {
+        clearStreamingPlaceholder(entry.actorId, entry.pendingEventId, groupId);
+      }
+      const fullText = entry.explicitText ?? `${previousText}${entry.deltaText}`;
+      upsertStreamingText(entry.streamId, fullText, groupId);
+      if (previousActivities.length > 0) {
+        upsertStreamingActivities(entry.streamId, previousActivities, groupId);
+      }
+      const existingData = existing?.data && typeof existing.data === "object"
+        ? existing.data as { pending_event_id?: unknown; text?: unknown }
+        : undefined;
+      const existingPendingEventId = String(existingData?.pending_event_id || "").trim();
+      const needsEventUpsert =
+        !existing ||
+        !!existing._streaming !== !entry.completed ||
+        existingPendingEventId !== entry.pendingEventId;
+      if (needsEventUpsert) {
+        upsertStreamingEvent({
+          id: `stream:${entry.streamId}`,
+          ts: entry.ts,
+          kind: "chat.message",
+          group_id: groupId,
+          by: entry.actorId,
+          _streaming: !entry.completed,
+          data: {
+            text: typeof existingData?.text === "string" ? existingData.text : "",
+            to: ["user"],
+            stream_id: entry.streamId,
+            pending_event_id: entry.pendingEventId || undefined,
+            activities: previousActivities,
+          },
+        }, groupId);
+      }
+      pendingEntries.delete(key);
+    }
+  }
+
+  function schedulePendingCodexMessageFlush(groupId: string) {
+    if (pendingCodexMessageFlushRef.current != null) return;
+    pendingCodexMessageFlushRef.current = window.requestAnimationFrame(() => {
+      flushPendingCodexMessages(groupId);
+    });
+  }
+
+  function flushPendingCodexActivities() {
+    pendingCodexActivityFlushRef.current = null;
+    const pendingEntries = pendingCodexActivitiesRef.current;
+    if (pendingEntries.size <= 0) return;
+
+    for (const [key, entry] of pendingEntries.entries()) {
+      for (const activity of entry.activities.values()) {
+        upsertStreamingActivity(entry.actorId, entry.match, activity, entry.groupId);
+      }
+      pendingEntries.delete(key);
+    }
+  }
+
+  function schedulePendingCodexActivityFlush() {
+    if (pendingCodexActivityFlushRef.current != null) return;
+    pendingCodexActivityFlushRef.current = window.setTimeout(() => {
+      flushPendingCodexActivities();
+    }, 64);
+  }
+
+  function connectCodexStream(groupId: string) {
+    if (codexReconnectTimerRef.current) {
+      window.clearTimeout(codexReconnectTimerRef.current);
+      codexReconnectTimerRef.current = null;
+    }
+    if (codexEventSourceRef.current) {
+      codexEventSourceRef.current.close();
+      codexEventSourceRef.current = null;
+    }
+
+    const codexEs = new EventSource(api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/codex/stream`));
+    codexEs.onopen = () => {
+      codexReconnectDelayRef.current = 1000;
+    };
+    codexEs.onerror = () => {
+      codexEs.close();
+      codexEventSourceRef.current = null;
+      if (codexReconnectTimerRef.current) {
+        window.clearTimeout(codexReconnectTimerRef.current);
+      }
+      const delay = codexReconnectDelayRef.current;
+      codexReconnectTimerRef.current = window.setTimeout(() => {
+        codexReconnectTimerRef.current = null;
+        if (selectedGroupIdRef.current === groupId) {
+          connectCodexStream(groupId);
+        }
+      }, delay);
+      codexReconnectDelayRef.current = Math.min(delay * 2, 30000);
+    };
+    codexEs.addEventListener("codex", (e) => {
+      const msg = e as MessageEvent;
+      try {
+        const ev = JSON.parse(String(msg.data || "{}")) as CodexStreamEvent;
+        const actorId = String(ev.actor_id || "").trim();
+        const eventType = String(ev.type || "").trim();
+        const data = ev.data && typeof ev.data === "object" ? ev.data : {};
+        const streamId = typeof data.stream_id === "string" ? data.stream_id.trim() : "";
+        const pendingEventId = typeof data.event_id === "string" ? data.event_id.trim() : "";
+        if (!actorId || !eventType) return;
+
+        if (eventType === "codex.turn.started" || eventType === "codex.turn.progress") {
+          updateActorActivity([{
+            id: actorId,
+            running: true,
+            idle_seconds: null,
+            effective_working_state: "working",
+            effective_working_reason: "codex_turn_active",
+            effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
+            effective_active_task_id: typeof data.turn_id === "string" ? data.turn_id : null,
+          }]);
+          return;
+        }
+
+        if (eventType === "codex.turn.completed" || eventType === "codex.turn.failed") {
+          updateActorActivity([{
+            id: actorId,
+            running: true,
+            idle_seconds: null,
+            effective_working_state: "idle",
+            effective_working_reason: "codex_turn_idle",
+            effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
+            effective_active_task_id: null,
+          }]);
+          if (eventType === "codex.turn.failed") {
+            clearStreamingEventsForActor(actorId, groupId);
+          }
+          return;
+        }
+
+        if (eventType === "codex.activity.started" || eventType === "codex.activity.updated" || eventType === "codex.activity.completed") {
+          const activityId = typeof data.activity_id === "string" ? data.activity_id.trim() : "";
+          const summary = typeof data.summary === "string" ? data.summary.trim() : "";
+          if (!activityId || !summary) return;
+          const activity: StreamingActivity = {
+            id: activityId,
+            kind: typeof data.kind === "string" ? data.kind.trim() : "thinking",
+            status: eventType.replace("codex.activity.", ""),
+            summary,
+            detail: typeof data.detail === "string" ? data.detail.trim() : undefined,
+            ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
+          };
+          const activityKey = `${groupId}:${actorId}:${streamId || pendingEventId || "pending"}`;
+          const existingActivityBatch = pendingCodexActivitiesRef.current.get(activityKey);
+          if (existingActivityBatch) {
+            existingActivityBatch.match = { pendingEventId, streamId };
+            existingActivityBatch.activities.set(activityId, activity);
+          } else {
+            pendingCodexActivitiesRef.current.set(activityKey, {
+              actorId,
+              groupId,
+              match: { pendingEventId, streamId },
+              activities: new Map([[activityId, activity]]),
+            });
+          }
+          schedulePendingCodexActivityFlush();
+          return;
+        }
+
+        if (eventType === "codex.message.started" || eventType === "codex.message.delta" || eventType === "codex.message.completed") {
+          if (!streamId) return;
+          const delta = typeof data.delta === "string" ? data.delta : "";
+          const explicitText = typeof data.text === "string" ? data.text : null;
+          const messageKey = `${groupId}:${streamId}`;
+          const existingMessageBatch = pendingCodexMessagesRef.current.get(messageKey);
+          if (existingMessageBatch) {
+            existingMessageBatch.pendingEventId = pendingEventId || existingMessageBatch.pendingEventId;
+            existingMessageBatch.ts = typeof ev.ts === "string" ? ev.ts : existingMessageBatch.ts;
+            if (explicitText != null) {
+              existingMessageBatch.explicitText = explicitText;
+              existingMessageBatch.deltaText = "";
+            } else if (delta) {
+              existingMessageBatch.deltaText += delta;
+            }
+            if (pendingEventId) {
+              existingMessageBatch.shouldClearPlaceholder = true;
+            }
+            if (eventType === "codex.message.completed") {
+              existingMessageBatch.completed = true;
+            }
+          } else {
+            pendingCodexMessagesRef.current.set(messageKey, {
+              actorId,
+              streamId,
+              pendingEventId,
+              ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
+              explicitText,
+              deltaText: explicitText == null ? delta : "",
+              completed: eventType === "codex.message.completed",
+              shouldClearPlaceholder: !!pendingEventId,
+            });
+          }
+          schedulePendingCodexMessageFlush(groupId);
+          return;
+        }
+      } catch {
+        /* ignore parse errors */
+      }
+    });
+    codexEventSourceRef.current = codexEs;
+  }
+
   function connectStream(groupId: string) {
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    if (codexReconnectTimerRef.current) {
+      window.clearTimeout(codexReconnectTimerRef.current);
+      codexReconnectTimerRef.current = null;
+    }
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
+    }
+    if (codexEventSourceRef.current) {
+      codexEventSourceRef.current.close();
+      codexEventSourceRef.current = null;
     }
 
     setSSEStatus("connecting");
@@ -319,6 +591,15 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         initializeObligationStatus(nextEvent, actorsRef.current);
 
         appendEvent(nextEvent, groupId);
+        if (isChatMessageEvent(nextEvent)) {
+          const msgData = nextEvent.data && typeof nextEvent.data === "object"
+            ? (nextEvent.data as { stream_id?: unknown })
+            : null;
+          const streamId = msgData && typeof msgData.stream_id === "string" ? msgData.stream_id.trim() : "";
+          if (streamId) {
+            removeStreamingEvent(streamId, groupId);
+          }
+        }
 
         // Reconcile outbox: when a user's chat.message arrives via SSE,
         // remove only the exact optimistic entry that produced this canonical event.
@@ -387,6 +668,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       }
     });
     eventSourceRef.current = es;
+
+    connectCodexStream(groupId);
   }
 
   function cleanup() {
@@ -394,15 +677,34 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    if (codexReconnectTimerRef.current) {
+      window.clearTimeout(codexReconnectTimerRef.current);
+      codexReconnectTimerRef.current = null;
+    }
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
+    if (codexEventSourceRef.current) {
+      codexEventSourceRef.current.close();
+      codexEventSourceRef.current = null;
+    }
+    if (pendingCodexMessageFlushRef.current != null) {
+      window.cancelAnimationFrame(pendingCodexMessageFlushRef.current);
+      pendingCodexMessageFlushRef.current = null;
+    }
+    if (pendingCodexActivityFlushRef.current != null) {
+      window.clearTimeout(pendingCodexActivityFlushRef.current);
+      pendingCodexActivityFlushRef.current = null;
+    }
+    pendingCodexMessagesRef.current.clear();
+    pendingCodexActivitiesRef.current.clear();
     if (contextRefreshTimerRef.current) {
       window.clearTimeout(contextRefreshTimerRef.current);
       contextRefreshTimerRef.current = null;
     }
     reconnectDelayRef.current = 1000;
+    codexReconnectDelayRef.current = 1000;
     hasConnectedOnceRef.current = false;
     setSSEStatus("disconnected");
   }

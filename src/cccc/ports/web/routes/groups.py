@@ -19,10 +19,11 @@ from ....daemon.group.presentation_ops import load_presentation_snapshot, resolv
 from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_summary_snapshot
 from ....runners import headless as headless_runner
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
+from ....kernel.codex_events import codex_events_path
 from ....kernel.group import get_group_state, load_group
 from ....kernel.context import ContextStorage
 from ....kernel.query_projections import get_groups_projection
-from ....daemon.runner_state_ops import pty_state_path
+from ....daemon.runner_state_ops import headless_state_path, pty_state_path
 from ....kernel.group_template import parse_group_template
 from ....kernel.ledger import read_last_lines
 from ....kernel.prompt_files import (
@@ -97,6 +98,19 @@ def _group_running_local(group_id: str) -> bool:
         aid = str(actor.get("id") or "").strip()
         if not aid:
             continue
+        runtime = str(actor.get("runtime") or "").strip().lower()
+        runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
+        effective_runner = "headless" if runner_kind == "headless" else "pty"
+        if runtime == "codex" and effective_runner == "headless":
+            try:
+                raw = json.loads(headless_state_path(gid, aid).read_text(encoding="utf-8"))
+                pid = int(raw.get("pid") or 0)
+                status = str(raw.get("status") or "").strip().lower()
+            except Exception:
+                pid = 0
+                status = ""
+            if pid > 0 and pid_is_alive(pid) and status != "stopped":
+                return True
         pty_state = pty_state_path(gid, aid)
         if pty_state.exists():
             try:
@@ -2069,6 +2083,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
         return create_sse_response(sse_ledger_tail(group.ledger_path))
+
+    @group_router.get("/codex/stream")
+    async def codex_stream(group_id: str) -> StreamingResponse:
+        from ..streams import create_sse_response, sse_jsonl_tail_shared
+
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        return create_sse_response(
+            sse_jsonl_tail_shared(codex_events_path(group.path), event_name="codex", heartbeat_s=30.0)
+        )
 
     return [global_router, group_router]
 

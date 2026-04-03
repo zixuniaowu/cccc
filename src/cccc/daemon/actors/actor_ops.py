@@ -10,6 +10,7 @@ from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.query_projections import get_actor_list_projection
 from ...kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, derive_effective_working_state
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..context.context_ops import _agent_state_to_dict
 from .private_env_ops import mask_private_env_value
 from ...runners import headless as headless_runner
@@ -60,9 +61,14 @@ def handle_actor_list(
             continue
         runner_kind = str(actor.get("runner") or "pty").strip()
         effective_runner = effective_runner_kind(runner_kind)
+        runtime = str(actor.get("runtime") or "").strip()
         idle_seconds = None
         headless_state = None
-        if effective_runner == "headless":
+        if runtime == "codex" and effective_runner == "headless":
+            actor["running"] = codex_app_supervisor.actor_running(group_id, aid)
+            headless_state = codex_app_supervisor.get_state(group_id=group_id, actor_id=aid)
+            actor["idle_seconds"] = None
+        elif effective_runner == "headless":
             actor["running"] = headless_runner.SUPERVISOR.actor_running(group_id, aid)
             state = headless_runner.SUPERVISOR.get_state(group_id=group_id, actor_id=aid)
             headless_state = state.model_dump() if state is not None else None
@@ -76,15 +82,21 @@ def handle_actor_list(
             )
             actor["idle_seconds"] = idle_seconds
         pty_terminal_text = ""
+        pty_terminal_override = None
         if effective_runner == "pty" and actor["running"]:
             try:
-                pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
-                    group_id=group_id,
-                    actor_id=aid,
-                    max_bytes=DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES,
-                ).decode("utf-8", errors="replace")
+                pty_terminal_override = pty_runner.SUPERVISOR.terminal_override(group_id=group_id, actor_id=aid)
             except Exception:
-                pty_terminal_text = ""
+                pty_terminal_override = None
+            if not pty_terminal_override:
+                try:
+                    pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
+                        group_id=group_id,
+                        actor_id=aid,
+                        max_bytes=DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES,
+                    ).decode("utf-8", errors="replace")
+                except Exception:
+                    pty_terminal_text = ""
         if effective_runner != runner_kind:
             actor["runner_effective"] = effective_runner
         actor.update(
@@ -94,6 +106,7 @@ def handle_actor_list(
                 runtime=str(actor.get("runtime") or ""),
                 idle_seconds=idle_seconds,
                 pty_terminal_text=pty_terminal_text,
+                pty_terminal_override=pty_terminal_override,
                 agent_state=agent_state_by_id.get(aid),
                 headless_state=headless_state,
             )

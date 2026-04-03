@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -677,6 +678,19 @@ class AutomationManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._memory_auto_in_flight: set[str] = set()
+        self._group_tick_at: dict[str, float] = {}
+
+    def _group_tick_due(self, group_id: str, *, now_monotonic: float, min_interval_seconds: float) -> bool:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return False
+        interval = max(0.0, float(min_interval_seconds or 0.0))
+        with self._lock:
+            last_at = float(self._group_tick_at.get(gid) or 0.0)
+            if last_at > 0.0 and (now_monotonic - last_at) < interval:
+                return False
+            self._group_tick_at[gid] = now_monotonic
+            return True
 
     def on_resume(self, group: Group) -> None:
         """Reset automation timers on resume (idle/paused -> active).
@@ -739,6 +753,7 @@ class AutomationManager:
         base = home / "groups"
         if not base.exists():
             return
+        now_monotonic = time.monotonic()
         for p in base.glob("*/group.yaml"):
             gid = p.parent.name
             group = load_group(gid)
@@ -754,6 +769,8 @@ class AutomationManager:
             if state == "paused":
                 continue  # paused: all automation disabled
             if state == "idle":
+                if not self._group_tick_due(gid, now_monotonic=now_monotonic, min_interval_seconds=30.0):
+                    continue
                 # idle: only run user-defined rules (Level 4);
                 # internal automation (Level 1-3) stays silent
                 try:
@@ -761,6 +778,8 @@ class AutomationManager:
                     self._check_rules(group, now, group_state="idle")
                 except Exception:
                     pass
+                continue
+            if not self._group_tick_due(gid, now_monotonic=now_monotonic, min_interval_seconds=5.0):
                 continue
             # active: run all automation (Level 1-4)
             try:

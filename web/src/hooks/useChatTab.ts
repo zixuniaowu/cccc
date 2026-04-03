@@ -17,6 +17,135 @@ import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxSto
 import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment } from "../types";
 import * as api from "../services/api";
 
+function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent): LedgerEvent {
+  const primaryData = primary.data && typeof primary.data === "object"
+    ? primary.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
+    : {};
+  const secondaryData = secondary.data && typeof secondary.data === "object"
+    ? secondary.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
+    : {};
+  const primaryText = typeof primaryData.text === "string" ? primaryData.text : "";
+  const secondaryText = typeof secondaryData.text === "string" ? secondaryData.text : "";
+  const primaryActivities = Array.isArray(primaryData.activities) ? primaryData.activities : [];
+  const secondaryActivities = Array.isArray(secondaryData.activities) ? secondaryData.activities : [];
+  return {
+    ...primary,
+    ts: primary.ts || secondary.ts,
+    data: {
+      ...secondaryData,
+      ...primaryData,
+      text: primaryText || secondaryText,
+      activities: primaryActivities.length > 0 ? primaryActivities : secondaryActivities,
+      pending_event_id:
+        String(primaryData.pending_event_id || "").trim() || String(secondaryData.pending_event_id || "").trim() || undefined,
+      stream_id:
+        String(primaryData.stream_id || "").trim() || String(secondaryData.stream_id || "").trim() || undefined,
+      pending_placeholder: Boolean(primaryData.pending_placeholder),
+    },
+  };
+}
+
+function dedupeStreamingEvents(streamingEvents: LedgerEvent[]): LedgerEvent[] {
+  const byKey = new Map<string, LedgerEvent>();
+  const passthrough: LedgerEvent[] = [];
+
+  for (const event of streamingEvents) {
+    const data = event.data && typeof event.data === "object"
+      ? event.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
+      : {};
+    const actorId = String(event.by || "").trim();
+    const pendingEventId = String(data.pending_event_id || "").trim();
+    const streamId = String(data.stream_id || "").trim();
+    const isPendingPlaceholder = Boolean(data.pending_placeholder);
+    const dedupeKey = actorId && pendingEventId ? `${actorId}:${pendingEventId}` : "";
+
+    if (!dedupeKey) {
+      passthrough.push(event);
+      continue;
+    }
+
+    const existing = byKey.get(dedupeKey);
+    if (!existing) {
+      byKey.set(dedupeKey, event);
+      continue;
+    }
+
+    const existingData = existing.data && typeof existing.data === "object"
+      ? existing.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
+      : {};
+    const existingIsPendingPlaceholder = Boolean(existingData.pending_placeholder);
+    const preferCurrent =
+      existingIsPendingPlaceholder && !isPendingPlaceholder
+        ? true
+        : existingIsPendingPlaceholder === isPendingPlaceholder && !!streamId && !String(existingData.stream_id || "").trim();
+
+    byKey.set(
+      dedupeKey,
+      preferCurrent ? mergeStreamingCandidates(event, existing) : mergeStreamingCandidates(existing, event),
+    );
+  }
+
+  return [...passthrough, ...byKey.values()];
+}
+
+function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[]): LedgerEvent[] {
+  const eventsByActor = new Map<string, LedgerEvent[]>();
+  for (const event of streamingEvents) {
+    const actorId = String(event.by || "").trim();
+    if (!actorId) continue;
+    const bucket = eventsByActor.get(actorId);
+    if (bucket) {
+      bucket.push(event);
+    } else {
+      eventsByActor.set(actorId, [event]);
+    }
+  }
+
+  const shouldDrop = new Set<LedgerEvent>();
+  for (const actorEvents of eventsByActor.values()) {
+    if (actorEvents.length <= 1) continue;
+
+    const hasRichStreaming = actorEvents.some((event) => {
+      const data = event.data && typeof event.data === "object"
+        ? event.data as ChatMessageData & { activities?: unknown[] }
+        : {};
+      const text = typeof data.text === "string" ? data.text.trim() : "";
+      const activities = Array.isArray(data.activities) ? data.activities : [];
+      return text.length > 0 || activities.some((item) => {
+        if (!item || typeof item !== "object") return false;
+        const kind = String((item as { kind?: unknown }).kind || "").trim();
+        const summary = String((item as { summary?: unknown }).summary || "").trim();
+        return kind !== "queued" || summary !== "queued";
+      });
+    });
+
+    if (!hasRichStreaming) continue;
+
+    for (const event of actorEvents) {
+      const data = event.data && typeof event.data === "object"
+        ? event.data as ChatMessageData & { pending_placeholder?: unknown; activities?: unknown[]; stream_id?: unknown }
+        : {};
+      const text = typeof data.text === "string" ? data.text.trim() : "";
+      const activities = Array.isArray(data.activities) ? data.activities : [];
+      const onlyQueuedActivities = activities.length === 0 || activities.every((item) => {
+        if (!item || typeof item !== "object") return true;
+        const kind = String((item as { kind?: unknown }).kind || "").trim();
+        const summary = String((item as { summary?: unknown }).summary || "").trim();
+        return kind === "queued" && summary === "queued";
+      });
+      const isPlaceholderLike =
+        Boolean(data.pending_placeholder) ||
+        String(data.stream_id || "").trim().startsWith("local:") ||
+        String(data.stream_id || "").trim().startsWith("pending:");
+      if (isPlaceholderLike && !text && onlyQueuedActivities) {
+        shouldDrop.add(event);
+      }
+    }
+  }
+
+  return streamingEvents.filter((event) => !shouldDrop.has(event));
+}
+
 interface UseChatTabOptions {
   selectedGroupId: string;
   selectedGroupRunning: boolean;
@@ -48,10 +177,12 @@ export function useChatTab({
 }: UseChatTabOptions) {
   const { t } = useTranslation(["chat", "common"]);
   // ============ Stores ============
-  const { events, chatWindow, hasMoreHistory, hasLoadedTail, isLoadingHistory, isChatWindowLoading } = useGroupStore(
+  const { events, streamingEvents, chatWindow, hasMoreHistory, hasLoadedTail, isLoadingHistory, isChatWindowLoading } = useGroupStore(
     useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId])
   );
   const appendEvent = useGroupStore((state) => state.appendEvent);
+  const upsertStreamingEvent = useGroupStore((state) => state.upsertStreamingEvent);
+  const removeStreamingEvent = useGroupStore((state) => state.removeStreamingEvent);
   const groupDoc = useGroupStore((state) => state.groupDoc);
   const groupContext = useGroupStore((state) => state.groupContext);
   const groupSettings = useGroupStore((state) => state.groupSettings);
@@ -65,6 +196,7 @@ export function useChatTab({
   const setShowScrollButton = useUIStore((s) => s.setShowScrollButton);
   const setChatUnreadCount = useUIStore((s) => s.setChatUnreadCount);
   const setChatScrollSnapshot = useUIStore((s) => s.setChatScrollSnapshot);
+  const setChatMobileSurface = useUIStore((s) => s.setChatMobileSurface);
   const showError = useUIStore((s) => s.showError);
   const showNotice = useUIStore((s) => s.showNotice);
 
@@ -108,6 +240,43 @@ export function useChatTab({
   const sendInFlightRef = useRef(false);
 
   // ============ Computed Values ============
+
+  const resolveAssistantTargets = useCallback((tokens: string[]): Actor[] => {
+    const normalized = tokens.map((token) => String(token || "").trim()).filter((token) => token);
+    const resolved = new Map<string, Actor>();
+    const policy = groupSettings?.default_send_to || "foreman";
+    const effectiveTokens = normalized.length > 0 ? normalized : (policy === "foreman" ? ["@foreman"] : ["@all"]);
+    const allActors = actors.filter((actor) => String(actor.id || "").trim() && String(actor.id || "").trim() !== "user");
+    const peers = allActors.filter((actor) => String(actor.role || "").trim() !== "foreman");
+    const foremen = allActors.filter((actor) => String(actor.role || "").trim() === "foreman");
+
+    const addActors = (items: Actor[]) => {
+      for (const actor of items) {
+        const actorId = String(actor.id || "").trim();
+        if (!actorId || resolved.has(actorId)) continue;
+        resolved.set(actorId, actor);
+      }
+    };
+
+    for (const token of effectiveTokens) {
+      if (token === "@all") {
+        addActors(allActors);
+        continue;
+      }
+      if (token === "@peers") {
+        addActors(peers);
+        continue;
+      }
+      if (token === "@foreman") {
+        addActors(foremen);
+        continue;
+      }
+      const actor = allActors.find((item) => String(item.id || "").trim() === token);
+      if (actor) addActors([actor]);
+    }
+
+    return Array.from(resolved.values()).filter((actor) => String(actor.runtime || "").trim() === "codex");
+  }, [actors, groupSettings?.default_send_to]);
 
   // Valid recipient tokens
   const validRecipientSet = useMemo(() => {
@@ -177,6 +346,9 @@ export function useChatTab({
   // Filtered live chat messages (canonical + optimistic pending merged)
   const liveChatMessages = useMemo(() => {
     const all = events.filter((ev) => ev.kind === "chat.message");
+    const streaming = collapseActorStreamingPlaceholders(
+      dedupeStreamingEvents(streamingEvents.filter((ev) => ev.kind === "chat.message"))
+    );
     const canonicalClientIds = new Set(
       all
         .map((ev) => {
@@ -188,7 +360,20 @@ export function useChatTab({
     const pendingEvents = outboxEntries
       .filter((entry) => !canonicalClientIds.has(entry.localId))
       .map((entry) => entry.event);
-    const merged = pendingEvents.length > 0 ? [...all, ...pendingEvents] : all;
+    const canonicalStreamIds = new Set(
+      all
+        .map((ev) => {
+          const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
+          return data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
+        })
+        .filter((streamId) => streamId.length > 0)
+    );
+    const liveStreaming = streaming.filter((ev) => {
+      const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
+      const streamId = data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
+      return !streamId || !canonicalStreamIds.has(streamId);
+    });
+    const merged = [...all, ...pendingEvents, ...liveStreaming];
 
     if (chatFilter === "attention") {
       return merged.filter((ev) => {
@@ -213,7 +398,7 @@ export function useChatTab({
       });
     }
     return merged;
-  }, [events, chatFilter, outboxEntries]);
+  }, [events, streamingEvents, chatFilter, outboxEntries]);
 
   // Chat messages (window or live)
   const chatMessages = useMemo(() => {
@@ -222,8 +407,8 @@ export function useChatTab({
   }, [chatWindow, inChatWindow, liveChatMessages]);
 
   const hasAnyChatMessages = useMemo(
-    () => events.some((ev) => ev.kind === "chat.message") || outboxEntries.length > 0,
-    [events, outboxEntries]
+    () => events.some((ev) => ev.kind === "chat.message") || streamingEvents.length > 0 || outboxEntries.length > 0,
+    [events, streamingEvents, outboxEntries]
   );
 
   // Chat view key for VirtualMessageList
@@ -369,9 +554,51 @@ export function useChatTab({
     const prioritySnapshot = priority;
     const replyRequiredSnapshot = replyRequired;
     const toTextSnapshot = toText;
+    const assistantTargets = !isCrossGroup ? resolveAssistantTargets(toTokens) : [];
 
     // Generate a local ID for outbox tracking
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const localPlaceholderStreamIds = assistantTargets.map((actor) => `local:${localId}:${String(actor.id || "").trim()}`);
+
+    const insertLocalAssistantPlaceholders = () => {
+      const now = new Date().toISOString();
+      for (const actor of assistantTargets) {
+        const actorId = String(actor.id || "").trim();
+        if (!actorId) continue;
+        upsertStreamingEvent(
+          {
+            id: `local:${localId}:${actorId}`,
+            ts: now,
+            kind: "chat.message",
+            group_id: selectedGroupId,
+            by: actorId,
+            _streaming: true,
+            data: {
+              text: "",
+              to: ["user"],
+              stream_id: `local:${localId}:${actorId}`,
+              pending_placeholder: true,
+              activities: [
+                {
+                  id: `queued:${localId}:${actorId}`,
+                  kind: "queued",
+                  status: "started",
+                  summary: "queued",
+                  ts: now,
+                },
+              ],
+            },
+          },
+          selectedGroupId,
+        );
+      }
+    };
+
+    const clearLocalAssistantPlaceholders = () => {
+      for (const streamId of localPlaceholderStreamIds) {
+        removeStreamingEvent(streamId, selectedGroupId);
+      }
+    };
 
     const restoreComposerState = () => {
       setComposerText(txt);
@@ -445,6 +672,7 @@ export function useChatTab({
         } as LedgerEvent["data"],
       };
       enqueueOutbox(selectedGroupId, localId, optimisticEvent);
+      insertLocalAssistantPlaceholders();
     }
 
     applyImmediateComposerFeedback();
@@ -507,6 +735,42 @@ export function useChatTab({
       // returned event because they do not stream back into the current group.
       if (canonicalEvent && isCrossGroup) {
         appendEvent(canonicalEvent, selectedGroupId);
+      } else if (canonicalEvent && !isCrossGroup) {
+        const canonicalEventId = String(canonicalEvent.id || "").trim();
+        if (canonicalEventId) {
+          clearLocalAssistantPlaceholders();
+          for (const actor of assistantTargets) {
+            const actorId = String(actor.id || "").trim();
+            if (!actorId) continue;
+            upsertStreamingEvent(
+              {
+                id: `pending:${canonicalEventId}:${actorId}`,
+                ts: new Date().toISOString(),
+                kind: "chat.message",
+                group_id: selectedGroupId,
+                by: actorId,
+                _streaming: true,
+                data: {
+                  text: "",
+                  to: ["user"],
+                  stream_id: `pending:${canonicalEventId}:${actorId}`,
+                  pending_event_id: canonicalEventId,
+                  pending_placeholder: true,
+                  activities: [
+                    {
+                      id: `queued:${canonicalEventId}:${actorId}`,
+                      kind: "queued",
+                      status: "started",
+                      summary: "queued",
+                      ts: new Date().toISOString(),
+                    },
+                  ],
+                },
+              },
+              selectedGroupId,
+            );
+          }
+        }
       }
       setDestGroupId(selectedGroupId);
       clearDraft(selectedGroupId);
@@ -520,12 +784,15 @@ export function useChatTab({
       }
       if (selectedGroupId) {
         setChatUnreadCount(selectedGroupId, 0);
+        setChatFilter(selectedGroupId, "all");
+        setChatMobileSurface(selectedGroupId, "messages");
       }
       onMessageSent?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : "send failed";
       // Pending-only outbox: failed sends roll back to the composer.
       removeOutbox(selectedGroupId, localId);
+      clearLocalAssistantPlaceholders();
       restoreComposerState();
       showError(message);
     } finally {
@@ -561,6 +828,8 @@ export function useChatTab({
     fileInputRef,
     chatAtBottomRef,
     scrollRef,
+    setChatFilter,
+    setChatMobileSurface,
     setShowScrollButton,
     setChatUnreadCount,
     onMessageSent,

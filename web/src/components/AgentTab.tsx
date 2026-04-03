@@ -211,20 +211,6 @@ export function AgentTab({
           strongPulse: runtimeIndicator.strongPulse,
           badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
         };
-      case "waiting":
-        return {
-          dotClass: runtimeIndicator.dotClass,
-          pulse: runtimeIndicator.pulse,
-          strongPulse: runtimeIndicator.strongPulse,
-          badgeClass: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
-        };
-      case "stuck":
-        return {
-          dotClass: runtimeIndicator.dotClass,
-          pulse: runtimeIndicator.pulse,
-          strongPulse: runtimeIndicator.strongPulse,
-          badgeClass: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-        };
       case "run":
       default:
         return {
@@ -239,8 +225,6 @@ export function AgentTab({
   const runtimeStatusText = (() => {
     if (!isRunning) return t("stopped");
     if (workingState === "working") return t("working");
-    if (workingState === "waiting") return t("waiting");
-    if (workingState === "stuck") return t("stuck");
     return t("running");
   })();
 

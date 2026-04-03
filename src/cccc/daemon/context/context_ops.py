@@ -55,6 +55,7 @@ from ...kernel.prompt_files import (
 from ...kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, derive_effective_working_state
 from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..space.group_space_projection import sync_group_space_projection
 from ..space.group_space_store import enqueue_space_job, get_space_binding, get_space_provider_state
 from ..pet.profile_refresh import mark_pet_profile_refresh_applied
@@ -345,10 +346,15 @@ def _actor_runtime_state_to_dict(
     actor_id = str(actor_doc.get("id") or "").strip()
     runner_kind = str(actor_doc.get("runner") or "pty").strip() or "pty"
     effective_runner = "headless" if runner_kind == "headless" else "pty"
+    runtime = str(actor_doc.get("runtime") or "").strip() or "codex"
     running = False
     idle_seconds = None
     headless_state = None
-    if effective_runner == "headless":
+    if runtime == "codex" and effective_runner == "headless":
+        state = codex_app_supervisor.get_state(group_id=group_id, actor_id=actor_id)
+        headless_state = state if isinstance(state, dict) else None
+        running = bool(headless_state is not None and codex_app_supervisor.actor_running(group_id, actor_id))
+    elif effective_runner == "headless":
         state = headless_runner.SUPERVISOR.get_state(group_id=group_id, actor_id=actor_id)
         headless_state = state.model_dump() if state is not None else None
         running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(group_id, actor_id))
@@ -356,19 +362,25 @@ def _actor_runtime_state_to_dict(
         running = pty_runner.SUPERVISOR.actor_running(group_id, actor_id)
         idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=group_id, actor_id=actor_id) if running else None
     pty_terminal_text = ""
+    pty_terminal_override = None
     if effective_runner == "pty" and running:
         try:
-            pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
-                group_id=group_id,
-                actor_id=actor_id,
-                max_bytes=DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES,
-            ).decode("utf-8", errors="replace")
+            pty_terminal_override = pty_runner.SUPERVISOR.terminal_override(group_id=group_id, actor_id=actor_id)
         except Exception:
-            pty_terminal_text = ""
+            pty_terminal_override = None
+        if not pty_terminal_override:
+            try:
+                pty_terminal_text = pty_runner.SUPERVISOR.tail_output(
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    max_bytes=DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES,
+                ).decode("utf-8", errors="replace")
+            except Exception:
+                pty_terminal_text = ""
 
     result = {
         "id": actor_id,
-        "runtime": str(actor_doc.get("runtime") or "").strip() or "codex",
+        "runtime": runtime,
         "runner": runner_kind,
         "runner_effective": effective_runner,
         "running": bool(running),
@@ -378,9 +390,10 @@ def _actor_runtime_state_to_dict(
         derive_effective_working_state(
             running=running,
             effective_runner=effective_runner,
-            runtime=str(actor_doc.get("runtime") or "").strip(),
+            runtime=runtime,
             idle_seconds=idle_seconds,
             pty_terminal_text=pty_terminal_text,
+            pty_terminal_override=pty_terminal_override,
             agent_state=agent_state_by_id.get(actor_id),
             headless_state=headless_state,
         )

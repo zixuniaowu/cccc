@@ -99,26 +99,40 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
   onRowLayoutChange,
 }: VirtualMessageRowProps) {
   const rowRef = useRef<HTMLDivElement | null>(null);
+  const isStreaming = !!message?._streaming;
 
   useEffect(() => {
     const el = rowRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
 
     let rafId: number | null = null;
-    const observer = new ResizeObserver(() => {
+    let timeoutId: number | null = null;
+    const runMeasure = () => {
       if (rafId != null) window.cancelAnimationFrame(rafId);
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
         measureElement(el);
         onRowLayoutChange(el);
       });
+    };
+    const observer = new ResizeObserver(() => {
+      if (isStreaming) {
+        if (timeoutId != null) return;
+        timeoutId = window.setTimeout(() => {
+          timeoutId = null;
+          runMeasure();
+        }, 48);
+        return;
+      }
+      runMeasure();
     });
     observer.observe(el);
     return () => {
       observer.disconnect();
       if (rafId != null) window.cancelAnimationFrame(rafId);
+      if (timeoutId != null) window.clearTimeout(timeoutId);
     };
-  }, [measureElement, onRowLayoutChange]);
+  }, [isStreaming, measureElement, onRowLayoutChange]);
 
   return (
     <div

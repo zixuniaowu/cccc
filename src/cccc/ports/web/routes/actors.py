@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from ....daemon.server import call_daemon, get_daemon_endpoint
 from ....daemon.actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
 from ....daemon.context.context_ops import _agent_state_to_dict
-from ....daemon.runner_state_ops import pty_state_path
+from ....daemon.runner_state_ops import headless_state_path, pty_state_path
 from ....kernel.group import load_group
 from ....kernel.actors import find_actor
 from ....kernel.context import ContextStorage
@@ -135,10 +135,29 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
             continue
         runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
         effective_runner = "headless" if runner_kind == "headless" else "pty"
+        runtime = str(actor.get("runtime") or "").strip()
         running = False
         idle_seconds = None
         headless_state = None
-        if effective_runner == "headless":
+        if runtime == "codex" and effective_runner == "headless":
+            try:
+                state_doc = read_json(headless_state_path(gid, aid))
+            except Exception:
+                state_doc = {}
+            pid = int(state_doc.get("pid") or 0) if isinstance(state_doc, dict) else 0
+            headless_state = dict(state_doc) if isinstance(state_doc, dict) else None
+            running = bool(
+                isinstance(state_doc, dict)
+                and str(state_doc.get("kind") or "") == "headless"
+                and str(state_doc.get("group_id") or "") == gid
+                and str(state_doc.get("actor_id") or "") == aid
+                and str(state_doc.get("runtime") or "").strip().lower() == "codex"
+                and pid > 0
+                and pid_is_alive(pid)
+                and str(state_doc.get("status") or "").strip().lower() != "stopped"
+            )
+            actor["idle_seconds"] = None
+        elif effective_runner == "headless":
             state = headless_runner.SUPERVISOR.get_state(group_id=gid, actor_id=aid)
             headless_state = state.model_dump() if state is not None else None
             running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(gid, aid))

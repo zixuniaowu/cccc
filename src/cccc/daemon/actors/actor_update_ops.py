@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...kernel.actors import find_actor, list_actors, update_actor
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
-from ...kernel.runtime import runtime_start_preflight_error
+from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...runners.platform_support import pty_support_error_message
@@ -278,7 +279,13 @@ def handle_actor_update(
                 runner_kind = str(launch_spec["runner"])
                 runner_effective = str(launch_spec["effective_runner"])
                 runtime = str(launch_spec["runtime"])
-                if runner_effective != "headless":
+                effective_env = inject_runtime_home_env(
+                    launch_spec["merged_env"],
+                    runtime=runtime,
+                    group_id=group.group_id,
+                    actor_id=actor_id,
+                )
+                if runtime != "codex" and runner_effective != "headless":
                     if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
                         return _error("actor_update_failed", pty_support_error_message() or "PTY runner is not supported in this environment.")
                     try:
@@ -292,25 +299,32 @@ def handle_actor_update(
                         return _error("runtime_unavailable", runtime_error)
 
                 if runner_effective == "headless":
-                    headless_runner.SUPERVISOR.start_actor(
-                        group_id=group.group_id,
-                        actor_id=actor_id,
-                        cwd=cwd,
-                        env=dict(inject_actor_context_env(launch_spec["merged_env"], group_id=group.group_id, actor_id=actor_id)),
-                    )
-                    try:
-                        write_headless_state(group.group_id, actor_id)
-                    except Exception:
-                        pass
+                    if runtime == "codex":
+                        codex_app_supervisor.start_actor(
+                            group_id=group.group_id,
+                            actor_id=actor_id,
+                            cwd=cwd,
+                            env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+                        )
+                    else:
+                        headless_runner.SUPERVISOR.start_actor(
+                            group_id=group.group_id,
+                            actor_id=actor_id,
+                            cwd=cwd,
+                            env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+                        )
+                        try:
+                            write_headless_state(group.group_id, actor_id)
+                        except Exception:
+                            pass
                 else:
                     session = pty_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
                         actor_id=actor_id,
                         cwd=cwd,
                         command=launch_spec["effective_command"],
-                        env=prepare_pty_env(
-                            inject_actor_context_env(launch_spec["merged_env"], group_id=group.group_id, actor_id=actor_id)
-                        ),
+                        env=prepare_pty_env(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+                        runtime=runtime,
                         max_backlog_bytes=pty_backlog_bytes(),
                     )
                     try:
@@ -323,7 +337,12 @@ def handle_actor_update(
         else:
             runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
             runner_effective = effective_runner_kind(runner_kind)
-            if runner_effective == "headless":
+            runtime = str(actor.get("runtime") or "codex").strip() or "codex"
+            if runtime == "codex" and runner_effective == "headless":
+                codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
+                remove_headless_state(group.group_id, actor_id)
+                remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+            elif runner_effective == "headless":
                 headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                 remove_headless_state(group.group_id, actor_id)
                 remove_pty_state_if_pid(group.group_id, actor_id, pid=0)

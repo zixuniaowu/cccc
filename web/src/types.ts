@@ -77,18 +77,31 @@ export type PresentationMessageRef = MessageRef & {
   snapshot?: PresentationRefSnapshot;
 };
 
+export type StreamingActivity = {
+  id: string;
+  kind: "queued" | "thinking" | "plan" | "search" | "command" | "patch" | "tool" | "reply" | string;
+  status: "started" | "updated" | "completed" | string;
+  summary: string;
+  detail?: string;
+  ts?: string;
+};
+
 // Chat message payload
 export type ChatMessageData = {
   text?: string;
   to?: string[];
   priority?: "normal" | "attention";
   reply_required?: boolean;
+  stream_id?: string;
+  pending_event_id?: string;
+  pending_placeholder?: boolean;
   client_id?: string;
   quote_text?: string;
   src_group_id?: string;
   src_event_id?: string;
   dst_group_id?: string;
   dst_to?: string[];
+  activities?: StreamingActivity[];
   refs?: MessageRef[];
   attachments?: MessageAttachment[];
 };
@@ -116,9 +129,19 @@ export type LedgerEvent = {
   group_id?: string;
   by?: string;
   data?: LedgerEventData;
+  _streaming?: boolean;
   _read_status?: Record<string, boolean>;
   _ack_status?: Record<string, boolean>;
   _obligation_status?: Record<string, ObligationStatus>;
+};
+
+export type CodexStreamEvent = {
+  id?: string;
+  ts?: string;
+  group_id?: string;
+  actor_id?: string;
+  type?: string;
+  data?: Record<string, unknown>;
 };
 
 export type LedgerEventStatusPayload = {

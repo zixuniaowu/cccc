@@ -1,17 +1,34 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
-import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef } from "../types";
+import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef, StreamingActivity } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { ActorAvatar } from "./ActorAvatar";
+import { useGroupStore } from "../stores";
 
 const LazyMarkdownRenderer = lazy(() =>
     import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
 );
+
+const TYPING_DOT_STYLE_ID = "cccc-message-bubble-typing-dot-style";
+
+function ensureTypingDotStyle(): void {
+    if (typeof document === "undefined") return;
+    if (document.getElementById(TYPING_DOT_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = TYPING_DOT_STYLE_ID;
+    style.textContent = `
+      @keyframes ccccMessageTypingDot {
+        0%, 70%, 100% { transform: translateY(0) scale(0.92); opacity: 0.28; }
+        35% { transform: translateY(-3px) scale(1); opacity: 0.95; }
+      }
+    `;
+    document.head.appendChild(style);
+}
 
 function formatEventLine(ev: LedgerEvent): string {
     if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
@@ -25,6 +42,30 @@ function mayContainMarkdown(text: string): boolean {
     const value = String(text || "");
     if (!value.trim()) return false;
     return /(```|`[^`\n]+`|\[[^\]]+\]\([^)]+\)|^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\s*>\s)/m.test(value);
+}
+
+function formatActivityKind(kind: string): string {
+    const normalized = String(kind || "").trim();
+    switch (normalized) {
+        case "queued":
+            return "queue";
+        case "thinking":
+            return "think";
+        case "plan":
+            return "plan";
+        case "search":
+            return "search";
+        case "command":
+            return "run";
+        case "patch":
+            return "patch";
+        case "tool":
+            return "tool";
+        case "reply":
+            return "reply";
+        default:
+            return normalized || "step";
+    }
 }
 
 function PlainMessageText({
@@ -45,6 +86,83 @@ function PlainMessageText({
         </div>
     );
 }
+
+const StreamingMessageText = memo(function StreamingMessageText({
+    groupId,
+    streamId,
+    fallbackText,
+    showPlaceholder,
+}: {
+    groupId: string;
+    streamId: string;
+    fallbackText: string;
+    showPlaceholder: boolean;
+}) {
+    const streamingText = useGroupStore(useCallback((state) => {
+        if (!streamId) return "";
+        const bucket = state.chatByGroup[String(groupId || "").trim()];
+        return String(bucket?.streamingTextByStreamId?.[streamId] || "");
+    }, [groupId, streamId]));
+    const text = streamingText || fallbackText;
+
+    if (!String(text || "").trim() && showPlaceholder) {
+        return (
+            <div className="inline-flex items-center gap-1 py-1.5">
+                {[0, 1, 2].map((index) => (
+                    <span
+                        key={index}
+                        className="h-2 w-2 rounded-full bg-current"
+                        style={{
+                            animation: "ccccMessageTypingDot 1.1s ease-in-out infinite",
+                            animationDelay: `${index * 140}ms`,
+                        }}
+                    />
+                ))}
+            </div>
+        );
+    }
+
+    return (
+        <PlainMessageText
+            text={text}
+            className="max-w-full"
+        />
+    );
+});
+
+const StreamingActivityList = memo(function StreamingActivityList({
+    groupId,
+    streamId,
+    fallbackActivities,
+}: {
+    groupId: string;
+    streamId: string;
+    fallbackActivities: StreamingActivity[];
+}) {
+    const activities = useGroupStore(useCallback((state) => {
+        if (!streamId) return fallbackActivities;
+        const bucket = state.chatByGroup[String(groupId || "").trim()];
+        const streamed = bucket?.streamingActivitiesByStreamId?.[streamId];
+        return Array.isArray(streamed) && streamed.length > 0 ? streamed : fallbackActivities;
+    }, [fallbackActivities, groupId, streamId]));
+
+    if (activities.length <= 0) return null;
+
+    return (
+        <div className="mb-2 flex flex-col gap-1 rounded-xl border border-[var(--glass-border-subtle)]/80 bg-[var(--glass-tab-bg)]/70 px-2.5 py-2">
+            {activities.map((activity) => (
+                <div key={activity.id} className="flex items-start gap-2 text-[11px] leading-4 text-[var(--color-text-secondary)]">
+                    <span className="min-w-[2.75rem] font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
+                        {formatActivityKind(activity.kind)}
+                    </span>
+                    <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                        {activity.summary}
+                    </span>
+                </div>
+            ))}
+        </div>
+    );
+});
 
 async function copyText(value: string): Promise<boolean> {
     const text = String(value || "");
@@ -147,6 +265,10 @@ export const MessageBubble = memo(function MessageBubble({
     const isUserMessage = ev.by === "user";
     const isOptimistic = !!(ev.data as Record<string, unknown> | undefined)?._optimistic;
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
+    const isStreaming = !!ev._streaming;
+    const streamId = ev.data && typeof ev.data === "object"
+        ? String((ev.data as { stream_id?: unknown }).stream_id || "").trim()
+        : "";
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
 
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
@@ -175,6 +297,10 @@ export const MessageBubble = memo(function MessageBubble({
     }, [ev.by, isUserMessage]);
 
     const { t } = useTranslation('chat');
+
+    useEffect(() => {
+        ensureTypingDotStyle();
+    }, []);
     const agentStateText = String(agentState?.hot?.focus || "").trim();
     const agentStateDisplay = agentStateText || t('noAgentStateYet');
     const stateTask = String(agentState?.hot?.active_task_id || "").trim();
@@ -211,7 +337,24 @@ export const MessageBubble = memo(function MessageBubble({
         }))
         .filter((a) => a.path.startsWith("state/blobs/") || a.local_preview_url.startsWith("blob:"));
     const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
-    const shouldRenderMarkdown = useMemo(() => mayContainMarkdown(messageText), [messageText]);
+    const shouldRenderMarkdown = useMemo(() => !isStreaming && mayContainMarkdown(messageText), [isStreaming, messageText]);
+    const streamingActivities = useMemo(() => {
+        const raw = (msgData as { activities?: unknown } | undefined)?.activities;
+        if (!Array.isArray(raw)) return [] as StreamingActivity[];
+        return raw
+            .filter((item): item is StreamingActivity => !!item && typeof item === "object")
+            .map((item) => ({
+                id: String(item.id || ""),
+                kind: String(item.kind || "thinking"),
+                status: String(item.status || "updated"),
+                summary: String(item.summary || ""),
+                detail: item.detail ? String(item.detail) : undefined,
+                ts: item.ts ? String(item.ts) : undefined,
+            }))
+            .filter((item) => item.id && item.summary)
+            .slice(-5);
+    }, [msgData]);
+    const showStreamingPlaceholder = isStreaming && !String(messageText || "").trim() && blobAttachments.length === 0 && presentationRefs.length === 0;
     const stableMessageAttachmentKey = useMemo(() => {
         const clientId = typeof msgData?.client_id === "string" ? String(msgData.client_id || "").trim() : "";
         if (clientId) return `client:${clientId}`;
@@ -618,8 +761,29 @@ export const MessageBubble = memo(function MessageBubble({
                         </div>
                     ) : null}
 
+                    {isStreaming ? (
+                        <StreamingActivityList
+                            groupId={groupId}
+                            streamId={streamId}
+                            fallbackActivities={streamingActivities}
+                        />
+                    ) : streamingActivities.length > 0 ? (
+                        <StreamingActivityList
+                            groupId={groupId}
+                            streamId=""
+                            fallbackActivities={streamingActivities}
+                        />
+                    ) : null}
+
                     {/* Text Content */}
-                    {shouldRenderMarkdown ? (
+                    {isStreaming ? (
+                        <StreamingMessageText
+                            groupId={groupId}
+                            streamId={streamId}
+                            fallbackText={messageText}
+                            showPlaceholder={showStreamingPlaceholder}
+                        />
+                    ) : shouldRenderMarkdown ? (
                         <Suspense
                             fallback={
                                 <PlainMessageText
