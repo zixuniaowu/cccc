@@ -315,6 +315,100 @@ describe("useGroupStore actors fetch policy", () => {
     ]);
   });
 
+  it("setActors persists the selected-group actor snapshot across group switches", () => {
+    useGroupStore.setState({
+      groups: [
+        { group_id: "g-demo", title: "Demo", topic: "", state: "active" },
+        { group_id: "g-other", title: "Other", topic: "", state: "idle" },
+      ],
+      groupOrder: ["g-demo", "g-other"],
+      selectedGroupId: "g-demo",
+      actors: [],
+    });
+
+    useGroupStore.getState().setActors([{ id: "peer-1", running: true, unread_count: 2 }]);
+    useGroupStore.getState().setSelectedGroupId("g-other");
+    useGroupStore.getState().setSelectedGroupId("g-demo");
+
+    expect(useGroupStore.getState().actors).toEqual([{ id: "peer-1", running: true, unread_count: 2 }]);
+  });
+
+  it("incrementActorUnread persists speculative unread counts across group switches", () => {
+    useGroupStore.setState({
+      groups: [
+        { group_id: "g-demo", title: "Demo", topic: "", state: "active" },
+        { group_id: "g-other", title: "Other", topic: "", state: "idle" },
+      ],
+      groupOrder: ["g-demo", "g-other"],
+      selectedGroupId: "g-demo",
+      actors: [{ id: "peer-1", running: true, unread_count: 2 }],
+    });
+
+    useGroupStore.getState().incrementActorUnread(["peer-1"]);
+    useGroupStore.getState().setSelectedGroupId("g-other");
+    useGroupStore.getState().setSelectedGroupId("g-demo");
+
+    expect(useGroupStore.getState().actors).toEqual([{ id: "peer-1", running: true, unread_count: 3 }]);
+  });
+
+  it("updateActorActivity persists the latest working-state truth into the selected-group snapshot", () => {
+    useGroupStore.setState({
+      groups: [
+        { group_id: "g-demo", title: "Demo", topic: "", state: "active" },
+        { group_id: "g-other", title: "Other", topic: "", state: "idle" },
+      ],
+      groupOrder: ["g-demo", "g-other"],
+      selectedGroupId: "g-demo",
+      actors: [{ id: "peer-1", unread_count: 4, running: true, idle_seconds: 8 }],
+    });
+
+    useGroupStore.getState().updateActorActivity([
+      {
+        id: "peer-1",
+        running: true,
+        idle_seconds: 2,
+        effective_working_state: "working",
+        effective_working_reason: "agent_active_task",
+        effective_active_task_id: "T1",
+      },
+    ]);
+
+    useGroupStore.getState().setSelectedGroupId("g-other");
+    useGroupStore.getState().setSelectedGroupId("g-demo");
+
+    expect(useGroupStore.getState().actors).toEqual([
+      {
+        id: "peer-1",
+        unread_count: 4,
+        running: true,
+        idle_seconds: 2,
+        effective_working_state: "working",
+        effective_working_reason: "agent_active_task",
+        effective_working_updated_at: null,
+        effective_active_task_id: "T1",
+      },
+    ]);
+  });
+
+  it("setGroupContext persists the selected-group context snapshot across group switches", () => {
+    useGroupStore.setState({
+      groups: [
+        { group_id: "g-demo", title: "Demo", topic: "", state: "active" },
+        { group_id: "g-other", title: "Other", topic: "", state: "idle" },
+      ],
+      groupOrder: ["g-demo", "g-other"],
+      selectedGroupId: "g-demo",
+      groupContext: null,
+    });
+
+    useGroupStore.getState().setGroupContext({ version: "ctxv:2", agent_states: [{ id: "peer-1" }] } as never);
+    useGroupStore.getState().setSelectedGroupId("g-other");
+    useGroupStore.getState().setSelectedGroupId("g-demo");
+
+    expect(useGroupStore.getState().groupContext?.version).toBe("ctxv:2");
+    expect(useGroupStore.getState().groupContext?.agent_states?.[0]?.id).toBe("peer-1");
+  });
+
   it("loadGroup keeps unread counts on the selected group path", async () => {
     await useGroupStore.getState().loadGroup("g-demo");
     await vi.waitFor(() => {

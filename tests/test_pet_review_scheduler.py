@@ -86,7 +86,7 @@ class TestPetReviewScheduler(unittest.TestCase):
             emitted.append((group_id, set(reasons), source_event_id))
 
         with tempfile.TemporaryDirectory() as tmp, patch.object(
-            review_scheduler,
+            review_scheduler.assistive_jobs,
             "ensure_home",
             return_value=Path(tmp),
         ), patch.object(review_scheduler, "_can_review_now", return_value=True), patch.object(
@@ -104,9 +104,13 @@ class TestPetReviewScheduler(unittest.TestCase):
                 source_event_id="evt-sync",
                 immediate=True,
             )
-            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "pet_review_pending.json"
+            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "assistive_jobs.json"
             self.assertEqual(emitted, [("g-test", {"group_state_changed"}, "evt-sync")])
-            self.assertFalse(pending_path.exists())
+            self.assertTrue(pending_path.exists())
+            payload = json.loads(pending_path.read_text(encoding="utf-8"))
+            job_payload = ((payload.get("jobs") or {}).get("pet_review") or {})
+            self.assertTrue(bool(job_payload.get("in_flight")))
+            self.assertFalse(bool(job_payload.get("pending")))
 
     def test_manual_review_allows_idle_group(self) -> None:
         fake_group = object()
@@ -344,7 +348,7 @@ class TestPetReviewScheduler(unittest.TestCase):
 
     def test_pending_review_is_persisted_to_disk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.object(
-            review_scheduler,
+            review_scheduler.assistive_jobs,
             "ensure_home",
             return_value=Path(tmp),
         ), patch.object(review_scheduler, "_can_review_now", return_value=True), patch.object(
@@ -357,10 +361,11 @@ class TestPetReviewScheduler(unittest.TestCase):
             60.0,
         ):
             review_scheduler.request_pet_review("g-test", reason="chat_message", source_event_id="evt-1")
-            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "pet_review_pending.json"
+            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "assistive_jobs.json"
             self.assertTrue(pending_path.exists())
             payload = json.loads(pending_path.read_text(encoding="utf-8"))
-            due_at_wall = float(payload.get("due_at_wall") or 0.0)
+            job_payload = ((payload.get("jobs") or {}).get("pet_review") or {})
+            due_at_wall = float(job_payload.get("due_at_wall") or 0.0)
             self.assertGreater(due_at_wall, time.time() + 30.0)
 
         review_scheduler.cancel_pet_review("g-test")
@@ -372,7 +377,7 @@ class TestPetReviewScheduler(unittest.TestCase):
             emitted.append((group_id, set(reasons), source_event_id))
 
         with tempfile.TemporaryDirectory() as tmp, patch.object(
-            review_scheduler,
+            review_scheduler.assistive_jobs,
             "ensure_home",
             return_value=Path(tmp),
         ), patch.object(review_scheduler, "_can_review_now", return_value=True), patch.object(
@@ -386,10 +391,30 @@ class TestPetReviewScheduler(unittest.TestCase):
         ), patch.object(review_scheduler, "PET_REVIEW_MAX_DELAY_SECONDS", 0.2):
             review_scheduler.request_pet_review("g-test", reason="chat_message", source_event_id="evt-9")
             review_scheduler.cancel_pet_review("g-test")
-            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "pet_review_pending.json"
+            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "assistive_jobs.json"
             pending_path.parent.mkdir(parents=True, exist_ok=True)
             pending_path.write_text(
-                '{"schema":1,"group_id":"g-test","dirty_since_wall":1,"last_dispatched_wall":0,"due_at_wall":0,"reasons":["chat_message"],"source_event_id":"evt-9"}',
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": "g-test",
+                        "jobs": {
+                            "pet_review": {
+                                "pending": True,
+                                "in_flight": False,
+                                "rerun_pending": False,
+                                "dirty_since_wall": 1,
+                                "due_at_wall": 0,
+                                "last_started_wall": 0,
+                                "last_finished_wall": 0,
+                                "last_trigger_class": "event",
+                                "reasons": ["chat_message"],
+                                "source_event_id": "evt-9",
+                                "suppressed_reason": "",
+                            }
+                        },
+                    }
+                ),
                 encoding="utf-8",
             )
             review_scheduler.recover_pending_pet_reviews()
@@ -408,7 +433,7 @@ class TestPetReviewScheduler(unittest.TestCase):
             return bool(can_review["value"])
 
         with tempfile.TemporaryDirectory() as tmp, patch.object(
-            review_scheduler,
+            review_scheduler.assistive_jobs,
             "ensure_home",
             return_value=Path(tmp),
         ), patch.object(review_scheduler, "_can_review_now", side_effect=_can_review_now), patch.object(
@@ -420,10 +445,30 @@ class TestPetReviewScheduler(unittest.TestCase):
             "PET_REVIEW_MIN_INTERVAL_SECONDS",
             0.01,
         ), patch.object(review_scheduler, "PET_REVIEW_MAX_DELAY_SECONDS", 0.2):
-            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "pet_review_pending.json"
+            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "assistive_jobs.json"
             pending_path.parent.mkdir(parents=True, exist_ok=True)
             pending_path.write_text(
-                '{"schema":1,"group_id":"g-test","dirty_since_wall":1,"last_dispatched_wall":0,"due_at_wall":0,"reasons":["chat_message"],"source_event_id":"evt-9"}',
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": "g-test",
+                        "jobs": {
+                            "pet_review": {
+                                "pending": True,
+                                "in_flight": False,
+                                "rerun_pending": False,
+                                "dirty_since_wall": 1,
+                                "due_at_wall": 0,
+                                "last_started_wall": 0,
+                                "last_finished_wall": 0,
+                                "last_trigger_class": "event",
+                                "reasons": ["chat_message"],
+                                "source_event_id": "evt-9",
+                                "suppressed_reason": "",
+                            }
+                        },
+                    }
+                ),
                 encoding="utf-8",
             )
             review_scheduler.recover_pending_pet_reviews()
@@ -435,6 +480,103 @@ class TestPetReviewScheduler(unittest.TestCase):
             time.sleep(0.08)
 
         self.assertEqual(emitted, [("g-test", {"chat_message", "group_state_changed"}, "evt-10")])
+
+
+    def test_review_reruns_after_in_flight_completion_when_new_signal_arrives(self) -> None:
+        from cccc.daemon.pet import assistive_jobs
+
+        emitted: list[tuple[str, set[str], str]] = []
+
+        def _capture(group_id: str, reasons: set[str], source_event_id: str) -> None:
+            emitted.append((group_id, set(reasons), source_event_id))
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            review_scheduler.assistive_jobs,
+            "ensure_home",
+            return_value=Path(tmp),
+        ), patch.object(review_scheduler, "_can_review_now", return_value=True), patch.object(
+            review_scheduler,
+            "_emit_pet_review",
+            side_effect=_capture,
+        ), patch.object(review_scheduler, "PET_REVIEW_DEBOUNCE_SECONDS", 0.02), patch.object(
+            review_scheduler,
+            "PET_REVIEW_MIN_INTERVAL_SECONDS",
+            0.01,
+        ), patch.object(review_scheduler, "PET_REVIEW_MAX_DELAY_SECONDS", 0.2):
+            review_scheduler.request_pet_review(
+                "g-test",
+                reason="chat_message",
+                source_event_id="evt-1",
+                immediate=True,
+            )
+            review_scheduler.request_pet_review("g-test", reason="chat_reply", source_event_id="evt-2")
+            time.sleep(0.04)
+            self.assertEqual(emitted, [("g-test", {"chat_message"}, "evt-1")])
+
+            assistive_jobs.mark_job_completed("g-test", assistive_jobs.JOB_KIND_PET_REVIEW)
+            time.sleep(0.08)
+
+        self.assertEqual(
+            emitted,
+            [
+                ("g-test", {"chat_message"}, "evt-1"),
+                ("g-test", {"chat_message", "chat_reply"}, "evt-2"),
+            ],
+        )
+
+    def test_recover_replays_stale_in_flight_review(self) -> None:
+        emitted: list[tuple[str, set[str], str]] = []
+
+        def _capture(group_id: str, reasons: set[str], source_event_id: str) -> None:
+            emitted.append((group_id, set(reasons), source_event_id))
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            review_scheduler.assistive_jobs,
+            "ensure_home",
+            return_value=Path(tmp),
+        ), patch.object(review_scheduler, "_can_review_now", return_value=True), patch.object(
+            review_scheduler,
+            "_emit_pet_review",
+            side_effect=_capture,
+        ), patch.object(review_scheduler, "PET_REVIEW_LEASE_SECONDS", 0.01), patch.object(
+            review_scheduler,
+            "PET_REVIEW_DEBOUNCE_SECONDS",
+            0.02,
+        ), patch.object(review_scheduler, "PET_REVIEW_MIN_INTERVAL_SECONDS", 0.01), patch.object(
+            review_scheduler,
+            "PET_REVIEW_MAX_DELAY_SECONDS",
+            0.2,
+        ):
+            pending_path = Path(tmp) / "groups" / "g-test" / "state" / "assistive_jobs.json"
+            pending_path.parent.mkdir(parents=True, exist_ok=True)
+            pending_path.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": "g-test",
+                        "jobs": {
+                            "pet_review": {
+                                "pending": False,
+                                "in_flight": True,
+                                "rerun_pending": False,
+                                "dirty_since_wall": time.time() - 60,
+                                "due_at_wall": 0,
+                                "last_started_wall": time.time() - 60,
+                                "last_finished_wall": 0,
+                                "last_trigger_class": "event",
+                                "reasons": ["chat_message"],
+                                "source_event_id": "evt-stale",
+                                "suppressed_reason": "",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            review_scheduler.recover_pending_pet_reviews()
+            time.sleep(0.08)
+
+        self.assertEqual(emitted, [("g-test", {"chat_message"}, "evt-stale")])
 
 
 if __name__ == "__main__":

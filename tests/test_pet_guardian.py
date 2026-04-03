@@ -382,6 +382,28 @@ class TestPetDecisionsOps(unittest.TestCase):
         self.assertEqual(load_pet_decisions(group), [])
 
 
+    def test_replace_marks_pet_review_job_completed(self) -> None:
+        from cccc.daemon.pet.pet_decision_ops import handle_pet_decisions_replace
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "cccc.daemon.pet.pet_decision_ops.load_group",
+            return_value=_FakeGroup("g-demo", Path(tmp)),
+        ), patch(
+            "cccc.daemon.pet.pet_decision_ops.get_pet_actor",
+            return_value={"id": "pet-peer", "internal_kind": "pet"},
+        ), patch("cccc.daemon.pet.pet_decision_ops.mark_job_completed") as mark_completed:
+            resp = handle_pet_decisions_replace(
+                {
+                    "group_id": "g-demo",
+                    "actor_id": "pet-peer",
+                    "decisions": [self._sample_decision("g-demo")],
+                }
+            )
+
+        self.assertTrue(resp.ok, getattr(resp, "error", None))
+        mark_completed.assert_called_once()
+
+
 class TestPetActorSeed(unittest.TestCase):
     def test_pet_actor_seed_uses_foreman_settings(self) -> None:
         from cccc.kernel.pet_actor import _pet_actor_seed
@@ -442,6 +464,56 @@ class TestPetActorSeed(unittest.TestCase):
         self.assertEqual(seed["command"], ["claude", "--dangerously-skip-permissions"])
 
 
+class TestPetVisibleChatBoundary(unittest.TestCase):
+    def test_pet_cannot_send_visible_chat_directly(self) -> None:
+        from cccc.daemon.messaging import chat_ops
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_group = _FakeGroup("g-demo", Path(tmp))
+            with patch.object(chat_ops, "load_group", return_value=fake_group), patch.object(
+                chat_ops,
+                "get_pet_actor",
+                return_value={"id": "pet-peer", "internal_kind": "pet"},
+            ):
+                resp = chat_ops.handle_send(
+                    {"group_id": "g-demo", "by": "pet-peer", "text": "hi"},
+                    coerce_bool=bool,
+                    normalize_attachments=lambda _group, _raw: [],
+                    effective_runner_kind=lambda runner: runner,
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _gid, _kinds: None,
+                )
+
+        self.assertFalse(resp.ok)
+        self.assertEqual(getattr(resp.error, "code", ""), "pet_visible_chat_forbidden")
+
+    def test_pet_cannot_reply_visible_chat_directly(self) -> None:
+        from cccc.daemon.messaging import chat_ops
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_group = _FakeGroup("g-demo", Path(tmp))
+            with patch.object(chat_ops, "load_group", return_value=fake_group), patch.object(
+                chat_ops,
+                "get_pet_actor",
+                return_value={"id": "pet-peer", "internal_kind": "pet"},
+            ):
+                resp = chat_ops.handle_reply(
+                    {"group_id": "g-demo", "by": "pet-peer", "text": "hi", "reply_to": "evt-1"},
+                    coerce_bool=bool,
+                    normalize_attachments=lambda _group, _raw: [],
+                    effective_runner_kind=lambda runner: runner,
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _gid, _kinds: None,
+                )
+
+        self.assertFalse(resp.ok)
+        self.assertEqual(getattr(resp.error, "code", ""), "pet_visible_chat_forbidden")
+
+
 class TestPetPromptContract(unittest.TestCase):
     def test_render_pet_system_prompt_declares_outbound_message_boundary(self) -> None:
         from cccc.kernel.pet_prompt import render_pet_system_prompt
@@ -457,6 +529,7 @@ class TestPetPromptContract(unittest.TestCase):
         self.assertIn("Finish every pet_review with exactly one cccc_pet_decisions call", prompt)
         self.assertIn("action.text must already be the exact message the user would likely want to send next", prompt)
         self.assertIn("A draft_message may be multi-sentence or a short bullet list", prompt)
+        self.assertIn("Do not call cccc_message_send, cccc_message_reply", prompt)
         self.assertIn("pet_profile_refresh", prompt)
         self.assertIn("data.context.kind=pet_profile_refresh", prompt)
         self.assertIn("do not touch cccc_pet_decisions", prompt)

@@ -28,4 +28,23 @@ describe("contextWriteback", () => {
     expect(result).toBe(response);
     expect(reloadContext).not.toHaveBeenCalled();
   });
+  it("returns an explicit failure when canonical readback fails", async () => {
+    const reloadContext = vi.fn().mockRejectedValue(new Error("context fetch blew up"));
+    const response: ApiResponse<{ updated: true }> = {
+      ok: true,
+      result: { updated: true },
+    };
+
+    const result = await reloadContextAfterWrite(response, reloadContext);
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "context_readback_failed",
+        message: "context fetch blew up",
+      },
+    });
+    expect(reloadContext).toHaveBeenCalledTimes(1);
+  });
+
 });

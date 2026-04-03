@@ -294,6 +294,16 @@ def _artifact_status_completed(raw: Any) -> bool:
     return status in {"completed", "succeeded", "ready", "done"}
 
 
+def _artifact_status_terminal(raw: Any) -> bool:
+    status = str(raw or "").strip().lower()
+    return status in {"completed", "succeeded", "ready", "done", "failed", "canceled", "cancelled", "error"}
+
+
+def _space_job_state_completed(raw: Any) -> bool:
+    state = str(raw or "").strip().lower()
+    return state in {"succeeded", "failed", "canceled"}
+
+
 def _safe_path_fragment(raw: Any, *, fallback: str) -> str:
     text = str(raw or "").strip()
     text = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-._")
@@ -1595,11 +1605,14 @@ def handle_group_space_ingest(args: Dict[str, Any]) -> DaemonResponse:
         normalized_source_ids = [str(item or "").strip() for item in source_ids if str(item or "").strip()]
         if source_id and source_id not in normalized_source_ids:
             normalized_source_ids = [source_id, *normalized_source_ids]
+        job_state = str(final_job.get("state") or "").strip().lower()
+        job_completed = _space_job_state_completed(job_state)
         response_payload = {
             "group_id": group.group_id,
             "lane": lane,
             "job_id": str(final_job.get("job_id") or ""),
-            "accepted": True,
+            "accepted": not job_completed,
+            "completed": job_completed,
             "deduped": bool(deduped),
             "job": final_job,
             "ingest_result": ingest_result,
@@ -2001,6 +2014,7 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
                     "wait": False,
                     "queued": True,
                     "accepted": True,
+                    "completed": False,
                     "background": True,
                     "completion_signal": "system.notify",
                     "recommended_next_action": "wait_for_notify",
@@ -2033,6 +2047,7 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
                     "wait": False,
                     "queued": False,
                     "accepted": True,
+                    "completed": False,
                     "background": True,
                     "completion_signal": "system.notify",
                     "recommended_next_action": "wait_for_notify",
@@ -2116,6 +2131,7 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
         if next_req is not None:
             _start_generate_worker(next_req)
 
+        artifact_completed = _artifact_status_terminal(artifact_status)
         return DaemonResponse(
             ok=True,
             result={
@@ -2130,7 +2146,8 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
                 "status": artifact_status,
                 "wait": bool(wait_for_completion),
                 "queued": False,
-                "accepted": True,
+                "accepted": not artifact_completed,
+                "completed": artifact_completed,
                 "saved_to_space": bool(save_to_space and bool(final_output_path)),
                 "output_path": final_output_path,
                 "generate_result": generate_result,

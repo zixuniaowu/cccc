@@ -751,7 +751,14 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
       }) ?? state;
     }),
-  setActors: (actors) => set({ actors }),
+  setActors: (actors) =>
+    set((state) => {
+      const gid = String(state.selectedGroupId || "").trim();
+      if (gid) {
+        saveGroupView(gid, { actors });
+      }
+      return { actors };
+    }),
   incrementActorUnread: (actorIds) =>
     set((state) => {
       if (!state.actors.length || !actorIds.length) return state;
@@ -769,7 +776,12 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         };
       });
 
-      return changed ? { actors: next } : state;
+      if (!changed) return state;
+      const gid = String(state.selectedGroupId || "").trim();
+      if (gid) {
+        saveGroupView(gid, { actors: next });
+      }
+      return { actors: next };
     }),
   updateActorActivity: (updates) =>
     set((state) => {
@@ -801,9 +813,21 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         }
         return a;
       });
-      return changed ? { actors: next } : state;
+      if (!changed) return state;
+      const gid = String(state.selectedGroupId || "").trim();
+      if (gid) {
+        saveGroupView(gid, { actors: next });
+      }
+      return { actors: next };
     }),
-  setGroupContext: (ctx) => set({ groupContext: ctx }),
+  setGroupContext: (ctx) =>
+    set((state) => {
+      const gid = String(state.selectedGroupId || "").trim();
+      if (gid) {
+        saveGroupView(gid, { groupContext: ctx });
+      }
+      return { groupContext: ctx };
+    }),
   setGroupSettings: (settings) =>
     set((state) => {
       const gid = String(state.selectedGroupId || "").trim();

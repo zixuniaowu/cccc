@@ -20,6 +20,7 @@ from ...kernel.messaging import (
     targets_any_agent,
 )
 from ...kernel.scope import detect_scope
+from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
 from ...util.time import utc_now_iso
 from .delivery import (
     flush_pending_messages,
@@ -35,6 +36,13 @@ logger = logging.getLogger("cccc.daemon.server")
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
+
+
+def _is_internal_pet_sender(group: Any, by: str) -> bool:
+    actor_id = str(by or "").strip()
+    if actor_id != PET_ACTOR_ID:
+        return False
+    return isinstance(get_pet_actor(group), dict)
 
 
 def _wake_group_on_human_message(
@@ -328,6 +336,11 @@ def handle_send(
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
+    if _is_internal_pet_sender(group, by):
+        return _error(
+            "pet_visible_chat_forbidden",
+            "Pet cannot send or reply visible chat directly; use pet decisions instead.",
+        )
 
     group = _wake_group_on_human_message(
         group,
@@ -546,6 +559,11 @@ def handle_reply(
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
+    if _is_internal_pet_sender(group, by):
+        return _error(
+            "pet_visible_chat_forbidden",
+            "Pet cannot send or reply visible chat directly; use pet decisions instead.",
+        )
 
     group = _wake_group_on_human_message(
         group,

@@ -361,11 +361,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         const notifyTargetActorId = getNotifyTargetActorId(nextEvent);
         const actorRefreshMode = getActorRefreshMode(nextEvent);
         if (notifyTargetActorId) {
-          // Hot-path optimization: most system.notify events already declare a
-          // single target actor, so we can update the unread badge locally
-          // instead of forcing a daemon round-trip for actor_list(unread=true).
+          // Fast local bump for responsiveness. system.notify is still an
+          // authoritative unread-resync point, so the daemon unread projection
+          // remains the final truth after this speculative increment.
           incrementActorUnread([notifyTargetActorId]);
-        } else if (actorRefreshMode === "unread") {
+        }
+        if (actorRefreshMode === "unread") {
           void refreshActors(groupId, { includeUnread: true });
         } else if (actorRefreshMode === "readonly") {
           void refreshActors(groupId, { includeUnread: false });

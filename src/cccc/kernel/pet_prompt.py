@@ -141,6 +141,7 @@ def build_pet_prompt_parts(
             "- For pet_review, first inspect the latest unread notify with data.context.kind=pet_review and use its review_packet as your initial focus. Widen only if the packet is insufficient.",
             "- Finish every pet_review with exactly one cccc_pet_decisions call: action=replace with the full current decision list, or action=clear.",
             "- Default to draft_message. Valid surfaced actions are draft_message, task_proposal, and restart_actor.",
+            "- Do not call cccc_message_send, cccc_message_reply, or visible file-send tools from Pet; surface drafts through pet decisions instead.",
             "- When drafting, action.text must already be the exact message the user would likely want to send next.",
             "- A draft_message may be multi-sentence or a short bullet list when one control move needs structure.",
             "- Set action.to and action.reply_to when the routing is clear.",
