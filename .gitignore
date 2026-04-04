@@ -60,4 +60,6 @@ AGENTS.md
 .agents/
 .codex/
 .windsurf/
-.github/
+.github/*
+!.github/workflows/
+!.github/workflows/**
