@@ -218,13 +218,12 @@ def handle_actor_restart(
             is_admin=is_admin,
         )
         runner_kind = str(actor.get("runner") or "pty").strip()
-        runner_effective = effective_runner_kind(runner_kind)
         runtime = str(actor.get("runtime") or "codex").strip() or "codex"
-        if runtime == "codex" and runner_effective == "headless":
+        if runtime == "codex" and effective_runner_kind(runner_kind) == "headless":
             codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
             remove_headless_state(group.group_id, actor_id)
             remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-        elif runner_effective == "headless":
+        elif effective_runner_kind(runner_kind) == "headless":
             headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
             remove_headless_state(group.group_id, actor_id)
             remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
@@ -326,7 +325,7 @@ def handle_actor_restart(
             group_id=group.group_id,
             actor_id=actor_id,
         )
-        if runtime != "codex" and runner_effective != "headless":
+        if runner_effective != "headless":
             try:
                 mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
             except Exception as e:
@@ -378,7 +377,11 @@ def handle_actor_restart(
         group_id=group.group_id,
         scope_key="",
         by=by,
-        data={"actor_id": actor_id, "runner": str(actor.get("runner") or "pty")},
+        data={
+            "actor_id": actor_id,
+            "runner": str(actor.get("runner") or "pty"),
+            "runner_effective": runner_effective,
+        },
     )
 
     from ...kernel.events import publish_event

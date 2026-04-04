@@ -73,6 +73,18 @@ class CodexAppSession:
         self._turn_thread: Optional[threading.Thread] = None
         self._completed_stream_ids: set[str] = set()
         self._plan_activity_id = ""
+        self._agent_message_phase_by_stream_id: Dict[str, str] = {}
+
+    def _agent_message_phase(self, item_id: str, item: Optional[Dict[str, Any]] = None) -> str:
+        stream_id = str(item_id or "").strip()
+        if not stream_id:
+            return ""
+        if isinstance(item, dict):
+            phase = str(item.get("phase") or "").strip().lower()
+            if phase:
+                self._agent_message_phase_by_stream_id[stream_id] = phase
+                return phase
+        return str(self._agent_message_phase_by_stream_id.get(stream_id) or "").strip().lower()
 
     def _persist_state(self) -> None:
         with self._lock:
@@ -142,6 +154,9 @@ class CodexAppSession:
             return
 
         if item_type == "agentMessage":
+            phase = str(item.get("phase") or "").strip().lower()
+            if phase and phase != "final_answer":
+                return
             summary = "replying" if status != "completed" else "reply ready"
             self._emit_activity(
                 status=status,
@@ -544,10 +559,19 @@ class CodexAppSession:
             item = params.get("item") if isinstance(params.get("item"), dict) else {}
             item_type = str(item.get("type") or "").strip()
             item_id = str(item.get("id") or "").strip()
-            event_type = "codex.item.started"
-            if item_type == "agentMessage":
-                event_type = "codex.message.started"
-            self._emit(event_type, {"turn_id": str(params.get("turnId") or ""), "event_id": active_event_id, "stream_id": item_id, "item": item})
+            if item_type == "agentMessage" and item_id:
+                phase = self._agent_message_phase(item_id, item)
+                payload = {
+                    "turn_id": str(params.get("turnId") or ""),
+                    "event_id": active_event_id,
+                    "stream_id": item_id,
+                    "item": item,
+                }
+                if phase:
+                    payload["phase"] = phase
+                self._emit("codex.message.started", payload)
+            else:
+                self._emit("codex.item.started", {"turn_id": str(params.get("turnId") or ""), "event_id": active_event_id, "stream_id": item_id, "item": item})
             self._emit_item_activity(status="started", turn_id=str(params.get("turnId") or ""), item=item)
             return
 
@@ -556,15 +580,16 @@ class CodexAppSession:
             delta = str(params.get("delta") or "")
             if not stream_id or not delta:
                 return
-            self._emit(
-                "codex.message.delta",
-                {
-                    "turn_id": str(params.get("turnId") or ""),
-                    "event_id": active_event_id,
-                    "stream_id": stream_id,
-                    "delta": delta,
-                },
-            )
+            phase = self._agent_message_phase(stream_id)
+            payload = {
+                "turn_id": str(params.get("turnId") or ""),
+                "event_id": active_event_id,
+                "stream_id": stream_id,
+                "delta": delta,
+            }
+            if phase:
+                payload["phase"] = phase
+            self._emit("codex.message.delta", payload)
             return
 
         if method == "item/reasoning/summaryTextDelta":
@@ -631,19 +656,26 @@ class CodexAppSession:
             item = params.get("item") if isinstance(params.get("item"), dict) else {}
             item_type = str(item.get("type") or "").strip()
             item_id = str(item.get("id") or "").strip()
-            if item_type == "agentMessage" and item_id and item_id not in self._completed_stream_ids:
-                self._completed_stream_ids.add(item_id)
+            if item_type == "agentMessage" and item_id:
+                phase = self._agent_message_phase(item_id, item)
+                self._agent_message_phase_by_stream_id.pop(item_id, None)
                 text = str(item.get("text") or "")
-                self._append_actor_message(stream_id=item_id, text=text)
-                self._emit(
-                    "codex.message.completed",
-                    {
-                        "turn_id": str(params.get("turnId") or ""),
-                        "event_id": active_event_id,
-                        "stream_id": item_id,
-                        "text": text,
-                    },
-                )
+                if phase != "commentary" and item_id not in self._completed_stream_ids:
+                    self._completed_stream_ids.add(item_id)
+                    self._append_actor_message(
+                        stream_id=item_id,
+                        text=text,
+                        pending_event_id=active_event_id,
+                    )
+                payload = {
+                    "turn_id": str(params.get("turnId") or ""),
+                    "event_id": active_event_id,
+                    "stream_id": item_id,
+                    "text": text,
+                }
+                if phase:
+                    payload["phase"] = phase
+                self._emit("codex.message.completed", payload)
                 self._emit_item_activity(status="completed", turn_id=str(params.get("turnId") or ""), item=item)
                 return
             self._emit_item_activity(status="completed", turn_id=str(params.get("turnId") or ""), item=item)
@@ -663,6 +695,7 @@ class CodexAppSession:
                 self._session_state.updated_at = now
             self._persist_state()
             self._completed_stream_ids.clear()
+            self._agent_message_phase_by_stream_id.clear()
             if self._plan_activity_id:
                 self._emit_activity(
                     status="completed",
@@ -684,7 +717,7 @@ class CodexAppSession:
             self._turn_done.set()
             return
 
-    def _append_actor_message(self, *, stream_id: str, text: str) -> None:
+    def _append_actor_message(self, *, stream_id: str, text: str, pending_event_id: str = "") -> None:
         group = load_group(self.group_id)
         if group is None:
             return
@@ -700,6 +733,7 @@ class CodexAppSession:
                     format="plain",
                     to=["user"],
                     stream_id=str(stream_id or "").strip() or None,
+                    pending_event_id=str(pending_event_id or "").strip() or None,
                 ).model_dump(),
             )
         except Exception:

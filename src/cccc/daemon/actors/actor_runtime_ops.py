@@ -229,7 +229,7 @@ def start_actor_process(
     runtime = launch_spec["runtime"]
     runner = launch_spec["runner"]
 
-    if runtime != "codex" and effective_runner != "headless":
+    if effective_runner != "headless":
         if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
             error_message = pty_support_error_message() or "PTY runner is not supported in this environment."
             return {"success": False, "error": error_message}

@@ -17,7 +17,7 @@ import { PetPanel } from "./PetPanel";
 import { PetReminderBubble } from "./PetReminderBubble";
 import { WebPetBubble } from "./WebPetBubble";
 import { diagnosePetManualReview } from "./reviewDiagnostics";
-import { shouldSurfaceReminder, useWebPetData } from "./useWebPetData";
+import { useWebPetData } from "./useWebPetData";
 import { buildPetPeerContext, usePetPeerContext } from "./petPeerContext";
 import { stagePetReminderDraft } from "./petSuggestionDraft";
 import { getBackgroundRefreshDelayMs } from "./reviewTiming";
@@ -289,7 +289,7 @@ export function WebPet({
         message: tPet("notice.reviewNoReminders", "No current reminders"),
       });
     })();
-  }, [groupId, reviewInFlight]);
+  }, [groupId, groupDoc?.state, reviewInFlight]);
 
   useEffect(() => {
     const gid = String(groupId || "").trim();

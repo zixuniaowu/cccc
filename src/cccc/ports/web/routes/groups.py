@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from ....contracts.v1.automation import AutomationRuleSet
+from ....daemon.codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ....daemon.server import get_daemon_endpoint
 from ....daemon.group.presentation_ops import load_presentation_snapshot, resolve_workspace_asset_path
 from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_summary_snapshot
@@ -101,16 +102,21 @@ def _group_running_local(group_id: str) -> bool:
         runtime = str(actor.get("runtime") or "").strip().lower()
         runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
         effective_runner = "headless" if runner_kind == "headless" else "pty"
-        if runtime == "codex" and effective_runner == "headless":
+        if runtime == "codex":
+            if codex_app_supervisor.actor_running(gid, aid):
+                return True
             try:
                 raw = json.loads(headless_state_path(gid, aid).read_text(encoding="utf-8"))
                 pid = int(raw.get("pid") or 0)
                 status = str(raw.get("status") or "").strip().lower()
+                state_runtime = str(raw.get("runtime") or "").strip().lower()
             except Exception:
                 pid = 0
                 status = ""
-            if pid > 0 and pid_is_alive(pid) and status != "stopped":
+                state_runtime = ""
+            if pid > 0 and pid_is_alive(pid) and status != "stopped" and (not state_runtime or state_runtime == "codex"):
                 return True
+            continue
         pty_state = pty_state_path(gid, aid)
         if pty_state.exists():
             try:
@@ -159,6 +165,45 @@ def _read_group_local(group_id: str) -> Dict[str, Any]:
         im.pop("bot_token", None)
         im.pop("app_token", None)
     return {"ok": True, "result": {"group": doc}}
+
+
+def _read_active_codex_replay_lines(group: Any, *, limit: int = 400) -> list[str]:
+    path = codex_events_path(group.path)
+    try:
+      raw_lines = read_last_lines(path, max(50, int(limit or 400)))
+    except Exception:
+      return []
+    indexed: list[tuple[int, str, str, str]] = []
+    for idx, raw in enumerate(raw_lines):
+      try:
+        payload = json.loads(raw)
+      except Exception:
+        continue
+      if not isinstance(payload, dict):
+        continue
+      actor_id = str(payload.get("actor_id") or "").strip()
+      event_type = str(payload.get("type") or "").strip()
+      if not actor_id or not event_type:
+        continue
+      indexed.append((idx, raw, actor_id, event_type))
+
+    active_start_by_actor: dict[str, int] = {}
+    for idx, _raw, actor_id, event_type in indexed:
+      if event_type == "codex.turn.started":
+        active_start_by_actor[actor_id] = idx
+      elif event_type in {"codex.turn.completed", "codex.turn.failed"}:
+        active_start_by_actor.pop(actor_id, None)
+
+    if not active_start_by_actor:
+      return []
+
+    replay_lines: list[str] = []
+    for idx, raw, actor_id, _event_type in indexed:
+      start_idx = active_start_by_actor.get(actor_id)
+      if start_idx is None or idx < start_idx:
+        continue
+      replay_lines.append(raw)
+    return replay_lines
 
 
 def _read_presentation_local(group_id: str) -> Dict[str, Any]:
@@ -2091,8 +2136,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        replay_lines = _read_active_codex_replay_lines(group)
         return create_sse_response(
-            sse_jsonl_tail_shared(codex_events_path(group.path), event_name="codex", heartbeat_s=30.0)
+            sse_jsonl_tail_shared(
+                codex_events_path(group.path),
+                event_name="codex",
+                heartbeat_s=30.0,
+                poll_interval_s=0.05,
+                initial_lines=replay_lines,
+            )
         )
 
     return [global_router, group_router]

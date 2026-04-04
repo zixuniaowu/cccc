@@ -80,7 +80,7 @@ class TestWebGroupsLocalProjection(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_groups_route_ignores_headless_codex_state_for_pty_actor(self) -> None:
+    def test_groups_route_treats_codex_pty_actor_as_internal_headless_on_restart(self) -> None:
         cleanup = self._with_home()
         try:
             from cccc.kernel.actors import add_actor
@@ -90,7 +90,7 @@ class TestWebGroupsLocalProjection(unittest.TestCase):
             from cccc.util.fs import atomic_write_json
 
             reg = load_registry()
-            gid = create_group(reg, title="codex-pty-not-running", topic="").group_id
+            gid = create_group(reg, title="codex-pty-restarts-running", topic="").group_id
             group = load_group(gid)
             self.assertIsNotNone(group)
             add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")  # type: ignore[arg-type]
@@ -114,6 +114,6 @@ class TestWebGroupsLocalProjection(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             groups = resp.json()["result"]["groups"]
             match = next(item for item in groups if str(item.get("group_id") or "") == gid)
-            self.assertFalse(bool(match.get("running")))
+            self.assertTrue(bool(match.get("running")))
         finally:
             cleanup()

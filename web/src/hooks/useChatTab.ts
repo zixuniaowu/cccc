@@ -16,6 +16,7 @@ import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
 import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment } from "../types";
 import * as api from "../services/api";
+import { buildReplyComposerState } from "../utils/chatReply";
 
 function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent): LedgerEvent {
   const primaryData = primary.data && typeof primary.data === "object"
@@ -24,28 +25,81 @@ function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent):
   const secondaryData = secondary.data && typeof secondary.data === "object"
     ? secondary.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
     : {};
-  const primaryText = typeof primaryData.text === "string" ? primaryData.text : "";
-  const secondaryText = typeof secondaryData.text === "string" ? secondaryData.text : "";
-  const primaryActivities = Array.isArray(primaryData.activities) ? primaryData.activities : [];
-  const secondaryActivities = Array.isArray(secondaryData.activities) ? secondaryData.activities : [];
+  const primaryText = typeof primaryData.text === "string" ? primaryData.text.trim() : "";
+  const secondaryText = typeof secondaryData.text === "string" ? secondaryData.text.trim() : "";
+  const primaryTs = String(primary.ts || "");
+  const secondaryTs = String(secondary.ts || "");
+  const primaryHasText = primaryText.length > 0;
+  const secondaryHasText = secondaryText.length > 0;
+  const primaryIsPlaceholder = Boolean(primaryData.pending_placeholder);
+  const secondaryIsPlaceholder = Boolean(secondaryData.pending_placeholder);
+
+  let display = primary;
+  let support = secondary;
+  if (secondaryHasText && !primaryHasText) {
+    display = secondary;
+    support = primary;
+  } else if (secondaryHasText === primaryHasText) {
+    if (primaryIsPlaceholder && !secondaryIsPlaceholder) {
+      display = secondary;
+      support = primary;
+    } else if (primaryIsPlaceholder === secondaryIsPlaceholder && secondaryTs > primaryTs) {
+      display = secondary;
+      support = primary;
+    }
+  }
+
+  const displayData = display.data && typeof display.data === "object"
+    ? display.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
+    : {};
+  const supportData = support.data && typeof support.data === "object"
+    ? support.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
+    : {};
+  const displayActivities = Array.isArray(displayData.activities) ? displayData.activities : [];
+  const supportActivities = Array.isArray(supportData.activities) ? supportData.activities : [];
   return {
-    ...primary,
-    ts: primary.ts || secondary.ts,
+    ...support,
+    ...display,
+    ts: String(primary.ts || "") >= String(secondary.ts || "") ? primary.ts : secondary.ts,
     data: {
-      ...secondaryData,
-      ...primaryData,
-      text: primaryText || secondaryText,
-      activities: primaryActivities.length > 0 ? primaryActivities : secondaryActivities,
+      ...supportData,
+      ...displayData,
+      text:
+        typeof displayData.text === "string" ? displayData.text
+          : (typeof supportData.text === "string" ? supportData.text : ""),
+      activities: displayActivities.length > 0 ? displayActivities : supportActivities,
       pending_event_id:
-        String(primaryData.pending_event_id || "").trim() || String(secondaryData.pending_event_id || "").trim() || undefined,
+        String(displayData.pending_event_id || "").trim() || String(supportData.pending_event_id || "").trim() || undefined,
       stream_id:
-        String(primaryData.stream_id || "").trim() || String(secondaryData.stream_id || "").trim() || undefined,
-      pending_placeholder: Boolean(primaryData.pending_placeholder),
+        String(displayData.stream_id || "").trim() || String(supportData.stream_id || "").trim() || undefined,
+      pending_placeholder: Boolean(displayData.pending_placeholder),
     },
   };
 }
 
-function dedupeStreamingEvents(streamingEvents: LedgerEvent[]): LedgerEvent[] {
+function isPlaceholderLikeStreamingEvent(data: ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown }): boolean {
+  const streamId = String(data.stream_id || "").trim();
+  return Boolean(data.pending_placeholder) || streamId.startsWith("local:") || streamId.startsWith("pending:");
+}
+
+function getStreamingEventDedupeKey(event: LedgerEvent): string {
+  const data = event.data && typeof event.data === "object"
+    ? event.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
+    : {};
+  const actorId = String(event.by || "").trim();
+  const pendingEventId = String(data.pending_event_id || "").trim();
+  const streamId = String(data.stream_id || "").trim();
+  if (!actorId) return "";
+  if (pendingEventId) {
+    return `pending:${actorId}:${pendingEventId}`;
+  }
+  if (streamId && !isPlaceholderLikeStreamingEvent(data)) {
+    return `stream:${actorId}:${streamId}`;
+  }
+  return "";
+}
+
+export function dedupeStreamingEvents(streamingEvents: LedgerEvent[]): LedgerEvent[] {
   const byKey = new Map<string, LedgerEvent>();
   const passthrough: LedgerEvent[] = [];
 
@@ -53,11 +107,9 @@ function dedupeStreamingEvents(streamingEvents: LedgerEvent[]): LedgerEvent[] {
     const data = event.data && typeof event.data === "object"
       ? event.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
       : {};
-    const actorId = String(event.by || "").trim();
-    const pendingEventId = String(data.pending_event_id || "").trim();
     const streamId = String(data.stream_id || "").trim();
     const isPendingPlaceholder = Boolean(data.pending_placeholder);
-    const dedupeKey = actorId && pendingEventId ? `${actorId}:${pendingEventId}` : "";
+    const dedupeKey = getStreamingEventDedupeKey(event);
 
     if (!dedupeKey) {
       passthrough.push(event);
@@ -88,7 +140,7 @@ function dedupeStreamingEvents(streamingEvents: LedgerEvent[]): LedgerEvent[] {
   return [...passthrough, ...byKey.values()];
 }
 
-function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[]): LedgerEvent[] {
+export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[]): LedgerEvent[] {
   const eventsByActor = new Map<string, LedgerEvent[]>();
   for (const event of streamingEvents) {
     const actorId = String(event.by || "").trim();
@@ -119,13 +171,29 @@ function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[]): Led
       });
     });
 
-    if (!hasRichStreaming) continue;
+    if (hasRichStreaming) {
+      for (const event of actorEvents) {
+        const data = event.data && typeof event.data === "object"
+          ? event.data as ChatMessageData & { pending_placeholder?: unknown; activities?: unknown[]; stream_id?: unknown }
+          : {};
+        const text = typeof data.text === "string" ? data.text.trim() : "";
+        const isPlaceholderLike =
+          Boolean(data.pending_placeholder) ||
+          String(data.stream_id || "").trim().startsWith("local:") ||
+          String(data.stream_id || "").trim().startsWith("pending:");
+        if (isPlaceholderLike && !text) {
+          shouldDrop.add(event);
+        }
+      }
+      continue;
+    }
 
-    for (const event of actorEvents) {
+    const placeholderOnlyEvents = actorEvents.filter((event) => {
       const data = event.data && typeof event.data === "object"
-        ? event.data as ChatMessageData & { pending_placeholder?: unknown; activities?: unknown[]; stream_id?: unknown }
+        ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown }
         : {};
       const text = typeof data.text === "string" ? data.text.trim() : "";
+      if (text) return false;
       const activities = Array.isArray(data.activities) ? data.activities : [];
       const onlyQueuedActivities = activities.length === 0 || activities.every((item) => {
         if (!item || typeof item !== "object") return true;
@@ -133,17 +201,265 @@ function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[]): Led
         const summary = String((item as { summary?: unknown }).summary || "").trim();
         return kind === "queued" && summary === "queued";
       });
-      const isPlaceholderLike =
-        Boolean(data.pending_placeholder) ||
-        String(data.stream_id || "").trim().startsWith("local:") ||
-        String(data.stream_id || "").trim().startsWith("pending:");
-      if (isPlaceholderLike && !text && onlyQueuedActivities) {
+      const streamId = String(data.stream_id || "").trim();
+      return (
+        onlyQueuedActivities &&
+        (Boolean(data.pending_placeholder) || streamId.startsWith("local:") || streamId.startsWith("pending:"))
+      );
+    });
+    if (placeholderOnlyEvents.length <= 1) continue;
+    const latestPlaceholder = placeholderOnlyEvents.reduce((latest, current) => {
+      const latestTs = String(latest.ts || "");
+      const currentTs = String(current.ts || "");
+      return currentTs >= latestTs ? current : latest;
+    });
+    for (const event of placeholderOnlyEvents) {
+      if (event !== latestPlaceholder) {
         shouldDrop.add(event);
       }
     }
   }
 
   return streamingEvents.filter((event) => !shouldDrop.has(event));
+}
+
+function dropOrphanQueuedPlaceholders(
+  canonicalEvents: LedgerEvent[],
+  streamingEvents: LedgerEvent[],
+): LedgerEvent[] {
+  const latestCanonicalTsByActor = new Map<string, string>();
+  for (const event of canonicalEvents) {
+    if (String(event.kind || "").trim() !== "chat.message") continue;
+    const actorId = String(event.by || "").trim();
+    if (!actorId || actorId === "user") continue;
+    const data = event.data && typeof event.data === "object"
+      ? event.data as ChatMessageData
+      : undefined;
+    const text = typeof data?.text === "string" ? data.text.trim() : "";
+    if (!text) continue;
+    const ts = String(event.ts || "").trim();
+    const current = latestCanonicalTsByActor.get(actorId) || "";
+    if (!current || (ts && ts >= current)) {
+      latestCanonicalTsByActor.set(actorId, ts);
+    }
+  }
+
+  return streamingEvents.filter((event) => {
+    const actorId = String(event.by || "").trim();
+    const latestCanonicalTs = latestCanonicalTsByActor.get(actorId) || "";
+    if (!actorId || !latestCanonicalTs) return true;
+    const data = event.data && typeof event.data === "object"
+      ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown }
+      : {};
+    const text = typeof data.text === "string" ? data.text.trim() : "";
+    if (text) return true;
+    const activities = Array.isArray(data.activities) ? data.activities : [];
+    const onlyQueuedActivities = activities.length === 0 || activities.every((item) => {
+      if (!item || typeof item !== "object") return true;
+      const kind = String((item as { kind?: unknown }).kind || "").trim();
+      const summary = String((item as { summary?: unknown }).summary || "").trim();
+      return kind === "queued" && summary === "queued";
+    });
+    const streamId = String(data.stream_id || "").trim();
+    const isPlaceholderLike =
+      Boolean(data.pending_placeholder) ||
+      streamId.startsWith("local:") ||
+      streamId.startsWith("pending:");
+    if (!isPlaceholderLike || !onlyQueuedActivities) return true;
+    const eventTs = String(event.ts || "").trim();
+    return !eventTs || eventTs > latestCanonicalTs;
+  });
+}
+
+function hasRenderableChatMessageContent(event: LedgerEvent): boolean {
+  if (String(event.kind || "").trim() !== "chat.message") return false;
+  const data = event.data && typeof event.data === "object"
+    ? event.data as ChatMessageData
+    : undefined;
+  const text = typeof data?.text === "string" ? data.text.trim() : "";
+  if (text) return true;
+  const attachments = Array.isArray(data?.attachments) ? data.attachments : [];
+  if (attachments.length > 0) return true;
+  const refs = Array.isArray(data?.refs) ? data.refs : [];
+  return refs.length > 0;
+}
+
+function getCanonicalStreamingSupersededStreamIds(canonicalEvents: LedgerEvent[]): Set<string> {
+  return new Set(
+    canonicalEvents
+      .filter((event) => hasRenderableChatMessageContent(event))
+      .map((event) => {
+        const data = event.data && typeof event.data === "object"
+          ? event.data as { stream_id?: unknown }
+          : null;
+        return data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
+      })
+      .filter((streamId) => streamId.length > 0)
+  );
+}
+
+export function mergeLiveChatMessageEvents(
+  canonicalEvents: LedgerEvent[],
+  streamingEvents: LedgerEvent[],
+  pendingEvents: LedgerEvent[],
+): LedgerEvent[] {
+  const canonicalStreamIds = getCanonicalStreamingSupersededStreamIds(canonicalEvents);
+  const liveStreaming = streamingEvents.filter((ev) => {
+    const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
+    const streamId = data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
+    return !streamId || !canonicalStreamIds.has(streamId);
+  });
+  const merged = [...canonicalEvents, ...pendingEvents, ...liveStreaming];
+  const replySlotTsByKey = buildReplySlotTsMap(streamingEvents);
+  return sortChatMessages(merged, replySlotTsByKey);
+}
+
+export function getReplySlotKey(event: LedgerEvent): string {
+  if (String(event.kind || "").trim() !== "chat.message") return "";
+  const actorId = String(event.by || "").trim();
+  if (!actorId || actorId === "user") return "";
+  const data = event.data && typeof event.data === "object"
+    ? event.data as ChatMessageData & { pending_event_id?: unknown; reply_to?: unknown }
+    : undefined;
+  const replyAnchor =
+    typeof data?.pending_event_id === "string" && data.pending_event_id.trim()
+      ? data.pending_event_id.trim()
+      : typeof data?.reply_to === "string" && data.reply_to.trim()
+        ? data.reply_to.trim()
+        : "";
+  if (!replyAnchor) return "";
+  return `${actorId}:${replyAnchor}`;
+}
+
+export function buildReplySlotTsMap(streamingEvents: LedgerEvent[]): Map<string, string> {
+  const slotTsByKey = new Map<string, string>();
+  for (const event of streamingEvents) {
+    const slotKey = getReplySlotKey(event);
+    if (!slotKey) continue;
+    const ts = String(event.ts || "").trim();
+    if (!ts) continue;
+    const prev = slotTsByKey.get(slotKey) || "";
+    if (!prev || ts < prev) {
+      slotTsByKey.set(slotKey, ts);
+    }
+  }
+  return slotTsByKey;
+}
+
+export function sortChatMessages(
+  messages: LedgerEvent[],
+  replySlotTsByKey: Map<string, string>,
+): LedgerEvent[] {
+  return messages
+    .map((event, index) => {
+      const slotKey = getReplySlotKey(event);
+      const slotTs = slotKey ? String(replySlotTsByKey.get(slotKey) || "").trim() : "";
+      const eventTs = String(event.ts || "").trim();
+      return {
+        event,
+        index,
+        sortTs: slotTs || eventTs,
+        eventTs,
+      };
+    })
+    .sort((a, b) => {
+      if (a.sortTs && b.sortTs && a.sortTs !== b.sortTs) return a.sortTs.localeCompare(b.sortTs);
+      if (a.sortTs && !b.sortTs) return -1;
+      if (!a.sortTs && b.sortTs) return 1;
+      if (a.eventTs && b.eventTs && a.eventTs !== b.eventTs) return a.eventTs.localeCompare(b.eventTs);
+      return a.index - b.index;
+    })
+    .map((item) => item.event);
+}
+
+function getLogicalMessageOrderKey(event: LedgerEvent): string {
+  if (String(event.kind || "").trim() !== "chat.message") {
+    return `event:${String(event.id || "").trim() || String(event.ts || "").trim()}`;
+  }
+  const data = event.data && typeof event.data === "object"
+    ? event.data as ChatMessageData & { client_id?: unknown; pending_event_id?: unknown; reply_to?: unknown; stream_id?: unknown }
+    : undefined;
+  const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
+  if (clientId) return `client:${clientId}`;
+
+  const actorId = String(event.by || "").trim();
+  const replyAnchor =
+    typeof data?.pending_event_id === "string" && data.pending_event_id.trim()
+      ? data.pending_event_id.trim()
+      : typeof data?.reply_to === "string" && data.reply_to.trim()
+        ? data.reply_to.trim()
+        : "";
+  if (actorId && actorId !== "user" && replyAnchor) {
+    return `reply:${actorId}:${replyAnchor}`;
+  }
+
+  const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
+  if (streamId) return `stream:${streamId}`;
+
+  const eventId = String(event.id || "").trim();
+  if (eventId) return `event:${eventId}`;
+  return `fallback:${actorId}:${String(event.ts || "").trim()}`;
+}
+
+function getLogicalMessageReplacementKey(event: LedgerEvent): string {
+  if (String(event.kind || "").trim() !== "chat.message") {
+    return `event:${String(event.id || "").trim() || String(event.ts || "").trim()}`;
+  }
+  const data = event.data && typeof event.data === "object"
+    ? event.data as ChatMessageData & { client_id?: unknown; stream_id?: unknown }
+    : undefined;
+  const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
+  if (clientId) return `client:${clientId}`;
+
+  const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
+  if (streamId) return `stream:${streamId}`;
+
+  const eventId = String(event.id || "").trim();
+  if (eventId) return `event:${eventId}`;
+
+  return `fallback:${String(event.by || "").trim()}:${String(event.ts || "").trim()}`;
+}
+
+function getLogicalMessagePriority(event: LedgerEvent): number {
+  const isStreaming = !!event._streaming;
+  const data = event.data && typeof event.data === "object"
+    ? event.data as { _optimistic?: unknown }
+    : undefined;
+  const isOptimistic = Boolean(data?._optimistic);
+  if (!isStreaming && !isOptimistic) return 3;
+  if (isOptimistic) return 2;
+  return 1;
+}
+
+function mergeLogicalMessagesWithStableOrder(
+  candidates: LedgerEvent[],
+  orderState: { map: Map<string, number>; next: number },
+): LedgerEvent[] {
+  const mergedByReplacementKey = new Map<string, { orderKey: string; event: LedgerEvent; index: number }>();
+  candidates.forEach((event, index) => {
+    const orderKey = getLogicalMessageOrderKey(event);
+    if (!orderState.map.has(orderKey)) {
+      orderState.map.set(orderKey, orderState.next);
+      orderState.next += 1;
+    }
+    const replacementKey = getLogicalMessageReplacementKey(event);
+    const existing = mergedByReplacementKey.get(replacementKey);
+    if (!existing || getLogicalMessagePriority(event) >= getLogicalMessagePriority(existing.event)) {
+      mergedByReplacementKey.set(replacementKey, { orderKey, event, index });
+    }
+  });
+
+  return Array.from(mergedByReplacementKey.values())
+    .sort((a, b) => {
+      const ao = orderState.map.get(a.orderKey) ?? Number.MAX_SAFE_INTEGER;
+      const bo = orderState.map.get(b.orderKey) ?? Number.MAX_SAFE_INTEGER;
+      if (ao !== bo) return ao - bo;
+      const ats = String(a.event.ts || "").trim();
+      const bts = String(b.event.ts || "").trim();
+      if (ats && bts && ats !== bts) return ats.localeCompare(bts);
+      return a.index - b.index;
+    })
+    .map((item) => item.event);
 }
 
 interface UseChatTabOptions {
@@ -182,7 +498,8 @@ export function useChatTab({
   );
   const appendEvent = useGroupStore((state) => state.appendEvent);
   const upsertStreamingEvent = useGroupStore((state) => state.upsertStreamingEvent);
-  const removeStreamingEvent = useGroupStore((state) => state.removeStreamingEvent);
+  const removeStreamingEventsByPrefix = useGroupStore((state) => state.removeStreamingEventsByPrefix);
+  const promoteStreamingEventsByPrefix = useGroupStore((state) => state.promoteStreamingEventsByPrefix);
   const groupDoc = useGroupStore((state) => state.groupDoc);
   const groupContext = useGroupStore((state) => state.groupContext);
   const groupSettings = useGroupStore((state) => state.groupSettings);
@@ -343,11 +660,33 @@ export function useChatTab({
     return !!chatWindow && String(chatWindow.groupId || "") === String(selectedGroupId || "");
   }, [chatWindow, selectedGroupId]);
 
+  const chatViewKey = useMemo(() => {
+    if (inChatWindow && chatWindow) {
+      return `${selectedGroupId}:window:${chatWindow.centerEventId}`;
+    }
+    return `${selectedGroupId}:live`;
+  }, [inChatWindow, chatWindow, selectedGroupId]);
+  const logicalMessageOrderStateRef = useRef<{ viewKey: string; map: Map<string, number>; next: number }>({
+    viewKey: "",
+    map: new Map(),
+    next: 0,
+  });
+  if (logicalMessageOrderStateRef.current.viewKey !== chatViewKey) {
+    logicalMessageOrderStateRef.current = {
+      viewKey: chatViewKey,
+      map: new Map(),
+      next: 0,
+    };
+  }
+
   // Filtered live chat messages (canonical + optimistic pending merged)
   const liveChatMessages = useMemo(() => {
     const all = events.filter((ev) => ev.kind === "chat.message");
-    const streaming = collapseActorStreamingPlaceholders(
-      dedupeStreamingEvents(streamingEvents.filter((ev) => ev.kind === "chat.message"))
+    const streaming = dropOrphanQueuedPlaceholders(
+      all,
+      collapseActorStreamingPlaceholders(
+        dedupeStreamingEvents(streamingEvents.filter((ev) => ev.kind === "chat.message"))
+      ),
     );
     const canonicalClientIds = new Set(
       all
@@ -360,35 +699,31 @@ export function useChatTab({
     const pendingEvents = outboxEntries
       .filter((entry) => !canonicalClientIds.has(entry.localId))
       .map((entry) => entry.event);
-    const canonicalStreamIds = new Set(
-      all
-        .map((ev) => {
-          const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
-          return data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
-        })
-        .filter((streamId) => streamId.length > 0)
-    );
+    const canonicalStreamIds = getCanonicalStreamingSupersededStreamIds(all);
     const liveStreaming = streaming.filter((ev) => {
       const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
       const streamId = data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
       return !streamId || !canonicalStreamIds.has(streamId);
     });
-    const merged = [...all, ...pendingEvents, ...liveStreaming];
+    const ordered = mergeLogicalMessagesWithStableOrder(
+      [...all, ...pendingEvents, ...liveStreaming],
+      logicalMessageOrderStateRef.current,
+    );
 
     if (chatFilter === "attention") {
-      return merged.filter((ev) => {
+      return ordered.filter((ev) => {
         const d = ev.data as ChatMessageData | undefined;
         return String(d?.priority || "normal") === "attention";
       });
     }
     if (chatFilter === "task") {
-      return merged.filter((ev) => {
+      return ordered.filter((ev) => {
         const d = ev.data as ChatMessageData | undefined;
         return !!d?.reply_required;
       });
     }
     if (chatFilter === "user") {
-      return merged.filter((ev) => {
+      return ordered.filter((ev) => {
         const d = ev.data as ChatMessageData | undefined;
         const dst = typeof d?.dst_group_id === "string" ? String(d.dst_group_id || "").trim() : "";
         if (dst) return false;
@@ -397,7 +732,7 @@ export function useChatTab({
         return by === "user" || to.includes("user") || to.includes("@user");
       });
     }
-    return merged;
+    return ordered;
   }, [events, streamingEvents, chatFilter, outboxEntries]);
 
   // Chat messages (window or live)
@@ -410,14 +745,6 @@ export function useChatTab({
     () => events.some((ev) => ev.kind === "chat.message") || streamingEvents.length > 0 || outboxEntries.length > 0,
     [events, streamingEvents, outboxEntries]
   );
-
-  // Chat view key for VirtualMessageList
-  const chatViewKey = useMemo(() => {
-    if (inChatWindow && chatWindow) {
-      return `${selectedGroupId}:window:${chatWindow.centerEventId}`;
-    }
-    return `${selectedGroupId}:live`;
-  }, [inChatWindow, chatWindow, selectedGroupId]);
 
   const chatInitialScrollAnchorId = useMemo(() => {
     if (inChatWindow) return undefined;
@@ -558,8 +885,6 @@ export function useChatTab({
 
     // Generate a local ID for outbox tracking
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const localPlaceholderStreamIds = assistantTargets.map((actor) => `local:${localId}:${String(actor.id || "").trim()}`);
-
     const insertLocalAssistantPlaceholders = () => {
       const now = new Date().toISOString();
       for (const actor of assistantTargets) {
@@ -595,9 +920,7 @@ export function useChatTab({
     };
 
     const clearLocalAssistantPlaceholders = () => {
-      for (const streamId of localPlaceholderStreamIds) {
-        removeStreamingEvent(streamId, selectedGroupId);
-      }
+      removeStreamingEventsByPrefix(`local:${localId}:`, selectedGroupId);
     };
 
     const restoreComposerState = () => {
@@ -711,6 +1034,7 @@ export function useChatTab({
       if (!resp.ok) {
         // Pending-only outbox: failed sends roll back to the composer.
         removeOutbox(selectedGroupId, localId);
+        clearLocalAssistantPlaceholders();
         restoreComposerState();
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
@@ -738,38 +1062,7 @@ export function useChatTab({
       } else if (canonicalEvent && !isCrossGroup) {
         const canonicalEventId = String(canonicalEvent.id || "").trim();
         if (canonicalEventId) {
-          clearLocalAssistantPlaceholders();
-          for (const actor of assistantTargets) {
-            const actorId = String(actor.id || "").trim();
-            if (!actorId) continue;
-            upsertStreamingEvent(
-              {
-                id: `pending:${canonicalEventId}:${actorId}`,
-                ts: new Date().toISOString(),
-                kind: "chat.message",
-                group_id: selectedGroupId,
-                by: actorId,
-                _streaming: true,
-                data: {
-                  text: "",
-                  to: ["user"],
-                  stream_id: `pending:${canonicalEventId}:${actorId}`,
-                  pending_event_id: canonicalEventId,
-                  pending_placeholder: true,
-                  activities: [
-                    {
-                      id: `queued:${canonicalEventId}:${actorId}`,
-                      kind: "queued",
-                      status: "started",
-                      summary: "queued",
-                      ts: new Date().toISOString(),
-                    },
-                  ],
-                },
-              },
-              selectedGroupId,
-            );
-          }
+          promoteStreamingEventsByPrefix(`local:${localId}:`, canonicalEventId, selectedGroupId);
         }
       }
       setDestGroupId(selectedGroupId);
@@ -833,6 +1126,10 @@ export function useChatTab({
     setShowScrollButton,
     setChatUnreadCount,
     onMessageSent,
+    promoteStreamingEventsByPrefix,
+    removeStreamingEventsByPrefix,
+    resolveAssistantTargets,
+    upsertStreamingEvent,
   ]);
 
   const copyMessageLink = useCallback(
@@ -912,40 +1209,21 @@ export function useChatTab({
 
   const startReply = useCallback(
     (ev: LedgerEvent) => {
-      if (!ev.id || ev.kind !== "chat.message") return;
-      const data = ev.data as ChatMessageData | undefined;
-      const text = data?.text ? String(data.text) : "";
-
-      // Reply is always in the current group.
-      if (selectedGroupId) {
-        setDestGroupId(selectedGroupId);
+      const replyComposerState = buildReplyComposerState(ev, selectedGroupId, actors, groupSettings);
+      if (!replyComposerState) {
+        showError(t("replyTargetUnavailable", { defaultValue: "This message is not ready for replies yet." }));
+        return;
       }
 
-      // Pre-fill recipients to match daemon default reply routing
-      const by = String(ev.by || "").trim();
-      const authorIsActor = by && by !== "user" && actors.some((a) => String(a.id || "") === by);
-      const originalTo = Array.isArray(data?.to)
-        ? data?.to.map((t) => String(t || "").trim()).filter((t) => t)
-        : [];
-      const policy = groupSettings?.default_send_to || "foreman";
-      const defaultTo =
-        authorIsActor
-          ? [by]
-          : originalTo.length > 0
-            ? originalTo
-            : policy === "foreman"
-              ? ["@foreman"]
-              : [];
-      setToText(defaultTo.join(", "));
-
-      setReplyTarget({
-        eventId: String(ev.id),
-        by: String(ev.by || "unknown"),
-        text: text.slice(0, 100) + (text.length > 100 ? "..." : ""),
-      });
+      // Reply is always in the current group.
+      if (replyComposerState.destGroupId) {
+        setDestGroupId(replyComposerState.destGroupId);
+      }
+      setToText(replyComposerState.toText);
+      setReplyTarget(replyComposerState.replyTarget);
       requestAnimationFrame(() => composerRef?.current?.focus());
     },
-    [selectedGroupId, actors, groupSettings, setDestGroupId, setToText, setReplyTarget, composerRef]
+    [selectedGroupId, actors, groupSettings, setDestGroupId, setToText, setReplyTarget, composerRef, showError, t]
   );
 
   const cancelReply = useCallback(() => setReplyTarget(null), [setReplyTarget]);

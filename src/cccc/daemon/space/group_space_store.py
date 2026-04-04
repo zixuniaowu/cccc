@@ -1122,13 +1122,14 @@ def list_space_jobs(
     remote_space_id: str = "",
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
+    home = ensure_home()
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
     lane_filter = _lane_or_raise(lane) if str(lane or "").strip() else ""
     wanted_state = str(state or "").strip()
     wanted_remote = str(remote_space_id or "").strip()
     max_items = max(1, min(int(limit or 50), 500))
-    if not _jobs_scan_allowed(_jobs_path(ensure_home())):
+    if not _jobs_scan_allowed(_jobs_path(home)):
         return []
     _, doc = _load_jobs_doc()
     jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
@@ -1150,7 +1151,7 @@ def list_space_jobs(
             continue
         if wanted_remote and model.remote_space_id != wanted_remote:
             continue
-        out.append(model.model_dump(exclude_none=True))
+        out.append(_hydrated_job_doc(home, model.model_dump(exclude_none=True)))
     out.sort(key=lambda it: str(it.get("updated_at") or ""), reverse=True)
     return out[:max_items]
 

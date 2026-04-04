@@ -4,10 +4,24 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { LedgerEvent, Actor, AgentState, PresentationMessageRef } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
-import { getChatTailSnapshot, shouldAutoFollowOnTailAppend } from "../utils/chatAutoFollow";
+import {
+  getChatTailMutationSnapshot,
+  getChatTailSnapshot,
+  shouldAutoFollowOnTailAppend,
+  shouldAutoFollowOnTailMutation,
+} from "../utils/chatAutoFollow";
 
 function getStableMessageKey(message: LedgerEvent | undefined, index: number): string | number {
   if (message?.kind === "chat.message" && message.data && typeof message.data === "object") {
+    const pendingEventId = typeof (message.data as { pending_event_id?: unknown }).pending_event_id === "string"
+      ? String((message.data as { pending_event_id?: string }).pending_event_id || "").trim()
+      : "";
+    const actorId = typeof message.by === "string" ? String(message.by || "").trim() : "";
+    if (pendingEventId && actorId) return `pending:${actorId}:${pendingEventId}`;
+    const streamId = typeof (message.data as { stream_id?: unknown }).stream_id === "string"
+      ? String((message.data as { stream_id?: string }).stream_id || "").trim()
+      : "";
+    if (streamId) return `stream:${streamId}`;
     const clientId = typeof (message.data as { client_id?: unknown }).client_id === "string"
       ? String((message.data as { client_id?: string }).client_id || "").trim()
       : "";
@@ -100,6 +114,8 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
 }: VirtualMessageRowProps) {
   const rowRef = useRef<HTMLDivElement | null>(null);
   const isStreaming = !!message?._streaming;
+  const lastMeasuredHeightRef = useRef(0);
+  const lastMeasureAtRef = useRef(0);
 
   useEffect(() => {
     const el = rowRef.current;
@@ -107,21 +123,32 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
 
     let rafId: number | null = null;
     let timeoutId: number | null = null;
+    const MEASURE_INTERVAL_MS = 180;
+    const HEIGHT_DELTA_PX = 24;
     const runMeasure = () => {
       if (rafId != null) window.cancelAnimationFrame(rafId);
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
+        lastMeasuredHeightRef.current = el.offsetHeight;
+        lastMeasureAtRef.current = performance.now();
         measureElement(el);
         onRowLayoutChange(el);
       });
     };
     const observer = new ResizeObserver(() => {
       if (isStreaming) {
+        const now = performance.now();
+        const nextHeight = el.offsetHeight;
+        const lastHeight = lastMeasuredHeightRef.current || nextHeight;
+        const elapsed = now - lastMeasureAtRef.current;
+        if (Math.abs(nextHeight - lastHeight) < HEIGHT_DELTA_PX && elapsed < MEASURE_INTERVAL_MS) {
+          return;
+        }
         if (timeoutId != null) return;
         timeoutId = window.setTimeout(() => {
           timeoutId = null;
           runMeasure();
-        }, 48);
+        }, Math.max(32, MEASURE_INTERVAL_MS - Math.min(elapsed, MEASURE_INTERVAL_MS)));
         return;
       }
       runMeasure();
@@ -141,6 +168,10 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
       data-message-id={message.id ? String(message.id) : ""}
       ref={(node) => {
         rowRef.current = node;
+        if (node) {
+          lastMeasuredHeightRef.current = node.offsetHeight;
+          lastMeasureAtRef.current = performance.now();
+        }
         measureElement(node);
       }}
       style={{
@@ -212,7 +243,39 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 }: VirtualMessageListInnerProps) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const remeasureRafRef = useRef<number | null>(null);
-  const shouldVirtualize = messages.length >= 80;
+  const displayOrderRef = useRef<Map<string, number>>(new Map());
+  const nextDisplayOrderRef = useRef(0);
+  const displayMessages = useMemo(() => {
+    const hasStreaming = messages.some((message) => !!message?._streaming);
+    if (!hasStreaming) {
+      displayOrderRef.current = new Map();
+      nextDisplayOrderRef.current = 0;
+      return messages;
+    }
+
+    const nextOrderMap = new Map(displayOrderRef.current);
+    let nextOrder = nextDisplayOrderRef.current;
+    for (let index = 0; index < messages.length; index += 1) {
+      const key = String(getStableMessageKey(messages[index], index));
+      if (!nextOrderMap.has(key)) {
+        nextOrderMap.set(key, nextOrder);
+        nextOrder += 1;
+      }
+    }
+    displayOrderRef.current = nextOrderMap;
+    nextDisplayOrderRef.current = nextOrder;
+
+    return messages.slice().sort((a, b) => {
+      const ao = nextOrderMap.get(String(getStableMessageKey(a, 0))) ?? Number.MAX_SAFE_INTEGER;
+      const bo = nextOrderMap.get(String(getStableMessageKey(b, 0))) ?? Number.MAX_SAFE_INTEGER;
+      if (ao !== bo) return ao - bo;
+      const ats = String(a?.ts || "");
+      const bts = String(b?.ts || "");
+      if (ats && bts && ats !== bts) return ats.localeCompare(bts);
+      return 0;
+    });
+  }, [messages]);
+  const shouldVirtualize = displayMessages.length > 0;
 
   const agentStateById = useMemo(() => {
     const m = new Map<string, AgentState>();
@@ -243,18 +306,23 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
   // Stable ref for messages — used by getEstimatedSize to avoid rebuilding
   // the callback (and thus the virtualizer) on every messages change.
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  const messagesRef = useRef(displayMessages);
+  messagesRef.current = displayMessages;
 
   const isAtBottomRef = useRef(true);
   const prevTailSnapshotRef = useRef(
     getChatTailSnapshot(
-      messages.length > 0 ? getStableMessageKey(messages[messages.length - 1], messages.length - 1) : null,
-      messages.length,
+      displayMessages.length > 0 ? getStableMessageKey(displayMessages[displayMessages.length - 1], displayMessages.length - 1) : null,
+      displayMessages.length,
+    )
+  );
+  const prevTailMutationSnapshotRef = useRef(
+    getChatTailMutationSnapshot(
+      displayMessages.length > 0 ? getStableMessageKey(displayMessages[displayMessages.length - 1], displayMessages.length - 1) : null,
+      "",
     )
   );
   const didInitialScrollRef = useRef(false);
-  const lastAutoFollowSignatureRef = useRef("");
   const scrollTimeoutRef = useRef<number | null>(null);
   const scrollRafRef = useRef<number | null>(null);
   const followupScrollTimeoutRef = useRef<number | null>(null);
@@ -338,9 +406,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
-    count: messages.length,
+    count: displayMessages.length,
     getScrollElement: () => parentRef.current,
-    getItemKey: (index) => getStableMessageKey(messages[index], index),
+    getItemKey: (index) => getStableMessageKey(displayMessages[index], index),
     estimateSize: getEstimatedSize,
     overscan: 10,
     paddingStart: 72,
@@ -366,7 +434,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       const vItems = virtualizer.getVirtualItems();
       if (vItems.length <= 0) return null;
       const anchorItem = vItems.find((v) => v.start + v.size > scrollTop + 1) || vItems[0];
-      const msg = messages[anchorItem.index];
+      const msg = displayMessages[anchorItem.index];
       const anchorId = msg?.id ? String(msg.id) : "";
       if (!anchorId) return null;
       return {
@@ -385,7 +453,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       anchorId,
       offsetPx: Math.max(0, scrollTop - anchorRow.offsetTop),
     };
-  }, [messages, shouldVirtualize, virtualizer]);
+  }, [displayMessages, shouldVirtualize, virtualizer]);
 
   const setAtBottom = useCallback((next: boolean) => {
     isAtBottomRef.current = next;
@@ -396,7 +464,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (!el || !eventId) return false;
 
     if (shouldVirtualize) {
-      const idx = messages.findIndex((m) => String(m?.id || "") === String(eventId));
+      const idx = displayMessages.findIndex((m) => String(m?.id || "") === String(eventId));
       if (idx < 0) return false;
       const offsetInfo = virtualizer.getOffsetForIndex(idx, "start");
       if (offsetInfo) {
@@ -411,7 +479,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (!row) return false;
     el.scrollTo({ top: row.offsetTop + Math.max(0, offsetPx), behavior: "auto" });
     return true;
-  }, [getMessageRowById, messages, shouldVirtualize, virtualizer]);
+  }, [displayMessages, getMessageRowById, shouldVirtualize, virtualizer]);
 
   const handleRowLayoutChange = useCallback((node: HTMLDivElement | null) => {
     if (shouldVirtualize && node) {
@@ -430,11 +498,11 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
   const scrollToBottom = useCallback(() => {
     const el = parentRef.current;
-    if (!el || messages.length <= 0) return;
+    if (!el || displayMessages.length <= 0) return;
     requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
     });
-  }, [messages.length]);
+  }, [displayMessages.length]);
 
   const cancelScheduledScroll = useCallback(() => {
     const id = scrollTimeoutRef.current;
@@ -609,7 +677,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
     prevResetKeyRef.current = resetKey;
     latestSnapshotRef.current = null;
-    lastAutoFollowSignatureRef.current = "";
 
     scrollTokenRef.current += 1;
     setAtBottom(true);
@@ -626,8 +693,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     anchorOffsetRef.current = 0;
     lastScrollTopRef.current = 0;
     prevTailSnapshotRef.current = getChatTailSnapshot(
-      messages.length > 0 ? getStableMessageKey(messages[messages.length - 1], messages.length - 1) : null,
-      messages.length,
+      displayMessages.length > 0 ? getStableMessageKey(displayMessages[displayMessages.length - 1], displayMessages.length - 1) : null,
+      displayMessages.length,
+    );
+    prevTailMutationSnapshotRef.current = getChatTailMutationSnapshot(
+      displayMessages.length > 0 ? getStableMessageKey(displayMessages[displayMessages.length - 1], displayMessages.length - 1) : null,
+      "",
     );
 
     // Without key-based remount, the virtualizer keeps stale measurement
@@ -636,10 +707,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (shouldVirtualize) {
       virtualizer.measure();
     }
-  }, [messages, resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, shouldVirtualize, virtualizer]);
+  }, [displayMessages, resetKey, cancelScheduledScroll, onScrollSnapshot, setAtBottom, shouldVirtualize, virtualizer]);
 
-  const tailFollowSignature = useMemo(() => {
-    const lastMessage = messages[messages.length - 1];
+  const tailMutationSignature = useMemo(() => {
+    const lastMessage = displayMessages[displayMessages.length - 1];
     if (!lastMessage) return "";
     const data = lastMessage.data && typeof lastMessage.data === "object"
       ? (lastMessage.data as { text?: unknown; attachments?: unknown[]; client_id?: unknown })
@@ -648,7 +719,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const textLength = typeof data?.text === "string" ? data.text.length : 0;
     const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
     return [
-      messages.length,
+      displayMessages.length,
       String(lastMessage.id || "").trim(),
       String(lastMessage.by || "").trim(),
       String(lastMessage.ts || "").trim(),
@@ -656,17 +727,17 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       textLength,
       attachmentCount,
     ].join("|");
-  }, [messages]);
+  }, [displayMessages]);
 
   useEffect(() => {
     if (didInitialScrollRef.current) return;
-    if (messages.length <= 0) return;
+    if (displayMessages.length <= 0) return;
     didInitialScrollRef.current = true;
     scheduleScroll(() => {
       if (initialScrollTargetId) {
         setAtBottom(false);
         if (shouldVirtualize) {
-          const idx = messages.findIndex((m) => String(m?.id || "") === String(initialScrollTargetId));
+          const idx = displayMessages.findIndex((m) => String(m?.id || "") === String(initialScrollTargetId));
           if (idx >= 0) {
             scrollToIndexStable(idx);
             return;
@@ -677,7 +748,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       }
       if (initialScrollAnchorId) {
         if (shouldVirtualize) {
-          const idx = messages.findIndex((m) => String(m?.id || "") === String(initialScrollAnchorId));
+          const idx = displayMessages.findIndex((m) => String(m?.id || "") === String(initialScrollAnchorId));
           if (idx >= 0) {
             setAtBottom(false);
             scrollToAnchorStable(idx, Number(initialScrollAnchorOffsetPx || 0));
@@ -690,28 +761,32 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       }
       scrollToBottom();
     });
-  }, [initialScrollAnchorId, initialScrollAnchorOffsetPx, initialScrollTargetId, messages, scheduleScroll, scrollToAnchorStable, scrollToBottom, scrollToIndexStable, scrollToMessageAnchor, setAtBottom, shouldVirtualize]);
+  }, [displayMessages, initialScrollAnchorId, initialScrollAnchorOffsetPx, initialScrollTargetId, scheduleScroll, scrollToAnchorStable, scrollToBottom, scrollToIndexStable, scrollToMessageAnchor, setAtBottom, shouldVirtualize]);
 
   useEffect(() => {
     if (!didInitialScrollRef.current) return;
-    if (!tailFollowSignature) return;
     if (!isAtBottomRef.current) return;
     if (isLoadingHistory || pendingRestoreRef.current) return;
-    if (lastAutoFollowSignatureRef.current === tailFollowSignature) return;
+    const nextSnapshot = getChatTailMutationSnapshot(
+      displayMessages.length > 0 ? getStableMessageKey(displayMessages[displayMessages.length - 1], displayMessages.length - 1) : null,
+      tailMutationSignature,
+    );
+    const prevSnapshot = prevTailMutationSnapshotRef.current;
+    prevTailMutationSnapshotRef.current = nextSnapshot;
+    if (!shouldAutoFollowOnTailMutation(prevSnapshot, nextSnapshot)) return;
 
-    lastAutoFollowSignatureRef.current = tailFollowSignature;
     scheduleScroll(() => {
       if (!isAtBottomRef.current || pendingRestoreRef.current) return;
       scrollToBottom();
     });
-  }, [isLoadingHistory, scheduleScroll, scrollToBottom, tailFollowSignature]);
+  }, [displayMessages, isLoadingHistory, scheduleScroll, scrollToBottom, tailMutationSignature]);
 
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
   useEffect(() => {
     const nextSnapshot = getChatTailSnapshot(
-      messages.length > 0 ? getStableMessageKey(messages[messages.length - 1], messages.length - 1) : null,
-      messages.length,
+      displayMessages.length > 0 ? getStableMessageKey(displayMessages[displayMessages.length - 1], displayMessages.length - 1) : null,
+      displayMessages.length,
     );
     const prevSnapshot = prevTailSnapshotRef.current;
     prevTailSnapshotRef.current = nextSnapshot;
@@ -726,7 +801,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         scrollToBottom();
       }
     });
-  }, [isLoadingHistory, messages, scheduleScroll, scrollToBottom]);
+  }, [displayMessages, isLoadingHistory, scheduleScroll, scrollToBottom]);
 
   useEffect(() => {
     if (!shouldVirtualize) return;
@@ -841,11 +916,11 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       }}
       className="flex-1 min-h-0 overflow-auto px-4 py-4 relative"
       style={{ overflowAnchor: "none" }}
-      onScroll={messages.length > 0 ? handleScroll : undefined}
+      onScroll={displayMessages.length > 0 ? handleScroll : undefined}
       role="log"
       aria-label="Chat messages"
     >
-      {messages.length === 0 ? (
+      {displayMessages.length === 0 ? (
         (isLoadingHistory || hasMoreHistory) ? (
           <div className="flex flex-col items-center justify-center h-full text-center pb-20">
             <div
@@ -896,7 +971,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               }}
             >
               {virtualizer.getVirtualItems().map((virtualRow) => {
-                const message = messages[virtualRow.index];
+                const message = displayMessages[virtualRow.index];
                 return (
                   <VirtualMessageRow
                     key={virtualRow.key}
@@ -926,7 +1001,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
             </div>
           ) : (
             <div className="w-full">
-              {messages.map((message) => (
+              {displayMessages.map((message) => (
                 <div
                   key={message.id ? String(message.id) : `${message.ts}-${String(message.by || "")}`}
                   data-message-row="true"

@@ -472,7 +472,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_actor_list_route_codex_pty_does_not_read_headless_state_file(self) -> None:
+    def test_actor_list_route_codex_pty_prefers_headless_state_file(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.daemon.runner_state_ops import headless_state_path
@@ -511,9 +511,9 @@ class TestWebActorRoutesCache(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             actor = resp.json()["result"]["actors"][0]
             self.assertTrue(bool(actor["running"]))
-            self.assertEqual(actor["runner_effective"], "pty")
-            self.assertEqual(actor["effective_working_state"], "waiting")
-            self.assertEqual(actor["effective_working_reason"], "pty_no_prompt_waiting")
+            self.assertEqual(actor["runner_effective"], "headless")
+            self.assertEqual(actor["effective_working_state"], "working")
+            self.assertEqual(actor["effective_working_reason"], "headless_working")
         finally:
             cleanup()
 

@@ -285,7 +285,7 @@ def handle_actor_update(
                     group_id=group.group_id,
                     actor_id=actor_id,
                 )
-                if runtime != "codex" and runner_effective != "headless":
+                if runner_effective != "headless":
                     if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
                         return _error("actor_update_failed", pty_support_error_message() or "PTY runner is not supported in this environment.")
                     try:

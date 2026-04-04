@@ -14,7 +14,6 @@ import { withAuthToken, fetchTerminalTail } from "../services/api";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
 import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
-import { getTerminalSignalKey } from "../stores/useTerminalSignalsStore";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -74,10 +73,8 @@ export function AgentTab({
   const observabilityLoaded = useObservabilityStore((s) => s.loaded);
   const loadObservability = useObservabilityStore((s) => s.load);
   const terminalScrollbackLines = useObservabilityStore((s) => s.terminalScrollbackLines);
-  const terminalSignals = useTerminalSignalsStore((s) => s.signals);
   const setTerminalSignal = useTerminalSignalsStore((s) => s.setSignal);
   const clearTerminalSignal = useTerminalSignalsStore((s) => s.clearSignal);
-  const terminalSignal = terminalSignals[getTerminalSignalKey(groupId, actor.id)];
 
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);

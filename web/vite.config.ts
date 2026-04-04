@@ -16,9 +16,9 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        entryFileNames: "assets/index.js",
-        chunkFileNames: "assets/chunk-[name].js",
-        assetFileNames: "assets/[name][extname]",
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]",
         // Split large deps into dedicated chunks to avoid oversized bundles.
         manualChunks(id) {
           if (!id.includes("node_modules")) return;

@@ -474,7 +474,7 @@ def handle_send(
             continue
         runtime = str(actor.get("runtime") or "codex").strip() or "codex"
         runner_kind = str(actor.get("runner") or "pty").strip()
-        if runtime == "codex" and effective_runner_kind(runner_kind) == "headless" and codex_app_supervisor.actor_running(group.group_id, actor_id):
+        if runtime == "codex" and codex_app_supervisor.actor_running(group.group_id, actor_id):
             codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -701,7 +701,7 @@ def handle_reply(
             continue
         runtime = str(actor.get("runtime") or "codex").strip() or "codex"
         runner_kind = str(actor.get("runner") or "pty").strip()
-        if runtime == "codex" and effective_runner_kind(runner_kind) == "headless" and codex_app_supervisor.actor_running(group.group_id, actor_id):
+        if runtime == "codex" and codex_app_supervisor.actor_running(group.group_id, actor_id):
             codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,

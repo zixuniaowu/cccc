@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from ....daemon.server import call_daemon, get_daemon_endpoint
+from ....daemon.codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ....daemon.actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
 from ....daemon.context.context_ops import _agent_state_to_dict
 from ....daemon.runner_state_ops import headless_state_path, pty_state_path
@@ -139,7 +140,7 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
         running = False
         idle_seconds = None
         headless_state = None
-        if runtime == "codex" and effective_runner == "headless":
+        if runtime.lower() == "codex":
             try:
                 state_doc = read_json(headless_state_path(gid, aid))
             except Exception:
@@ -156,13 +157,17 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                 and pid_is_alive(pid)
                 and str(state_doc.get("status") or "").strip().lower() != "stopped"
             )
-            actor["idle_seconds"] = None
-        elif effective_runner == "headless":
+            if not running:
+                state = codex_app_supervisor.get_state(group_id=gid, actor_id=aid)
+                headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else headless_state)
+                running = bool(state is not None and codex_app_supervisor.actor_running(gid, aid))
+            if running:
+                effective_runner = "headless"
+        if not running and effective_runner == "headless":
             state = headless_runner.SUPERVISOR.get_state(group_id=gid, actor_id=aid)
-            headless_state = state.model_dump() if state is not None else None
+            headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
             running = bool(state is not None and headless_runner.SUPERVISOR.actor_running(gid, aid))
-            actor["idle_seconds"] = None
-        else:
+        if not running and effective_runner != "headless":
             running = bool(pty_runner.SUPERVISOR.actor_running(gid, aid))
             if not running:
                 try:
@@ -181,7 +186,6 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                     and _pid_matches_actor_context(pid, group_id=gid, actor_id=aid)
                 )
             idle_seconds = pty_runner.SUPERVISOR.idle_seconds(group_id=gid, actor_id=aid) if running else None
-            actor["idle_seconds"] = idle_seconds
         pty_terminal_text = ""
         if effective_runner == "pty" and running:
             try:
@@ -193,12 +197,13 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
             except Exception:
                 pty_terminal_text = ""
         actor["running"] = running
+        actor["idle_seconds"] = idle_seconds
         actor["runner_effective"] = effective_runner
         actor.update(
             derive_effective_working_state(
                 running=running,
                 effective_runner=effective_runner,
-                runtime=str(actor.get("runtime") or ""),
+                runtime=runtime,
                 idle_seconds=idle_seconds,
                 pty_terminal_text=pty_terminal_text,
                 agent_state=agent_state_by_id.get(aid),
@@ -313,12 +318,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             },
         )
 
-    async def _profile_runner(
+    async def _profile_runtime_meta(
         profile_id: str,
         *,
         scope: str = "",
         owner_id: str = "",
-    ) -> Optional[str]:
+    ) -> Optional[Dict[str, str]]:
         pid = str(profile_id or "").strip()
         if not pid:
             return None
@@ -337,9 +342,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return None
         if not isinstance(profile, dict):
             return None
-        return str(profile.get("runner") or "pty").strip().lower() or "pty"
+        return {
+            "runner": str(profile.get("runner") or "pty").strip().lower() or "pty",
+            "runtime": str(profile.get("runtime") or "codex").strip().lower() or "codex",
+        }
 
-    async def _actor_runner(group_id: str, actor_id: str) -> Optional[str]:
+    async def _actor_runtime_meta(group_id: str, actor_id: str) -> Optional[Dict[str, str]]:
         gid = str(group_id or "").strip()
         aid = str(actor_id or "").strip()
         if not gid or not aid:
@@ -358,25 +366,47 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 continue
             if str(actor.get("id") or "").strip() != aid:
                 continue
-            return str(actor.get("runner_effective") or actor.get("runner") or "pty").strip().lower() or "pty"
+            return {
+                "runner": str(actor.get("runner_effective") or actor.get("runner") or "pty").strip().lower() or "pty",
+                "runtime": str(actor.get("runtime") or "codex").strip().lower() or "codex",
+            }
         return None
+
+    def _is_internal_headless_runtime(meta: Optional[Dict[str, str]]) -> bool:
+        if not isinstance(meta, dict):
+            return False
+        runtime = str(meta.get("runtime") or "").strip().lower()
+        runner = str(meta.get("runner") or "").strip().lower()
+        return runner == "headless" and runtime != "codex"
 
     async def _ensure_standard_web_runner(
         request: Request,
         *,
         source: str,
         runner: Optional[str] = None,
+        runtime: Optional[str] = None,
         profile_id: str = "",
         profile_scope: str = "",
         profile_owner: str = "",
+        group_id: str = "",
+        actor_id: str = "",
     ) -> None:
         if await _developer_mode_enabled():
             return
-        if _runner_is_headless(runner):
-            raise _headless_error(source=source)
-        profile_runner = await _profile_runner(profile_id, scope=profile_scope, owner_id=profile_owner)
-        if _runner_is_headless(profile_runner):
+        runtime_kind = str(runtime or "").strip().lower()
+        profile_meta = await _profile_runtime_meta(profile_id, scope=profile_scope, owner_id=profile_owner)
+        if _is_internal_headless_runtime(profile_meta):
             raise _headless_error(source=f"{source}:profile")
+        if _runner_is_headless(runner) and runtime_kind != "codex":
+            raise _headless_error(source=source)
+        if not runtime_kind and group_id and actor_id:
+            actor_meta = await _actor_runtime_meta(group_id, actor_id)
+            if not _is_internal_headless_runtime(actor_meta):
+                runtime_kind = str((actor_meta or {}).get("runtime") or "").strip().lower()
+            if _is_internal_headless_runtime(actor_meta):
+                raise _headless_error(source=f"{source}:actor")
+        if runtime_kind == "codex":
+            return
 
     def _profile_auth_args(request: Request) -> Dict[str, Any]:
         if not websocket_tokens_active():
@@ -404,7 +434,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         profiles = result.get("profiles") if isinstance(result, dict) else None
         if isinstance(profiles, list):
             result["profiles"] = [
-                item for item in profiles if isinstance(item, dict) and not _runner_is_headless(item.get("runner"))
+                item
+                for item in profiles
+                if isinstance(item, dict)
+                and not _is_internal_headless_runtime(
+                    {
+                        "runner": str(item.get("runner") or "pty"),
+                        "runtime": str(item.get("runtime") or "codex"),
+                    }
+                )
             ]
         return resp
 
@@ -447,9 +485,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 },
             )
         if not await _developer_mode_enabled():
-            if _runner_is_headless(profile_payload.get("runner")):
+            if _is_internal_headless_runtime(
+                {
+                    "runner": str(profile_payload.get("runner") or "pty"),
+                    "runtime": str(profile_payload.get("runtime") or "codex"),
+                }
+            ):
                 raise _headless_error(source="actor_profile_upsert")
-            profile_payload["runner"] = "pty"
+            if str(profile_payload.get("runtime") or "").strip().lower() != "codex":
+                profile_payload["runner"] = "pty"
         args: Dict[str, Any] = {
             "profile": profile_payload,
             "by": by,
@@ -465,16 +509,19 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         async def _fetch() -> Dict[str, Any]:
             if include_internal:
-                return await ctx.daemon(
-                    {
-                        "op": "actor_list",
-                        "args": {
-                            "group_id": gid,
-                            "include_unread": include_unread,
-                            "include_internal": True,
-                        },
-                    }
-                )
+                try:
+                    return await ctx.daemon(
+                        {
+                            "op": "actor_list",
+                            "args": {
+                                "group_id": gid,
+                                "include_unread": include_unread,
+                                "include_internal": include_internal,
+                            },
+                        }
+                    )
+                except Exception:
+                    return await run_in_threadpool(_read_actor_list_local, gid, include_unread=include_unread)
             return await run_in_threadpool(_read_actor_list_local, gid, include_unread=include_unread)
 
         cache_suffix = "unread_internal" if include_internal and include_unread else (
@@ -492,6 +539,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             request,
             source="actor_create",
             runner=str(req.runner or "pty"),
+            runtime=str(req.runtime or "codex"),
             profile_id=profile_id,
             profile_scope=str(req.profile_scope or ""),
             profile_owner=str(req.profile_owner or ""),
@@ -530,9 +578,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             request,
             source="actor_update",
             runner=str(req.runner or "") if req.runner is not None else None,
+            runtime=str(req.runtime or "") if req.runtime is not None else None,
             profile_id=str(req.profile_id or "").strip(),
             profile_scope=str(req.profile_scope or ""),
             profile_owner=str(req.profile_owner or ""),
+            group_id=group_id,
+            actor_id=actor_id,
         )
         patch: Dict[str, Any] = {}
         # Note: role is ignored - auto-determined by position
@@ -683,7 +734,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @group_router.post("/actors/{actor_id}/start")
     async def actor_start(request: Request, group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
         await invalidate_readonly_actor_list(group_id)
-        if not await _developer_mode_enabled() and _runner_is_headless(await _actor_runner(group_id, actor_id)):
+        if not await _developer_mode_enabled() and _is_internal_headless_runtime(await _actor_runtime_meta(group_id, actor_id)):
             raise _headless_error(source="actor_start")
         return await ctx.daemon(
             {
@@ -700,7 +751,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @group_router.post("/actors/{actor_id}/restart")
     async def actor_restart(request: Request, group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
         await invalidate_readonly_actor_list(group_id)
-        if not await _developer_mode_enabled() and _runner_is_headless(await _actor_runner(group_id, actor_id)):
+        if not await _developer_mode_enabled() and _is_internal_headless_runtime(await _actor_runtime_meta(group_id, actor_id)):
             raise _headless_error(source="actor_restart")
         return await ctx.daemon(
             {

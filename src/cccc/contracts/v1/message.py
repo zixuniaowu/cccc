@@ -68,6 +68,7 @@ class ChatMessageData(BaseModel):
 
     # Streaming
     stream_id: Optional[str] = None  # Links final message to its stream
+    pending_event_id: Optional[str] = None  # Stable turn-scoped id to reconcile transient UI bubbles
 
     # Metadata
     client_id: Optional[str] = None  # Client-generated idempotency key

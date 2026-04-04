@@ -92,7 +92,9 @@ export type ChatMessageData = {
   to?: string[];
   priority?: "normal" | "attention";
   reply_required?: boolean;
+  reply_to?: string;
   stream_id?: string;
+  stream_phase?: string;
   pending_event_id?: string;
   pending_placeholder?: boolean;
   client_id?: string;

@@ -6,13 +6,41 @@ type ReplyComposerState = {
   replyTarget: ReplyTarget;
 };
 
+export function isEphemeralMessageEventId(eventId: string): boolean {
+  const rawId = String(eventId || "").trim();
+  if (!rawId) return true;
+  return (
+    rawId.startsWith("stream:")
+    || rawId.startsWith("pending:")
+    || rawId.startsWith("local:")
+    || rawId.startsWith("local_")
+  );
+}
+
+export function getReplyEventId(event: LedgerEvent): string {
+  if (!event || event.kind !== "chat.message") return "";
+
+  const rawId = String(event.id || "").trim();
+  const data = event.data && typeof event.data === "object"
+    ? (event.data as ChatMessageData & { pending_event_id?: unknown })
+    : null;
+  const pendingEventId = data && typeof data.pending_event_id === "string"
+    ? String(data.pending_event_id || "").trim()
+    : "";
+
+  if (pendingEventId) return pendingEventId;
+  if (isEphemeralMessageEventId(rawId)) return "";
+  return rawId;
+}
+
 export function buildReplyComposerState(
   event: LedgerEvent,
   selectedGroupId: string,
   actors: Actor[],
   groupSettings: GroupSettings | null | undefined
 ): ReplyComposerState | null {
-  if (!event.id || event.kind !== "chat.message") return null;
+  const replyEventId = getReplyEventId(event);
+  if (!replyEventId) return null;
 
   const data = event.data && typeof event.data === "object" ? (event.data as ChatMessageData) : null;
   const text = data && typeof data.text === "string" ? String(data.text) : "";
@@ -35,7 +63,7 @@ export function buildReplyComposerState(
     destGroupId: String(selectedGroupId || "").trim(),
     toText: defaultTo.join(", "),
     replyTarget: {
-      eventId: String(event.id),
+      eventId: replyEventId,
       by: String(event.by || "unknown"),
       text: text.slice(0, 100) + (text.length > 100 ? "..." : ""),
     },

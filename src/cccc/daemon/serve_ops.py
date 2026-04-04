@@ -5,13 +5,16 @@ import logging
 import socket
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from .actor_runtime_cache import replace_group_runtime
 from ..kernel.context import ContextStorage
 from ..kernel.working_state import (
     derive_effective_working_state,
 )
+from ..util.conv import coerce_bool
 
 _LOG = logging.getLogger("cccc.daemon.serve_ops")
 _LOOP_ERROR_LAST_TS: Dict[str, float] = {}
@@ -284,9 +287,11 @@ def start_actor_activity_thread(
     event_broadcaster: Any,
     load_group: Callable[[str], Any],
     interval_seconds: float = 1.0,
+    startup_grace_seconds: float = 8.0,
 ) -> threading.Thread:
     """Periodically publish actor.activity SSE events with effective runtime status."""
     import uuid
+    started_at = time.monotonic()
 
     def _actor_activity_loop() -> None:
         interval = max(1.0, float(interval_seconds or 1.0))
@@ -317,6 +322,7 @@ def start_actor_activity_thread(
                             if isinstance(item, dict) and str(item.get("id") or "").strip()
                         } if isinstance(agent_rows, list) else {}
                         actors_data = []
+                        actors_snapshot: Dict[str, Dict[str, Any]] = {}
                         actor_list = group.doc.get("actors")
                         if not isinstance(actor_list, list):
                             continue
@@ -353,6 +359,7 @@ def start_actor_activity_thread(
                             payload = {
                                 "id": aid,
                                 "running": True,
+                                "runner_effective": effective_runner,
                                 "idle_seconds": round(float(idle), 1) if idle is not None else None,
                             }
                             payload.update(
@@ -367,6 +374,17 @@ def start_actor_activity_thread(
                                 )
                             )
                             actors_data.append(payload)
+                            actors_snapshot[aid] = payload
+                        replace_group_runtime(gid, actors_snapshot)
+                        any_running = bool(actors_snapshot)
+                        within_startup_grace = (time.monotonic() - started_at) < max(0.0, float(startup_grace_seconds or 0.0))
+                        should_reconcile_group_running = any_running or not within_startup_grace
+                        if should_reconcile_group_running and coerce_bool(group.doc.get("running"), default=False) != any_running:
+                            try:
+                                group.doc["running"] = any_running
+                                group.save()
+                            except Exception:
+                                pass
                         if actors_data:
                             event_broadcaster.publish({
                                 "id": uuid.uuid4().hex,

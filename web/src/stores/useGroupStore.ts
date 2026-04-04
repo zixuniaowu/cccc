@@ -91,7 +91,22 @@ interface GroupState {
     groupId?: string,
   ) => void;
   removeStreamingEvent: (streamId: string, groupId?: string) => void;
+  removeStreamingEventsByPrefix: (streamIdPrefix: string, groupId?: string) => void;
+  promoteStreamingEventsByPrefix: (
+    streamIdPrefix: string,
+    pendingEventId: string,
+    groupId?: string,
+  ) => void;
+  promoteStreamingEventToStream: (
+    actorId: string,
+    pendingEventId: string,
+    streamId: string,
+    groupId?: string,
+  ) => void;
+  completeStreamingEventsForActor: (actorId: string, groupId?: string) => void;
   clearStreamingEventsForActor: (actorId: string, groupId?: string) => void;
+  clearEmptyStreamingEventsForActor: (actorId: string, groupId?: string) => void;
+  clearTransientStreamingEventsForActor: (actorId: string, groupId?: string) => void;
   clearStreamingPlaceholder: (actorId: string, pendingEventId: string, groupId?: string) => void;
   prependEvents: (events: LedgerEvent[], groupId?: string) => void;
   setChatWindow: (w: GroupState["chatWindow"], groupId?: string) => void;
@@ -877,13 +892,25 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (!gid || !targetActorId || !activityId || !summary) return state;
 
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      let targetIndex = bucket.streamingEvents.findIndex((item) => {
+      const targetIndex = bucket.streamingEvents.findIndex((item) => {
         if (String(item.by || "").trim() !== targetActorId) return false;
-        const data = item.data as { pending_event_id?: unknown; stream_id?: unknown } | undefined;
+        const data = item.data as {
+          pending_event_id?: unknown;
+          pending_placeholder?: unknown;
+          stream_id?: unknown;
+          text?: unknown;
+        } | undefined;
         const itemStreamId = String(data?.stream_id || "").trim();
         const itemPendingEventId = String(data?.pending_event_id || "").trim();
         if (streamId && itemStreamId === streamId) return true;
-        return !!pendingEventId && itemPendingEventId === pendingEventId;
+        if (!pendingEventId || itemPendingEventId !== pendingEventId) return false;
+
+        const itemText = String(data?.text || "").trim();
+        const isPendingPlaceholder = Boolean(data?.pending_placeholder);
+        const isPendingProcessBubble =
+          itemStreamId.startsWith("pending:") &&
+          !itemText;
+        return isPendingPlaceholder || isPendingProcessBubble;
       });
 
       const nextStreamingEvents = bucket.streamingEvents.slice();
@@ -945,7 +972,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           ...data,
           stream_id: targetStreamId,
           pending_placeholder: streamId ? false : Boolean(data.pending_placeholder),
-          activities: previousActivities,
+          activities: nextActivities.slice(-5),
         },
       };
       return buildChatBucketPatch(state, gid, {
@@ -983,6 +1010,175 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
       }) ?? state;
     }),
+  removeStreamingEventsByPrefix: (streamIdPrefix, groupId) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      const targetPrefix = String(streamIdPrefix || "").trim();
+      if (!gid || !targetPrefix) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const removedStreamIds = bucket.streamingEvents
+        .map((item) => String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim())
+        .filter((streamId) => streamId.startsWith(targetPrefix));
+      if (removedStreamIds.length <= 0) return state;
+      const removedSet = new Set(removedStreamIds);
+      const nextStreamingEvents = bucket.streamingEvents.filter((item) => {
+        const itemStreamId = String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim();
+        return !removedSet.has(itemStreamId);
+      });
+      const nextStreamingTextByStreamId = { ...bucket.streamingTextByStreamId };
+      const nextStreamingActivitiesByStreamId = { ...bucket.streamingActivitiesByStreamId };
+      for (const streamId of removedStreamIds) {
+        delete nextStreamingTextByStreamId[streamId];
+        delete nextStreamingActivitiesByStreamId[streamId];
+      }
+      return buildChatBucketPatch(state, gid, {
+        streamingEvents: nextStreamingEvents,
+        streamingTextByStreamId: nextStreamingTextByStreamId,
+        streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+      }) ?? state;
+    }),
+  promoteStreamingEventsByPrefix: (streamIdPrefix, pendingEventId, groupId) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      const targetPrefix = String(streamIdPrefix || "").trim();
+      const targetPendingEventId = String(pendingEventId || "").trim();
+      if (!gid || !targetPrefix || !targetPendingEventId) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+
+      let changed = false;
+      const nextStreamingEvents = bucket.streamingEvents.map((item) => {
+        const data = item.data && typeof item.data === "object"
+          ? item.data as { stream_id?: unknown; pending_event_id?: unknown; pending_placeholder?: unknown }
+          : {};
+        const streamId = String(data.stream_id || "").trim();
+        if (!streamId.startsWith(targetPrefix)) return item;
+        changed = true;
+        const actorId = String(item.by || "").trim();
+        const nextStreamId = `pending:${targetPendingEventId}:${actorId}`;
+        return {
+          ...item,
+          data: {
+            ...data,
+            stream_id: nextStreamId,
+            pending_event_id: targetPendingEventId,
+            pending_placeholder: true,
+          },
+        };
+      });
+      if (!changed) return state;
+
+      const nextStreamingTextByStreamId = { ...bucket.streamingTextByStreamId };
+      const nextStreamingActivitiesByStreamId = { ...bucket.streamingActivitiesByStreamId };
+      for (const streamId of Object.keys(bucket.streamingTextByStreamId || {})) {
+        if (!streamId.startsWith(targetPrefix)) continue;
+        const actorId = streamId.slice(targetPrefix.length).trim();
+        if (!actorId) continue;
+        const nextStreamId = `pending:${targetPendingEventId}:${actorId}`;
+        nextStreamingTextByStreamId[nextStreamId] = nextStreamingTextByStreamId[streamId];
+        delete nextStreamingTextByStreamId[streamId];
+      }
+      for (const streamId of Object.keys(bucket.streamingActivitiesByStreamId || {})) {
+        if (!streamId.startsWith(targetPrefix)) continue;
+        const actorId = streamId.slice(targetPrefix.length).trim();
+        if (!actorId) continue;
+        const nextStreamId = `pending:${targetPendingEventId}:${actorId}`;
+        nextStreamingActivitiesByStreamId[nextStreamId] = nextStreamingActivitiesByStreamId[streamId];
+        delete nextStreamingActivitiesByStreamId[streamId];
+      }
+
+      return buildChatBucketPatch(state, gid, {
+        streamingEvents: nextStreamingEvents,
+        streamingTextByStreamId: nextStreamingTextByStreamId,
+        streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+      }) ?? state;
+    }),
+  promoteStreamingEventToStream: (actorId, pendingEventId, streamId, groupId) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      const targetActorId = String(actorId || "").trim();
+      const targetPendingEventId = String(pendingEventId || "").trim();
+      const targetStreamId = String(streamId || "").trim();
+      if (!gid || !targetActorId || !targetPendingEventId || !targetStreamId) return state;
+
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const targetIndex = bucket.streamingEvents.findIndex((item) => {
+        if (String(item.by || "").trim() !== targetActorId) return false;
+        const data = item.data && typeof item.data === "object"
+          ? item.data as { pending_event_id?: unknown; stream_id?: unknown }
+          : {};
+        if (String(data.stream_id || "").trim() === targetStreamId) return true;
+        return String(data.pending_event_id || "").trim() === targetPendingEventId;
+      });
+      if (targetIndex < 0) return state;
+
+      const target = bucket.streamingEvents[targetIndex];
+      const data = target.data && typeof target.data === "object"
+        ? target.data as { stream_id?: unknown; pending_placeholder?: unknown }
+        : {};
+      const previousStreamId = String(data.stream_id || "").trim();
+      if (previousStreamId === targetStreamId && !data.pending_placeholder) return state;
+
+      const nextStreamingEvents = bucket.streamingEvents.slice();
+      nextStreamingEvents[targetIndex] = {
+        ...target,
+        data: {
+          ...data,
+          stream_id: targetStreamId,
+          pending_placeholder: false,
+        },
+      };
+
+      const nextStreamingTextByStreamId = { ...bucket.streamingTextByStreamId };
+      const nextStreamingActivitiesByStreamId = { ...bucket.streamingActivitiesByStreamId };
+      if (
+        previousStreamId &&
+        previousStreamId !== targetStreamId &&
+        Object.prototype.hasOwnProperty.call(nextStreamingTextByStreamId, previousStreamId)
+      ) {
+        nextStreamingTextByStreamId[targetStreamId] = nextStreamingTextByStreamId[previousStreamId];
+        delete nextStreamingTextByStreamId[previousStreamId];
+      }
+      if (
+        previousStreamId &&
+        previousStreamId !== targetStreamId &&
+        Object.prototype.hasOwnProperty.call(nextStreamingActivitiesByStreamId, previousStreamId)
+      ) {
+        nextStreamingActivitiesByStreamId[targetStreamId] = nextStreamingActivitiesByStreamId[previousStreamId];
+        delete nextStreamingActivitiesByStreamId[previousStreamId];
+      }
+
+      return buildChatBucketPatch(state, gid, {
+        streamingEvents: nextStreamingEvents,
+        streamingTextByStreamId: nextStreamingTextByStreamId,
+        streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+      }) ?? state;
+    }),
+  completeStreamingEventsForActor: (actorId, groupId) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      const targetActorId = String(actorId || "").trim();
+      if (!gid || !targetActorId) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      let changed = false;
+      const nextStreamingEvents = bucket.streamingEvents.map((item) => {
+        if (String(item.by || "").trim() !== targetActorId) return item;
+        if (!item._streaming) return item;
+        const data = item.data && typeof item.data === "object"
+          ? item.data as { pending_placeholder?: unknown }
+          : {};
+        changed = true;
+        return {
+          ...item,
+          _streaming: false,
+          data: {
+            ...data,
+            pending_placeholder: false,
+          },
+        };
+      });
+      if (!changed) return state;
+      return buildChatBucketPatch(state, gid, { streamingEvents: nextStreamingEvents }) ?? state;
+    }),
   clearStreamingEventsForActor: (actorId, groupId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
@@ -1009,6 +1205,85 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         }
       }
       if (nextStreamingEvents.length === bucket.streamingEvents.length && !textChanged && !activitiesChanged) return state;
+      return buildChatBucketPatch(state, gid, {
+        streamingEvents: nextStreamingEvents,
+        streamingTextByStreamId: nextStreamingTextByStreamId,
+        streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+      }) ?? state;
+    }),
+  clearEmptyStreamingEventsForActor: (actorId, groupId) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      const targetActorId = String(actorId || "").trim();
+      if (!gid || !targetActorId) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const removedStreamIds = bucket.streamingEvents
+        .filter((item) => {
+          if (String(item.by || "").trim() !== targetActorId) return false;
+          const data = item.data && typeof item.data === "object"
+            ? item.data as { text?: unknown; stream_id?: unknown; activities?: unknown }
+            : {};
+          const streamId = String(data.stream_id || "").trim();
+          const eventText = String(data.text || "").trim();
+          const cachedText = streamId ? String(bucket.streamingTextByStreamId[streamId] || "").trim() : "";
+          if (eventText || cachedText) return false;
+          const activities = Array.isArray(data.activities) ? data.activities : [];
+          return activities.length === 0 || activities.every((item) => {
+            if (!item || typeof item !== "object") return true;
+            const kind = String((item as { kind?: unknown }).kind || "").trim().toLowerCase();
+            const summary = String((item as { summary?: unknown }).summary || "").trim().toLowerCase();
+            const status = String((item as { status?: unknown }).status || "").trim().toLowerCase();
+            return kind === "queued" && summary === "queued" && (!status || status === "started" || status === "completed");
+          });
+        })
+        .map((item) => String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim())
+        .filter(Boolean);
+      if (removedStreamIds.length === 0) return state;
+      const removedSet = new Set(removedStreamIds);
+      const nextStreamingEvents = bucket.streamingEvents.filter((item) => {
+        const itemStreamId = String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim();
+        return !removedSet.has(itemStreamId);
+      });
+      const nextStreamingTextByStreamId = { ...bucket.streamingTextByStreamId };
+      const nextStreamingActivitiesByStreamId = { ...bucket.streamingActivitiesByStreamId };
+      for (const streamId of removedStreamIds) {
+        delete nextStreamingTextByStreamId[streamId];
+        delete nextStreamingActivitiesByStreamId[streamId];
+      }
+      return buildChatBucketPatch(state, gid, {
+        streamingEvents: nextStreamingEvents,
+        streamingTextByStreamId: nextStreamingTextByStreamId,
+        streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+      }) ?? state;
+    }),
+  clearTransientStreamingEventsForActor: (actorId, groupId) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      const targetActorId = String(actorId || "").trim();
+      if (!gid || !targetActorId) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const removedStreamIds = bucket.streamingEvents
+        .filter((item) => {
+          if (String(item.by || "").trim() !== targetActorId) return false;
+          const data = item.data && typeof item.data === "object"
+            ? item.data as { transient_stream?: unknown; stream_id?: unknown }
+            : {};
+          return Boolean(data.transient_stream);
+        })
+        .map((item) => String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim())
+        .filter(Boolean);
+      if (removedStreamIds.length === 0) return state;
+      const removedSet = new Set(removedStreamIds);
+      const nextStreamingEvents = bucket.streamingEvents.filter((item) => {
+        const itemStreamId = String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim();
+        return !removedSet.has(itemStreamId);
+      });
+      const nextStreamingTextByStreamId = { ...bucket.streamingTextByStreamId };
+      const nextStreamingActivitiesByStreamId = { ...bucket.streamingActivitiesByStreamId };
+      for (const streamId of removedStreamIds) {
+        delete nextStreamingTextByStreamId[streamId];
+        delete nextStreamingActivitiesByStreamId[streamId];
+      }
       return buildChatBucketPatch(state, gid, {
         streamingEvents: nextStreamingEvents,
         streamingTextByStreamId: nextStreamingTextByStreamId,

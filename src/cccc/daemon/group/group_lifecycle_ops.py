@@ -191,7 +191,7 @@ def handle_group_start(
                 group_id=group.group_id,
                 actor_id=aid,
             )
-            if runtime != "codex" and runner_effective != "headless":
+            if runner_effective != "headless":
                 try:
                     mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
                 except Exception as e:

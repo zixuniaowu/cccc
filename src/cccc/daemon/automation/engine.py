@@ -131,6 +131,47 @@ def _save_state(group: Group, doc: Dict[str, Any]) -> None:
     atomic_write_json(_state_path(group), doc)
 
 
+def _read_help_ledger_events(group: Group, start_pos: int) -> Tuple[int, List[Dict[str, Any]]]:
+    ledger_path = group.ledger_path
+    if not ledger_path.exists():
+        return 0, []
+    try:
+        ledger_size = int(ledger_path.stat().st_size)
+    except Exception:
+        ledger_size = 0
+    pos = max(0, int(start_pos or 0))
+    if pos > ledger_size:
+        return ledger_size, []
+
+    events: List[Dict[str, Any]] = []
+    next_pos = pos
+    try:
+        with ledger_path.open("rb") as handle:
+            handle.seek(pos)
+            while True:
+                start = handle.tell()
+                line = handle.readline()
+                if not line:
+                    break
+                if not line.endswith(b"\n"):
+                    # Partial write; retry next tick without advancing the cursor.
+                    handle.seek(start)
+                    break
+                next_pos = int(handle.tell())
+                s = line.decode("utf-8", errors="replace").strip()
+                if not s:
+                    continue
+                try:
+                    ev = json.loads(s)
+                except Exception:
+                    continue
+                if isinstance(ev, dict):
+                    events.append(ev)
+    except Exception:
+        return pos, []
+    return next_pos, events
+
+
 def _actor_state(doc: Dict[str, Any], actor_id: str) -> Dict[str, Any]:
     actors = doc.get("actors")
     if not isinstance(actors, dict):
@@ -1812,15 +1853,11 @@ class AutomationManager:
         except Exception:
             agents_by_id = {}
 
+        pos_key = "help_ledger_pos"
+        read_start: Optional[int] = None
         with self._lock:
             state = _load_state(group)
             dirty = False
-
-            # Increment per-actor work counters by ingesting newly appended ledger events.
-            #
-            # We intentionally do not backfill on first run: start counting from "now" to
-            # avoid catch-up bursts from historical ledgers.
-            pos_key = "help_ledger_pos"
             try:
                 ledger_size = int(group.ledger_path.stat().st_size)
             except Exception:
@@ -1831,56 +1868,48 @@ class AutomationManager:
             if pos is None or pos < 0 or pos > ledger_size:
                 state[pos_key] = ledger_size
                 dirty = True
-                pos = ledger_size
             else:
-                events: list[dict[str, Any]] = []
-                try:
-                    with group.ledger_path.open("rb") as f:
-                        f.seek(pos)
-                        while True:
-                            start = f.tell()
-                            line = f.readline()
-                            if not line:
-                                break
-                            if not line.endswith(b"\n"):
-                                # Partial write; retry next tick.
-                                f.seek(start)
-                                break
-                            pos = f.tell()
-                            s = line.decode("utf-8", errors="replace").strip()
-                            if not s:
-                                continue
+                read_start = pos
+
+            if dirty:
+                _save_state(group, state)
+
+        events: List[Dict[str, Any]] = []
+        next_pos: Optional[int] = None
+        if read_start is not None:
+            next_pos, events = _read_help_ledger_events(group, read_start)
+
+        with self._lock:
+            state = _load_state(group)
+            dirty = False
+
+            if read_start is not None:
+                current_raw_pos = state.get(pos_key)
+                current_pos = int(current_raw_pos) if isinstance(current_raw_pos, int) else None
+                if current_pos == read_start:
+                    if next_pos is None:
+                        next_pos = read_start
+                    if current_pos != next_pos:
+                        state[pos_key] = next_pos
+                        dirty = True
+
+                    for ev in events:
+                        kind = str(ev.get("kind") or "")
+                        if kind not in ("chat.message", "system.notify"):
+                            continue
+                        for aid in running_ids:
                             try:
-                                ev = json.loads(s)
+                                if not is_message_for_actor(group, actor_id=aid, event=ev):
+                                    continue
                             except Exception:
                                 continue
-                            if isinstance(ev, dict):
-                                events.append(ev)
-                except Exception:
-                    events = []
-
-                next_pos = int(pos or 0)
-                if int(state.get(pos_key) or 0) != next_pos:
-                    state[pos_key] = next_pos
-                    dirty = True
-
-                for ev in events:
-                    kind = str(ev.get("kind") or "")
-                    if kind not in ("chat.message", "system.notify"):
-                        continue
-                    for aid in running_ids:
-                        try:
-                            if not is_message_for_actor(group, actor_id=aid, event=ev):
-                                continue
-                        except Exception:
-                            continue
-                        st = _actor_state(state, aid)
-                        try:
-                            cur = int(st.get("help_msg_count_since") or 0)
-                        except Exception:
-                            cur = 0
-                        st["help_msg_count_since"] = cur + 1
-                        dirty = True
+                            st = _actor_state(state, aid)
+                            try:
+                                cur = int(st.get("help_msg_count_since") or 0)
+                            except Exception:
+                                cur = 0
+                            st["help_msg_count_since"] = cur + 1
+                            dirty = True
 
             # Decide which actors should be nudged.
             for aid, runner_kind, session_key in running:

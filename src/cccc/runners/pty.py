@@ -408,8 +408,8 @@ class PtySession:
 
             self._maybe_reply_to_terminal_queries(chunk)
             self._update_input_modes(chunk)
+            self._append_backlog(chunk)
             with self._lock:
-                self._append_backlog(chunk)
                 clients = list(self._clients.items())
 
             for fileno, client in clients:

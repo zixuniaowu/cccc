@@ -140,7 +140,7 @@ def autostart_running_groups(
             if runtime_error:
                 logger.warning("Autostart skipped for %s/%s: %s", group_id, actor_id, runtime_error)
                 continue
-            if runtime != "codex" and effective_runner != "headless":
+            if effective_runner != "headless":
                 try:
                     ok_mcp = bool(ensure_mcp_installed(runtime, cwd))
                 except Exception:

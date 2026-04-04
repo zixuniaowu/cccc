@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef, StreamingActivity } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
+import { getReplyEventId } from "../utils/chatReply";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
@@ -15,6 +16,7 @@ const LazyMarkdownRenderer = lazy(() =>
 );
 
 const TYPING_DOT_STYLE_ID = "cccc-message-bubble-typing-dot-style";
+const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 
 function ensureTypingDotStyle(): void {
     if (typeof document === "undefined") return;
@@ -68,6 +70,41 @@ function formatActivityKind(kind: string): string {
     }
 }
 
+function isQueuedOnlyStreamingPlaceholder({
+    isStreaming,
+    messageText,
+    liveStreamingText,
+    blobAttachmentCount,
+    presentationRefCount,
+    activities,
+}: {
+    isStreaming: boolean;
+    messageText: string;
+    liveStreamingText: string;
+    blobAttachmentCount: number;
+    presentationRefCount: number;
+    activities: StreamingActivity[];
+}): boolean {
+    if (!isStreaming) return false;
+    if (String(messageText || "").trim()) return false;
+    if (String(liveStreamingText || "").trim()) return false;
+    if (blobAttachmentCount > 0 || presentationRefCount > 0) return false;
+    if (activities.length !== 1) return false;
+    const [activity] = activities;
+    return activity.kind === "queued" && activity.summary === "queued";
+}
+
+function getStreamingPlaceholderText({
+    isQueuedOnlyPlaceholder,
+    placeholderLabel,
+}: {
+    isQueuedOnlyPlaceholder: boolean;
+    placeholderLabel: string;
+}): string {
+    if (isQueuedOnlyPlaceholder) return "queued";
+    return String(placeholderLabel || "").trim() || "working";
+}
+
 function PlainMessageText({
     text,
     className,
@@ -92,11 +129,13 @@ const StreamingMessageText = memo(function StreamingMessageText({
     streamId,
     fallbackText,
     showPlaceholder,
+    placeholderLabel,
 }: {
     groupId: string;
     streamId: string;
     fallbackText: string;
     showPlaceholder: boolean;
+    placeholderLabel?: string;
 }) {
     const streamingText = useGroupStore(useCallback((state) => {
         if (!streamId) return "";
@@ -104,29 +143,37 @@ const StreamingMessageText = memo(function StreamingMessageText({
         return String(bucket?.streamingTextByStreamId?.[streamId] || "");
     }, [groupId, streamId]));
     const text = streamingText || fallbackText;
-
-    if (!String(text || "").trim() && showPlaceholder) {
-        return (
-            <div className="inline-flex items-center gap-1 py-1.5">
-                {[0, 1, 2].map((index) => (
-                    <span
-                        key={index}
-                        className="h-2 w-2 rounded-full bg-current"
-                        style={{
-                            animation: "ccccMessageTypingDot 1.1s ease-in-out infinite",
-                            animationDelay: `${index * 140}ms`,
-                        }}
-                    />
-                ))}
-            </div>
-        );
-    }
+    const hasText = !!String(text || "").trim();
+    const placeholderText = String(placeholderLabel || "").trim() || "Working...";
 
     return (
-        <PlainMessageText
-            text={text}
-            className="max-w-full"
-        />
+        <div className="w-full">
+            <div
+                className={classNames(
+                    "flex min-h-[1.75rem] items-center gap-2 transition-opacity duration-150",
+                    hasText ? "opacity-100" : "opacity-85 text-[var(--color-text-secondary)]"
+                )}
+            >
+                {!hasText && showPlaceholder ? (
+                    <span className="inline-flex items-center gap-1 text-[var(--color-text-tertiary)]">
+                        {[0, 1, 2].map((index) => (
+                            <span
+                                key={index}
+                                className="h-1.5 w-1.5 rounded-full bg-current"
+                                style={{
+                                    animation: "ccccMessageTypingDot 1.1s ease-in-out infinite",
+                                    animationDelay: `${index * 140}ms`,
+                                }}
+                            />
+                        ))}
+                    </span>
+                ) : null}
+                <PlainMessageText
+                    text={hasText ? text : placeholderText}
+                    className="max-w-full"
+                />
+            </div>
+        </div>
     );
 });
 
@@ -139,12 +186,14 @@ const StreamingActivityList = memo(function StreamingActivityList({
     streamId: string;
     fallbackActivities: StreamingActivity[];
 }) {
-    const activities = useGroupStore(useCallback((state) => {
-        if (!streamId) return fallbackActivities;
+    const streamedActivities = useGroupStore(useCallback((state) => {
+        if (!streamId) return undefined;
         const bucket = state.chatByGroup[String(groupId || "").trim()];
-        const streamed = bucket?.streamingActivitiesByStreamId?.[streamId];
-        return Array.isArray(streamed) && streamed.length > 0 ? streamed : fallbackActivities;
-    }, [fallbackActivities, groupId, streamId]));
+        return bucket?.streamingActivitiesByStreamId?.[streamId];
+    }, [groupId, streamId]));
+    const activities = Array.isArray(streamedActivities) && streamedActivities.length > 0
+        ? streamedActivities
+        : fallbackActivities;
 
     if (activities.length <= 0) return null;
 
@@ -160,6 +209,112 @@ const StreamingActivityList = memo(function StreamingActivityList({
                     </span>
                 </div>
             ))}
+        </div>
+    );
+});
+
+const StreamingContent = memo(function StreamingContent({
+    groupId,
+    streamId,
+    fallbackText,
+    fallbackActivities,
+    isQueuedOnlyFallbackPlaceholder,
+    placeholderLabel,
+}: {
+    groupId: string;
+    streamId: string;
+    fallbackText: string;
+    fallbackActivities: StreamingActivity[];
+    isQueuedOnlyFallbackPlaceholder: boolean;
+    placeholderLabel: string;
+}) {
+    const liveStreamingText = useGroupStore(useCallback((state) => {
+        if (!streamId) return "";
+        const bucket = state.chatByGroup[String(groupId || "").trim()];
+        return String(bucket?.streamingTextByStreamId?.[streamId] || "");
+    }, [groupId, streamId]));
+    const liveStreamingActivities = useGroupStore(useCallback((state) => {
+        if (!streamId) return EMPTY_STREAMING_ACTIVITIES;
+        const bucket = state.chatByGroup[String(groupId || "").trim()];
+        const streamed = bucket?.streamingActivitiesByStreamId?.[streamId];
+        return Array.isArray(streamed) ? streamed : EMPTY_STREAMING_ACTIVITIES;
+    }, [groupId, streamId]));
+
+    const effectiveStreamingActivities = liveStreamingActivities.length > 0 ? liveStreamingActivities : fallbackActivities;
+    const hasText = !!String(liveStreamingText || fallbackText || "").trim();
+    const isQueuedOnlyPlaceholder =
+        !hasText &&
+        effectiveStreamingActivities.length === 1 &&
+        effectiveStreamingActivities[0]?.kind === "queued" &&
+        effectiveStreamingActivities[0]?.summary === "queued"
+            ? true
+            : isQueuedOnlyFallbackPlaceholder;
+    const streamingTextMinHeightClass = isQueuedOnlyPlaceholder
+        ? "min-h-[44px]"
+        : hasText
+            ? "min-h-[44px]"
+            : "min-h-[52px]";
+
+    return (
+        <>
+            <div className="mb-2 min-h-[52px]">
+                {effectiveStreamingActivities.length > 0 ? (
+                    <StreamingActivityList
+                        groupId={groupId}
+                        streamId={streamId}
+                        fallbackActivities={effectiveStreamingActivities}
+                    />
+                ) : (
+                    <div className="flex min-h-[52px] items-start">
+                        <StreamingStatusPlaceholder
+                            label={getStreamingPlaceholderText({
+                                isQueuedOnlyPlaceholder,
+                                placeholderLabel,
+                            })}
+                            queuedOnly={isQueuedOnlyPlaceholder}
+                        />
+                    </div>
+                )}
+            </div>
+
+            <div className={classNames("flex items-start", streamingTextMinHeightClass)}>
+                <StreamingMessageText
+                    groupId={groupId}
+                    streamId={streamId}
+                    fallbackText={fallbackText}
+                    showPlaceholder={!hasText}
+                    placeholderLabel={placeholderLabel}
+                />
+            </div>
+        </>
+    );
+});
+
+const StreamingStatusPlaceholder = memo(function StreamingStatusPlaceholder({
+    label,
+    queuedOnly,
+}: {
+    label: string;
+    queuedOnly?: boolean;
+}) {
+    return (
+        <div className="inline-flex items-center gap-2 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]/75 px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
+                {queuedOnly ? "queue" : "stream"}
+            </span>
+            <span>{label}</span>
+            <span className="ml-1 inline-flex items-center gap-1 text-[var(--color-text-tertiary)]">
+                {[0, 1, 2].map((index) => (
+                    <span
+                        key={index}
+                        className="h-1.5 w-1.5 rounded-full bg-current"
+                        style={{
+                            animation: "ccccMessageTypingDot 1.05s ease-in-out infinite",
+                            animationDelay: `${index * 120}ms`,
+                        }}
+                    />
+                ))}
+            </span>
         </div>
     );
 });
@@ -269,15 +424,17 @@ export const MessageBubble = memo(function MessageBubble({
     const streamId = ev.data && typeof ev.data === "object"
         ? String((ev.data as { stream_id?: unknown }).stream_id || "").trim()
         : "";
+    const canReply = !!getReplyEventId(ev);
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
 
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
     const [copiedMessageText, setCopiedMessageText] = useState(false);
+    const floatingMiddleware = useMemo(() => [offset(8), flip(), shift({ padding: 8 })], []);
     const { refs, floatingStyles, context } = useFloating({
         open: isAgentStateOpen,
         onOpenChange: setIsAgentStateOpen,
         placement: "bottom-start",
-        middleware: [offset(8), flip(), shift({ padding: 8 })],
+        middleware: floatingMiddleware,
         whileElementsMounted: autoUpdate,
         strategy: "fixed",
     });
@@ -354,7 +511,27 @@ export const MessageBubble = memo(function MessageBubble({
             .filter((item) => item.id && item.summary)
             .slice(-5);
     }, [msgData]);
-    const showStreamingPlaceholder = isStreaming && !String(messageText || "").trim() && blobAttachments.length === 0 && presentationRefs.length === 0;
+    const isQueuedOnlyPlaceholder = useMemo(() => {
+        return isQueuedOnlyStreamingPlaceholder({
+            isStreaming,
+            messageText,
+            liveStreamingText: "",
+            blobAttachmentCount: blobAttachments.length,
+            presentationRefCount: presentationRefs.length,
+            activities: streamingActivities,
+        });
+    }, [blobAttachments.length, isStreaming, messageText, presentationRefs.length, streamingActivities]);
+    const streamPhase = String((msgData as { stream_phase?: unknown } | undefined)?.stream_phase || "").trim().toLowerCase();
+    const streamingPlaceholderLabel = useMemo(() => {
+        if (!isStreaming) return "";
+        if (streamPhase === "commentary") {
+            return t("streamCommentaryPending");
+        }
+        if (streamPhase === "final_answer") {
+            return t("streamFinalAnswerPending");
+        }
+        return t("streamWorkingPending");
+    }, [isStreaming, streamPhase, t]);
     const stableMessageAttachmentKey = useMemo(() => {
         const clientId = typeof msgData?.client_id === "string" ? String(msgData.client_id || "").trim() : "";
         if (clientId) return `client:${clientId}`;
@@ -681,7 +858,9 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 <div
                     className={classNames(
-                        "inline-flex max-w-full flex-col px-4 py-2.5 text-sm leading-relaxed",
+                        "inline-flex max-w-full flex-col px-4 py-2.5 text-sm leading-relaxed transition-[opacity,transform,box-shadow] duration-200 ease-out",
+                        isQueuedOnlyPlaceholder ? "min-h-0 px-3 py-2" : "",
+                        isStreaming ? "opacity-95 translate-y-0.5" : "opacity-100 translate-y-0",
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none shadow-sm"
                             : "glass-bubble rounded-2xl rounded-tl-none text-[var(--color-text-primary)]"
@@ -761,13 +940,7 @@ export const MessageBubble = memo(function MessageBubble({
                         </div>
                     ) : null}
 
-                    {isStreaming ? (
-                        <StreamingActivityList
-                            groupId={groupId}
-                            streamId={streamId}
-                            fallbackActivities={streamingActivities}
-                        />
-                    ) : streamingActivities.length > 0 ? (
+                    {isStreaming ? null : streamingActivities.length > 0 ? (
                         <StreamingActivityList
                             groupId={groupId}
                             streamId=""
@@ -777,11 +950,13 @@ export const MessageBubble = memo(function MessageBubble({
 
                     {/* Text Content */}
                     {isStreaming ? (
-                        <StreamingMessageText
+                        <StreamingContent
                             groupId={groupId}
                             streamId={streamId}
                             fallbackText={messageText}
-                            showPlaceholder={showStreamingPlaceholder}
+                            fallbackActivities={streamingActivities}
+                            isQueuedOnlyFallbackPlaceholder={isQueuedOnlyPlaceholder}
+                            placeholderLabel={streamingPlaceholderLabel}
                         />
                     ) : shouldRenderMarkdown ? (
                         <Suspense
@@ -1022,16 +1197,18 @@ export const MessageBubble = memo(function MessageBubble({
                                 {t('relay')}
                             </button>
                         ) : null}
-                        <button
-                            type="button"
-                            className={classNames(
-                                "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
-                                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                            )}
-                            onClick={onReply}
-                        >
-                            {t('reply')}
-                        </button>
+                        {canReply ? (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                                )}
+                                onClick={onReply}
+                            >
+                                {t('reply')}
+                            </button>
+                        ) : null}
                       </div>
                     )}
                 </div>

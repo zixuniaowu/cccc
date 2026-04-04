@@ -1,5 +1,6 @@
 import { useComposerStore, useGroupStore, useUIStore } from "../../stores";
 import type { ChatMessageData, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
+import { getReplyEventId } from "../../utils/chatReply";
 import type { PetReminder } from "./types";
 import { getPetReminderDraftText } from "./reminderText";
 import { buildTaskProposalMessage } from "./taskProposal";
@@ -30,9 +31,12 @@ function findReplyTarget(groupId: string, replyTo: string): ReplyTarget {
     };
   }
 
+  const replyEventId = getReplyEventId(match);
+  if (!replyEventId) return null;
+
   const data = (match.data && typeof match.data === "object" ? match.data : {}) as ChatMessageData;
   return {
-    eventId,
+    eventId: replyEventId,
     by: String(match.by || "unknown"),
     text: truncateReplyText(String(data.text || "")),
   };

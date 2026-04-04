@@ -37,14 +37,14 @@ def auto_wake_recipients(
 
     for actor_id in disabled_recipient_actor_ids(group, to):
         aid = str(actor_id or "").strip()
-        if not aid or aid in seen_candidates:
+        if not aid or aid == str(by or "").strip() or aid in seen_candidates:
             continue
         seen_candidates.add(aid)
         candidate_ids.append(aid)
 
     for actor_id in enabled_recipient_actor_ids(group, to):
         aid = str(actor_id or "").strip()
-        if not aid or aid in seen_candidates:
+        if not aid or aid == str(by or "").strip() or aid in seen_candidates:
             continue
         if is_actor_running(group, aid):
             continue

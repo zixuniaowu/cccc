@@ -173,12 +173,18 @@ def derive_effective_working_state(
         }
 
     idle = _safe_float(idle_seconds)
-    has_visible_output = _has_visible_terminal_output(pty_terminal_text)
     if idle is not None:
-        if has_visible_output and idle < DEFAULT_PTY_WORKING_IDLE_SECONDS:
+        if idle < DEFAULT_PTY_WORKING_IDLE_SECONDS:
+            if _has_visible_terminal_output(pty_terminal_text):
+                return {
+                    "effective_working_state": "working",
+                    "effective_working_reason": "pty_no_prompt_recent_output",
+                    "effective_working_updated_at": updated_at or None,
+                    "effective_active_task_id": active_task_id or None,
+                }
             return {
-                "effective_working_state": "working",
-                "effective_working_reason": "pty_no_prompt_recent_output",
+                "effective_working_state": "waiting",
+                "effective_working_reason": "pty_no_prompt_waiting",
                 "effective_working_updated_at": updated_at or None,
                 "effective_active_task_id": active_task_id or None,
             }

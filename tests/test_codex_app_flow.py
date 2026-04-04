@@ -77,7 +77,7 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(len(actors), 1)
             actor = actors[0]
             self.assertEqual(actor.get("runner"), "headless")
-            self.assertIsNone(actor.get("runner_effective"))
+            self.assertEqual(actor.get("runner_effective"), "headless")
             self.assertTrue(bool(actor.get("running")))
             self.assertEqual(actor.get("effective_working_state"), "working")
             self.assertEqual(actor.get("effective_working_reason"), "headless_working")
@@ -140,7 +140,7 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_send_routes_running_pty_codex_actor_to_queue(self) -> None:
+    def test_send_routes_running_pty_codex_actor_to_app_supervisor(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_send
 
         _, cleanup = self._with_home()
@@ -189,9 +189,9 @@ class TestCodexAppFlow(unittest.TestCase):
                 )
 
             self.assertTrue(resp.ok, getattr(resp, "error", None))
-            submit_user_message.assert_not_called()
-            queue_chat_message.assert_called_once()
-            request_flush_pending_messages.assert_called_once()
+            submit_user_message.assert_called_once()
+            queue_chat_message.assert_not_called()
+            request_flush_pending_messages.assert_not_called()
         finally:
             cleanup()
 
@@ -218,6 +218,15 @@ class TestCodexAppFlow(unittest.TestCase):
             session._active_event_id = "evt-1"
 
             session._handle_notification("turn/started", {"turn": {"id": "turn-1"}})
+            session._handle_notification(
+                "item/started",
+                {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "commentary-1", "phase": "commentary"}},
+            )
+            session._handle_notification("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "commentary-1", "delta": "Inspecting"})
+            session._handle_notification(
+                "item/completed",
+                {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "commentary-1", "phase": "commentary", "text": "Inspecting"}},
+            )
             session._handle_notification("turn/plan/updated", {"turnId": "turn-1", "plan": [{"step": "Inspect src/app.ts", "status": "in_progress"}]})
             session._handle_notification("item/started", {"turnId": "turn-1", "item": {"type": "reasoning", "id": "rs-1"}})
             session._handle_notification("item/reasoning/summaryTextDelta", {"turnId": "turn-1", "itemId": "rs-1", "delta": "Inspecting state flow"})
@@ -226,7 +235,10 @@ class TestCodexAppFlow(unittest.TestCase):
                 {"turnId": "turn-1", "item": {"type": "commandExecution", "id": "cmd-1", "command": "npm run typecheck", "commandActions": [], "cwd": "/tmp", "status": "in_progress"}},
             )
             session._handle_notification("item/commandExecution/outputDelta", {"turnId": "turn-1", "itemId": "cmd-1", "delta": "typecheck started"})
-            session._handle_notification("item/started", {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "msg-1"}})
+            session._handle_notification(
+                "item/started",
+                {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "msg-1", "phase": "final_answer"}},
+            )
             session._handle_notification("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "msg-1", "delta": "Hel"})
             session._handle_notification("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "msg-1", "delta": "lo"})
             session._handle_notification(
@@ -235,11 +247,11 @@ class TestCodexAppFlow(unittest.TestCase):
             )
             session._handle_notification(
                 "item/completed",
-                {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "msg-1", "text": "Hello"}},
+                {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "msg-1", "phase": "final_answer", "text": "Hello"}},
             )
             session._handle_notification(
                 "item/completed",
-                {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "msg-1", "text": "Hello"}},
+                {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "msg-1", "phase": "final_answer", "text": "Hello"}},
             )
             session._handle_notification("turn/completed", {"turn": {"id": "turn-1", "status": "completed"}})
 
@@ -259,7 +271,23 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertIn("codex.message.delta", event_types)
             self.assertIn("codex.message.completed", event_types)
             self.assertIn("codex.turn.completed", event_types)
-            message_started = next(item for item in codex_events if str(item.get("type") or "") == "codex.message.started")
+            commentary_started = next(
+                item for item in codex_events
+                if str(item.get("type") or "") == "codex.message.started"
+                and str(((item.get("data") or {}).get("phase") or "")) == "commentary"
+            )
+            self.assertEqual(str(((commentary_started.get("data") or {}).get("stream_id") or "")), "commentary-1")
+            commentary_completed = next(
+                item for item in codex_events
+                if str(item.get("type") or "") == "codex.message.completed"
+                and str(((item.get("data") or {}).get("phase") or "")) == "commentary"
+            )
+            self.assertEqual(str(((commentary_completed.get("data") or {}).get("text") or "")), "Inspecting")
+            message_started = next(
+                item for item in codex_events
+                if str(item.get("type") or "") == "codex.message.started"
+                and str(((item.get("data") or {}).get("phase") or "")) == "final_answer"
+            )
             started_data = message_started.get("data") if isinstance(message_started.get("data"), dict) else {}
             self.assertEqual(str(started_data.get("event_id") or ""), "evt-1")
             activity_summaries = [
@@ -284,7 +312,98 @@ class TestCodexAppFlow(unittest.TestCase):
             data = message.get("data") if isinstance(message.get("data"), dict) else {}
             self.assertEqual(str(data.get("text") or ""), "Hello")
             self.assertEqual(str(data.get("stream_id") or ""), "msg-1")
+            self.assertEqual(str(data.get("pending_event_id") or ""), "evt-1")
             self.assertEqual(data.get("to"), ["user"])
+        finally:
+            cleanup()
+
+    def test_codex_notifications_keep_streaming_when_agent_message_phase_missing(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+        from cccc.kernel.codex_events import codex_events_path
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="codex-session-phase-fallback", topic="")
+            loaded_group = load_group(group.group_id)
+            self.assertIsNotNone(loaded_group)
+            assert loaded_group is not None
+
+            session = CodexAppSession(
+                group_id=group.group_id,
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_event_id = "evt-fallback"
+
+            session._handle_notification("turn/started", {"turn": {"id": "turn-fallback"}})
+            session._handle_notification(
+                "item/started",
+                {"turnId": "turn-fallback", "item": {"type": "agentMessage", "id": "msg-fallback"}},
+            )
+            session._handle_notification(
+                "item/agentMessage/delta",
+                {"turnId": "turn-fallback", "itemId": "msg-fallback", "delta": "Hel"},
+            )
+            session._handle_notification(
+                "item/agentMessage/delta",
+                {"turnId": "turn-fallback", "itemId": "msg-fallback", "delta": "lo"},
+            )
+            session._handle_notification(
+                "item/completed",
+                {
+                    "turnId": "turn-fallback",
+                    "item": {"type": "agentMessage", "id": "msg-fallback", "text": "Hello"},
+                },
+            )
+            session._handle_notification("turn/completed", {"turn": {"id": "turn-fallback", "status": "completed"}})
+
+            events_path = codex_events_path(loaded_group.path)
+            self.assertTrue(events_path.exists())
+            codex_events = [
+                json.loads(line)
+                for line in events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            started = next(
+                item for item in codex_events
+                if str(item.get("type") or "") == "codex.message.started"
+                and str(((item.get("data") or {}).get("stream_id") or "")) == "msg-fallback"
+            )
+            started_data = started.get("data") if isinstance(started.get("data"), dict) else {}
+            self.assertEqual(str(started_data.get("phase") or ""), "")
+
+            deltas = [
+                item for item in codex_events
+                if str(item.get("type") or "") == "codex.message.delta"
+                and str(((item.get("data") or {}).get("stream_id") or "")) == "msg-fallback"
+            ]
+            self.assertEqual([str((item.get("data") or {}).get("delta") or "") for item in deltas], ["Hel", "lo"])
+
+            completed = next(
+                item for item in codex_events
+                if str(item.get("type") or "") == "codex.message.completed"
+                and str(((item.get("data") or {}).get("stream_id") or "")) == "msg-fallback"
+            )
+            completed_data = completed.get("data") if isinstance(completed.get("data"), dict) else {}
+            self.assertEqual(str(completed_data.get("text") or ""), "Hello")
+            self.assertEqual(str(completed_data.get("phase") or ""), "")
+
+            ledger_events = [
+                json.loads(line)
+                for line in loaded_group.ledger_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
+            self.assertEqual(len(chat_messages), 1)
+            message = chat_messages[0]
+            data = message.get("data") if isinstance(message.get("data"), dict) else {}
+            self.assertEqual(str(data.get("text") or ""), "Hello")
+            self.assertEqual(str(data.get("stream_id") or ""), "msg-fallback")
+            self.assertEqual(str(data.get("pending_event_id") or ""), "evt-fallback")
         finally:
             cleanup()
 

@@ -109,7 +109,7 @@ def is_actor_running(group_id: str, actor_id: str, runner_kind: str) -> bool:
     group = load_group(group_id)
     actor = find_actor(group, actor_id) if group is not None else None
     runtime = str(actor.get("runtime") or "").strip().lower() if isinstance(actor, dict) else ""
-    if runtime == "codex" and _effective_runner_kind(runner_kind) == "headless":
+    if runtime == "codex":
         return codex_app_supervisor.actor_running(group_id, actor_id)
     if _effective_runner_kind(runner_kind) == "headless":
         return headless_runner.SUPERVISOR.actor_running(group_id, actor_id)
@@ -132,7 +132,7 @@ def stop_actor(group_id: str, actor_id: str, runner_kind: str) -> None:
     group = load_group(group_id)
     actor = find_actor(group, actor_id) if group is not None else None
     runtime = str(actor.get("runtime") or "").strip().lower() if isinstance(actor, dict) else ""
-    if runtime == "codex" and _effective_runner_kind(runner_kind) == "headless":
+    if runtime == "codex":
         codex_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
     elif _effective_runner_kind(runner_kind) == "headless":
         headless_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
