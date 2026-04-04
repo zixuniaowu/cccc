@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 from ...kernel.actors import find_actor, get_effective_role, is_pet_actor
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import load_group
-from ...kernel.capabilities import CORE_ADMIN_TOOLS, CORE_TOOL_NAMES
+from ...kernel.capabilities import BUILTIN_CAPABILITY_PACKS, CORE_ADMIN_TOOLS, resolve_visible_tool_names
 from ...kernel.memory_guide import build_memory_guide
 from ...kernel.prompt_files import HELP_FILENAME, read_group_prompt_file
 from ...util.conv import coerce_bool
@@ -927,7 +927,7 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
     Behavior:
     1) full profile opt-out via CCCC_MCP_TOOL_PROFILE=full
     2) default: core + enabled capability packs from daemon capability_state
-    3) daemon failure fallback: core-only
+    3) daemon failure fallback: best-effort built-in actor surface
     """
     runtime_ctx = _runtime_context()
     gid = runtime_ctx.group_id
@@ -948,10 +948,21 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
 
     # Determine actor role for admin tool gating.
     actor_role = ""
+    actor_is_pet = False
+    builtin_enabled_fallback: List[str] = []
     if gid and aid and aid != "user":
         try:
             group = load_group(gid)
             actor_role = str(get_effective_role(group, aid) or "").strip().lower()
+            actor = find_actor(group, aid)
+            if isinstance(actor, dict):
+                actor_is_pet = is_pet_actor(actor)
+                autoload = actor.get("capability_autoload") if isinstance(actor.get("capability_autoload"), list) else []
+                builtin_enabled_fallback = [
+                    str(cap_id or "").strip()
+                    for cap_id in autoload
+                    if str(cap_id or "").strip() in BUILTIN_CAPABILITY_PACKS
+                ]
         except Exception:
             pass
     admin_excluded = set(CORE_ADMIN_TOOLS) if actor_role == "peer" else set()
@@ -965,7 +976,13 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
             tools_raw = []
         visible = {str(x).strip() for x in tools_raw if str(x).strip()}
         if not visible:
-            visible = set(CORE_TOOL_NAMES) - admin_excluded
+            visible = set(
+                resolve_visible_tool_names(
+                    builtin_enabled_fallback,
+                    actor_role=actor_role,
+                    is_pet=actor_is_pet,
+                )
+            ) - admin_excluded
 
     dynamic_raw = state.get("dynamic_tools") if isinstance(state, dict) else []
     dynamic_specs: List[Dict[str, Any]] = []

@@ -51,6 +51,9 @@ class TestBootstrapActorOps(unittest.TestCase):
                 throttle_reset_actor=lambda _gid, _aid: None,
                 automation_on_resume=lambda _group: None,
                 get_group_state=lambda _group: "idle",
+                load_actor_private_env=lambda _gid, _aid: {},
+                update_actor_private_env=lambda *_args, **_kwargs: {},
+                delete_actor_private_env=lambda _gid, _aid: None,
             )
         finally:
             cleanup()
@@ -91,6 +94,9 @@ class TestBootstrapActorOps(unittest.TestCase):
                 throttle_reset_actor=lambda _gid, _aid: None,
                 automation_on_resume=lambda _group: None,
                 get_group_state=lambda _group: "idle",
+                load_actor_private_env=lambda _gid, _aid: {},
+                update_actor_private_env=lambda *_args, **_kwargs: {},
+                delete_actor_private_env=lambda _gid, _aid: None,
             )
 
             reloaded = load_group(group_id)
@@ -215,6 +221,9 @@ class TestBootstrapActorOps(unittest.TestCase):
                     throttle_reset_actor=lambda _gid, _aid: None,
                     automation_on_resume=lambda _group: None,
                     get_group_state=lambda _group: "idle",
+                    load_actor_private_env=lambda _gid, _aid: {},
+                    update_actor_private_env=lambda *_args, **_kwargs: {},
+                    delete_actor_private_env=lambda _gid, _aid: None,
                     resolve_linked_actor_before_start=lambda grp, aid, caller_id="", is_admin=False: resolve_linked_actor_before_start(
                         grp,
                         aid,
@@ -245,6 +254,158 @@ class TestBootstrapActorOps(unittest.TestCase):
             self.assertEqual(str(actor.get("submit") or ""), "newline")
             self.assertEqual(str(actor.get("profile_scope") or ""), "user")
             self.assertEqual(str(actor.get("profile_owner") or ""), "user-a")
+        finally:
+            cleanup()
+
+    def test_autostart_pet_inherits_foreman_profile_private_env(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.actors.actor_profile_runtime import resolve_linked_actor_before_start
+            from cccc.daemon.actors.actor_profile_store import get_actor_profile, load_actor_profile_secrets
+            from cccc.daemon.actors.private_env_ops import (
+                delete_actor_private_env,
+                load_actor_private_env,
+                merge_actor_env_with_private,
+                update_actor_private_env,
+            )
+            from cccc.kernel.group import load_group
+            from cccc.kernel.pet_actor import PET_ACTOR_ID
+
+            create, _ = self._call("group_create", {"title": "autostart-pet-profile", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            profile_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "pet-profile",
+                        "name": "Pet Profile",
+                        "scope": "user",
+                        "owner_id": "user-a",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(profile_upsert.ok, getattr(profile_upsert, "error", None))
+
+            secret_update, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "pet-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "set": {"API_KEY": "pet-secret"},
+                },
+            )
+            self.assertTrue(secret_update.ok, getattr(secret_update, "error", None))
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add_foreman, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "lead",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "profile_id": "pet-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_foreman.ok, getattr(add_foreman, "error", None))
+
+            enable_pet, _ = self._call(
+                "group_settings_update",
+                {"group_id": group_id, "by": "user", "patch": {"desktop_pet_enabled": True}},
+            )
+            self.assertTrue(enable_pet.ok, getattr(enable_pet, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = True
+            group.save()
+
+            captured: list[dict[str, object]] = []
+
+            def _fake_headless_start_actor(*, group_id: str, actor_id: str, cwd: Path, env: dict[str, str]):
+                captured.append(
+                    {
+                        "group_id": group_id,
+                        "actor_id": actor_id,
+                        "cwd": cwd,
+                        "env": dict(env),
+                    }
+                )
+
+                class _Session:
+                    pass
+
+                return _Session()
+
+            with patch("cccc.daemon.group.bootstrap_actor_ops.headless_runner.SUPERVISOR.start_actor", side_effect=_fake_headless_start_actor):
+                autostart_running_groups(
+                    home,
+                    effective_runner_kind=lambda runner: runner,
+                    find_scope_url=lambda current_group, scope_key: (
+                        str(Path(".").resolve())
+                        if str(current_group.group_id or "").strip() == group_id and str(scope_key or "").strip()
+                        else ""
+                    ),
+                    supported_runtimes=("codex", "custom"),
+                    ensure_mcp_installed=lambda _runtime, _cwd: True,
+                    auto_mcp_runtimes=("codex",),
+                    pty_supported=lambda: True,
+                    merge_actor_env_with_private=merge_actor_env_with_private,
+                    inject_actor_context_env=lambda env, _gid, _aid: dict(env),
+                    prepare_pty_env=lambda env: dict(env),
+                    normalize_runtime_command=lambda _runtime, command: list(command),
+                    pty_backlog_bytes=lambda: 1024,
+                    write_headless_state=lambda _gid, _aid: None,
+                    write_pty_state=lambda _gid, _aid, _pid: None,
+                    clear_preamble_sent=lambda _group, _aid: None,
+                    throttle_reset_actor=lambda _gid, _aid: None,
+                    automation_on_resume=lambda _group: None,
+                    get_group_state=lambda _group: "idle",
+                    load_actor_private_env=load_actor_private_env,
+                    update_actor_private_env=update_actor_private_env,
+                    delete_actor_private_env=delete_actor_private_env,
+                    resolve_linked_actor_before_start=lambda grp, aid, caller_id="", is_admin=False: resolve_linked_actor_before_start(
+                        grp,
+                        aid,
+                        get_actor_profile=get_actor_profile,
+                        load_actor_profile_secrets=load_actor_profile_secrets,
+                        update_actor_private_env=update_actor_private_env,
+                        caller_id=caller_id,
+                        is_admin=is_admin,
+                    ),
+                )
+
+            pet_launches = [item for item in captured if item.get("actor_id") == PET_ACTOR_ID]
+            self.assertEqual(len(pet_launches), 1)
+            pet_env = pet_launches[0].get("env")
+            self.assertIsInstance(pet_env, dict)
+            assert isinstance(pet_env, dict)
+            self.assertEqual(pet_env.get("API_KEY"), "pet-secret")
+
+            private_env = load_actor_private_env(group_id, PET_ACTOR_ID)
+            self.assertEqual(private_env.get("API_KEY"), "pet-secret")
         finally:
             cleanup()
 
