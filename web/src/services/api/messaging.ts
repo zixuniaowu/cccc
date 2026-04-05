@@ -1,4 +1,4 @@
-import type { LedgerEvent, LedgerEventStatusPayload } from "../../types";
+import type { CodexStreamEvent, LedgerEvent, LedgerEventStatusPayload } from "../../types";
 import { apiJson, ledgerStatusesRequestKey, reuseRecentReadRequest } from "./base";
 
 const LEDGER_STATUSES_TTL_MS = 1200;
@@ -101,5 +101,12 @@ export async function fetchLedgerStatuses(groupId: string, eventIds: string[], i
     ledgerStatusesRequestKey(groupId, normalizedIds),
     LEDGER_STATUSES_TTL_MS,
     loader,
+  );
+}
+
+export async function fetchCodexSnapshot(groupId: string, init?: RequestInit & { noCache?: boolean }) {
+  return apiJson<{ group_id: string; events: CodexStreamEvent[]; count: number }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/codex/snapshot`,
+    init,
   );
 }

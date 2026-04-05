@@ -37,11 +37,14 @@ export interface UseWebPetNotificationsResult {
 }
 
 export function shouldProjectReminderForGroupState(
-  _reminder: PetReminder,
+  reminder: PetReminder,
   groupState: string,
 ): boolean {
   const normalizedState = String(groupState || "").trim().toLowerCase();
-  if (!normalizedState || normalizedState === "active" || normalizedState === "idle") {
+  if (!normalizedState || normalizedState === "active") {
+    return true;
+  }
+  if (normalizedState === "idle") {
     return true;
   }
   return false;

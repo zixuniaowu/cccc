@@ -14,11 +14,13 @@ interface UINotice {
 }
 
 export type ChatFilter = "all" | "user" | "attention" | "task";
+export type ChatFollowMode = "follow" | "detached";
 
 export interface ChatScrollSnapshot {
-  atBottom: boolean;
+  mode: ChatFollowMode;
   anchorId: string;
   offsetPx: number;
+  updatedAt: number;
 }
 
 export interface ChatSessionState {
@@ -97,6 +99,7 @@ let noticeTimeoutId: number | null = null;
 const SIDEBAR_COLLAPSED_KEY = "cccc-sidebar-collapsed";
 const SIDEBAR_WIDTH_KEY = "cccc-sidebar-width";
 const PRESENTATION_SPLIT_WIDTH_KEY = "cccc-presentation-split-width";
+const CHAT_SESSIONS_KEY = "cccc-chat-sessions";
 
 export function clampSidebarWidth(value: number): number {
   const numeric = Number(value);
@@ -155,6 +158,87 @@ function savePresentationSplitWidth(width: number): void {
   }
 }
 
+function sanitizeChatScrollSnapshot(value: unknown): ChatScrollSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const snapshot = value as {
+    mode?: unknown;
+    anchorId?: unknown;
+    offsetPx?: unknown;
+    updatedAt?: unknown;
+  };
+  const mode = snapshot.mode === "detached" ? "detached" : "follow";
+  const anchorId = typeof snapshot.anchorId === "string" ? snapshot.anchorId.trim() : "";
+  const offsetPx = Number.isFinite(Number(snapshot.offsetPx)) ? Math.max(0, Number(snapshot.offsetPx)) : 0;
+  const updatedAt = Number.isFinite(Number(snapshot.updatedAt)) ? Math.max(0, Number(snapshot.updatedAt)) : 0;
+  if (mode === "follow") {
+    return { mode, anchorId: "", offsetPx: 0, updatedAt };
+  }
+  if (!anchorId) return null;
+  return { mode, anchorId, offsetPx, updatedAt };
+}
+
+function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> {
+  if (!value || typeof value !== "object") return {};
+  const input = value as Record<string, unknown>;
+  const next: Record<string, ChatSessionState> = {};
+  for (const [groupId, raw] of Object.entries(input)) {
+    const gid = String(groupId || "").trim();
+    if (!gid || !raw || typeof raw !== "object") continue;
+    const session = raw as {
+      chatFilter?: unknown;
+      scrollSnapshot?: unknown;
+      mobileSurface?: unknown;
+      presentationDockOpen?: unknown;
+      presentationDisplayMode?: unknown;
+    };
+    next[gid] = {
+      ...DEFAULT_CHAT_SESSION,
+      chatFilter:
+        session.chatFilter === "user" ||
+        session.chatFilter === "attention" ||
+        session.chatFilter === "task"
+          ? session.chatFilter
+          : "all",
+      scrollSnapshot: sanitizeChatScrollSnapshot(session.scrollSnapshot),
+      mobileSurface: session.mobileSurface === "presentation" ? "presentation" : "messages",
+      presentationDockOpen: Boolean(session.presentationDockOpen),
+      presentationDisplayMode: session.presentationDisplayMode === "split" ? "split" : "modal",
+    };
+  }
+  return next;
+}
+
+function loadChatSessions(): Record<string, ChatSessionState> {
+  try {
+    const raw = localStorage.getItem(CHAT_SESSIONS_KEY);
+    if (!raw) return {};
+    return sanitizeChatSessions(JSON.parse(raw));
+  } catch (e) {
+    console.warn("Failed to read chat sessions from localStorage:", e);
+    return {};
+  }
+}
+
+function saveChatSessions(sessions: Record<string, ChatSessionState>): void {
+  try {
+    const persisted = Object.fromEntries(
+      Object.entries(sessions).map(([groupId, session]) => [
+        groupId,
+        {
+          chatFilter: session.chatFilter,
+          scrollSnapshot: session.scrollSnapshot,
+          mobileSurface: session.mobileSurface,
+          presentationDockOpen: session.presentationDockOpen,
+          presentationDisplayMode: session.presentationDisplayMode,
+        },
+      ]),
+    );
+    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(persisted));
+  } catch (e) {
+    console.warn("Failed to persist chat sessions to localStorage:", e);
+  }
+}
+
 function updateChatSession(
   sessions: Record<string, ChatSessionState>,
   groupId: string,
@@ -183,7 +267,7 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarWidth: loadSidebarWidth(),
   isSmallScreen: false,
   presentationSplitWidth: loadPresentationSplitWidth(),
-  chatSessions: {},
+  chatSessions: loadChatSessions(),
   webReadOnly: false,
   sseStatus: "disconnected" as const,
 
@@ -250,7 +334,10 @@ export const useUIStore = create<UIState>((set) => ({
       return { sidebarCollapsed: next };
     }),
   setShowScrollButton: (groupId, v) =>
-    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { showScrollButton: v }) })),
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, { showScrollButton: v });
+      return { chatSessions };
+    }),
   setChatUnreadCount: (groupId, v) =>
     set((state) => ({
       chatSessions: updateChatSession(state.chatSessions, groupId, { chatUnreadCount: Math.max(0, Number(v || 0)) }),
@@ -271,15 +358,35 @@ export const useUIStore = create<UIState>((set) => ({
     set({ presentationSplitWidth: next });
   },
   setChatFilter: (groupId, v) =>
-    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { chatFilter: v }) })),
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, { chatFilter: v });
+      saveChatSessions(chatSessions);
+      return { chatSessions };
+    }),
   setChatScrollSnapshot: (groupId, snap) =>
-    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { scrollSnapshot: snap }) })),
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, { scrollSnapshot: snap });
+      saveChatSessions(chatSessions);
+      return { chatSessions };
+    }),
   setChatMobileSurface: (groupId, v) =>
-    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { mobileSurface: v }) })),
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, { mobileSurface: v });
+      saveChatSessions(chatSessions);
+      return { chatSessions };
+    }),
   setChatPresentationDockOpen: (groupId, v) =>
-    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { presentationDockOpen: v }) })),
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, { presentationDockOpen: v });
+      saveChatSessions(chatSessions);
+      return { chatSessions };
+    }),
   setChatPresentationDisplayMode: (groupId, v) =>
-    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { presentationDisplayMode: v }) })),
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, { presentationDisplayMode: v });
+      saveChatSessions(chatSessions);
+      return { chatSessions };
+    }),
   setWebReadOnly: (v) => set({ webReadOnly: v }),
   setSSEStatus: (v) => set({ sseStatus: v }),
 }));

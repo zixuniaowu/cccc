@@ -50,6 +50,9 @@ class ChatMessageData(BaseModel):
     source_user_name: Optional[str] = None  # External IM sender display name
     source_user_id: Optional[str] = None  # External IM sender platform user id
     mention_user_ids: Optional[List[str]] = None  # External IM real-mention targets
+    sender_title: Optional[str] = None  # Immutable sender title snapshot for message rendering
+    sender_runtime: Optional[str] = None  # Immutable sender runtime snapshot for message rendering
+    sender_avatar_path: Optional[str] = None  # Immutable blob-backed sender avatar path
 
     # Cross-group provenance (for relays/forwarding)
     src_group_id: Optional[str] = None

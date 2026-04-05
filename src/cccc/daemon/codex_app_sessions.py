@@ -15,12 +15,32 @@ from ..contracts.v1.message import ChatMessageData
 from ..kernel.codex_events import append_codex_event
 from ..kernel.group import load_group
 from ..kernel.ledger import append_event
+from ..kernel.message_sender_snapshot import build_sender_snapshot
 from .runner_state_ops import headless_state_path, remove_headless_state
 from ..util.fs import atomic_write_json
 from ..util.process import pid_is_alive
 from ..util.time import utc_now_iso
 
 logger = logging.getLogger(__name__)
+
+
+def _is_closed_stream_logging_error(exc: BaseException) -> bool:
+    if not isinstance(exc, ValueError):
+        return False
+    message = str(exc or "").strip().lower()
+    return "i/o operation on closed file" in message or "closed stream" in message
+
+
+def _safe_logger_call(method: str, message: str, *args: Any, **kwargs: Any) -> None:
+    log_method = getattr(logger, method, None)
+    if not callable(log_method):
+        return
+    try:
+        log_method(message, *args, **kwargs)
+    except Exception as exc:
+        if _is_closed_stream_logging_error(exc):
+            return
+        raise
 
 
 def _jsonrpc_request(request_id: int, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -441,9 +461,11 @@ class CodexAppSession:
             for raw_line in proc.stderr:
                 line = str(raw_line or "").rstrip()
                 if line:
-                    logger.info("[codex-app %s/%s] %s", self.group_id, self.actor_id, line)
-        except Exception:
-            logger.exception("codex stderr loop failed: %s/%s", self.group_id, self.actor_id)
+                    _safe_logger_call("info", "[codex-app %s/%s] %s", self.group_id, self.actor_id, line)
+        except Exception as exc:
+            if _is_closed_stream_logging_error(exc):
+                return
+            _safe_logger_call("exception", "codex stderr loop failed: %s/%s", self.group_id, self.actor_id)
 
     def _turn_loop(self) -> None:
         while self.is_running():
@@ -734,6 +756,7 @@ class CodexAppSession:
                     to=["user"],
                     stream_id=str(stream_id or "").strip() or None,
                     pending_event_id=str(pending_event_id or "").strip() or None,
+                    **build_sender_snapshot(group, by=self.actor_id),
                 ).model_dump(),
             )
         except Exception:

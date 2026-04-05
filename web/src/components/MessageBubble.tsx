@@ -1,13 +1,21 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
 import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef, StreamingActivity } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getReplyEventId } from "../utils/chatReply";
-import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
+import { withAuthToken } from "../services/api/base";
+import {
+    buildToLabel,
+    buildVisibleReadStatusEntries,
+    computeAckSummary,
+    computeObligationSummary,
+    getSenderDisplayName,
+} from "./messageBubble/model";
 import { ActorAvatar } from "./ActorAvatar";
 import { useGroupStore } from "../stores";
 
@@ -17,6 +25,9 @@ const LazyMarkdownRenderer = lazy(() =>
 
 const TYPING_DOT_STYLE_ID = "cccc-message-bubble-typing-dot-style";
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
+const EMPTY_STREAMING_EVENTS: LedgerEvent[] = [];
+const STREAMING_PENDING_MIN_MS = 80;
+const STREAMING_STATUS_EXIT_MS = 140;
 
 function ensureTypingDotStyle(): void {
     if (typeof document === "undefined") return;
@@ -40,10 +51,185 @@ function formatEventLine(ev: LedgerEvent): string {
     return "";
 }
 
+function buildSenderAvatarUrl(groupId: string, senderAvatarPath?: string): string {
+    const gid = String(groupId || "").trim();
+    const relPath = String(senderAvatarPath || "").trim();
+    if (!gid || !relPath.startsWith("state/blobs/")) return "";
+    const blobName = relPath.split("/").pop() || "";
+    if (!blobName) return "";
+    return withAuthToken(`/api/v1/groups/${encodeURIComponent(gid)}/blobs/${encodeURIComponent(blobName)}`);
+}
+
 function mayContainMarkdown(text: string): boolean {
     const value = String(text || "");
     if (!value.trim()) return false;
+    // Internal delivery manifests should stay compact plain text instead of
+    // picking up prose list spacing from Markdown rendering.
+    if (/^\[cccc\]\s+(Attachments|References):/m.test(value)) return false;
     return /(```|`[^`\n]+`|\[[^\]]+\]\([^)]+\)|^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\s*>\s)/m.test(value);
+}
+
+function normalizeStreamingActivities(value: unknown): StreamingActivity[] {
+    if (!Array.isArray(value)) return EMPTY_STREAMING_ACTIVITIES;
+    return value
+        .filter((item): item is StreamingActivity => !!item && typeof item === "object")
+        .map((item) => ({
+            id: String(item.id || ""),
+            kind: String(item.kind || "thinking"),
+            status: String(item.status || "updated"),
+            summary: String(item.summary || ""),
+            detail: item.detail ? String(item.detail) : undefined,
+            ts: item.ts ? String(item.ts) : undefined,
+        }))
+        .filter((item) => item.id && item.summary)
+        .slice(-5);
+}
+
+export function getMessageBubbleMotionClass({
+    isStreaming,
+    isOptimistic,
+    streamPhase,
+}: {
+    isStreaming: boolean;
+    isOptimistic: boolean;
+    streamPhase?: string;
+}): string {
+    const phase = String(streamPhase || "").trim().toLowerCase();
+    if (!isStreaming && !isOptimistic) return "";
+    if (phase === "commentary") return "cccc-transient-bubble cccc-transient-bubble-commentary";
+    return "cccc-transient-bubble";
+}
+
+export function getEffectiveStreamingActivities({
+    streamId,
+    actorId,
+    pendingEventId,
+    bucket,
+    fallbackActivities,
+}: {
+    streamId: string;
+    actorId: string;
+    pendingEventId: string;
+    bucket?: {
+        streamingActivitiesByStreamId?: Record<string, StreamingActivity[]>;
+        streamingEvents?: LedgerEvent[];
+    } | null;
+    fallbackActivities?: StreamingActivity[];
+}): StreamingActivity[] {
+    const normalizedFallback = Array.isArray(fallbackActivities) ? fallbackActivities : EMPTY_STREAMING_ACTIVITIES;
+    const activitiesByStreamId = bucket?.streamingActivitiesByStreamId || {};
+    const direct = streamId ? normalizeStreamingActivities(activitiesByStreamId[streamId]) : EMPTY_STREAMING_ACTIVITIES;
+    const events = Array.isArray(bucket?.streamingEvents) ? (bucket?.streamingEvents || EMPTY_STREAMING_EVENTS) : EMPTY_STREAMING_EVENTS;
+
+    const latestCandidate = events
+        .filter((event) => {
+            if (String(event.by || "").trim() !== actorId) return false;
+            const data = event.data && typeof event.data === "object"
+                ? event.data as { stream_id?: unknown; pending_event_id?: unknown }
+                : {};
+            const eventStreamId = String(data.stream_id || "").trim();
+            const eventPendingEventId = String(data.pending_event_id || "").trim();
+            if (streamId && eventStreamId === streamId) return true;
+            if (pendingEventId && eventPendingEventId === pendingEventId) return true;
+            return false;
+        })
+        .map((event, index) => {
+            const data = event.data && typeof event.data === "object"
+                ? event.data as { stream_id?: unknown; activities?: unknown }
+                : {};
+            const eventStreamId = String(data.stream_id || "").trim();
+            const liveActivities = eventStreamId ? normalizeStreamingActivities(activitiesByStreamId[eventStreamId]) : EMPTY_STREAMING_ACTIVITIES;
+            return {
+                index,
+                ts: String(event.ts || "").trim(),
+                activities: liveActivities.length > 0 ? liveActivities : normalizeStreamingActivities(data.activities),
+            };
+        })
+        .filter((item) => item.activities.length > 0)
+        .sort((left, right) => {
+            if (left.ts && right.ts && left.ts !== right.ts) return right.ts.localeCompare(left.ts);
+            if (left.ts && !right.ts) return -1;
+            if (!left.ts && right.ts) return 1;
+            return right.index - left.index;
+        })[0];
+
+    if (latestCandidate?.activities?.length) return latestCandidate.activities;
+    if (direct.length > 0) return direct;
+    return normalizedFallback;
+}
+
+export function isQueuedOnlyStreamingPlaceholder({
+    isStreaming,
+    messageText,
+    liveStreamingText,
+    blobAttachmentCount,
+    presentationRefCount,
+    activities,
+}: {
+    isStreaming: boolean;
+    messageText: string;
+    liveStreamingText: string;
+    blobAttachmentCount: number;
+    presentationRefCount: number;
+    activities: StreamingActivity[];
+}): boolean {
+    if (!isStreaming) return false;
+    if (String(messageText || "").trim()) return false;
+    if (String(liveStreamingText || "").trim()) return false;
+    if (blobAttachmentCount > 0 || presentationRefCount > 0) return false;
+    if (activities.length !== 1) return false;
+    const [activity] = activities;
+    return activity.kind === "queued" && activity.summary === "queued";
+}
+
+export function getStreamingPlaceholderText({
+    isQueuedOnlyPlaceholder,
+    placeholderLabel,
+}: {
+    isQueuedOnlyPlaceholder: boolean;
+    placeholderLabel: string;
+}): string {
+    if (isQueuedOnlyPlaceholder) return "queued";
+    return String(placeholderLabel || "").trim() || "working";
+}
+
+export function shouldRenderStreamingStatusPanel({
+    hasText,
+    activities,
+}: {
+    hasText: boolean;
+    activities: StreamingActivity[];
+}): boolean {
+    if (activities.length > 0) return true;
+    return !hasText;
+}
+
+export function shouldReserveStreamingStatusSpace({
+    isStreaming,
+    renderPhase,
+}: {
+    isStreaming: boolean;
+    renderPhase: "pending" | "active" | "exiting" | "completed";
+}): boolean {
+    if (renderPhase === "completed") return false;
+    return isStreaming || renderPhase === "exiting";
+}
+
+export function deriveStreamingRenderPhase({
+    isStreaming,
+    hasText,
+    activities,
+    previousPhase,
+}: {
+    isStreaming: boolean;
+    hasText: boolean;
+    activities: StreamingActivity[];
+    previousPhase?: "pending" | "active" | "exiting" | "completed";
+}): "pending" | "active" | "completed" {
+    if (!isStreaming) return "completed";
+    if (hasText || activities.length > 0) return "active";
+    if (previousPhase === "active" || previousPhase === "exiting") return "active";
+    return "pending";
 }
 
 function formatActivityKind(kind: string): string {
@@ -70,39 +256,9 @@ function formatActivityKind(kind: string): string {
     }
 }
 
-function isQueuedOnlyStreamingPlaceholder({
-    isStreaming,
-    messageText,
-    liveStreamingText,
-    blobAttachmentCount,
-    presentationRefCount,
-    activities,
-}: {
-    isStreaming: boolean;
-    messageText: string;
-    liveStreamingText: string;
-    blobAttachmentCount: number;
-    presentationRefCount: number;
-    activities: StreamingActivity[];
-}): boolean {
-    if (!isStreaming) return false;
-    if (String(messageText || "").trim()) return false;
-    if (String(liveStreamingText || "").trim()) return false;
-    if (blobAttachmentCount > 0 || presentationRefCount > 0) return false;
-    if (activities.length !== 1) return false;
-    const [activity] = activities;
-    return activity.kind === "queued" && activity.summary === "queued";
-}
-
-function getStreamingPlaceholderText({
-    isQueuedOnlyPlaceholder,
-    placeholderLabel,
-}: {
-    isQueuedOnlyPlaceholder: boolean;
-    placeholderLabel: string;
-}): string {
-    if (isQueuedOnlyPlaceholder) return "queued";
-    return String(placeholderLabel || "").trim() || "working";
+export function getStreamingPendingDelayMs(startedAtMs: number | null, nowMs: number): number {
+    if (startedAtMs == null) return 0;
+    return Math.max(0, STREAMING_PENDING_MIN_MS - Math.max(0, nowMs - startedAtMs));
 }
 
 function PlainMessageText({
@@ -178,27 +334,22 @@ const StreamingMessageText = memo(function StreamingMessageText({
 });
 
 const StreamingActivityList = memo(function StreamingActivityList({
-    groupId,
-    streamId,
-    fallbackActivities,
+    activities,
+    exiting,
 }: {
-    groupId: string;
-    streamId: string;
-    fallbackActivities: StreamingActivity[];
+    activities: StreamingActivity[];
+    exiting?: boolean;
 }) {
-    const streamedActivities = useGroupStore(useCallback((state) => {
-        if (!streamId) return undefined;
-        const bucket = state.chatByGroup[String(groupId || "").trim()];
-        return bucket?.streamingActivitiesByStreamId?.[streamId];
-    }, [groupId, streamId]));
-    const activities = Array.isArray(streamedActivities) && streamedActivities.length > 0
-        ? streamedActivities
-        : fallbackActivities;
-
     if (activities.length <= 0) return null;
 
     return (
-        <div className="mb-2 flex flex-col gap-1 rounded-xl border border-[var(--glass-border-subtle)]/80 bg-[var(--glass-tab-bg)]/70 px-2.5 py-2">
+        <div
+            className={classNames(
+                "flex flex-col gap-1 rounded-xl border border-[var(--glass-border-subtle)]/80 bg-[var(--glass-tab-bg)]/70 px-2.5 py-2 cccc-streaming-status-panel",
+                exiting ? "cccc-streaming-status-panel-exit" : "cccc-streaming-status-panel-enter"
+            )}
+            data-state={exiting ? "exit" : "enter"}
+        >
             {activities.map((activity) => (
                 <div key={activity.id} className="flex items-start gap-2 text-[11px] leading-4 text-[var(--color-text-secondary)]">
                     <span className="min-w-[2.75rem] font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
@@ -213,97 +364,27 @@ const StreamingActivityList = memo(function StreamingActivityList({
     );
 });
 
-const StreamingContent = memo(function StreamingContent({
-    groupId,
-    streamId,
-    fallbackText,
-    fallbackActivities,
-    isQueuedOnlyFallbackPlaceholder,
-    placeholderLabel,
-}: {
-    groupId: string;
-    streamId: string;
-    fallbackText: string;
-    fallbackActivities: StreamingActivity[];
-    isQueuedOnlyFallbackPlaceholder: boolean;
-    placeholderLabel: string;
-}) {
-    const liveStreamingText = useGroupStore(useCallback((state) => {
-        if (!streamId) return "";
-        const bucket = state.chatByGroup[String(groupId || "").trim()];
-        return String(bucket?.streamingTextByStreamId?.[streamId] || "");
-    }, [groupId, streamId]));
-    const liveStreamingActivities = useGroupStore(useCallback((state) => {
-        if (!streamId) return EMPTY_STREAMING_ACTIVITIES;
-        const bucket = state.chatByGroup[String(groupId || "").trim()];
-        const streamed = bucket?.streamingActivitiesByStreamId?.[streamId];
-        return Array.isArray(streamed) ? streamed : EMPTY_STREAMING_ACTIVITIES;
-    }, [groupId, streamId]));
-
-    const effectiveStreamingActivities = liveStreamingActivities.length > 0 ? liveStreamingActivities : fallbackActivities;
-    const hasText = !!String(liveStreamingText || fallbackText || "").trim();
-    const isQueuedOnlyPlaceholder =
-        !hasText &&
-        effectiveStreamingActivities.length === 1 &&
-        effectiveStreamingActivities[0]?.kind === "queued" &&
-        effectiveStreamingActivities[0]?.summary === "queued"
-            ? true
-            : isQueuedOnlyFallbackPlaceholder;
-    const streamingTextMinHeightClass = isQueuedOnlyPlaceholder
-        ? "min-h-[44px]"
-        : hasText
-            ? "min-h-[44px]"
-            : "min-h-[52px]";
-
-    return (
-        <>
-            <div className="mb-2 min-h-[52px]">
-                {effectiveStreamingActivities.length > 0 ? (
-                    <StreamingActivityList
-                        groupId={groupId}
-                        streamId={streamId}
-                        fallbackActivities={effectiveStreamingActivities}
-                    />
-                ) : (
-                    <div className="flex min-h-[52px] items-start">
-                        <StreamingStatusPlaceholder
-                            label={getStreamingPlaceholderText({
-                                isQueuedOnlyPlaceholder,
-                                placeholderLabel,
-                            })}
-                            queuedOnly={isQueuedOnlyPlaceholder}
-                        />
-                    </div>
-                )}
-            </div>
-
-            <div className={classNames("flex items-start", streamingTextMinHeightClass)}>
-                <StreamingMessageText
-                    groupId={groupId}
-                    streamId={streamId}
-                    fallbackText={fallbackText}
-                    showPlaceholder={!hasText}
-                    placeholderLabel={placeholderLabel}
-                />
-            </div>
-        </>
-    );
-});
-
 const StreamingStatusPlaceholder = memo(function StreamingStatusPlaceholder({
     label,
     queuedOnly,
+    compact,
 }: {
     label: string;
     queuedOnly?: boolean;
+    compact?: boolean;
 }) {
     return (
-        <div className="inline-flex items-center gap-2 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]/75 px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+        <div
+            className={classNames(
+                "inline-flex items-center rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]/75 text-[11px] font-medium text-[var(--color-text-secondary)]",
+                compact ? "gap-1.5 px-2.5 py-1" : "gap-2 px-3 py-1.5"
+            )}
+        >
             <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
                 {queuedOnly ? "queue" : "stream"}
             </span>
             <span>{label}</span>
-            <span className="ml-1 inline-flex items-center gap-1 text-[var(--color-text-tertiary)]">
+            <span className={classNames("inline-flex items-center gap-1 text-[var(--color-text-tertiary)]", compact ? "ml-0.5" : "ml-1")}>
                 {[0, 1, 2].map((index) => (
                     <span
                         key={index}
@@ -315,6 +396,245 @@ const StreamingStatusPlaceholder = memo(function StreamingStatusPlaceholder({
                     />
                 ))}
             </span>
+        </div>
+    );
+});
+
+const StreamingContent = memo(function StreamingContent({
+    groupId,
+    streamId,
+    actorId,
+    pendingEventId,
+    fallbackText,
+    fallbackActivities,
+    isQueuedOnlyFallbackPlaceholder,
+    placeholderLabel,
+}: {
+    groupId: string;
+    streamId: string;
+    actorId: string;
+    pendingEventId: string;
+    fallbackText: string;
+    fallbackActivities: StreamingActivity[];
+    isQueuedOnlyFallbackPlaceholder: boolean;
+    placeholderLabel: string;
+}) {
+    const liveStreamingText = useGroupStore(useCallback((state) => {
+        if (!streamId) return "";
+        const bucket = state.chatByGroup[String(groupId || "").trim()];
+        return String(bucket?.streamingTextByStreamId?.[streamId] || "");
+    }, [groupId, streamId]));
+    const streamingEvents = useGroupStore(useCallback((state) => {
+        const bucket = state.chatByGroup[String(groupId || "").trim()];
+        return Array.isArray(bucket?.streamingEvents) ? bucket.streamingEvents : EMPTY_STREAMING_EVENTS;
+    }, [groupId]));
+    const streamedActivities = useGroupStore(useCallback((state) => {
+        if (!streamId) return EMPTY_STREAMING_ACTIVITIES;
+        const bucket = state.chatByGroup[String(groupId || "").trim()];
+        const activities = bucket?.streamingActivitiesByStreamId?.[streamId];
+        return Array.isArray(activities) ? activities : EMPTY_STREAMING_ACTIVITIES;
+    }, [groupId, streamId]));
+    const liveStreamingActivities = useMemo(() => getEffectiveStreamingActivities({
+        streamId,
+        actorId,
+        pendingEventId,
+        bucket: {
+            streamingActivitiesByStreamId: streamId
+                ? { [streamId]: streamedActivities }
+                : undefined,
+            streamingEvents,
+        },
+        fallbackActivities,
+    }), [actorId, fallbackActivities, pendingEventId, streamId, streamedActivities, streamingEvents]);
+
+    const effectiveStreamingActivities = liveStreamingActivities.length > 0 ? liveStreamingActivities : fallbackActivities;
+    const hasText = !!String(liveStreamingText || fallbackText || "").trim();
+    const isQueuedOnlyPlaceholder =
+        !hasText &&
+        effectiveStreamingActivities.length === 1 &&
+        effectiveStreamingActivities[0]?.kind === "queued" &&
+        effectiveStreamingActivities[0]?.summary === "queued"
+            ? true
+            : isQueuedOnlyFallbackPlaceholder;
+    const [renderPhase, setRenderPhase] = useState<"pending" | "active" | "exiting" | "completed">(() =>
+        deriveStreamingRenderPhase({
+            isStreaming: true,
+            hasText,
+            activities: effectiveStreamingActivities,
+        })
+    );
+    const [exitSnapshot, setExitSnapshot] = useState<{
+        activities: StreamingActivity[];
+        showPlaceholder: boolean;
+        placeholderLabel: string;
+        queuedOnly: boolean;
+    } | null>(null);
+    const pendingStartedAtRef = useRef<number | null>(null);
+    const desiredPhase = useMemo(() => deriveStreamingRenderPhase({
+        isStreaming: true,
+        hasText,
+        activities: effectiveStreamingActivities,
+        previousPhase: renderPhase,
+    }), [effectiveStreamingActivities, hasText, renderPhase]);
+
+    useEffect(() => {
+        const scheduledTimers: number[] = [];
+        const scheduleTask = (task: () => void) => {
+            const timerId = window.setTimeout(task, 0);
+            scheduledTimers.push(timerId);
+            return timerId;
+        };
+        const scheduleRenderPhase = (nextPhase: "pending" | "active" | "completed") => {
+            scheduleTask(() => {
+                setRenderPhase(nextPhase);
+            });
+        };
+        const scheduleClearExitSnapshot = () => {
+            scheduleTask(() => {
+                setExitSnapshot(null);
+            });
+        };
+        if (renderPhase !== "exiting" && desiredPhase === renderPhase) {
+            if (renderPhase === "pending" && pendingStartedAtRef.current == null) {
+                pendingStartedAtRef.current = Date.now();
+            }
+            if (renderPhase !== "pending") {
+                pendingStartedAtRef.current = null;
+            }
+            return () => {
+                scheduledTimers.forEach((timerId) => window.clearTimeout(timerId));
+            };
+        }
+
+        if (desiredPhase === "pending") {
+            scheduleClearExitSnapshot();
+            pendingStartedAtRef.current = Date.now();
+            if (renderPhase !== "active") {
+                scheduleRenderPhase("pending");
+            }
+            return () => {
+                scheduledTimers.forEach((timerId) => window.clearTimeout(timerId));
+            };
+        }
+
+        if (desiredPhase === "completed") {
+            pendingStartedAtRef.current = null;
+            if (renderPhase !== "completed" && renderPhase !== "exiting") {
+                scheduleTask(() => {
+                    setExitSnapshot({
+                        activities: effectiveStreamingActivities,
+                        showPlaceholder: renderPhase === "pending" || (!hasText && effectiveStreamingActivities.length === 0),
+                        placeholderLabel,
+                        queuedOnly: isQueuedOnlyPlaceholder,
+                    });
+                    setRenderPhase("exiting");
+                });
+            }
+            return () => {
+                scheduledTimers.forEach((timerId) => window.clearTimeout(timerId));
+            };
+        }
+
+        scheduleClearExitSnapshot();
+        if (renderPhase !== "pending" || pendingStartedAtRef.current == null) {
+            pendingStartedAtRef.current = null;
+            scheduleRenderPhase("active");
+            return () => {
+                scheduledTimers.forEach((timerId) => window.clearTimeout(timerId));
+            };
+        }
+
+        const remainingMs = getStreamingPendingDelayMs(pendingStartedAtRef.current, Date.now());
+        if (remainingMs <= 0) {
+            pendingStartedAtRef.current = null;
+            scheduleRenderPhase("active");
+            return () => {
+                scheduledTimers.forEach((timerId) => window.clearTimeout(timerId));
+            };
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            pendingStartedAtRef.current = null;
+            setRenderPhase("active");
+        }, remainingMs);
+        return () => {
+            window.clearTimeout(timeoutId);
+            scheduledTimers.forEach((timerId) => window.clearTimeout(timerId));
+        };
+    }, [desiredPhase, effectiveStreamingActivities, hasText, isQueuedOnlyPlaceholder, placeholderLabel, renderPhase]);
+
+    useEffect(() => {
+        if (renderPhase !== "exiting") return undefined;
+        const timeoutId = window.setTimeout(() => {
+            setExitSnapshot(null);
+            setRenderPhase("completed");
+        }, STREAMING_STATUS_EXIT_MS);
+        return () => window.clearTimeout(timeoutId);
+    }, [renderPhase]);
+
+    const visibleActivities = renderPhase === "pending"
+        ? EMPTY_STREAMING_ACTIVITIES
+        : renderPhase === "exiting"
+            ? (exitSnapshot?.activities || EMPTY_STREAMING_ACTIVITIES)
+            : effectiveStreamingActivities;
+    const shouldShowPlaceholder = renderPhase === "pending" || (renderPhase === "exiting" && !!exitSnapshot?.showPlaceholder);
+    const shouldShowStatusPanel = shouldShowPlaceholder || visibleActivities.length > 0;
+    const shouldReserveStatusSpace = shouldReserveStreamingStatusSpace({
+        isStreaming: true,
+        renderPhase,
+    });
+    const shouldShowText = hasText || renderPhase !== "completed";
+    const effectivePlaceholderLabel = renderPhase === "exiting"
+        ? String(exitSnapshot?.placeholderLabel || placeholderLabel)
+        : placeholderLabel;
+    const isExiting = renderPhase === "exiting";
+
+    return (
+        <div className="flex flex-col gap-1.5 min-h-[4.25rem]">
+            {shouldReserveStatusSpace ? (
+                <div
+                    className={classNames(
+                        "flex items-start min-h-[2rem] transition-opacity duration-150",
+                        shouldShowStatusPanel ? "opacity-100" : "opacity-0 pointer-events-none select-none"
+                    )}
+                    aria-hidden={!shouldShowStatusPanel}
+                >
+                    {visibleActivities.length > 0 ? (
+                        <StreamingActivityList
+                            activities={visibleActivities}
+                            exiting={isExiting}
+                        />
+                    ) : (
+                        <div
+                            className={classNames(
+                                "flex items-start",
+                                isExiting ? "cccc-streaming-status-panel cccc-streaming-status-panel-exit" : ""
+                            )}
+                        >
+                            <StreamingStatusPlaceholder
+                                label={getStreamingPlaceholderText({
+                                    isQueuedOnlyPlaceholder: renderPhase === "exiting" ? !!exitSnapshot?.queuedOnly : isQueuedOnlyPlaceholder,
+                                    placeholderLabel: effectivePlaceholderLabel,
+                                })}
+                                queuedOnly={renderPhase === "exiting" ? !!exitSnapshot?.queuedOnly : isQueuedOnlyPlaceholder}
+                                compact={renderPhase === "exiting" ? !!exitSnapshot?.queuedOnly : isQueuedOnlyPlaceholder}
+                            />
+                        </div>
+                    )}
+                </div>
+            ) : null}
+
+            {shouldShowText ? (
+                <div className="flex items-start min-h-[1.75rem]">
+                    <StreamingMessageText
+                        groupId={groupId}
+                        streamId={streamId}
+                        fallbackText={fallbackText}
+                        showPlaceholder={!hasText}
+                        placeholderLabel={placeholderLabel}
+                    />
+                </div>
+            ) : null}
         </div>
     );
 });
@@ -378,6 +698,718 @@ function buildMessageCopyText({
     return sections.join("\n\n").trim();
 }
 
+
+function MessageMetadataHeader({
+    mobile,
+    isUserMessage,
+    isDark,
+    senderAccentTextClass,
+    senderDisplayName,
+    messageTimestamp,
+    fullMessageTimestamp,
+    toLabel,
+    senderAvatarUrl,
+    senderRuntime,
+    avatarRingClassName,
+}: {
+    mobile?: boolean;
+    isUserMessage: boolean;
+    isDark: boolean;
+    senderAccentTextClass?: string | null;
+    senderDisplayName: string;
+    messageTimestamp: string;
+    fullMessageTimestamp: string;
+    toLabel: string;
+    senderAvatarUrl?: string;
+    senderRuntime?: string;
+    avatarRingClassName?: string;
+}) {
+    const senderTextClass = isUserMessage
+        ? isDark
+            ? "text-slate-300"
+            : "text-gray-700"
+        : senderAccentTextClass
+            ? senderAccentTextClass
+            : isDark
+                ? "text-slate-300"
+                : "text-gray-700";
+
+    if (mobile) {
+        return (
+            <div
+                className={classNames(
+                    "flex items-center gap-2 mb-1 sm:hidden min-w-0",
+                    isUserMessage ? "justify-end" : "justify-start"
+                )}
+            >
+                <ActorAvatar
+                    avatarUrl={senderAvatarUrl}
+                    runtime={senderRuntime}
+                    title={senderDisplayName}
+                    isUser={isUserMessage}
+                    isDark={isDark}
+                    accentRingClassName={avatarRingClassName}
+                    sizeClassName="h-6 w-6"
+                    textClassName="text-[10px]"
+                />
+                <span className={classNames("text-xs font-medium flex-shrink-0", senderTextClass)}>
+                    {senderDisplayName}
+                </span>
+                <span className="text-[10px] flex-shrink-0 text-[var(--color-text-tertiary)]">
+                    <span title={fullMessageTimestamp}>{messageTimestamp}</span>
+                </span>
+                <span
+                    className={classNames("text-[10px] min-w-0 truncate", "text-[var(--color-text-tertiary)]")}
+                    title={`to ${toLabel}`}
+                >
+                    to {toLabel}
+                </span>
+            </div>
+        );
+    }
+
+    return (
+        <div className="hidden sm:flex items-center gap-2 mb-1 px-1 min-w-0">
+            <span
+                className={classNames(
+                    "text-[11px] font-medium flex-shrink-0",
+                    isUserMessage
+                        ? isDark
+                            ? "text-[var(--color-text-secondary)]"
+                            : "text-gray-500"
+                        : senderAccentTextClass
+                            ? senderAccentTextClass
+                            : isDark
+                                ? "text-[var(--color-text-secondary)]"
+                                : "text-gray-500"
+                )}
+            >
+                {senderDisplayName}
+            </span>
+            <span className="text-[10px] flex-shrink-0 text-[var(--color-text-tertiary)]">
+                <span title={fullMessageTimestamp}>{messageTimestamp}</span>
+            </span>
+            <span
+                className={classNames("text-[10px] min-w-0 truncate", "text-[var(--color-text-tertiary)]")}
+                title={`to ${toLabel}`}
+            >
+                to {toLabel}
+            </span>
+        </div>
+    );
+}
+
+function MessageFooter({
+    readOnly,
+    obligationSummary,
+    ackSummary,
+    visibleReadStatusEntries,
+    readPreviewEntries,
+    readPreviewOverflow,
+    displayNameMap,
+    isDark,
+    replyRequired,
+    copiedMessageText,
+    copyableMessageText,
+    onCopyMessageText,
+    onShowRecipients,
+    onCopyLink,
+    onRelay,
+    onReply,
+    canReply,
+    eventId,
+    event,
+}: {
+    readOnly?: boolean;
+    obligationSummary: { kind: "reply" | "ack"; done: number; total: number } | null;
+    ackSummary: { done: number; total: number; needsUserAck: boolean } | null;
+    visibleReadStatusEntries: readonly (readonly [string, boolean])[];
+    readPreviewEntries: readonly (readonly [string, boolean])[];
+    readPreviewOverflow: number;
+    displayNameMap: Map<string, string>;
+    isDark: boolean;
+    replyRequired: boolean;
+    copiedMessageText: boolean;
+    copyableMessageText: string;
+    onCopyMessageText: () => void;
+    onShowRecipients: () => void;
+    onCopyLink?: (eventId: string) => void;
+    onRelay?: (ev: LedgerEvent) => void;
+    onReply: () => void;
+    canReply: boolean;
+    eventId?: string;
+    event: LedgerEvent;
+}) {
+    const { t } = useTranslation(["chat", "common"]);
+
+    return (
+        <div
+            className={classNames(
+                "flex items-center gap-3 mt-1 px-1 text-[10px] transition-opacity",
+                (obligationSummary || ackSummary || visibleReadStatusEntries.length > 0 || replyRequired) ? "justify-between" : "justify-end",
+                "opacity-85 group-hover:opacity-100",
+                "text-[var(--color-text-tertiary)]"
+            )}
+        >
+            {obligationSummary ? (
+                readOnly ? (
+                    <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
+                        <span
+                            className={classNames(
+                                "text-[10px] font-semibold tracking-tight",
+                                obligationSummary.done >= obligationSummary.total
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : "text-amber-600 dark:text-amber-400"
+                            )}
+                        >
+                            {obligationSummary.kind === "reply" ? t("reply") : t("ack")} {obligationSummary.done}/{obligationSummary.total}
+                        </span>
+                    </div>
+                ) : (
+                    <button
+                        type="button"
+                        className={classNames(
+                            "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
+                            "hover:bg-[var(--glass-tab-bg-hover)]"
+                        )}
+                        onClick={onShowRecipients}
+                        aria-label={t("showObligationStatus")}
+                    >
+                        <span
+                            className={classNames(
+                                "text-[10px] font-semibold tracking-tight",
+                                obligationSummary.done >= obligationSummary.total
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : "text-amber-600 dark:text-amber-400"
+                            )}
+                        >
+                            {obligationSummary.kind === "reply" ? t("reply") : t("ack")} {obligationSummary.done}/{obligationSummary.total}
+                        </span>
+                    </button>
+                )
+            ) : ackSummary ? (
+                readOnly ? (
+                    <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
+                        <span
+                            className={classNames(
+                                "text-[10px] font-semibold tracking-tight",
+                                ackSummary.done >= ackSummary.total
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : "text-amber-600 dark:text-amber-400"
+                            )}
+                        >
+                            {t("ack")} {ackSummary.done}/{ackSummary.total}
+                        </span>
+                    </div>
+                ) : (
+                    <button
+                        type="button"
+                        className={classNames(
+                            "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
+                            "hover:bg-[var(--glass-tab-bg-hover)]"
+                        )}
+                        onClick={onShowRecipients}
+                        aria-label={t("showAckStatus")}
+                    >
+                        <span
+                            className={classNames(
+                                "text-[10px] font-semibold tracking-tight",
+                                ackSummary.done >= ackSummary.total
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : "text-amber-600 dark:text-amber-400"
+                            )}
+                        >
+                            {t("ack")} {ackSummary.done}/{ackSummary.total}
+                        </span>
+                    </button>
+                )
+            ) : visibleReadStatusEntries.length > 0 ? (
+                readOnly ? (
+                    <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                            {readPreviewEntries.map(([id, cleared]) => (
+                                <span key={id} className="inline-flex items-center gap-1 min-w-0">
+                                    <span className="truncate max-w-[10ch]">{displayNameMap.get(id) || id}</span>
+                                    <span
+                                        className={classNames(
+                                            "text-[10px] font-semibold tracking-tight",
+                                            cleared
+                                                ? isDark ? "text-emerald-400" : "text-emerald-600"
+                                                : isDark ? "text-slate-500" : "text-gray-500"
+                                        )}
+                                        aria-label={cleared ? t("read") : t("pending")}
+                                    >
+                                        {cleared ? "✓✓" : "✓"}
+                                    </span>
+                                </span>
+                            ))}
+                            {readPreviewOverflow > 0 ? (
+                                <span className={classNames("text-[10px]", "text-[var(--color-text-tertiary)]")}>
+                                    +{readPreviewOverflow}
+                                </span>
+                            ) : null}
+                        </div>
+                    </div>
+                ) : (
+                    <button
+                        type="button"
+                        className={classNames(
+                            "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
+                            "hover:bg-[var(--glass-tab-bg-hover)]"
+                        )}
+                        onClick={onShowRecipients}
+                        aria-label={t("showRecipientStatus")}
+                    >
+                        <div className="flex items-center gap-2 min-w-0">
+                            {readPreviewEntries.map(([id, cleared]) => (
+                                <span key={id} className="inline-flex items-center gap-1 min-w-0">
+                                    <span className="truncate max-w-[10ch]">{displayNameMap.get(id) || id}</span>
+                                    <span
+                                        className={classNames(
+                                            "text-[10px] font-semibold tracking-tight",
+                                            cleared
+                                                ? isDark ? "text-emerald-400" : "text-emerald-600"
+                                                : isDark ? "text-slate-500" : "text-gray-500"
+                                        )}
+                                        aria-label={cleared ? t("read") : t("pending")}
+                                    >
+                                        {cleared ? "✓✓" : "✓"}
+                                    </span>
+                                </span>
+                            ))}
+                            {readPreviewOverflow > 0 ? (
+                                <span className={classNames("text-[10px]", "text-[var(--color-text-tertiary)]")}>
+                                    +{readPreviewOverflow}
+                                </span>
+                            ) : null}
+                        </div>
+                    </button>
+                )
+            ) : null}
+
+            {!obligationSummary && !ackSummary && replyRequired ? (
+                <span className={classNames("text-[10px] font-semibold tracking-tight", "text-violet-700 dark:text-violet-300")}>
+                    {t("needReply")}
+                </span>
+            ) : null}
+
+            {!readOnly ? (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                    {copyableMessageText ? (
+                        <button
+                            type="button"
+                            className={classNames(
+                                "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                            )}
+                            onClick={() => void onCopyMessageText()}
+                            title={copiedMessageText ? t("common:copied") : t("copyText")}
+                        >
+                            {copiedMessageText ? t("common:copied") : t("copyText")}
+                        </button>
+                    ) : null}
+                    {eventId && onCopyLink ? (
+                        <button
+                            type="button"
+                            className={classNames(
+                                "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                            )}
+                            onClick={() => onCopyLink(eventId)}
+                            title={t("copyLink")}
+                        >
+                            {t("copyLink")}
+                        </button>
+                    ) : null}
+                    {eventId && onRelay ? (
+                        <button
+                            type="button"
+                            className={classNames(
+                                "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                            )}
+                            onClick={() => onRelay(event)}
+                            title={t("relayToGroup")}
+                        >
+                            {t("relay")}
+                        </button>
+                    ) : null}
+                    {canReply ? (
+                        <button
+                            type="button"
+                            className={classNames(
+                                "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                            )}
+                            onClick={onReply}
+                        >
+                            {t("reply")}
+                        </button>
+                    ) : null}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
+function MessageBubbleBody({
+    event,
+    isUserMessage,
+    isDark,
+    groupId,
+    groupLabelById,
+    hasSource,
+    srcGroupId,
+    srcEventId,
+    hasDestination,
+    dstGroupId,
+    dstTo,
+    relayChipClass,
+    quoteText,
+    presentationRefs,
+    isStreaming,
+    streamingActivities,
+    streamId,
+    actorId,
+    pendingEventId,
+    messageText,
+    isQueuedOnlyPlaceholder,
+    streamingPlaceholderLabel,
+    shouldRenderMarkdown,
+    blobAttachments,
+    blobGroupId,
+    stableMessageAttachmentKey,
+    onOpenSource,
+    onOpenPresentationRef,
+}: {
+    event: LedgerEvent;
+    isUserMessage: boolean;
+    isDark: boolean;
+    groupId: string;
+    groupLabelById: Record<string, string>;
+    hasSource: boolean;
+    srcGroupId: string;
+    srcEventId: string;
+    hasDestination: boolean;
+    dstGroupId: string;
+    dstTo: string[];
+    relayChipClass: string;
+    quoteText?: string;
+    presentationRefs: PresentationMessageRef[];
+    isStreaming: boolean;
+    streamingActivities: StreamingActivity[];
+    streamId: string;
+    actorId: string;
+    pendingEventId: string;
+    messageText: string;
+    isQueuedOnlyPlaceholder: boolean;
+    streamingPlaceholderLabel: string;
+    shouldRenderMarkdown: boolean;
+    blobAttachments: Array<{
+        kind: string;
+        path: string;
+        title: string;
+        bytes: number;
+        mime_type: string;
+        local_preview_url: string;
+    }>;
+    blobGroupId: string;
+    stableMessageAttachmentKey: string;
+    onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
+    onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+}) {
+    const { t } = useTranslation("chat");
+
+    return (
+        <>
+            {hasSource ? (
+                <button
+                    type="button"
+                    className={classNames(
+                        "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
+                        relayChipClass,
+                        onOpenSource ? "cursor-pointer" : "cursor-default"
+                    )}
+                    onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
+                    disabled={!onOpenSource}
+                    title={t("openOriginalMessage")}
+                >
+                    <span className="opacity-70">↗</span>
+                    <span className="truncate">
+                        {t("relayedFrom", { groupId: srcGroupId, eventId: srcEventId.slice(0, 8) })}
+                    </span>
+                </button>
+            ) : null}
+
+            {hasDestination ? (() => {
+                const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
+                const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
+                return (
+                    <div
+                        className={classNames(
+                            "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
+                            relayChipClass
+                        )}
+                        title={t("sentTo", { label: dstGroupId, to: dstToLabel })}
+                    >
+                        <span className="opacity-70">↗</span>
+                        <span className="truncate">
+                            {t("sentTo", { label: dstLabel, to: dstToLabel })}
+                        </span>
+                    </div>
+                );
+            })() : null}
+
+            {quoteText ? (
+                <div
+                    className={`mb-2 text-xs border-l-2 pl-2 italic truncate opacity-80 ${isUserMessage ? "border-blue-400" : "border-[var(--glass-border-subtle)]"}`}
+                >
+                    "{quoteText}"
+                </div>
+            ) : null}
+
+            {presentationRefs.length > 0 ? (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                    {presentationRefs.map((ref, index) => (
+                        <button
+                            key={`${String(event.id || "message")}:presentation-ref:${index}:${String(ref.slot_id || "")}`}
+                            type="button"
+                            onClick={() => onOpenPresentationRef?.(ref, event)}
+                            className={classNames(
+                                "inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                                isUserMessage
+                                    ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
+                                    : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                            )}
+                            title={getPresentationRefChipLabel(ref)}
+                        >
+                            <span className="truncate">{getPresentationRefChipLabel(ref)}</span>
+                        </button>
+                    ))}
+                </div>
+            ) : null}
+
+            <MessageContent
+                isStreaming={isStreaming}
+                groupId={groupId}
+                streamId={streamId}
+                actorId={actorId}
+                pendingEventId={pendingEventId}
+                fallbackText={messageText}
+                streamingActivities={streamingActivities}
+                isQueuedOnlyPlaceholder={isQueuedOnlyPlaceholder}
+                streamingPlaceholderLabel={streamingPlaceholderLabel}
+                shouldRenderMarkdown={shouldRenderMarkdown}
+                isDark={isDark}
+                isUserMessage={isUserMessage}
+            />
+
+            <MessageAttachments
+                attachments={blobAttachments}
+                blobGroupId={blobGroupId}
+                isUserMessage={isUserMessage}
+                isDark={isDark}
+                attachmentKeyPrefix={stableMessageAttachmentKey}
+                downloadTitle={(name) => t("download", { name })}
+            />
+        </>
+    );
+}
+
+function StreamingMessageBody({
+    groupId,
+    streamId,
+    actorId,
+    pendingEventId,
+    fallbackText,
+    streamingActivities,
+    isQueuedOnlyPlaceholder,
+    streamingPlaceholderLabel,
+}: {
+    groupId: string;
+    streamId: string;
+    actorId: string;
+    pendingEventId: string;
+    fallbackText: string;
+    streamingActivities: StreamingActivity[];
+    isQueuedOnlyPlaceholder: boolean;
+    streamingPlaceholderLabel: string;
+}) {
+    return (
+        <StreamingContent
+            groupId={groupId}
+            streamId={streamId}
+            actorId={actorId}
+            pendingEventId={pendingEventId}
+            fallbackText={fallbackText}
+            fallbackActivities={streamingActivities}
+            isQueuedOnlyFallbackPlaceholder={isQueuedOnlyPlaceholder}
+            placeholderLabel={streamingPlaceholderLabel}
+        />
+    );
+}
+
+function MessageContent({
+    isStreaming,
+    groupId,
+    streamId,
+    actorId,
+    pendingEventId,
+    fallbackText,
+    streamingActivities,
+    isQueuedOnlyPlaceholder,
+    streamingPlaceholderLabel,
+    shouldRenderMarkdown,
+    isDark,
+    isUserMessage,
+}: {
+    isStreaming: boolean;
+    groupId: string;
+    streamId: string;
+    actorId: string;
+    pendingEventId: string;
+    fallbackText: string;
+    streamingActivities: StreamingActivity[];
+    isQueuedOnlyPlaceholder: boolean;
+    streamingPlaceholderLabel: string;
+    shouldRenderMarkdown: boolean;
+    isDark: boolean;
+    isUserMessage: boolean;
+}) {
+    if (isStreaming) {
+        return (
+            <StreamingMessageBody
+                groupId={groupId}
+                streamId={streamId}
+                actorId={actorId}
+                pendingEventId={pendingEventId}
+                fallbackText={fallbackText}
+                streamingActivities={streamingActivities}
+                isQueuedOnlyPlaceholder={isQueuedOnlyPlaceholder}
+                streamingPlaceholderLabel={streamingPlaceholderLabel}
+            />
+        );
+    }
+
+    if (shouldRenderMarkdown) {
+        return (
+            <Suspense
+                fallback={
+                    <PlainMessageText
+                        text={fallbackText}
+                        className="max-w-full"
+                    />
+                }
+            >
+                <LazyMarkdownRenderer
+                    content={fallbackText}
+                    isDark={isDark}
+                    invertText={isUserMessage}
+                    className="break-words [overflow-wrap:anywhere] max-w-full"
+                />
+            </Suspense>
+        );
+    }
+
+    return (
+        <PlainMessageText
+            text={fallbackText}
+            className="max-w-full"
+        />
+    );
+}
+
+function AgentStateTooltip({
+    isOpen,
+    canShow,
+    isPositioned,
+    setFloating,
+    floatingStyles,
+    senderDisplayName,
+    updatedAt,
+    agentStateDisplay,
+    stateTask,
+    blockerCount,
+    stateNext,
+    stateChanged,
+}: {
+    isOpen: boolean;
+    canShow: boolean;
+    isPositioned: boolean;
+    setFloating: (node: HTMLElement | null) => void;
+    floatingStyles: CSSProperties;
+    senderDisplayName: string;
+    updatedAt?: string;
+    agentStateDisplay: string;
+    stateTask: string;
+    blockerCount: number;
+    stateNext: string;
+    stateChanged: string;
+}) {
+    const { t } = useTranslation("chat");
+
+    if (!isOpen || !canShow) return null;
+
+    return (
+        <div
+            ref={setFloating}
+            style={floatingStyles}
+            className={classNames(
+                "pointer-events-none z-[80] w-[min(360px,calc(100vw-32px))] rounded-2xl px-3 py-2 shadow-2xl transition-opacity duration-150",
+                "glass-modal text-[var(--color-text-primary)]",
+                isPositioned ? "opacity-100" : "opacity-0"
+            )}
+            role="status"
+        >
+            <div className="flex items-center gap-2">
+                <div className="text-xs font-semibold text-[var(--color-text-primary)]">
+                    {senderDisplayName}
+                </div>
+                {updatedAt ? (
+                    <div
+                        className={classNames(
+                            "ml-auto text-xs tabular-nums",
+                            "text-[var(--color-text-tertiary)]"
+                        )}
+                        title={formatFullTime(updatedAt)}
+                    >
+                        {t("updated", { time: formatTime(updatedAt) })}
+                    </div>
+                ) : null}
+            </div>
+            <div className="mt-1 text-xs whitespace-pre-wrap text-[var(--color-text-secondary)]">
+                {agentStateDisplay}
+            </div>
+            {(stateTask || blockerCount > 0 || stateNext || stateChanged) ? (
+                <div className="mt-2 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                        {stateTask ? (
+                            <span className="text-[11px] px-2 py-0.5 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
+                                {t("taskShort", { id: stateTask })}
+                            </span>
+                        ) : null}
+                        {blockerCount > 0 ? (
+                            <span className="text-[11px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-300">
+                                {t("blockersShort", { count: blockerCount })}
+                            </span>
+                        ) : null}
+                    </div>
+                    {stateNext ? (
+                        <div className="text-[11px] text-[var(--color-text-tertiary)]">
+                            {t("nextShort", { value: stateNext })}
+                        </div>
+                    ) : null}
+                    {stateChanged ? (
+                        <div className={classNames("text-[11px]", "text-[var(--color-text-tertiary)]")}>
+                            {t("changedShort", { value: stateChanged })}
+                        </div>
+                    ) : null}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
 export interface MessageBubbleProps {
     event: LedgerEvent;
     actorById: Map<string, Actor>;
@@ -389,6 +1421,7 @@ export interface MessageBubbleProps {
     groupId: string;
     groupLabelById: Record<string, string>;
     isHighlighted?: boolean;
+    collapseHeader?: boolean;
     onReply: () => void;
     onShowRecipients: () => void;
     onCopyLink?: (eventId: string) => void;
@@ -409,6 +1442,7 @@ export const MessageBubble = memo(function MessageBubble({
     groupId,
     groupLabelById,
     isHighlighted,
+    collapseHeader,
     onReply,
     onShowRecipients,
     onCopyLink,
@@ -469,6 +1503,9 @@ export const MessageBubble = memo(function MessageBubble({
     // Treat data as ChatMessageData.
     const msgData = ev.data as ChatMessageData | undefined;
     const quoteText = msgData?.quote_text;
+    const senderSnapshotTitle = typeof msgData?.sender_title === "string" ? String(msgData.sender_title || "").trim() : "";
+    const senderSnapshotRuntime = typeof msgData?.sender_runtime === "string" ? String(msgData.sender_runtime || "").trim() : "";
+    const senderSnapshotAvatarPath = typeof msgData?.sender_avatar_path === "string" ? String(msgData.sender_avatar_path || "").trim() : "";
     const isAttention = String(msgData?.priority || "normal") === "attention";
     const replyRequired = !!msgData?.reply_required;
     const srcGroupId = typeof msgData?.src_group_id === "string" ? String(msgData.src_group_id || "").trim() : "";
@@ -496,21 +1533,10 @@ export const MessageBubble = memo(function MessageBubble({
     const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
     const shouldRenderMarkdown = useMemo(() => !isStreaming && mayContainMarkdown(messageText), [isStreaming, messageText]);
     const streamingActivities = useMemo(() => {
-        const raw = (msgData as { activities?: unknown } | undefined)?.activities;
-        if (!Array.isArray(raw)) return [] as StreamingActivity[];
-        return raw
-            .filter((item): item is StreamingActivity => !!item && typeof item === "object")
-            .map((item) => ({
-                id: String(item.id || ""),
-                kind: String(item.kind || "thinking"),
-                status: String(item.status || "updated"),
-                summary: String(item.summary || ""),
-                detail: item.detail ? String(item.detail) : undefined,
-                ts: item.ts ? String(item.ts) : undefined,
-            }))
-            .filter((item) => item.id && item.summary)
-            .slice(-5);
+        return normalizeStreamingActivities((msgData as { activities?: unknown } | undefined)?.activities);
     }, [msgData]);
+    const pendingEventId = String((msgData as { pending_event_id?: unknown } | undefined)?.pending_event_id || "").trim();
+    const actorId = String(ev.by || "").trim();
     const isQueuedOnlyPlaceholder = useMemo(() => {
         return isQueuedOnlyStreamingPlaceholder({
             isStreaming,
@@ -522,6 +1548,11 @@ export const MessageBubble = memo(function MessageBubble({
         });
     }, [blobAttachments.length, isStreaming, messageText, presentationRefs.length, streamingActivities]);
     const streamPhase = String((msgData as { stream_phase?: unknown } | undefined)?.stream_phase || "").trim().toLowerCase();
+    const bubbleMotionClass = useMemo(() => getMessageBubbleMotionClass({
+        isStreaming,
+        isOptimistic,
+        streamPhase,
+    }), [isOptimistic, isStreaming, streamPhase]);
     const streamingPlaceholderLabel = useMemo(() => {
         if (!isStreaming) return "";
         if (streamPhase === "commentary") {
@@ -562,11 +1593,7 @@ export const MessageBubble = memo(function MessageBubble({
     const recipients = msgData?.to;
 
     const visibleReadStatusEntries = useMemo(() => {
-        if (!readStatus) return [];
-        return actors
-            .map((a) => String(a.id || ""))
-            .filter((id) => id && Object.prototype.hasOwnProperty.call(readStatus, id))
-            .map((id) => [id, !!readStatus[id]] as const);
+        return buildVisibleReadStatusEntries(actors, readStatus);
     }, [actors, readStatus]);
 
     const isDirectUserMessage = useMemo(() => {
@@ -591,42 +1618,31 @@ export const MessageBubble = memo(function MessageBubble({
     }, [ackStatus, ev._obligation_status, isDirectUserMessage, isUserMessage]);
 
     const ackSummary = useMemo(() => {
-        if (hideDirectUserObligationSummary) return null;
-        if ((!isAttention && !replyRequired) || !ackStatus || typeof ackStatus !== "object") return null;
-        const ids = Object.keys(ackStatus);
-        if (ids.length === 0) return null;
-        const done = ids.reduce((n, id) => n + (ackStatus[id] ? 1 : 0), 0);
-        const needsUserAck =
-            Object.prototype.hasOwnProperty.call(ackStatus, "user") && !ackStatus["user"] && !isUserMessage;
-        return { done, total: ids.length, needsUserAck };
+        return computeAckSummary({
+            hideDirectUserObligationSummary,
+            isAttention,
+            replyRequired,
+            ackStatus,
+            isUserMessage,
+        });
     }, [ackStatus, hideDirectUserObligationSummary, isAttention, isUserMessage, replyRequired]);
 
     const obligationSummary = useMemo(() => {
-        if (hideDirectUserObligationSummary) return null;
-        const os = ev._obligation_status;
-        if (!os || typeof os !== "object") return null;
-        const ids = Object.keys(os);
-        if (ids.length === 0) return null;
-
-        const requiresReply = ids.some((id) => !!os[id]?.reply_required);
-        if (requiresReply) {
-            const done = ids.reduce((n, id) => n + (os[id]?.replied ? 1 : 0), 0);
-            return { kind: "reply" as const, done, total: ids.length };
-        }
-        const done = ids.reduce((n, id) => n + (os[id]?.acked ? 1 : 0), 0);
-        return { kind: "ack" as const, done, total: ids.length };
+        return computeObligationSummary({
+            hideDirectUserObligationSummary,
+            obligationStatus: ev._obligation_status,
+        });
     }, [ev._obligation_status, hideDirectUserObligationSummary]);
 
     const toLabel = useMemo(() => {
-        if (hasDestination) {
-            const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
-            const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
-            return `group: ${dstLabel} · ${dstToLabel}`;
-        }
-        if (!recipients || recipients.length === 0) return "@all";
-        return recipients
-            .map(r => getRecipientDisplayName(r, displayNameMap))
-            .join(", ");
+        return buildToLabel({
+            hasDestination,
+            dstGroupId,
+            dstTo,
+            groupLabelById,
+            recipients,
+            displayNameMap,
+        });
     }, [displayNameMap, dstGroupId, dstTo, groupLabelById, hasDestination, recipients]);
 
     // Sender display name (use title if available)
@@ -638,10 +1654,17 @@ export const MessageBubble = memo(function MessageBubble({
     }, [actorById, ev.by, isUserMessage]);
 
     const senderDisplayName = useMemo(() => {
-        const by = String(ev.by || "");
-        if (!by || by === "user") return by;
-        return String(senderActor?.title || "").trim() || displayNameMap.get(by) || by;
-    }, [displayNameMap, ev.by, senderActor]);
+        return getSenderDisplayName({
+            senderId: String(ev.by || ""),
+            senderActor,
+            senderTitle: senderSnapshotTitle,
+            displayNameMap,
+        });
+    }, [displayNameMap, ev.by, senderActor, senderSnapshotTitle]);
+    const senderAvatarUrl = useMemo(() => {
+        return buildSenderAvatarUrl(blobGroupId, senderSnapshotAvatarPath) || String(senderActor?.avatar_url || "").trim();
+    }, [blobGroupId, senderActor?.avatar_url, senderSnapshotAvatarPath]);
+    const senderRuntime = senderSnapshotRuntime || String(senderActor?.runtime || "").trim();
 
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
@@ -679,19 +1702,20 @@ export const MessageBubble = memo(function MessageBubble({
                 <div
                     className={classNames(
                         "mt-1 h-8 w-8 flex-shrink-0",
-                        canShowAgentState ? "cursor-help" : ""
+                        collapseHeader ? "opacity-0 pointer-events-none" : "",
+                        canShowAgentState && !collapseHeader ? "cursor-help" : ""
                     )}
-                    ref={canShowAgentState ? setAgentStateReference : undefined}
-                    onMouseEnter={canShowAgentState ? () => setIsAgentStateOpen(true) : undefined}
-                    onMouseLeave={canShowAgentState ? () => setIsAgentStateOpen(false) : undefined}
-                    onFocus={canShowAgentState ? () => setIsAgentStateOpen(true) : undefined}
-                    onBlur={canShowAgentState ? () => setIsAgentStateOpen(false) : undefined}
-                    tabIndex={canShowAgentState ? 0 : undefined}
-                    aria-label={canShowAgentState ? t('agentStateTooltipLabel', { defaultValue: 'View agent state' }) : undefined}
+                    ref={canShowAgentState && !collapseHeader ? setAgentStateReference : undefined}
+                    onMouseEnter={canShowAgentState && !collapseHeader ? () => setIsAgentStateOpen(true) : undefined}
+                    onMouseLeave={canShowAgentState && !collapseHeader ? () => setIsAgentStateOpen(false) : undefined}
+                    onFocus={canShowAgentState && !collapseHeader ? () => setIsAgentStateOpen(true) : undefined}
+                    onBlur={canShowAgentState && !collapseHeader ? () => setIsAgentStateOpen(false) : undefined}
+                    tabIndex={canShowAgentState && !collapseHeader ? 0 : undefined}
+                    aria-label={canShowAgentState && !collapseHeader ? t('agentStateTooltipLabel', { defaultValue: 'View agent state' }) : undefined}
                 >
                     <ActorAvatar
-                        avatarUrl={senderActor?.avatar_url}
-                        runtime={senderActor?.runtime}
+                        avatarUrl={senderAvatarUrl || undefined}
+                        runtime={senderRuntime || undefined}
                         title={senderDisplayName}
                         isUser={isUserMessage}
                         isDark={isDark}
@@ -700,64 +1724,20 @@ export const MessageBubble = memo(function MessageBubble({
                 </div>
             </div>
             <FloatingPortal>
-                {isAgentStateOpen && canShowAgentState ? (
-                    <div
-                        ref={setAgentStateFloating}
-                        style={floatingStyles}
-                        className={classNames(
-                            "pointer-events-none z-[80] w-[min(360px,calc(100vw-32px))] rounded-2xl px-3 py-2 shadow-2xl transition-opacity duration-150",
-                            "glass-modal text-[var(--color-text-primary)]",
-                            isAgentStatePositioned ? "opacity-100" : "opacity-0"
-                        )}
-                        role="status"
-                    >
-                        <div className="flex items-center gap-2">
-                            <div className="text-xs font-semibold text-[var(--color-text-primary)]">
-                                {senderDisplayName}
-                            </div>
-                            {agentState?.updated_at ? (
-                                <div
-                                    className={classNames(
-                                        "ml-auto text-xs tabular-nums",
-                                        "text-[var(--color-text-tertiary)]"
-                                    )}
-                                    title={formatFullTime(agentState.updated_at)}
-                                >
-                                    {t('updated', { time: formatTime(agentState.updated_at) })}
-                                </div>
-                            ) : null}
-                        </div>
-                        <div className="mt-1 text-xs whitespace-pre-wrap text-[var(--color-text-secondary)]">
-                            {agentStateDisplay}
-                        </div>
-                        {(stateTask || blockerCount > 0 || stateNext || stateChanged) ? (
-                            <div className="mt-2 space-y-1">
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                    {stateTask ? (
-                                        <span className="text-[11px] px-2 py-0.5 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
-                                            {t("taskShort", { id: stateTask })}
-                                        </span>
-                                    ) : null}
-                                    {blockerCount > 0 ? (
-                                        <span className="text-[11px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-300">
-                                            {t("blockersShort", { count: blockerCount })}
-                                        </span>
-                                    ) : null}
-                                </div>
-                                {stateNext ? (
-                                    <div className="text-[11px] text-[var(--color-text-tertiary)]">
-                                        {t("nextShort", { value: stateNext })}
-                                    </div>
-                                ) : null}
-                                {stateChanged ? (
-                                    <div className={classNames("text-[11px]", "text-[var(--color-text-tertiary)]")}>
-                                        {t("changedShort", { value: stateChanged })}
-                                    </div>
-                                ) : null}
-                            </div>
-                        ) : null}
-                    </div>
-                ) : null}
+                <AgentStateTooltip
+                    isOpen={isAgentStateOpen && !collapseHeader}
+                    canShow={canShowAgentState && !collapseHeader}
+                    isPositioned={isAgentStatePositioned}
+                    setFloating={setAgentStateFloating}
+                    floatingStyles={floatingStyles}
+                    senderDisplayName={senderDisplayName}
+                    updatedAt={agentState?.updated_at ? String(agentState.updated_at) : undefined}
+                    agentStateDisplay={agentStateDisplay}
+                    stateTask={stateTask}
+                    blockerCount={blockerCount}
+                    stateNext={stateNext}
+                    stateChanged={stateChanged}
+                />
             </FloatingPortal>
 
             {/* Message Content */}
@@ -767,78 +1747,33 @@ export const MessageBubble = memo(function MessageBubble({
                     isUserMessage ? "items-end" : "items-start"
                 )}
             >
-                {/* Mobile Header Row (Visible only on mobile) */}
-                <div
-                    className={classNames(
-                        "flex items-center gap-2 mb-1 sm:hidden min-w-0",
-                        isUserMessage ? "justify-end" : "justify-start"
-                    )}
-                >
-                    <ActorAvatar
-                        avatarUrl={senderActor?.avatar_url}
-                        runtime={senderActor?.runtime}
-                        title={senderDisplayName}
-                        isUser={isUserMessage}
-                        isDark={isDark}
-                        accentRingClassName={senderAccent?.ring}
-                        sizeClassName="h-6 w-6"
-                        textClassName="text-[10px]"
-                    />
-                    <span
-                        className={classNames(
-                            "text-xs font-medium flex-shrink-0",
-                            isUserMessage
-                                ? isDark
-                                    ? "text-slate-300"
-                                    : "text-gray-700"
-                                : senderAccent
-                                    ? senderAccent.text
-                                    : isDark
-                                        ? "text-slate-300"
-                                        : "text-gray-700"
-                        )}
-                    >
-                        {senderDisplayName}
-                    </span>
-                    <span className={`text-[10px] flex-shrink-0 text-[var(--color-text-tertiary)]`}>
-                        <span title={fullMessageTimestamp}>{messageTimestamp}</span>
-                    </span>
-                    <span
-                        className={classNames(
-                            "text-[10px] min-w-0 truncate",
-                            "text-[var(--color-text-tertiary)]"
-                        )}
-                        title={`to ${toLabel}`}
-                    >
-                        to {toLabel}
-                    </span>
-                </div>
+                {!collapseHeader ? (
+                    <>
+                        <MessageMetadataHeader
+                            mobile={true}
+                            isUserMessage={isUserMessage}
+                            isDark={isDark}
+                            senderAccentTextClass={senderAccent?.text}
+                            senderDisplayName={senderDisplayName}
+                            messageTimestamp={messageTimestamp}
+                            fullMessageTimestamp={fullMessageTimestamp}
+                            toLabel={toLabel}
+                            senderAvatarUrl={senderAvatarUrl || undefined}
+                            senderRuntime={senderRuntime || undefined}
+                            avatarRingClassName={senderAccent?.ring}
+                        />
 
-                {/* Desktop Metadata Header (Hidden on mobile) */}
-                <div className="hidden sm:flex items-center gap-2 mb-1 px-1 min-w-0">
-                    <span
-                        className={classNames(
-                            "text-[11px] font-medium flex-shrink-0",
-                            isUserMessage
-                                ? isDark
-                                    ? "text-[var(--color-text-secondary)]"
-                                    : "text-gray-500"
-                                : senderAccent
-                                    ? senderAccent.text
-                                    : isDark
-                                        ? "text-[var(--color-text-secondary)]"
-                                        : "text-gray-500"
-                        )}
-                    >
-                        {senderDisplayName}
-                    </span>
-                    <span className={`text-[10px] flex-shrink-0 text-[var(--color-text-tertiary)]`}>
-                        <span title={fullMessageTimestamp}>{messageTimestamp}</span>
-                    </span>
-                    <span className={classNames("text-[10px] min-w-0 truncate", "text-[var(--color-text-tertiary)]")} title={`to ${toLabel}`}>
-                        to {toLabel}
-                    </span>
-                </div>
+                        <MessageMetadataHeader
+                            isUserMessage={isUserMessage}
+                            isDark={isDark}
+                            senderAccentTextClass={senderAccent?.text}
+                            senderDisplayName={senderDisplayName}
+                            messageTimestamp={messageTimestamp}
+                            fullMessageTimestamp={fullMessageTimestamp}
+                            toLabel={toLabel}
+                        />
+                    </>
+                ) : null}
 
                 {/* Bubble wrapper (allows badge to overflow) */}
                 <div
@@ -858,9 +1793,10 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 <div
                     className={classNames(
-                        "inline-flex max-w-full flex-col px-4 py-2.5 text-sm leading-relaxed transition-[opacity,transform,box-shadow] duration-200 ease-out",
+                        "inline-flex max-w-full flex-col px-4 py-2.5 text-sm leading-relaxed transition-[opacity,transform,box-shadow,background-color] duration-200 ease-out",
                         isQueuedOnlyPlaceholder ? "min-h-0 px-3 py-2" : "",
-                        isStreaming ? "opacity-95 translate-y-0.5" : "opacity-100 translate-y-0",
+                        isStreaming ? "opacity-95 translate-y-0" : "opacity-100 translate-y-0",
+                        bubbleMotionClass,
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none shadow-sm"
                             : "glass-bubble rounded-2xl rounded-tl-none text-[var(--color-text-primary)]"
@@ -871,347 +1807,60 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 >
 
-                    {/* Cross-group relay provenance */}
-                    {hasSource ? (
-                        <button
-                            type="button"
-                            className={classNames(
-                                "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
-                                relayChipClass,
-                                onOpenSource ? "cursor-pointer" : "cursor-default"
-                            )}
-                            onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
-                            disabled={!onOpenSource}
-                            title={t('openOriginalMessage')}
-                        >
-                            <span className="opacity-70">↗</span>
-                            <span className="truncate">
-                                {t('relayedFrom', { groupId: srcGroupId, eventId: srcEventId.slice(0, 8) })}
-                            </span>
-                        </button>
-                    ) : null}
-                    {/* Outbound cross-group send record */}
-                    {hasDestination ? (() => {
-                        const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
-                        const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
-                        return (
-                            <div
-                                className={classNames(
-                                    "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
-                                    relayChipClass
-                                )}
-                                title={t('sentTo', { label: dstGroupId, to: dstToLabel })}
-                            >
-                                <span className="opacity-70">↗</span>
-                                <span className="truncate">
-                                    {t('sentTo', { label: dstLabel, to: dstToLabel })}
-                                </span>
-                            </div>
-                        );
-                    })() : null}
-                    {/* Reply Context */}
-                    {quoteText && (
-                        <div
-                            className={`mb-2 text-xs border-l-2 pl-2 italic truncate opacity-80 ${isUserMessage ? "border-blue-400" : "border-[var(--glass-border-subtle)]"
-                                }`}
-                        >
-                            "{quoteText}"
-                        </div>
-                    )}
-
-                    {presentationRefs.length > 0 ? (
-                        <div className="mb-2 flex flex-wrap gap-1.5">
-                            {presentationRefs.map((ref, index) => (
-                                <button
-                                    key={`${String(ev.id || "message")}:presentation-ref:${index}:${String(ref.slot_id || "")}`}
-                                    type="button"
-                                    onClick={() => onOpenPresentationRef?.(ref, ev)}
-                                    className={classNames(
-                                        "inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                                        isUserMessage
-                                            ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
-                                            : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                                    )}
-                                    title={getPresentationRefChipLabel(ref)}
-                                >
-                                    <span className="truncate">{getPresentationRefChipLabel(ref)}</span>
-                                </button>
-                            ))}
-                        </div>
-                    ) : null}
-
-                    {isStreaming ? null : streamingActivities.length > 0 ? (
-                        <StreamingActivityList
-                            groupId={groupId}
-                            streamId=""
-                            fallbackActivities={streamingActivities}
-                        />
-                    ) : null}
-
-                    {/* Text Content */}
-                    {isStreaming ? (
-                        <StreamingContent
-                            groupId={groupId}
-                            streamId={streamId}
-                            fallbackText={messageText}
-                            fallbackActivities={streamingActivities}
-                            isQueuedOnlyFallbackPlaceholder={isQueuedOnlyPlaceholder}
-                            placeholderLabel={streamingPlaceholderLabel}
-                        />
-                    ) : shouldRenderMarkdown ? (
-                        <Suspense
-                            fallback={
-                                <PlainMessageText
-                                    text={messageText}
-                                    className="max-w-full"
-                                />
-                            }
-                        >
-                            <LazyMarkdownRenderer
-                                content={messageText}
-                                isDark={isDark}
-                                invertText={isUserMessage}
-                                className="break-words [overflow-wrap:anywhere] max-w-full"
-                            />
-                        </Suspense>
-                    ) : (
-                        <PlainMessageText
-                            text={messageText}
-                            className="max-w-full"
-                        />
-                    )}
-
-                    {/* Attachments */}
-                    <MessageAttachments
-                        attachments={blobAttachments}
-                        blobGroupId={blobGroupId}
+                    <MessageBubbleBody
+                        event={ev}
                         isUserMessage={isUserMessage}
                         isDark={isDark}
-                        attachmentKeyPrefix={stableMessageAttachmentKey}
-                        downloadTitle={(name) => t('download', { name })}
+                        groupId={groupId}
+                        groupLabelById={groupLabelById}
+                        hasSource={hasSource}
+                        srcGroupId={srcGroupId}
+                        srcEventId={srcEventId}
+                        hasDestination={hasDestination}
+                        dstGroupId={dstGroupId}
+                        dstTo={dstTo}
+                        relayChipClass={relayChipClass}
+                        quoteText={quoteText}
+                        presentationRefs={presentationRefs}
+                        isStreaming={isStreaming}
+                        streamingActivities={streamingActivities}
+                        streamId={streamId}
+                        actorId={actorId}
+                        pendingEventId={pendingEventId}
+                        messageText={messageText}
+                        isQueuedOnlyPlaceholder={isQueuedOnlyPlaceholder}
+                        streamingPlaceholderLabel={streamingPlaceholderLabel}
+                        shouldRenderMarkdown={shouldRenderMarkdown}
+                        blobAttachments={blobAttachments}
+                        blobGroupId={blobGroupId}
+                        stableMessageAttachmentKey={stableMessageAttachmentKey}
+                        onOpenSource={onOpenSource}
+                        onOpenPresentationRef={onOpenPresentationRef}
                     />
                 </div>
                 </div>
 
-                <div
-                    className={classNames(
-                        "flex items-center gap-3 mt-1 px-1 text-[10px] transition-opacity",
-                        (obligationSummary || ackSummary || visibleReadStatusEntries.length > 0 || replyRequired) ? "justify-between" : "justify-end",
-                        "opacity-85 group-hover:opacity-100",
-                        "text-[var(--color-text-tertiary)]"
-                    )}
-                >
-                    {obligationSummary ? (
-                        readOnly ? (
-                            <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
-                                <span
-                                    className={classNames(
-                                        "text-[10px] font-semibold tracking-tight",
-                                        obligationSummary.done >= obligationSummary.total
-                                            ? "text-emerald-600 dark:text-emerald-400"
-                                            : "text-amber-600 dark:text-amber-400"
-                                    )}
-                                >
-                                    {obligationSummary.kind === "reply" ? t('reply') : t('ack')} {obligationSummary.done}/{obligationSummary.total}
-                                </span>
-                            </div>
-                        ) : (
-                            <button
-                                type="button"
-                                className={classNames(
-                                    "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
-                                    "hover:bg-[var(--glass-tab-bg-hover)]"
-                                )}
-                                onClick={onShowRecipients}
-                                aria-label={t('showObligationStatus')}
-                            >
-                                <span
-                                    className={classNames(
-                                        "text-[10px] font-semibold tracking-tight",
-                                        obligationSummary.done >= obligationSummary.total
-                                            ? "text-emerald-600 dark:text-emerald-400"
-                                            : "text-amber-600 dark:text-amber-400"
-                                    )}
-                                >
-                                    {obligationSummary.kind === "reply" ? t('reply') : t('ack')} {obligationSummary.done}/{obligationSummary.total}
-                                </span>
-                            </button>
-                        )
-                    ) : ackSummary ? (
-                        readOnly ? (
-                            <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
-                                <span
-                                    className={classNames(
-                                        "text-[10px] font-semibold tracking-tight",
-                                        ackSummary.done >= ackSummary.total
-                                            ? "text-emerald-600 dark:text-emerald-400"
-                                            : "text-amber-600 dark:text-amber-400"
-                                    )}
-                                >
-                                    {t('ack')} {ackSummary.done}/{ackSummary.total}
-                                </span>
-                            </div>
-                        ) : (
-                            <button
-                                type="button"
-                                className={classNames(
-                                    "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
-                                    "hover:bg-[var(--glass-tab-bg-hover)]"
-                                )}
-                                onClick={onShowRecipients}
-                                aria-label={t('showAckStatus')}
-                            >
-                                <span
-                                    className={classNames(
-                                        "text-[10px] font-semibold tracking-tight",
-                                        ackSummary.done >= ackSummary.total
-                                            ? "text-emerald-600 dark:text-emerald-400"
-                                            : "text-amber-600 dark:text-amber-400"
-                                    )}
-                                >
-                                    {t('ack')} {ackSummary.done}/{ackSummary.total}
-                                </span>
-                            </button>
-                        )
-                    ) : visibleReadStatusEntries.length > 0 ? (
-                        readOnly ? (
-                            <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
-                                <div className="flex items-center gap-2 min-w-0">
-                                    {readPreviewEntries.map(([id, cleared]) => (
-                                        <span key={id} className="inline-flex items-center gap-1 min-w-0">
-                                            <span className="truncate max-w-[10ch]">{displayNameMap.get(id) || id}</span>
-                                            <span
-                                                className={classNames(
-                                                    "text-[10px] font-semibold tracking-tight",
-                                                    cleared
-                                                        ? isDark
-                                                            ? "text-emerald-400"
-                                                            : "text-emerald-600"
-                                                        : isDark
-                                                            ? "text-slate-500"
-                                                            : "text-gray-500"
-                                                )}
-                                                aria-label={cleared ? t('read') : t('pending')}
-                                            >
-                                                {cleared ? "✓✓" : "✓"}
-                                            </span>
-                                        </span>
-                                    ))}
-                                    {readPreviewOverflow > 0 && (
-                                        <span className={classNames("text-[10px]", "text-[var(--color-text-tertiary)]")}>
-                                            +{readPreviewOverflow}
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                        ) : (
-                            <button
-                                type="button"
-                                className={classNames(
-                                    "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
-                                    "hover:bg-[var(--glass-tab-bg-hover)]"
-                                )}
-                                onClick={onShowRecipients}
-                                aria-label={t('showRecipientStatus')}
-                            >
-                                <div className="flex items-center gap-2 min-w-0">
-                                    {readPreviewEntries.map(([id, cleared]) => (
-                                        <span key={id} className="inline-flex items-center gap-1 min-w-0">
-                                            <span className="truncate max-w-[10ch]">{displayNameMap.get(id) || id}</span>
-                                            <span
-                                                className={classNames(
-                                                    "text-[10px] font-semibold tracking-tight",
-                                                    cleared
-                                                        ? isDark
-                                                            ? "text-emerald-400"
-                                                            : "text-emerald-600"
-                                                        : isDark
-                                                            ? "text-slate-500"
-                                                            : "text-gray-500"
-                                                )}
-                                                aria-label={cleared ? t('read') : t('pending')}
-                                            >
-                                                {cleared ? "✓✓" : "✓"}
-                                            </span>
-                                        </span>
-                                    ))}
-                                    {readPreviewOverflow > 0 && (
-                                        <span className={classNames("text-[10px]", "text-[var(--color-text-tertiary)]")}>
-                                            +{readPreviewOverflow}
-                                        </span>
-                                    )}
-                                </div>
-                            </button>
-                        )
-                    ) : null}
-
-                    {!obligationSummary && !ackSummary && replyRequired && (
-                        <span
-                            className={classNames(
-                                "text-[10px] font-semibold tracking-tight",
-                                "text-violet-700 dark:text-violet-300"
-                            )}
-                        >
-                            {t('needReply')}
-                        </span>
-                    )}
-
-                    {!readOnly && (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {copyableMessageText ? (
-                            <button
-                                type="button"
-                                className={classNames(
-                                    "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
-                                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                                )}
-                                onClick={() => void handleCopyMessageText()}
-                                title={copiedMessageText ? t("common:copied") : t("copyText")}
-                            >
-                                {copiedMessageText ? t("common:copied") : t("copyText")}
-                            </button>
-                        ) : null}
-                        {ev.id && onCopyLink ? (
-                            <button
-                                type="button"
-                                className={classNames(
-                                    "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
-                                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                                )}
-                                onClick={() => onCopyLink(String(ev.id))}
-                                title={t('copyLink')}
-                            >
-                                {t('copyLink')}
-                            </button>
-                        ) : null}
-                        {ev.id && onRelay ? (
-                            <button
-                                type="button"
-                                className={classNames(
-                                    "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
-                                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                                )}
-                                onClick={() => onRelay(ev)}
-                                title={t('relayToGroup')}
-                            >
-                                {t('relay')}
-                            </button>
-                        ) : null}
-                        {canReply ? (
-                            <button
-                                type="button"
-                                className={classNames(
-                                    "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
-                                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                                )}
-                                onClick={onReply}
-                            >
-                                {t('reply')}
-                            </button>
-                        ) : null}
-                      </div>
-                    )}
-                </div>
+                <MessageFooter
+                    readOnly={readOnly}
+                    obligationSummary={obligationSummary}
+                    ackSummary={ackSummary}
+                    visibleReadStatusEntries={visibleReadStatusEntries}
+                    readPreviewEntries={readPreviewEntries}
+                    readPreviewOverflow={readPreviewOverflow}
+                    displayNameMap={displayNameMap}
+                    isDark={isDark}
+                    replyRequired={replyRequired}
+                    copiedMessageText={copiedMessageText}
+                    copyableMessageText={copyableMessageText}
+                    onCopyMessageText={() => void handleCopyMessageText()}
+                    onShowRecipients={onShowRecipients}
+                    onCopyLink={onCopyLink}
+                    onRelay={onRelay}
+                    onReply={onReply}
+                    canReply={canReply}
+                    eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
+                    event={ev}
+                />
             </div>
         </div>
     );
@@ -1225,6 +1874,7 @@ export const MessageBubble = memo(function MessageBubble({
         prevProps.groupId === nextProps.groupId &&
         prevProps.groupLabelById === nextProps.groupLabelById &&
         prevProps.isHighlighted === nextProps.isHighlighted &&
+        prevProps.collapseHeader === nextProps.collapseHeader &&
         prevProps.onRelay === nextProps.onRelay &&
         prevProps.onOpenSource === nextProps.onOpenSource &&
         prevProps.onOpenPresentationRef === nextProps.onOpenPresentationRef

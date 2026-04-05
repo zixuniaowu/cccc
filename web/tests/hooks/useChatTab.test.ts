@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS,
+  buildChatStreamingIndicatorItems,
   buildReplySlotTsMap,
   collapseActorStreamingPlaceholders,
   dedupeStreamingEvents,
   mergeLiveChatMessageEvents,
+  mergeVisibleChatMessages,
   sortChatMessages,
+  shouldRestoreDetachedScrollSnapshot,
+  supportsChatStreamingPlaceholder,
 } from "../../src/hooks/useChatTab";
 import type { LedgerEvent } from "../../src/types";
 
@@ -135,6 +140,33 @@ describe("collapseActorStreamingPlaceholders", () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.data?.stream_id).toBe("commentary-1");
   });
+
+  it("keeps a new local queued placeholder when the actor only has rich streaming from an older reply slot", () => {
+    const events = collapseActorStreamingPlaceholders([
+      makeStreamingEvent({
+        id: "stream:old-final",
+        streamId: "old-final",
+        pendingEventId: "evt-0",
+        text: "上一轮已经有正文",
+      }),
+      {
+        id: "stream:queued-local",
+        kind: "chat.message",
+        by: "claude-1",
+        _streaming: true,
+        data: {
+          text: "",
+          to: ["user"],
+          stream_id: "local:msg-2:claude-1",
+          pending_placeholder: true,
+          activities: [{ id: "queued:2", kind: "queued", status: "started", summary: "queued" }],
+        },
+      },
+    ]);
+
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => String(event.id || ""))).toContain("stream:queued-local");
+  });
 });
 
 describe("sortChatMessages", () => {
@@ -201,6 +233,43 @@ describe("sortChatMessages", () => {
 });
 
 describe("mergeLiveChatMessageEvents", () => {
+  it("keeps the optimistic user bubble visible until the canonical echo is renderable", () => {
+    const optimisticEvent: LedgerEvent = {
+      id: "local-1",
+      ts: "2026-04-05T02:00:00.000Z",
+      kind: "chat.message",
+      by: "user",
+      data: {
+        text: "马上发出去",
+        to: ["@foreman"],
+        client_id: "local-1",
+        _optimistic: true,
+      },
+    };
+    const nonRenderableCanonical: LedgerEvent = {
+      id: "evt-1",
+      ts: "2026-04-05T02:00:01.000Z",
+      kind: "chat.message",
+      by: "user",
+      data: {
+        text: "",
+        to: ["@foreman"],
+        client_id: "local-1",
+      },
+    };
+
+    const merged = mergeVisibleChatMessages(
+      [nonRenderableCanonical],
+      [],
+      [optimisticEvent],
+      { map: new Map(), next: 0 },
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(String(merged[0]?.id || "")).toBe("local-1");
+    expect(String(((merged[0]?.data as { text?: string })?.text) || "")).toBe("马上发出去");
+  });
+
   it("does not collapse multiple canonical replies from the same actor to the same parent", () => {
     const merged = mergeLiveChatMessageEvents(
       [
@@ -268,8 +337,8 @@ describe("mergeLiveChatMessageEvents", () => {
       [],
     );
 
-    expect(merged).toHaveLength(2);
-    expect(merged.map((event) => String(event.id || ""))).toEqual(["stream:commentary", "evt-empty"]);
+    expect(merged).toHaveLength(1);
+    expect(merged.map((event) => String(event.id || ""))).toEqual(["stream:commentary"]);
     expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("我先检查 commentary 合并");
   });
 
@@ -310,5 +379,410 @@ describe("mergeLiveChatMessageEvents", () => {
     expect(merged).toHaveLength(1);
     expect(String(merged[0]?.id || "")).toBe("evt-final");
     expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("已经定位到问题");
+  });
+
+  it("replaces a queued streaming placeholder with the canonical reply in the same logical slot", () => {
+    const merged = mergeLiveChatMessageEvents(
+      [
+        {
+          id: "evt-final",
+          ts: "2026-04-04T15:29:03.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          data: {
+            text: "已经定位到问题",
+            reply_to: "user-msg-1",
+            to: ["user"],
+          },
+        },
+      ],
+      [
+        {
+          id: "stream:queued",
+          ts: "2026-04-04T15:29:00.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          _streaming: true,
+          data: {
+            text: "",
+            pending_event_id: "user-msg-1",
+            stream_id: "pending:user-msg-1:claude-1",
+            pending_placeholder: true,
+            to: ["user"],
+            activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
+          },
+        },
+      ],
+      [],
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(String(merged[0]?.id || "")).toBe("evt-final");
+  });
+
+  it("keeps a fresh local queued placeholder visible even when the actor already has older canonical replies", () => {
+    const merged = mergeLiveChatMessageEvents(
+      [
+        {
+          id: "evt-old",
+          ts: "2026-04-04T15:29:03.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          data: {
+            text: "上一轮已经回复过",
+            reply_to: "user-msg-0",
+            to: ["user"],
+          },
+        },
+      ],
+      [
+        {
+          id: "stream:queued-local",
+          ts: "2026-04-04T15:29:02.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          _streaming: true,
+          data: {
+            text: "",
+            stream_id: "local:msg-1:claude-1",
+            pending_event_id: "local_1",
+            pending_placeholder: true,
+            to: ["user"],
+            activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
+          },
+        },
+      ],
+      [],
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged.map((event) => String(event.id || ""))).toContain("stream:queued-local");
+  });
+
+  it("keeps pending and real streaming variants in one logical slot", () => {
+    const merged = mergeVisibleChatMessages(
+      [],
+      [
+        {
+          id: "stream:local",
+          ts: "2026-04-04T15:29:00.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          _streaming: true,
+          data: {
+            text: "",
+            pending_event_id: "user-msg-1",
+            stream_id: "pending:user-msg-1:claude-1",
+            pending_placeholder: true,
+            to: ["user"],
+            activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
+          },
+        },
+        {
+          id: "stream:real",
+          ts: "2026-04-04T15:29:01.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          _streaming: true,
+          data: {
+            text: "开始输出",
+            pending_event_id: "user-msg-1",
+            stream_id: "stream-final-1",
+            pending_placeholder: false,
+            to: ["user"],
+          },
+        },
+      ],
+      [],
+      { map: new Map(), next: 0 },
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(String(merged[0]?.id || "")).toBe("stream:real");
+  });
+
+  it("keeps the streaming placeholder instead of replacing it with an empty canonical reply", () => {
+    const merged = mergeVisibleChatMessages(
+      [
+        {
+          id: "evt-empty",
+          ts: "2026-04-04T15:29:01.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          data: {
+            text: "",
+            reply_to: "user-msg-1",
+            to: ["user"],
+          },
+        },
+      ],
+      [
+        {
+          id: "stream:queued-local",
+          ts: "2026-04-04T15:29:00.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          _streaming: true,
+          data: {
+            text: "",
+            pending_event_id: "user-msg-1",
+            stream_id: "local:msg-1:claude-1",
+            pending_placeholder: true,
+            to: ["user"],
+            activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
+          },
+        },
+      ],
+      [],
+      { map: new Map(), next: 0 },
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(String(merged[0]?.id || "")).toBe("stream:queued-local");
+  });
+
+  it("treats two local placeholders from the same actor as different logical reply slots", () => {
+    const merged = mergeVisibleChatMessages(
+      [],
+      [
+        {
+          id: "stream:queued-local-1",
+          ts: "2026-04-04T15:29:00.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          _streaming: true,
+          data: {
+            text: "",
+            pending_event_id: "local_1",
+            stream_id: "local:msg-1:claude-1",
+            pending_placeholder: true,
+            to: ["user"],
+            activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
+          },
+        },
+        {
+          id: "stream:queued-local-2",
+          ts: "2026-04-04T15:29:02.000Z",
+          kind: "chat.message",
+          by: "claude-1",
+          _streaming: true,
+          data: {
+            text: "",
+            pending_event_id: "local_2",
+            stream_id: "local:msg-2:claude-1",
+            pending_placeholder: true,
+            to: ["user"],
+            activities: [{ id: "queued:2", kind: "queued", status: "started", summary: "queued" }],
+          },
+        },
+      ],
+      [],
+      { map: new Map(), next: 0 },
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged.map((event) => String(event.id || ""))).toEqual([
+      "stream:queued-local-1",
+      "stream:queued-local-2",
+    ]);
+  });
+});
+
+describe("mergeVisibleChatMessages", () => {
+  it("keeps an optimistic user reply visible while the matching canonical event is still empty", () => {
+    const localId = "local-user-reply-1";
+    const merged = mergeVisibleChatMessages(
+      [
+        {
+          id: "evt-empty-user",
+          ts: "2026-04-04T16:40:02.000Z",
+          kind: "chat.message",
+          by: "user",
+          data: {
+            text: "",
+            client_id: localId,
+            reply_to: "agent-msg-1",
+            to: ["@assistant"],
+          },
+        },
+      ],
+      [],
+      [
+        {
+          id: localId,
+          ts: "2026-04-04T16:40:01.000Z",
+          kind: "chat.message",
+          by: "user",
+          data: {
+            text: "这是 optimistic reply",
+            client_id: localId,
+            reply_to: "agent-msg-1",
+            to: ["@assistant"],
+            _optimistic: true,
+          },
+        },
+      ],
+      { map: new Map(), next: 0 },
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(String(merged[0]?.id || "")).toBe(localId);
+    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("这是 optimistic reply");
+  });
+
+  it("replaces the optimistic user reply once the canonical event has renderable content", () => {
+    const localId = "local-user-reply-2";
+    const merged = mergeVisibleChatMessages(
+      [
+        {
+          id: "evt-user-final",
+          ts: "2026-04-04T16:41:02.000Z",
+          kind: "chat.message",
+          by: "user",
+          data: {
+            text: "这是最终 canonical reply",
+            client_id: localId,
+            reply_to: "agent-msg-1",
+            to: ["@assistant"],
+          },
+        },
+      ],
+      [],
+      [
+        {
+          id: localId,
+          ts: "2026-04-04T16:41:01.000Z",
+          kind: "chat.message",
+          by: "user",
+          data: {
+            text: "这是 optimistic reply",
+            client_id: localId,
+            reply_to: "agent-msg-1",
+            to: ["@assistant"],
+            _optimistic: true,
+          },
+        },
+      ],
+      { map: new Map(), next: 0 },
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(String(merged[0]?.id || "")).toBe("evt-user-final");
+    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("这是最终 canonical reply");
+  });
+});
+
+describe("buildChatStreamingIndicatorItems", () => {
+  it("builds actor-level indicators from active streaming events instead of message bubbles", () => {
+    const items = buildChatStreamingIndicatorItems(
+      [
+        {
+          id: "stream:commentary",
+          ts: "2026-04-06T02:00:00.000Z",
+          kind: "chat.message",
+          by: "coder",
+          _streaming: true,
+          data: {
+            text: "先看下 hook 合并",
+            stream_id: "stream-commentary",
+            pending_event_id: "evt-1",
+            activities: [{ id: "a1", kind: "search", status: "started", summary: "search docs" }],
+            to: ["user"],
+          },
+        },
+      ],
+      [{ id: "coder", title: "Coder", runtime: "codex" } as never],
+    );
+
+    expect(items).toEqual([
+      {
+        actorId: "coder",
+        actorName: "Coder",
+        activities: [{ id: "a1", kind: "search", summary: "search docs" }],
+        placeholderLabel: "Working...",
+        queuedOnly: false,
+      },
+    ]);
+  });
+
+  it("keeps a queued placeholder indicator even before正文 arrives", () => {
+    const items = buildChatStreamingIndicatorItems(
+      [
+        {
+          id: "stream:queued",
+          ts: "2026-04-06T02:00:00.000Z",
+          kind: "chat.message",
+          by: "coder",
+          _streaming: true,
+          data: {
+            text: "",
+            stream_id: "local:msg-1:coder",
+            pending_event_id: "local_1",
+            pending_placeholder: true,
+            activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
+            to: ["user"],
+          },
+        },
+      ],
+      [{ id: "coder", title: "Coder", runtime: "codex" } as never],
+    );
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.queuedOnly).toBe(true);
+  });
+});
+
+describe("shouldRestoreDetachedScrollSnapshot", () => {
+  it("restores only fresh detached snapshots with anchors", () => {
+    const now = 1_700_000_000_000;
+    expect(shouldRestoreDetachedScrollSnapshot({
+      mode: "detached",
+      anchorId: "evt-1",
+      updatedAt: now - 1000,
+    }, now)).toBe(true);
+
+    expect(shouldRestoreDetachedScrollSnapshot({
+      mode: "follow",
+      anchorId: "",
+      updatedAt: now,
+    }, now)).toBe(false);
+
+    expect(shouldRestoreDetachedScrollSnapshot({
+      mode: "detached",
+      anchorId: "evt-1",
+      updatedAt: now - CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS - 1,
+    }, now)).toBe(false);
+
+    expect(shouldRestoreDetachedScrollSnapshot({
+      mode: "detached",
+      anchorId: "",
+      updatedAt: now,
+    }, now)).toBe(false);
+  });
+});
+
+describe("supportsChatStreamingPlaceholder", () => {
+  it("returns true for codex headless actors", () => {
+    expect(supportsChatStreamingPlaceholder({
+      runtime: "codex",
+      runner: "pty",
+      runner_effective: "headless",
+    })).toBe(true);
+  });
+
+  it("returns false for codex pty actors", () => {
+    expect(supportsChatStreamingPlaceholder({
+      runtime: "codex",
+      runner: "pty",
+      runner_effective: "pty",
+    })).toBe(false);
+  });
+
+  it("returns false for non-codex actors", () => {
+    expect(supportsChatStreamingPlaceholder({
+      runtime: "claude",
+      runner: "headless",
+      runner_effective: "headless",
+    })).toBe(false);
   });
 });

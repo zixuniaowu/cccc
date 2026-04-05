@@ -77,6 +77,28 @@ class TestWebGroupsLocalProjection(unittest.TestCase):
             groups = resp.json()["result"]["groups"]
             match = next(item for item in groups if str(item.get("group_id") or "") == gid)
             self.assertTrue(bool(match.get("running")))
+            self.assertTrue(bool(((match.get("runtime_status") or {}).get("runtime_running"))))
+        finally:
+            cleanup()
+
+    def test_groups_route_prefers_group_level_supervisor_running_signal(self) -> None:
+        cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import create_group
+            from cccc.kernel.registry import load_registry
+
+            reg = load_registry()
+            gid = create_group(reg, title="group-running-supervisor", topic="").group_id
+
+            with patch("cccc.ports.web.routes.groups.codex_app_supervisor.group_running", return_value=True):
+                with self._client() as client:
+                    resp = client.get("/api/v1/groups")
+
+            self.assertEqual(resp.status_code, 200)
+            groups = resp.json()["result"]["groups"]
+            match = next(item for item in groups if str(item.get("group_id") or "") == gid)
+            self.assertTrue(bool(match.get("running")))
+            self.assertTrue(bool(((match.get("runtime_status") or {}).get("runtime_running"))))
         finally:
             cleanup()
 

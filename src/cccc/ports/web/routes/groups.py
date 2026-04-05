@@ -19,6 +19,7 @@ from ....daemon.server import get_daemon_endpoint
 from ....daemon.group.presentation_ops import load_presentation_snapshot, resolve_workspace_asset_path
 from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_summary_snapshot
 from ....runners import headless as headless_runner
+from ....runners import pty as pty_runner
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.codex_events import codex_events_path
 from ....kernel.group import get_group_state, load_group
@@ -85,38 +86,30 @@ _CONTEXT_LOCK = asyncio.Lock()
 logger = logging.getLogger("cccc.web.groups")
 
 
-def _group_running_local(group_id: str) -> bool:
+def _actor_running_local(group_id: str, actor: Any) -> bool:
     gid = str(group_id or "").strip()
-    if not gid:
+    if not gid or not isinstance(actor, dict):
         return False
-    group = load_group(gid)
-    if group is None:
+    aid = str(actor.get("id") or "").strip()
+    if not aid:
         return False
-    actors = group.doc.get("actors") if isinstance(group.doc.get("actors"), list) else []
-    for actor in actors:
-        if not isinstance(actor, dict):
-            continue
-        aid = str(actor.get("id") or "").strip()
-        if not aid:
-            continue
-        runtime = str(actor.get("runtime") or "").strip().lower()
-        runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
-        effective_runner = "headless" if runner_kind == "headless" else "pty"
-        if runtime == "codex":
-            if codex_app_supervisor.actor_running(gid, aid):
-                return True
-            try:
-                raw = json.loads(headless_state_path(gid, aid).read_text(encoding="utf-8"))
-                pid = int(raw.get("pid") or 0)
-                status = str(raw.get("status") or "").strip().lower()
-                state_runtime = str(raw.get("runtime") or "").strip().lower()
-            except Exception:
-                pid = 0
-                status = ""
-                state_runtime = ""
-            if pid > 0 and pid_is_alive(pid) and status != "stopped" and (not state_runtime or state_runtime == "codex"):
-                return True
-            continue
+    runtime = str(actor.get("runtime") or "").strip().lower()
+    runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
+    effective_runner = "headless" if runner_kind == "headless" else "pty"
+    if runtime == "codex":
+        if codex_app_supervisor.actor_running(gid, aid):
+            return True
+        try:
+            raw = json.loads(headless_state_path(gid, aid).read_text(encoding="utf-8"))
+            pid = int(raw.get("pid") or 0)
+            status = str(raw.get("status") or "").strip().lower()
+            state_runtime = str(raw.get("runtime") or "").strip().lower()
+        except Exception:
+            pid = 0
+            status = ""
+            state_runtime = ""
+        return bool(pid > 0 and pid_is_alive(pid) and status != "stopped" and (not state_runtime or state_runtime == "codex"))
+    if effective_runner == "pty":
         pty_state = pty_state_path(gid, aid)
         if pty_state.exists():
             try:
@@ -126,9 +119,43 @@ def _group_running_local(group_id: str) -> bool:
                 pid = 0
             if pid > 0 and pid_is_alive(pid):
                 return True
-        if headless_runner.SUPERVISOR.actor_running(gid, aid):
-            return True
-    return False
+        return bool(pty_runner.SUPERVISOR.actor_running(gid, aid))
+    return bool(headless_runner.SUPERVISOR.actor_running(gid, aid))
+
+
+def _group_runtime_status_local(group: Any) -> Dict[str, Any]:
+    gid = str(getattr(group, "group_id", "") or "").strip()
+    lifecycle_state = get_group_state(group) if group is not None else "active"
+    if not gid or group is None:
+        return {
+            "lifecycle_state": lifecycle_state,
+            "runtime_running": False,
+            "running_actor_count": 0,
+            "has_running_foreman": False,
+        }
+    actors = group.doc.get("actors") if isinstance(group.doc.get("actors"), list) else []
+    running_actor_count = 0
+    has_running_foreman = False
+    for index, actor in enumerate(actors):
+        if not _actor_running_local(gid, actor):
+            continue
+        running_actor_count += 1
+        role = str(actor.get("role") or "").strip().lower() if isinstance(actor, dict) else ""
+        enabled = coerce_bool(actor.get("enabled"), default=True) if isinstance(actor, dict) else False
+        if role == "foreman" or (not role and index == 0 and enabled):
+            has_running_foreman = True
+    runtime_running = bool(
+        running_actor_count > 0
+        or codex_app_supervisor.group_running(gid)
+        or pty_runner.SUPERVISOR.group_running(gid)
+        or headless_runner.SUPERVISOR.group_running(gid)
+    )
+    return {
+        "lifecycle_state": lifecycle_state,
+        "runtime_running": runtime_running,
+        "running_actor_count": running_actor_count,
+        "has_running_foreman": has_running_foreman,
+    }
 
 
 def _read_groups_local() -> Dict[str, Any]:
@@ -140,7 +167,11 @@ def _read_groups_local() -> Dict[str, Any]:
             continue
         gid = str(item.get("group_id") or "").strip()
         row = dict(item)
-        row["running"] = _group_running_local(gid)
+        group = load_group(gid)
+        runtime_status = _group_runtime_status_local(group)
+        row["state"] = str(runtime_status.get("lifecycle_state") or row.get("state") or "active")
+        row["running"] = bool(runtime_status.get("runtime_running"))
+        row["runtime_status"] = runtime_status
         out.append(row)
     return {
         "ok": True,
@@ -159,6 +190,10 @@ def _read_group_local(group_id: str) -> Dict[str, Any]:
     if group is None:
         return {"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {gid}"}}
     doc = json.loads(json.dumps(group.doc))
+    runtime_status = _group_runtime_status_local(group)
+    doc["state"] = str(runtime_status.get("lifecycle_state") or doc.get("state") or "active")
+    doc["running"] = bool(runtime_status.get("runtime_running"))
+    doc["runtime_status"] = runtime_status
     im = doc.get("im")
     if isinstance(im, dict):
         im.pop("token", None)
@@ -204,6 +239,22 @@ def _read_active_codex_replay_lines(group: Any, *, limit: int = 400) -> list[str
         continue
       replay_lines.append(raw)
     return replay_lines
+
+
+def _read_active_codex_snapshot(group: Any, *, limit: int = 400) -> Dict[str, Any]:
+    events: list[Dict[str, Any]] = []
+    for raw in _read_active_codex_replay_lines(group, limit=limit):
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            events.append(payload)
+    return {
+        "group_id": str(getattr(group, "group_id", "") or "").strip(),
+        "events": events,
+        "count": len(events),
+    }
 
 
 def _read_presentation_local(group_id: str) -> Dict[str, Any]:
@@ -2129,14 +2180,21 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
         return create_sse_response(sse_ledger_tail(group.ledger_path))
 
+    @group_router.get("/codex/snapshot")
+    async def codex_snapshot(group_id: str) -> Dict[str, Any]:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        return {"ok": True, "result": _read_active_codex_snapshot(group)}
+
     @group_router.get("/codex/stream")
-    async def codex_stream(group_id: str) -> StreamingResponse:
+    async def codex_stream(group_id: str, replay: bool = True) -> StreamingResponse:
         from ..streams import create_sse_response, sse_jsonl_tail_shared
 
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
-        replay_lines = _read_active_codex_replay_lines(group)
+        replay_lines = _read_active_codex_replay_lines(group) if replay else []
         return create_sse_response(
             sse_jsonl_tail_shared(
                 codex_events_path(group.path),

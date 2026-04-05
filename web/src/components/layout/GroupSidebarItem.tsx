@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { getGroupStatusUnified } from "../../utils/groupStatus";
+import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { MoreIcon } from "../Icons";
 
 interface GroupSidebarItemProps {
@@ -29,7 +29,7 @@ export function GroupSidebarItem({
 }: GroupSidebarItemProps) {
   const gid = String(group.group_id || "");
   const [menuOpen, setMenuOpen] = useState(false);
-  const status = getGroupStatusUnified(group.running ?? false, group.state);
+  const status = getGroupStatusFromSource(group);
 
   if (isCollapsed) {
     const initial = (group.title || gid).charAt(0).toUpperCase();

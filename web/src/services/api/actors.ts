@@ -71,6 +71,7 @@ export async function addActor(
   actorId: string,
   role: "peer" | "foreman",
   runtime: string,
+  runner: "pty" | "headless",
   command: string,
   envPrivate?: Record<string, string>,
   options?: {
@@ -88,7 +89,7 @@ export async function addActor(
     body: JSON.stringify({
       actor_id: actorId,
       role,
-      runner: "pty",
+      runner,
       runtime,
       command,
       env: {},
@@ -108,6 +109,7 @@ export async function updateActor(
   groupId: string,
   actorId: string,
   runtime?: string,
+  runner?: "pty" | "headless",
   command?: string,
   title?: string,
   opts?: {
@@ -123,6 +125,7 @@ export async function updateActor(
   clearGroupsReadRequest();
   const body: Record<string, unknown> = { by: "user" };
   if (runtime !== undefined && runtime !== "") body.runtime = runtime;
+  if (runner !== undefined) body.runner = runner;
   if (command !== undefined) body.command = command.trim();
   if (title !== undefined) body.title = title.trim();
   if (opts?.profileId !== undefined) body.profile_id = String(opts.profileId || "");

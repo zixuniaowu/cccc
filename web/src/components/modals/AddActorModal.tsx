@@ -39,6 +39,8 @@ export interface AddActorModalProps {
 
   newActorRuntime: SupportedRuntime;
   setNewActorRuntime: (runtime: SupportedRuntime) => void;
+  newActorRunner: "pty" | "headless";
+  setNewActorRunner: (runner: "pty" | "headless") => void;
 
   newActorCommand: string;
   setNewActorCommand: (cmd: string) => void;
@@ -107,6 +109,8 @@ export function AddActorModal({
   actorProfilesBusy,
   newActorRuntime,
   setNewActorRuntime,
+  newActorRunner,
+  setNewActorRunner,
   newActorCommand,
   setNewActorCommand,
   newActorUseDefaultCommand,
@@ -151,6 +155,7 @@ export function AddActorModal({
   const showCommandEditor = !newActorUseProfile && (newActorRuntime === "custom" || !newActorUseDefaultCommand);
   const previewRuntime = newActorUseProfile ? selectedProfileRuntime || null : newActorRuntime;
   const previewTitle = String(newActorId || "").trim() || suggestedActorId;
+  const customRunnerLockedToPty = !newActorUseProfile && newActorRuntime !== "codex";
 
   const sectionCardClass = "rounded-2xl p-4 sm:p-5 glass-panel";
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
@@ -368,6 +373,7 @@ export function AddActorModal({
                         onChange={(e) => {
                           const next = e.target.value as SupportedRuntime;
                           setNewActorRuntime(next);
+                          if (next !== "codex") setNewActorRunner("pty");
                           setNewActorCommand("");
                           setNewActorUseDefaultCommand(next !== "custom");
                         }}
@@ -405,6 +411,36 @@ export function AddActorModal({
                         />
                         {t("useRuntimeDefaultCommand")}
                       </label>
+                    ) : null}
+
+                    {newActorRuntime === "codex" ? (
+                      <div>
+                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                          {t("runnerMode", { defaultValue: "运行模式" })}
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            className={modeButtonClass(newActorRunner === "pty")}
+                            onClick={() => setNewActorRunner("pty")}
+                          >
+                            {t("pty", { defaultValue: "PTY" })}
+                          </button>
+                          <button
+                            type="button"
+                            className={modeButtonClass(newActorRunner === "headless")}
+                            onClick={() => setNewActorRunner("headless")}
+                            disabled={customRunnerLockedToPty}
+                          >
+                            {t("headless")}
+                          </button>
+                        </div>
+                        <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                          {customRunnerLockedToPty
+                            ? t("runnerModeCodexOnly", { defaultValue: "当前只有 codex runtime 支持切换为 Headless，其他 runtime 固定为 PTY。" })
+                            : t("runnerModeHint", { defaultValue: "PTY 走终端交互；Headless 走结构化事件流。" })}
+                        </div>
+                      </div>
                     ) : null}
 
                     {showCommandEditor ? (

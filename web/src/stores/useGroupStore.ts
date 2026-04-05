@@ -3,6 +3,7 @@ import { create } from "zustand";
 import type {
   GroupMeta,
   GroupDoc,
+  GroupRuntimeStatus,
   LedgerEvent,
   LedgerEventStatusPayload,
   Actor,
@@ -29,6 +30,8 @@ type GroupChatBucket = {
   streamingEvents: LedgerEvent[];
   streamingTextByStreamId: Record<string, string>;
   streamingActivitiesByStreamId: Record<string, StreamingActivity[]>;
+  latestActorTextByActorId: Record<string, string>;
+  latestActorActivitiesByActorId: Record<string, StreamingActivity[]>;
   chatWindow: ChatWindowState | null;
   hasMoreHistory: boolean;
   hasLoadedTail: boolean;
@@ -41,6 +44,8 @@ const EMPTY_CHAT_BUCKET: GroupChatBucket = {
   streamingEvents: [],
   streamingTextByStreamId: {},
   streamingActivitiesByStreamId: {},
+  latestActorTextByActorId: {},
+  latestActorActivitiesByActorId: {},
   chatWindow: null,
   hasMoreHistory: false,
   hasLoadedTail: false,
@@ -60,6 +65,7 @@ interface GroupState {
   events: LedgerEvent[];
   chatWindow: ChatWindowState | null;
   actors: Actor[];
+  internalRuntimeActorsByGroup: Record<string, Actor[]>;
   groupContext: GroupContext | null;
   groupSettings: GroupSettings | null;
   groupPresentation: GroupPresentation | null;
@@ -103,6 +109,19 @@ interface GroupState {
     streamId: string,
     groupId?: string,
   ) => void;
+  reconcileStreamingMessage: (args: {
+    actorId: string;
+    pendingEventId?: string;
+    streamId: string;
+    ts: string;
+    fullText: string;
+    eventText: string;
+    activities: StreamingActivity[];
+    completed: boolean;
+    transientStream: boolean;
+    phase?: string;
+    groupId?: string;
+  }) => void;
   completeStreamingEventsForActor: (actorId: string, groupId?: string) => void;
   clearStreamingEventsForActor: (actorId: string, groupId?: string) => void;
   clearEmptyStreamingEventsForActor: (actorId: string, groupId?: string) => void;
@@ -111,6 +130,7 @@ interface GroupState {
   prependEvents: (events: LedgerEvent[], groupId?: string) => void;
   setChatWindow: (w: GroupState["chatWindow"], groupId?: string) => void;
   setActors: (actors: Actor[]) => void;
+  updateGroupRuntimeState: (groupId: string, patch: Partial<GroupRuntimeStatus>) => void;
   incrementActorUnread: (actorIds: string[]) => void;
   updateActorActivity: (updates: Array<{
     id: string;
@@ -135,6 +155,7 @@ interface GroupState {
   // Async actions
   refreshGroups: () => Promise<void>;
   refreshActors: (groupId?: string, opts?: { includeUnread?: boolean }) => Promise<void>;
+  refreshInternalRuntimeActors: (groupId?: string) => Promise<void>;
   refreshSettings: (groupId?: string) => Promise<void>;
   refreshPresentation: (groupId?: string) => Promise<void>;
   loadGroup: (groupId: string) => Promise<void>;
@@ -283,6 +304,7 @@ const deferredUnreadRefreshTimers = new Map<string, ReturnType<typeof globalThis
 const settingsRequestEpochByGroup = new Map<string, number>();
 const presentationRequestEpochByGroup = new Map<string, number>();
 const chatWindowRequestEpochByGroup = new Map<string, number>();
+const internalActorsRequestEpochByGroup = new Map<string, number>();
 
 type GroupViewSnapshot = {
   groupDoc: GroupDoc | null;
@@ -472,6 +494,8 @@ function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>, groupI
       ...stored,
       streamingTextByStreamId: stored.streamingTextByStreamId || {},
       streamingActivitiesByStreamId: stored.streamingActivitiesByStreamId || {},
+      latestActorTextByActorId: stored.latestActorTextByActorId || {},
+      latestActorActivitiesByActorId: stored.latestActorActivitiesByActorId || {},
     };
   }
   const cached = getCachedGroupView(gid);
@@ -480,6 +504,8 @@ function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>, groupI
     streamingEvents: [],
     streamingTextByStreamId: {},
     streamingActivitiesByStreamId: {},
+    latestActorTextByActorId: {},
+    latestActorActivitiesByActorId: {},
     chatWindow: null,
     hasMoreHistory: cached?.hasMoreHistory ?? true,
     hasLoadedTail: false,
@@ -503,6 +529,64 @@ export function selectChatBucketState(state: GroupState, groupId: string): Group
   return state.chatByGroup[gid] || EMPTY_CHAT_BUCKET;
 }
 
+function deriveHeadlessPreviewIndex(
+  events: LedgerEvent[],
+  streamingEvents: LedgerEvent[],
+  streamingTextByStreamId: Record<string, string>,
+  streamingActivitiesByStreamId: Record<string, StreamingActivity[]>,
+): {
+  latestActorTextByActorId: Record<string, string>;
+  latestActorActivitiesByActorId: Record<string, StreamingActivity[]>;
+} {
+  const latestActorTextByActorId: Record<string, string> = {};
+  const latestActorActivitiesByActorId: Record<string, StreamingActivity[]> = {};
+
+  for (const event of events) {
+    if (String(event.kind || "").trim() !== "chat.message") continue;
+    const actorId = String(event.by || "").trim();
+    if (!actorId || actorId === "user") continue;
+    const data = event.data && typeof event.data === "object"
+      ? event.data as { text?: unknown; activities?: unknown }
+      : undefined;
+    const text = String(data?.text || "").trim();
+    if (text) {
+      latestActorTextByActorId[actorId] = text;
+    }
+    const activities = Array.isArray(data?.activities) ? data.activities.filter(Boolean) as StreamingActivity[] : [];
+    if (activities.length > 0) {
+      latestActorActivitiesByActorId[actorId] = activities.slice(-5);
+    }
+  }
+
+  const safeStreamingEvents = Array.isArray(streamingEvents) ? streamingEvents : [];
+  for (const event of safeStreamingEvents) {
+    if (String(event.kind || "").trim() !== "chat.message") continue;
+    const actorId = String(event.by || "").trim();
+    if (!actorId || actorId === "user") continue;
+    const data = event.data && typeof event.data === "object"
+      ? event.data as { text?: unknown; stream_id?: unknown; activities?: unknown }
+      : undefined;
+    const streamId = String(data?.stream_id || "").trim();
+    const liveText = streamId ? String(streamingTextByStreamId[streamId] || "").trim() : "";
+    const eventText = String(data?.text || "").trim();
+    const text = liveText || eventText;
+    if (text) {
+      latestActorTextByActorId[actorId] = text;
+    }
+    const liveActivities = streamId ? (streamingActivitiesByStreamId[streamId] || []) : [];
+    const fallbackActivities = Array.isArray(data?.activities) ? data.activities.filter(Boolean) as StreamingActivity[] : [];
+    const activities = liveActivities.length > 0 ? liveActivities : fallbackActivities;
+    if (activities.length > 0) {
+      latestActorActivitiesByActorId[actorId] = activities.slice(-5);
+    }
+  }
+
+  return {
+    latestActorTextByActorId,
+    latestActorActivitiesByActorId,
+  };
+}
+
 function buildChatBucketPatch(
   state: GroupState,
   groupId: string,
@@ -522,6 +606,12 @@ function buildChatBucketPatch(
   const nextStreamingActivitiesByStreamId = patch.streamingActivitiesByStreamId !== undefined
     ? patch.streamingActivitiesByStreamId
     : prevStreamingActivitiesByStreamId;
+  const previewIndex = deriveHeadlessPreviewIndex(
+    nextEvents,
+    nextStreamingEvents,
+    nextStreamingTextByStreamId,
+    nextStreamingActivitiesByStreamId,
+  );
   const nextHasMoreHistory = patch.hasMoreHistory !== undefined ? patch.hasMoreHistory : prev.hasMoreHistory;
   if (patch.events !== undefined || patch.hasMoreHistory !== undefined) {
     saveGroupView(gid, {
@@ -537,6 +627,8 @@ function buildChatBucketPatch(
         streamingEvents: nextStreamingEvents,
         streamingTextByStreamId: nextStreamingTextByStreamId,
         streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+        latestActorTextByActorId: previewIndex.latestActorTextByActorId,
+        latestActorActivitiesByActorId: previewIndex.latestActorActivitiesByActorId,
         chatWindow: patch.chatWindow !== undefined ? patch.chatWindow : prev.chatWindow,
         hasMoreHistory: nextHasMoreHistory,
         hasLoadedTail: patch.hasLoadedTail !== undefined ? patch.hasLoadedTail : prev.hasLoadedTail,
@@ -545,6 +637,46 @@ function buildChatBucketPatch(
       },
     },
   };
+}
+
+function isQueuedOnlyActivityList(value: unknown): boolean {
+  const activities = Array.isArray(value) ? value : [];
+  return activities.length === 0 || activities.every((activity) => {
+    if (!activity || typeof activity !== "object") return true;
+    const kind = String((activity as { kind?: unknown }).kind || "").trim().toLowerCase();
+    const summary = String((activity as { summary?: unknown }).summary || "").trim().toLowerCase();
+    const status = String((activity as { status?: unknown }).status || "").trim().toLowerCase();
+    return kind === "queued" && summary === "queued" && (!status || status === "started" || status === "completed");
+  });
+}
+
+function findLatestBindableLocalPlaceholderIndex(
+  streamingEvents: LedgerEvent[],
+  actorId: string,
+): number {
+  const targetActorId = String(actorId || "").trim();
+  if (!targetActorId) return -1;
+
+  let bestIndex = -1;
+  let bestTs = "";
+  for (let index = 0; index < streamingEvents.length; index += 1) {
+    const item = streamingEvents[index];
+    if (String(item?.by || "").trim() !== targetActorId) continue;
+    const data = item?.data && typeof item.data === "object"
+      ? item.data as { stream_id?: unknown; text?: unknown; pending_placeholder?: unknown; activities?: unknown }
+      : {};
+    const streamId = String(data.stream_id || "").trim();
+    const text = String(data.text || "").trim();
+    const isPendingPlaceholder = Boolean(data.pending_placeholder);
+    if (!streamId.startsWith("local:") || !isPendingPlaceholder || text) continue;
+    if (!isQueuedOnlyActivityList(data.activities)) continue;
+    const ts = String(item.ts || "").trim();
+    if (bestIndex < 0 || ts >= bestTs) {
+      bestIndex = index;
+      bestTs = ts;
+    }
+  }
+  return bestIndex;
 }
 
 function resolveChatGroupId(state: GroupState, groupId?: string): string {
@@ -676,8 +808,42 @@ function buildShellGroupDoc(groupId: string, groups: GroupMeta[], cached: GroupV
     group_id: gid,
     title: meta.title,
     topic: meta.topic,
+    running: meta.running,
     state: meta.state,
+    runtime_status: meta.runtime_status,
   };
+}
+
+function deriveRuntimeStatusFromActors(actors: Actor[] | undefined, fallback?: GroupRuntimeStatus | null): GroupRuntimeStatus {
+  const actorList = Array.isArray(actors) ? actors : [];
+  const runningActors = actorList.filter((actor) => !!actor?.running);
+  return {
+    lifecycle_state: String(fallback?.lifecycle_state || "active"),
+    runtime_running: runningActors.length > 0,
+    running_actor_count: runningActors.length,
+    has_running_foreman: runningActors.some((actor) => String(actor.role || "").trim().toLowerCase() === "foreman"),
+  };
+}
+
+function patchGroupRuntimeStatus(
+  groups: GroupMeta[],
+  groupId: string,
+  runtimeStatus: GroupRuntimeStatus,
+): GroupMeta[] {
+  const gid = String(groupId || "").trim();
+  if (!gid) return groups;
+  let changed = false;
+  const next = groups.map((group) => {
+    if (String(group.group_id || "").trim() !== gid) return group;
+    changed = true;
+    return {
+      ...group,
+      running: !!runtimeStatus.runtime_running,
+      state: String(runtimeStatus.lifecycle_state || group.state || "active") as GroupMeta["state"],
+      runtime_status: runtimeStatus,
+    };
+  });
+  return changed ? next : groups;
 }
 
 function buildPrimedGroupState(groupId: string, groups: GroupMeta[]) {
@@ -717,6 +883,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   events: [],
   chatWindow: null,
   actors: [],
+  internalRuntimeActorsByGroup: {},
   groupContext: null,
   groupSettings: null,
   groupPresentation: null,
@@ -801,6 +968,41 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     });
   },
   setGroupDoc: (doc) => set({ groupDoc: doc }),
+  updateGroupRuntimeState: (groupId, patch) =>
+    set((state) => {
+      const gid = String(groupId || "").trim();
+      if (!gid) return state;
+      const currentGroup = state.groups.find((group) => String(group.group_id || "").trim() === gid) || null;
+      const currentRuntime = currentGroup?.runtime_status
+        || (state.groupDoc?.group_id === gid ? state.groupDoc.runtime_status : null)
+        || null;
+      const nextRuntime: GroupRuntimeStatus = {
+        lifecycle_state: String(patch.lifecycle_state || currentRuntime?.lifecycle_state || currentGroup?.state || "active"),
+        runtime_running: patch.runtime_running ?? currentRuntime?.runtime_running ?? currentGroup?.running ?? false,
+        running_actor_count: Number.isFinite(Number(patch.running_actor_count))
+          ? Number(patch.running_actor_count)
+          : Number(currentRuntime?.running_actor_count || 0),
+        has_running_foreman: patch.has_running_foreman ?? currentRuntime?.has_running_foreman ?? false,
+      };
+      const nextGroups = patchGroupRuntimeStatus(state.groups, gid, nextRuntime);
+      const nextGroupDoc =
+        state.groupDoc && String(state.groupDoc.group_id || "").trim() === gid
+          ? {
+              ...state.groupDoc,
+              running: nextRuntime.runtime_running,
+              state: nextRuntime.lifecycle_state as GroupDoc["state"],
+              runtime_status: nextRuntime,
+            }
+          : state.groupDoc;
+      saveGroupView(gid, { groupDoc: nextGroupDoc });
+      if (nextGroups === state.groups && nextGroupDoc === state.groupDoc) {
+        return state;
+      }
+      return {
+        groups: nextGroups,
+        ...(nextGroupDoc !== state.groupDoc ? { groupDoc: nextGroupDoc } : {}),
+      };
+    }),
   setEvents: (events, groupId) =>
     set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { events }) ?? state),
   mergeEventStatuses: (statuses, groupId) =>
@@ -1101,7 +1303,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (!gid || !targetActorId || !targetPendingEventId || !targetStreamId) return state;
 
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const targetIndex = bucket.streamingEvents.findIndex((item) => {
+      const matchedIndex = bucket.streamingEvents.findIndex((item) => {
         if (String(item.by || "").trim() !== targetActorId) return false;
         const data = item.data && typeof item.data === "object"
           ? item.data as { pending_event_id?: unknown; stream_id?: unknown }
@@ -1109,14 +1311,23 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         if (String(data.stream_id || "").trim() === targetStreamId) return true;
         return String(data.pending_event_id || "").trim() === targetPendingEventId;
       });
+      const targetIndex = matchedIndex >= 0
+        ? matchedIndex
+        : findLatestBindableLocalPlaceholderIndex(bucket.streamingEvents, targetActorId);
       if (targetIndex < 0) return state;
 
       const target = bucket.streamingEvents[targetIndex];
       const data = target.data && typeof target.data === "object"
-        ? target.data as { stream_id?: unknown; pending_placeholder?: unknown }
+        ? target.data as { stream_id?: unknown; pending_placeholder?: unknown; pending_event_id?: unknown }
         : {};
       const previousStreamId = String(data.stream_id || "").trim();
-      if (previousStreamId === targetStreamId && !data.pending_placeholder) return state;
+      if (
+        previousStreamId === targetStreamId &&
+        !data.pending_placeholder &&
+        String(data.pending_event_id || "").trim() === targetPendingEventId
+      ) {
+        return state;
+      }
 
       const nextStreamingEvents = bucket.streamingEvents.slice();
       nextStreamingEvents[targetIndex] = {
@@ -1124,6 +1335,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         data: {
           ...data,
           stream_id: targetStreamId,
+          pending_event_id: targetPendingEventId,
           pending_placeholder: false,
         },
       };
@@ -1153,6 +1365,152 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
       }) ?? state;
     }),
+  reconcileStreamingMessage: ({
+    actorId,
+    pendingEventId,
+    streamId,
+    ts,
+    fullText,
+    eventText,
+    activities,
+    completed,
+    transientStream,
+    phase,
+    groupId,
+  }) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      const targetActorId = String(actorId || "").trim();
+      const targetPendingEventId = String(pendingEventId || "").trim();
+      const targetStreamId = String(streamId || "").trim();
+      if (!gid || !targetActorId || !targetStreamId) return state;
+
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const nextPlaceholderState = !String(fullText || "").trim() && activities.length <= 0;
+      const nextStreamingEvents = bucket.streamingEvents.slice();
+      const matchedIndex = nextStreamingEvents.findIndex((item) => {
+        if (String(item.by || "").trim() !== targetActorId) return false;
+        const data = item.data && typeof item.data === "object"
+          ? item.data as { pending_event_id?: unknown; stream_id?: unknown }
+          : {};
+        if (String(data.stream_id || "").trim() === targetStreamId) return true;
+        return !!targetPendingEventId && String(data.pending_event_id || "").trim() === targetPendingEventId;
+      });
+      const targetIndex = matchedIndex >= 0
+        ? matchedIndex
+        : findLatestBindableLocalPlaceholderIndex(nextStreamingEvents, targetActorId);
+
+      let previousStreamId = "";
+      if (targetIndex >= 0) {
+        const target = nextStreamingEvents[targetIndex];
+        const data = target.data && typeof target.data === "object"
+          ? target.data as {
+              pending_event_id?: unknown;
+              pending_placeholder?: unknown;
+              text?: unknown;
+              transient_stream?: unknown;
+              stream_phase?: unknown;
+              stream_id?: unknown;
+            }
+          : {};
+        previousStreamId = String(data.stream_id || "").trim();
+        nextStreamingEvents[targetIndex] = {
+          ...target,
+          ts: ts || target.ts,
+          _streaming: !completed,
+          data: {
+            ...data,
+            text: eventText,
+            to: Array.isArray((target.data as { to?: unknown } | undefined)?.to)
+              ? (target.data as { to?: unknown[] }).to
+              : ["user"],
+            stream_id: targetStreamId,
+            pending_event_id: targetPendingEventId || undefined,
+            pending_placeholder: nextPlaceholderState,
+            activities: activities.slice(-5),
+            transient_stream: transientStream,
+            stream_phase: phase || undefined,
+          },
+        };
+      } else {
+        nextStreamingEvents.push({
+          id: `stream:${targetStreamId}`,
+          ts,
+          kind: "chat.message",
+          group_id: gid,
+          by: targetActorId,
+          _streaming: !completed,
+          data: {
+            text: eventText,
+            to: ["user"],
+            stream_id: targetStreamId,
+            pending_event_id: targetPendingEventId || undefined,
+            pending_placeholder: nextPlaceholderState,
+            activities: activities.slice(-5),
+            transient_stream: transientStream,
+            stream_phase: phase || undefined,
+          },
+        });
+      }
+
+      const removedPlaceholderStreamIds: string[] = [];
+      const dedupedStreamingEvents = nextStreamingEvents.filter((item) => {
+        if (String(item.by || "").trim() !== targetActorId) return true;
+        const data = item.data && typeof item.data === "object"
+          ? item.data as { pending_event_id?: unknown; pending_placeholder?: unknown; stream_id?: unknown }
+          : {};
+        const itemPendingEventId = String(data.pending_event_id || "").trim();
+        const itemStreamId = String(data.stream_id || "").trim();
+        const isPendingPlaceholder = Boolean(data.pending_placeholder);
+        if (
+          itemStreamId !== targetStreamId &&
+          isPendingPlaceholder &&
+          targetPendingEventId &&
+          itemPendingEventId === targetPendingEventId
+        ) {
+          if (itemStreamId) removedPlaceholderStreamIds.push(itemStreamId);
+          return false;
+        }
+        return true;
+      });
+
+      const nextStreamingTextByStreamId = { ...bucket.streamingTextByStreamId };
+      const nextStreamingActivitiesByStreamId = { ...bucket.streamingActivitiesByStreamId };
+      if (
+        previousStreamId &&
+        previousStreamId !== targetStreamId &&
+        Object.prototype.hasOwnProperty.call(nextStreamingTextByStreamId, previousStreamId)
+      ) {
+        nextStreamingTextByStreamId[targetStreamId] = nextStreamingTextByStreamId[previousStreamId];
+        delete nextStreamingTextByStreamId[previousStreamId];
+      }
+      nextStreamingTextByStreamId[targetStreamId] = fullText;
+
+      if (
+        previousStreamId &&
+        previousStreamId !== targetStreamId &&
+        Object.prototype.hasOwnProperty.call(nextStreamingActivitiesByStreamId, previousStreamId)
+      ) {
+        nextStreamingActivitiesByStreamId[targetStreamId] = nextStreamingActivitiesByStreamId[previousStreamId];
+        delete nextStreamingActivitiesByStreamId[previousStreamId];
+      }
+      if (activities.length > 0) {
+        nextStreamingActivitiesByStreamId[targetStreamId] = activities.slice(-5);
+      } else {
+        delete nextStreamingActivitiesByStreamId[targetStreamId];
+      }
+
+      for (const removedStreamId of removedPlaceholderStreamIds) {
+        delete nextStreamingTextByStreamId[removedStreamId];
+        delete nextStreamingActivitiesByStreamId[removedStreamId];
+      }
+
+      return buildChatBucketPatch(state, gid, {
+        streamingEvents: dedupedStreamingEvents,
+        streamingTextByStreamId: nextStreamingTextByStreamId,
+        streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+      }) ?? state;
+    }),
   completeStreamingEventsForActor: (actorId, groupId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
@@ -1164,8 +1522,25 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         if (String(item.by || "").trim() !== targetActorId) return item;
         if (!item._streaming) return item;
         const data = item.data && typeof item.data === "object"
-          ? item.data as { pending_placeholder?: unknown }
+          ? item.data as { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown; text?: unknown; activities?: unknown }
           : {};
+        const pendingEventId = String(data.pending_event_id || "").trim();
+        const streamId = String(data.stream_id || "").trim();
+        const text = String(data.text || "").trim();
+        const activities = Array.isArray(data.activities) ? data.activities : [];
+        const queuedOnly = activities.length === 0 || activities.every((activity) => {
+          if (!activity || typeof activity !== "object") return true;
+          const kind = String((activity as { kind?: unknown }).kind || "").trim().toLowerCase();
+          const summary = String((activity as { summary?: unknown }).summary || "").trim().toLowerCase();
+          const status = String((activity as { status?: unknown }).status || "").trim().toLowerCase();
+          return kind === "queued" && summary === "queued" && (!status || status === "started" || status === "completed");
+        });
+        const isFreshLocalPlaceholder =
+          (!pendingEventId || pendingEventId.startsWith("local_")) &&
+          streamId.startsWith("local:") &&
+          !text &&
+          queuedOnly;
+        if (isFreshLocalPlaceholder) return item;
         changed = true;
         return {
           ...item,
@@ -1217,24 +1592,54 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const targetActorId = String(actorId || "").trim();
       if (!gid || !targetActorId) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const hasCanonicalReplyForPendingEvent = (pendingEventId: string): boolean => {
+        const targetPendingEventId = String(pendingEventId || "").trim();
+        if (!targetPendingEventId) return false;
+        return bucket.events.some((event) => {
+          if (String(event.kind || "").trim() !== "chat.message") return false;
+          if (String(event.by || "").trim() !== targetActorId) return false;
+          const data = event.data && typeof event.data === "object"
+            ? event.data as { pending_event_id?: unknown; reply_to?: unknown; text?: unknown; attachments?: unknown; refs?: unknown }
+            : {};
+          const eventPendingEventId = String(data.pending_event_id || "").trim();
+          const replyTo = String(data.reply_to || "").trim();
+          if (eventPendingEventId !== targetPendingEventId && replyTo !== targetPendingEventId) return false;
+          const text = String(data.text || "").trim();
+          if (text) return true;
+          const attachments = Array.isArray(data.attachments) ? data.attachments : [];
+          if (attachments.length > 0) return true;
+          const refs = Array.isArray(data.refs) ? data.refs : [];
+          return refs.length > 0;
+        });
+      };
       const removedStreamIds = bucket.streamingEvents
         .filter((item) => {
           if (String(item.by || "").trim() !== targetActorId) return false;
           const data = item.data && typeof item.data === "object"
-            ? item.data as { text?: unknown; stream_id?: unknown; activities?: unknown }
+            ? item.data as { text?: unknown; stream_id?: unknown; activities?: unknown; pending_event_id?: unknown }
             : {};
           const streamId = String(data.stream_id || "").trim();
+          const pendingEventId = String(data.pending_event_id || "").trim();
           const eventText = String(data.text || "").trim();
           const cachedText = streamId ? String(bucket.streamingTextByStreamId[streamId] || "").trim() : "";
           if (eventText || cachedText) return false;
+          // Keep fresh client-side placeholders for the next turn. A late
+          // turn-completed event from the previous turn can otherwise clear the
+          // newly inserted local/pending bubble before it binds to a real stream.
+          if (!pendingEventId && streamId.startsWith("local:")) {
+            return false;
+          }
           const activities = Array.isArray(data.activities) ? data.activities : [];
-          return activities.length === 0 || activities.every((item) => {
+          const queuedOnly = activities.length === 0 || activities.every((item) => {
             if (!item || typeof item !== "object") return true;
             const kind = String((item as { kind?: unknown }).kind || "").trim().toLowerCase();
             const summary = String((item as { summary?: unknown }).summary || "").trim().toLowerCase();
             const status = String((item as { status?: unknown }).status || "").trim().toLowerCase();
             return kind === "queued" && summary === "queued" && (!status || status === "started" || status === "completed");
           });
+          if (!queuedOnly) return false;
+          if (pendingEventId && !hasCanonicalReplyForPendingEvent(pendingEventId)) return false;
+          return true;
         })
         .map((item) => String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim())
         .filter(Boolean);
@@ -1635,9 +2040,31 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         const nextActors = includeUnread
           ? (resp.result.actors || [])
           : mergeActorUnreadCounts(resp.result.actors || [], prevActors);
-        saveGroupView(gid, { actors: nextActors });
-        if (get().selectedGroupId === gid) {
-          set({ actors: nextActors, selectedGroupActorsHydrating: false });
+        const current = get();
+        const runtimeFallback =
+          current.groupDoc?.group_id === gid
+            ? current.groupDoc.runtime_status || null
+            : current.groups.find((group) => String(group.group_id || "").trim() === gid)?.runtime_status || null;
+        const runtimeStatus = deriveRuntimeStatusFromActors(nextActors, runtimeFallback);
+        const nextGroups = patchGroupRuntimeStatus(current.groups, gid, runtimeStatus);
+        const nextGroupDoc = current.selectedGroupId === gid && current.groupDoc
+          ? {
+              ...current.groupDoc,
+              running: runtimeStatus.runtime_running,
+              state: runtimeStatus.lifecycle_state as GroupDoc["state"],
+              runtime_status: runtimeStatus,
+            }
+          : undefined;
+        saveGroupView(gid, { actors: nextActors, groupDoc: nextGroupDoc });
+        const patch: Partial<GroupState> = {};
+        if (nextGroups !== current.groups) patch.groups = nextGroups;
+        if (current.selectedGroupId === gid) {
+          patch.actors = nextActors;
+          patch.selectedGroupActorsHydrating = false;
+          if (nextGroupDoc) patch.groupDoc = nextGroupDoc;
+        }
+        if (Object.keys(patch).length > 0) {
+          set(patch as GroupState | Partial<GroupState>);
         }
       }
     } catch (e) {
@@ -1649,6 +2076,36 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         refreshActorsQueued.delete(gid);
         void get().refreshActors(gid, { includeUnread: queuedIncludeUnread });
       }
+    }
+  },
+
+  refreshInternalRuntimeActors: async (groupId?: string) => {
+    const gid = String(groupId || get().selectedGroupId || "").trim();
+    if (!gid) return;
+    const epoch = beginGroupRequestEpoch(internalActorsRequestEpochByGroup, gid);
+    const inFlightKey = `internal:${gid}`;
+    if (refreshActorsInFlight.has(inFlightKey)) {
+      return;
+    }
+    refreshActorsInFlight.add(inFlightKey);
+    try {
+      const resp = await api.fetchActors(gid, false, { noCache: true }, { includeInternal: true });
+      if (!resp.ok) return;
+      if (!isLatestGroupRequestEpoch(internalActorsRequestEpochByGroup, gid, epoch)) return;
+      const nextActors = (resp.result.actors || []).filter((actor) => {
+        const internalKind = String(actor.internal_kind || "").trim().toLowerCase();
+        return internalKind === "pet";
+      });
+      set((state) => ({
+        internalRuntimeActorsByGroup: {
+          ...state.internalRuntimeActorsByGroup,
+          [gid]: nextActors,
+        },
+      }));
+    } catch (e) {
+      console.error(`Failed to refresh internal runtime actors for group=${gid}:`, e);
+    } finally {
+      refreshActorsInFlight.delete(inFlightKey);
     }
   },
 

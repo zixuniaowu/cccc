@@ -369,6 +369,13 @@ def handle_actor_restart(
             ContextStorage(group).clear_agent_status_if_present(actor_id)
         except Exception:
             pass
+        try:
+            if str(group.doc.get("state") or "").strip() == "stopped":
+                group.doc["state"] = "active"
+            group.doc["running"] = True
+            group.save()
+        except Exception:
+            pass
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
     event = append_event(

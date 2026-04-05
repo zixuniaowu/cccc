@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Actor, GroupDoc } from "../../types";
-import { getGroupStatusUnified } from "../../utils/groupStatus";
-import { getGroupControlVisual, getLaunchControlMode } from "../../utils/groupControls";
+import { getGroupStatusFromSource } from "../../utils/groupStatus";
+import { getGroupControlVisual, getLaunchControlMode, resolveGroupControls } from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { LanguageSwitcher } from "../LanguageSwitcher";
@@ -57,19 +57,29 @@ export function MobileMenuSheet({
 }: MobileMenuSheetProps) {
   const { modalRef } = useModalA11y(isOpen, onClose);
   const { t } = useTranslation('layout');
-  const selectedStatus = selectedGroupId ? getGroupStatusUnified(selectedGroupRunning, groupDoc?.state) : null;
+  const selectedStatus = selectedGroupId ? getGroupStatusFromSource({
+    running: selectedGroupRunning,
+    state: groupDoc?.state,
+    runtime_status: groupDoc?.runtime_status,
+  }) : null;
   const selectedStatusKey = selectedStatus?.key ?? null;
   const launchMode = getLaunchControlMode(selectedStatusKey);
   const launchControl = getGroupControlVisual(selectedStatusKey, "launch", busy);
   const pauseControl = getGroupControlVisual(selectedStatusKey, "pause", busy);
   const stopControl = getGroupControlVisual(selectedStatusKey, "stop", busy);
-  const isGroupBusy = busy.startsWith("group-");
-  const launchHardUnavailable = !selectedGroupId || actors.length === 0;
-  const pauseHardUnavailable = !selectedGroupId || !selectedGroupRunning;
-  const stopHardUnavailable = !selectedGroupId;
-  const launchDisabled = launchHardUnavailable || isGroupBusy;
-  const pauseDisabled = pauseHardUnavailable || isGroupBusy;
-  const stopDisabled = stopHardUnavailable || isGroupBusy;
+  const {
+    launchHardUnavailable,
+    pauseHardUnavailable,
+    stopHardUnavailable,
+    launchDisabled,
+    pauseDisabled,
+    stopDisabled,
+  } = resolveGroupControls({
+    selectedGroupId,
+    actorCount: actors.length,
+    statusKey: selectedStatusKey,
+    busy,
+  });
   const themeLabel = isDark ? t('themeDark') : t('themeLight');
   const runtimeHint = selectedStatusKey === "paused"
     ? t('runtimeHintPaused')

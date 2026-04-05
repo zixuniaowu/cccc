@@ -288,6 +288,8 @@ def start_actor_process(
         pass
 
     try:
+        if str(group.doc.get("state") or "").strip() == "stopped":
+            group.doc["state"] = "active"
         group.doc["running"] = True
         group.save()
     except Exception:

@@ -19,6 +19,7 @@ from ...kernel.messaging import (
     get_default_send_to,
     targets_any_agent,
 )
+from ...kernel.message_sender_snapshot import build_sender_snapshot
 from ...kernel.scope import detect_scope
 from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
 from ...util.time import utc_now_iso
@@ -437,6 +438,7 @@ def handle_send(
             source_user_name=source_user_name or None,
             source_user_id=source_user_id or None,
             mention_user_ids=mention_user_ids or None,
+            **build_sender_snapshot(group, by=by),
             src_group_id=src_group_id or None,
             src_event_id=src_event_id or None,
             dst_group_id=dst_group_id or None,
@@ -474,7 +476,11 @@ def handle_send(
             continue
         runtime = str(actor.get("runtime") or "codex").strip() or "codex"
         runner_kind = str(actor.get("runner") or "pty").strip()
-        if runtime == "codex" and codex_app_supervisor.actor_running(group.group_id, actor_id):
+        if (
+            runtime == "codex"
+            and effective_runner_kind(runner_kind) == "headless"
+            and codex_app_supervisor.actor_running(group.group_id, actor_id)
+        ):
             codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -652,6 +658,7 @@ def handle_reply(
             source_user_name=original_source_user_name or None,
             source_user_id=original_source_user_id or None,
             mention_user_ids=original_mention_user_ids or None,
+            **build_sender_snapshot(group, by=by),
             client_id=client_id or None,
         ).model_dump(),
     )
@@ -701,7 +708,11 @@ def handle_reply(
             continue
         runtime = str(actor.get("runtime") or "codex").strip() or "codex"
         runner_kind = str(actor.get("runner") or "pty").strip()
-        if runtime == "codex" and codex_app_supervisor.actor_running(group.group_id, actor_id):
+        if (
+            runtime == "codex"
+            and effective_runner_kind(runner_kind) == "headless"
+            and codex_app_supervisor.actor_running(group.group_id, actor_id)
+        ):
             codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,

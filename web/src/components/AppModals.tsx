@@ -175,11 +175,13 @@ export function AppModals({
     setEditGroupTitle,
     setEditGroupTopic,
     editActorRuntime,
+    editActorRunner,
     editActorCommand,
     editActorTitle,
     editActorRoleNotes,
     editActorCapabilityAutoloadText,
     setEditActorRuntime,
+    setEditActorRunner,
     setEditActorCommand,
     setEditActorTitle,
     setEditActorRoleNotes,
@@ -187,6 +189,7 @@ export function AppModals({
     newActorId,
     newActorRole,
     newActorRuntime,
+    newActorRunner,
     newActorCommand,
     newActorUseDefaultCommand,
     newActorSecretsSetText,
@@ -199,6 +202,7 @@ export function AppModals({
     setNewActorId,
     setNewActorRole,
     setNewActorRuntime,
+    setNewActorRunner,
     setNewActorCommand,
     setNewActorUseDefaultCommand,
     setNewActorSecretsSetText,
@@ -601,6 +605,7 @@ export function AppModals({
     const willChangeSecrets = canEditSecrets && (clear || setKeys.length > 0 || unsetKeys.length > 0);
 
     const currentRuntime = String(editingActor.runtime || "codex").trim();
+    const currentRunner = String(editingActor.runner || "pty").trim().toLowerCase() || "pty";
     const currentCommand = Array.isArray(editingActor.command)
       ? editingActor.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
       : "";
@@ -611,6 +616,7 @@ export function AppModals({
     const currentRoleNotes = String(editActorRoleNotesBaselineRef.current || "").trim();
     const nextRoleNotes = String(editActorRoleNotes || "").trim();
     const nextRuntime = String(editActorRuntime || "codex").trim();
+    const nextRunner = String(editActorRunner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty";
     const nextCommand = String(editActorCommand || "").trim();
     const nextTitle = String(editActorTitle || "").trim();
     const nextCapabilityAutoload = Array.isArray(payload.capabilityAutoload)
@@ -618,6 +624,7 @@ export function AppModals({
       : [];
 
     const runtimeChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextRuntime !== currentRuntime;
+    const runnerChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextRunner !== currentRunner;
     const commandChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextCommand !== currentCommand;
     const titleChanged = nextTitle !== currentTitle;
     const autoloadChanged =
@@ -629,7 +636,7 @@ export function AppModals({
     });
     const roleNotesChanged = nextRoleNotes !== currentRoleNotes;
     const hasActorMutation =
-      convertToCustom || runtimeChanged || commandChanged || titleChanged || autoloadChanged || profileChanged;
+      convertToCustom || runtimeChanged || runnerChanged || commandChanged || titleChanged || autoloadChanged || profileChanged;
 
     if (!options.restart && !hasActorMutation && !willChangeSecrets && !roleNotesChanged) {
       throw new Error(NO_CHANGES_SENTINEL);
@@ -650,6 +657,7 @@ export function AppModals({
         const convertResp = await api.updateActor(
           selectedGroupId,
           actorId,
+          undefined,
           undefined,
           undefined,
           nextTitle,
@@ -677,6 +685,7 @@ export function AppModals({
             actorId,
             undefined,
             undefined,
+            undefined,
             nextTitle,
             {
               profileId,
@@ -700,9 +709,11 @@ export function AppModals({
         const snapshotCommand = Array.isArray(actorSnapshot.command)
           ? actorSnapshot.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
           : currentCommand;
+        const snapshotRunner = String(actorSnapshot.runner || currentRunner || "pty").trim().toLowerCase() || "pty";
         const snapshotTitle = String(actorSnapshot.title || "").trim();
         const needCustomPatch =
           nextRuntime !== snapshotRuntime ||
+          nextRunner !== snapshotRunner ||
           nextCommand !== snapshotCommand ||
           nextTitle !== snapshotTitle ||
           autoloadChanged;
@@ -711,6 +722,7 @@ export function AppModals({
             selectedGroupId,
             actorId,
             editActorRuntime,
+            nextRunner,
             editActorCommand,
             nextTitle,
             { capabilityAutoload: nextCapabilityAutoload }
@@ -783,6 +795,7 @@ export function AppModals({
   const applyEditingActor = useCallback((actor: Record<string, unknown>) => {
     const runtime = String(actor.runtime || "").trim();
     setEditActorRuntime((runtime || "codex") as SupportedRuntime);
+    setEditActorRunner(String(actor.runner_effective || actor.runner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty");
     setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
     setEditActorTitle(String(actor.title || ""));
     setEditActorRoleNotes("");
@@ -791,7 +804,7 @@ export function AppModals({
       formatCapabilityIdInput((actor as { capability_autoload?: unknown[] }).capability_autoload)
     );
     setEditingActor(actor as Actor);
-  }, [setEditActorRuntime, setEditActorCommand, setEditActorTitle, setEditActorRoleNotes, setEditActorCapabilityAutoloadText, setEditingActor]);
+  }, [setEditActorRuntime, setEditActorRunner, setEditActorCommand, setEditActorTitle, setEditActorRoleNotes, setEditActorCapabilityAutoloadText, setEditingActor]);
 
   useEffect(() => {
     if (!editingActor || !selectedGroupId) return;
@@ -810,6 +823,7 @@ export function AppModals({
       String(editingActor.profile_id || "").trim() !== String(latest.profile_id || "").trim() ||
       Number(editingActor.profile_revision_applied || 0) !== Number(latest.profile_revision_applied || 0) ||
       String(editingActor.runtime || "").trim() !== String(latest.runtime || "").trim() ||
+      String(editingActor.runner || "").trim() !== String(latest.runner || "").trim() ||
       String(editingActor.title || "") !== String(latest.title || "") ||
       String(Array.isArray(editingActor.command) ? editingActor.command.join("\u0000") : "") !==
         String(Array.isArray(latest.command) ? latest.command.join("\u0000") : "") ||
@@ -845,7 +859,7 @@ export function AppModals({
       const resp = await api.upsertActorProfile({
         name: name.trim(),
         runtime: editActorRuntime,
-        runner: "pty",
+        runner: editActorRunner,
         command: editActorCommand.trim(),
         submit: String(editingActor.submit || "enter"),
         env: editingActor.env && typeof editingActor.env === "object" ? editingActor.env : {},
@@ -1004,6 +1018,9 @@ export function AppModals({
         actorId,
         newActorRole,
         newActorUseProfile ? String(selectedProfile?.runtime || "codex") : newActorRuntime,
+        newActorUseProfile
+          ? (String(selectedProfile?.runner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty")
+          : newActorRunner,
         commandToUse,
         newActorUseProfile ? undefined : (Object.keys(secretsSetVars).length ? secretsSetVars : undefined),
         newActorUseProfile
@@ -1077,7 +1094,7 @@ export function AppModals({
       const resp = await api.upsertActorProfile({
         name: name.trim(),
         runtime: newActorRuntime,
-        runner: "pty",
+        runner: newActorRunner,
         command: commandToUse,
         submit: "enter",
         env: {},
@@ -1614,6 +1631,8 @@ export function AppModals({
         runtimes={runtimes}
         runtime={editActorRuntime}
         onChangeRuntime={setEditActorRuntime}
+        runner={editActorRunner}
+        onChangeRunner={setEditActorRunner}
         command={editActorCommand}
         onChangeCommand={setEditActorCommand}
         title={editActorTitle}
@@ -1685,6 +1704,8 @@ export function AppModals({
         actorProfilesBusy={actorProfilesBusy}
         newActorRuntime={newActorRuntime}
         setNewActorRuntime={setNewActorRuntime}
+        newActorRunner={newActorRunner}
+        setNewActorRunner={setNewActorRunner}
         newActorCommand={newActorCommand}
         setNewActorCommand={setNewActorCommand}
         newActorUseDefaultCommand={newActorUseDefaultCommand}

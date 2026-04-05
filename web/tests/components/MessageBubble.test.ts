@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { isQueuedOnlyStreamingPlaceholder } from "../../src/components/MessageBubble";
+import {
+  deriveStreamingRenderPhase,
+  getEffectiveStreamingActivities,
+  getMessageBubbleMotionClass,
+  getStreamingPendingDelayMs,
+  getStreamingPlaceholderText,
+  isQueuedOnlyStreamingPlaceholder,
+  shouldReserveStreamingStatusSpace,
+  shouldRenderStreamingStatusPanel,
+} from "../../src/components/MessageBubble";
 
 describe("isQueuedOnlyStreamingPlaceholder", () => {
   it("returns true for pure queued placeholder without live text", () => {
@@ -34,5 +43,174 @@ describe("isQueuedOnlyStreamingPlaceholder", () => {
       presentationRefCount: 0,
       activities: [{ id: "reply:1", kind: "reply", status: "started", summary: "replying" }],
     })).toBe(false);
+  });
+
+  it("keeps queued placeholder label compact and stable", () => {
+    expect(getStreamingPlaceholderText({
+      isQueuedOnlyPlaceholder: true,
+      placeholderLabel: "Working...",
+    })).toBe("queued");
+  });
+});
+
+describe("getEffectiveStreamingActivities", () => {
+  it("prefers the latest activity batch from the same pending reply slot", () => {
+    const activities = getEffectiveStreamingActivities({
+      streamId: "stream-commentary",
+      actorId: "coder",
+      pendingEventId: "evt-1",
+      bucket: {
+        streamingActivitiesByStreamId: {
+          "stream-commentary": [{ id: "a1", kind: "tool", status: "started", summary: "search docs" }],
+          "stream-final": [{ id: "a2", kind: "tool", status: "started", summary: "patch ui" }],
+        },
+        streamingEvents: [
+          {
+            id: "stream:commentary",
+            ts: "2026-04-04T16:00:00.000Z",
+            kind: "chat.message",
+            by: "coder",
+            data: {
+              stream_id: "stream-commentary",
+              pending_event_id: "evt-1",
+            },
+          },
+          {
+            id: "stream:final",
+            ts: "2026-04-04T16:00:02.000Z",
+            kind: "chat.message",
+            by: "coder",
+            data: {
+              stream_id: "stream-final",
+              pending_event_id: "evt-1",
+            },
+          },
+        ],
+      },
+      fallbackActivities: [],
+    });
+
+    expect(activities).toHaveLength(1);
+    expect(activities[0]?.summary).toBe("patch ui");
+  });
+});
+
+describe("getMessageBubbleMotionClass", () => {
+  it("animates commentary bubbles with the transient commentary class", () => {
+    expect(getMessageBubbleMotionClass({
+      isStreaming: true,
+      isOptimistic: false,
+      streamPhase: "commentary",
+    })).toBe("cccc-transient-bubble cccc-transient-bubble-commentary");
+  });
+
+  it("animates optimistic bubbles with the base transient class", () => {
+    expect(getMessageBubbleMotionClass({
+      isStreaming: false,
+      isOptimistic: true,
+      streamPhase: "",
+    })).toBe("cccc-transient-bubble");
+  });
+
+  it("keeps stable final bubbles animation-free", () => {
+    expect(getMessageBubbleMotionClass({
+      isStreaming: false,
+      isOptimistic: false,
+      streamPhase: "final_answer",
+    })).toBe("");
+  });
+});
+
+describe("shouldRenderStreamingStatusPanel", () => {
+  it("renders the status panel while activities exist", () => {
+    expect(shouldRenderStreamingStatusPanel({
+      hasText: true,
+      activities: [{ id: "a1", kind: "tool", status: "started", summary: "search docs" }],
+    })).toBe(true);
+  });
+
+  it("renders the placeholder panel when there is no text yet", () => {
+    expect(shouldRenderStreamingStatusPanel({
+      hasText: false,
+      activities: [],
+    })).toBe(true);
+  });
+
+  it("hides the status panel once text exists and activities are empty", () => {
+    expect(shouldRenderStreamingStatusPanel({
+      hasText: true,
+      activities: [],
+    })).toBe(false);
+  });
+});
+
+describe("shouldReserveStreamingStatusSpace", () => {
+  it("keeps a reserved status row while streaming is pending", () => {
+    expect(shouldReserveStreamingStatusSpace({
+      isStreaming: true,
+      renderPhase: "pending",
+    })).toBe(true);
+  });
+
+  it("keeps a reserved status row while streaming is exiting", () => {
+    expect(shouldReserveStreamingStatusSpace({
+      isStreaming: false,
+      renderPhase: "exiting",
+    })).toBe(true);
+  });
+
+  it("releases the reserved status row once streaming completes", () => {
+    expect(shouldReserveStreamingStatusSpace({
+      isStreaming: false,
+      renderPhase: "completed",
+    })).toBe(false);
+  });
+});
+
+describe("deriveStreamingRenderPhase", () => {
+  it("starts in pending while streaming has no text or activities", () => {
+    expect(deriveStreamingRenderPhase({
+      isStreaming: true,
+      hasText: false,
+      activities: [],
+    })).toBe("pending");
+  });
+
+  it("switches to active once streaming activities arrive", () => {
+    expect(deriveStreamingRenderPhase({
+      isStreaming: true,
+      hasText: false,
+      activities: [{ id: "a1", kind: "tool", status: "started", summary: "search docs" }],
+    })).toBe("active");
+  });
+
+  it("does not fall back to pending after becoming active", () => {
+    expect(deriveStreamingRenderPhase({
+      isStreaming: true,
+      hasText: false,
+      activities: [],
+      previousPhase: "active",
+    })).toBe("active");
+  });
+
+  it("becomes completed once streaming ends", () => {
+    expect(deriveStreamingRenderPhase({
+      isStreaming: false,
+      hasText: true,
+      activities: [],
+      previousPhase: "active",
+    })).toBe("completed");
+  });
+});
+
+describe("getStreamingPendingDelayMs", () => {
+  it("caps the pending hold to a short residual delay", () => {
+    expect(getStreamingPendingDelayMs(1_000, 1_000)).toBe(80);
+    expect(getStreamingPendingDelayMs(1_000, 1_040)).toBe(40);
+    expect(getStreamingPendingDelayMs(1_000, 1_120)).toBe(0);
+  });
+
+  it("returns zero when there is no pending start time", () => {
+    expect(getStreamingPendingDelayMs(null, 1_000)).toBe(0);
   });
 });

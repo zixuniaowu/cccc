@@ -140,7 +140,7 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_send_routes_running_pty_codex_actor_to_app_supervisor(self) -> None:
+    def test_send_routes_running_pty_codex_actor_to_pty_delivery(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_send
 
         _, cleanup = self._with_home()
@@ -189,9 +189,79 @@ class TestCodexAppFlow(unittest.TestCase):
                 )
 
             self.assertTrue(resp.ok, getattr(resp, "error", None))
-            submit_user_message.assert_called_once()
-            queue_chat_message.assert_not_called()
-            request_flush_pending_messages.assert_not_called()
+            submit_user_message.assert_not_called()
+            queue_chat_message.assert_called_once()
+            request_flush_pending_messages.assert_called_once()
+        finally:
+            cleanup()
+
+    def test_reply_routes_running_pty_codex_actor_to_pty_delivery(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_reply
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-reply-pty", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            send_resp, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "text": "hello codex",
+                    "to": ["peer1"],
+                },
+            )
+            self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
+            original_event = (send_resp.result or {}).get("event") if isinstance(send_resp.result, dict) else {}
+            self.assertIsInstance(original_event, dict)
+            reply_to = str((original_event or {}).get("id") or "").strip()
+            self.assertTrue(reply_to)
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=[]),
+            ):
+                resp = handle_reply(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "reply codex",
+                        "reply_to": reply_to,
+                        "to": ["peer1"],
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: [],
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_not_called()
+            queue_chat_message.assert_called_once()
+            request_flush_pending_messages.assert_called_once()
         finally:
             cleanup()
 

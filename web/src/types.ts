@@ -3,6 +3,13 @@
 // Theme types
 export type Theme = "light" | "dark" | "system";
 
+export type GroupRuntimeStatus = {
+  lifecycle_state: "active" | "idle" | "paused" | "stopped" | string;
+  runtime_running: boolean;
+  running_actor_count: number;
+  has_running_foreman: boolean;
+};
+
 export type GroupMeta = {
   group_id: string;
   title?: string;
@@ -10,7 +17,8 @@ export type GroupMeta = {
   updated_at?: string;
   created_at?: string;
   running?: boolean;
-  state?: "active" | "idle" | "paused";
+  state?: "active" | "idle" | "paused" | "stopped";
+  runtime_status?: GroupRuntimeStatus;
 };
 
 export type GroupDoc = {
@@ -19,7 +27,9 @@ export type GroupDoc = {
   topic?: string;
   active_scope_key?: string;
   scopes?: Array<{ scope_key?: string; url?: string; label?: string }>;
-  state?: "active" | "idle" | "paused";
+  running?: boolean;
+  state?: "active" | "idle" | "paused" | "stopped";
+  runtime_status?: GroupRuntimeStatus;
 };
 
 // Server-backed attachment metadata carried by canonical ledger events.
@@ -92,6 +102,9 @@ export type ChatMessageData = {
   to?: string[];
   priority?: "normal" | "attention";
   reply_required?: boolean;
+  sender_title?: string;
+  sender_runtime?: string;
+  sender_avatar_path?: string;
   reply_to?: string;
   stream_id?: string;
   stream_phase?: string;

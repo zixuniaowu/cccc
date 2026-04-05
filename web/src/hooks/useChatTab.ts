@@ -1,7 +1,7 @@
 // useChatTab - Encapsulates ChatTab business logic and state.
 // Reduces prop drilling by providing state from stores and computed values directly.
 
-import { useMemo, useCallback, useRef } from "react";
+import { useMemo, useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   useGroupStore,
@@ -17,6 +17,35 @@ import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxSto
 import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment } from "../types";
 import * as api from "../services/api";
 import { buildReplyComposerState } from "../utils/chatReply";
+
+export interface ChatStreamingIndicatorItem {
+  actorId: string;
+  actorName: string;
+  activities: Array<{ id: string; kind: string; summary: string }>;
+  placeholderLabel: string;
+  queuedOnly: boolean;
+}
+
+export function supportsChatStreamingPlaceholder(actor: Pick<Actor, "runtime" | "runner" | "runner_effective">): boolean {
+  const runtime = String(actor.runtime || "").trim();
+  if (runtime !== "codex") return false;
+  const runner = String(actor.runner_effective || actor.runner || "pty").trim() || "pty";
+  return runner === "headless";
+}
+
+export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
+
+export function shouldRestoreDetachedScrollSnapshot(
+  snapshot: { mode?: unknown; anchorId?: unknown; updatedAt?: unknown } | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (!snapshot || snapshot.mode !== "detached") return false;
+  const anchorId = typeof snapshot.anchorId === "string" ? snapshot.anchorId.trim() : "";
+  if (!anchorId) return false;
+  const updatedAt = Number(snapshot.updatedAt);
+  if (!Number.isFinite(updatedAt) || updatedAt <= 0) return false;
+  return now - updatedAt <= CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS;
+}
 
 function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent): LedgerEvent {
   const primaryData = primary.data && typeof primary.data === "object"
@@ -157,22 +186,30 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
   for (const actorEvents of eventsByActor.values()) {
     if (actorEvents.length <= 1) continue;
 
-    const hasRichStreaming = actorEvents.some((event) => {
+    const richReplySlots = new Set<string>();
+    actorEvents.forEach((event) => {
       const data = event.data && typeof event.data === "object"
         ? event.data as ChatMessageData & { activities?: unknown[] }
         : {};
       const text = typeof data.text === "string" ? data.text.trim() : "";
       const activities = Array.isArray(data.activities) ? data.activities : [];
-      return text.length > 0 || activities.some((item) => {
+      const hasRichStreaming = text.length > 0 || activities.some((item) => {
         if (!item || typeof item !== "object") return false;
         const kind = String((item as { kind?: unknown }).kind || "").trim();
         const summary = String((item as { summary?: unknown }).summary || "").trim();
         return kind !== "queued" || summary !== "queued";
       });
+      if (!hasRichStreaming) return;
+      const slotKey = getReplySlotKey(event);
+      if (slotKey) {
+        richReplySlots.add(slotKey);
+      }
     });
 
-    if (hasRichStreaming) {
+    if (richReplySlots.size > 0) {
       for (const event of actorEvents) {
+        const slotKey = getReplySlotKey(event);
+        if (!slotKey || !richReplySlots.has(slotKey)) continue;
         const data = event.data && typeof event.data === "object"
           ? event.data as ChatMessageData & { pending_placeholder?: unknown; activities?: unknown[]; stream_id?: unknown }
           : {};
@@ -227,27 +264,16 @@ function dropOrphanQueuedPlaceholders(
   canonicalEvents: LedgerEvent[],
   streamingEvents: LedgerEvent[],
 ): LedgerEvent[] {
-  const latestCanonicalTsByActor = new Map<string, string>();
-  for (const event of canonicalEvents) {
-    if (String(event.kind || "").trim() !== "chat.message") continue;
-    const actorId = String(event.by || "").trim();
-    if (!actorId || actorId === "user") continue;
-    const data = event.data && typeof event.data === "object"
-      ? event.data as ChatMessageData
-      : undefined;
-    const text = typeof data?.text === "string" ? data.text.trim() : "";
-    if (!text) continue;
-    const ts = String(event.ts || "").trim();
-    const current = latestCanonicalTsByActor.get(actorId) || "";
-    if (!current || (ts && ts >= current)) {
-      latestCanonicalTsByActor.set(actorId, ts);
-    }
-  }
+  const renderableCanonicalReplySlots = new Set(
+    canonicalEvents
+      .filter((event) => hasRenderableChatMessageContent(event))
+      .map((event) => getReplySlotKey(event))
+      .filter((slotKey) => slotKey.length > 0),
+  );
 
   return streamingEvents.filter((event) => {
-    const actorId = String(event.by || "").trim();
-    const latestCanonicalTs = latestCanonicalTsByActor.get(actorId) || "";
-    if (!actorId || !latestCanonicalTs) return true;
+    const slotKey = getReplySlotKey(event);
+    if (!slotKey || !renderableCanonicalReplySlots.has(slotKey)) return true;
     const data = event.data && typeof event.data === "object"
       ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown }
       : {};
@@ -265,9 +291,7 @@ function dropOrphanQueuedPlaceholders(
       Boolean(data.pending_placeholder) ||
       streamId.startsWith("local:") ||
       streamId.startsWith("pending:");
-    if (!isPlaceholderLike || !onlyQueuedActivities) return true;
-    const eventTs = String(event.ts || "").trim();
-    return !eventTs || eventTs > latestCanonicalTs;
+    return !isPlaceholderLike || !onlyQueuedActivities;
   });
 }
 
@@ -298,20 +322,59 @@ function getCanonicalStreamingSupersededStreamIds(canonicalEvents: LedgerEvent[]
   );
 }
 
+function dropSupersededReplyPlaceholders(
+  canonicalEvents: LedgerEvent[],
+  streamingEvents: LedgerEvent[],
+): LedgerEvent[] {
+  const renderableCanonicalReplySlots = new Set(
+    canonicalEvents
+      .filter((event) => hasRenderableChatMessageContent(event))
+      .map((event) => getReplySlotKey(event))
+      .filter((slotKey) => slotKey.length > 0),
+  );
+
+  return streamingEvents.filter((event) => {
+    const slotKey = getReplySlotKey(event);
+    if (!slotKey || !renderableCanonicalReplySlots.has(slotKey)) return true;
+
+    const data = event.data && typeof event.data === "object"
+      ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown }
+      : {};
+    const text = typeof data.text === "string" ? data.text.trim() : "";
+    const attachments = Array.isArray(data.attachments) ? data.attachments : [];
+    const refs = Array.isArray(data.refs) ? data.refs : [];
+    const activities = Array.isArray(data.activities) ? data.activities : [];
+    const onlyQueuedActivities = activities.length === 0 || activities.every((item) => {
+      if (!item || typeof item !== "object") return true;
+      const kind = String((item as { kind?: unknown }).kind || "").trim();
+      const summary = String((item as { summary?: unknown }).summary || "").trim();
+      return kind === "queued" && summary === "queued";
+    });
+    const streamId = String(data.stream_id || "").trim();
+    const isPlaceholderLike =
+      Boolean(data.pending_placeholder) ||
+      streamId.startsWith("local:") ||
+      streamId.startsWith("pending:");
+
+    if (!isPlaceholderLike) return true;
+    if (text || attachments.length > 0 || refs.length > 0) return true;
+    return !onlyQueuedActivities ? true : false;
+  });
+}
+
 export function mergeLiveChatMessageEvents(
   canonicalEvents: LedgerEvent[],
   streamingEvents: LedgerEvent[],
   pendingEvents: LedgerEvent[],
 ): LedgerEvent[] {
-  const canonicalStreamIds = getCanonicalStreamingSupersededStreamIds(canonicalEvents);
-  const liveStreaming = streamingEvents.filter((ev) => {
-    const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
-    const streamId = data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
-    return !streamId || !canonicalStreamIds.has(streamId);
-  });
-  const merged = [...canonicalEvents, ...pendingEvents, ...liveStreaming];
   const replySlotTsByKey = buildReplySlotTsMap(streamingEvents);
-  return sortChatMessages(merged, replySlotTsByKey);
+  return sortChatMessages(
+    mergeVisibleChatMessages(canonicalEvents, streamingEvents, pendingEvents, {
+      map: new Map(),
+      next: 0,
+    }),
+    replySlotTsByKey,
+  );
 }
 
 export function getReplySlotKey(event: LedgerEvent): string {
@@ -411,6 +474,19 @@ function getLogicalMessageReplacementKey(event: LedgerEvent): string {
   const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
   if (clientId) return `client:${clientId}`;
 
+  if (event._streaming || !hasRenderableChatMessageContent(event)) {
+    const actorId = String(event.by || "").trim();
+    const replyAnchor =
+      typeof data?.pending_event_id === "string" && data.pending_event_id.trim()
+        ? data.pending_event_id.trim()
+        : typeof (data as { reply_to?: unknown } | undefined)?.reply_to === "string" && String((data as { reply_to?: string }).reply_to || "").trim()
+          ? String((data as { reply_to?: string }).reply_to || "").trim()
+          : "";
+    if (actorId && actorId !== "user" && replyAnchor) {
+      return `reply:${actorId}:${replyAnchor}`;
+    }
+  }
+
   const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
   if (streamId) return `stream:${streamId}`;
 
@@ -431,7 +507,21 @@ function getLogicalMessagePriority(event: LedgerEvent): number {
   return 1;
 }
 
-function mergeLogicalMessagesWithStableOrder(
+function shouldReplaceLogicalMessage(existing: LedgerEvent, incoming: LedgerEvent): boolean {
+  const existingRenderable = hasRenderableChatMessageContent(existing);
+  const incomingRenderable = hasRenderableChatMessageContent(incoming);
+  if (incomingRenderable !== existingRenderable) {
+    return incomingRenderable;
+  }
+
+  if (!existingRenderable && !incomingRenderable && !!existing._streaming !== !!incoming._streaming) {
+    return !!incoming._streaming;
+  }
+
+  return getLogicalMessagePriority(incoming) >= getLogicalMessagePriority(existing);
+}
+
+export function mergeLogicalMessagesWithStableOrder(
   candidates: LedgerEvent[],
   orderState: { map: Map<string, number>; next: number },
 ): LedgerEvent[] {
@@ -444,7 +534,7 @@ function mergeLogicalMessagesWithStableOrder(
     }
     const replacementKey = getLogicalMessageReplacementKey(event);
     const existing = mergedByReplacementKey.get(replacementKey);
-    if (!existing || getLogicalMessagePriority(event) >= getLogicalMessagePriority(existing.event)) {
+    if (!existing || shouldReplaceLogicalMessage(existing.event, event)) {
       mergedByReplacementKey.set(replacementKey, { orderKey, event, index });
     }
   });
@@ -460,6 +550,104 @@ function mergeLogicalMessagesWithStableOrder(
       return a.index - b.index;
     })
     .map((item) => item.event);
+}
+
+export function mergeVisibleChatMessages(
+  canonicalEvents: LedgerEvent[],
+  streamingEvents: LedgerEvent[],
+  pendingEvents: LedgerEvent[],
+  orderState: { map: Map<string, number>; next: number },
+): LedgerEvent[] {
+  const canonicalStreamIds = getCanonicalStreamingSupersededStreamIds(canonicalEvents);
+  const liveStreaming = dropSupersededReplyPlaceholders(canonicalEvents, streamingEvents).filter((ev) => {
+    const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
+    const streamId = data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
+    return !streamId || !canonicalStreamIds.has(streamId);
+  });
+
+  return mergeLogicalMessagesWithStableOrder(
+    [...canonicalEvents, ...pendingEvents, ...liveStreaming],
+    orderState,
+  );
+}
+
+function isQueuedOnlyActivities(activities: unknown[]): boolean {
+  return activities.length === 0 || activities.every((item) => {
+    if (!item || typeof item !== "object") return true;
+    const kind = String((item as { kind?: unknown }).kind || "").trim().toLowerCase();
+    const summary = String((item as { summary?: unknown }).summary || "").trim().toLowerCase();
+    return kind === "queued" && summary === "queued";
+  });
+}
+
+function getStreamingIndicatorPlaceholderLabel(event: LedgerEvent): string {
+  const data = event.data && typeof event.data === "object"
+    ? event.data as { stream_phase?: unknown }
+    : undefined;
+  const phase = String(data?.stream_phase || "").trim().toLowerCase();
+  if (phase === "commentary") return "Streaming commentary...";
+  if (phase === "final_answer") return "Streaming final answer...";
+  return "Working...";
+}
+
+export function buildChatStreamingIndicatorItems(
+  streamingEvents: LedgerEvent[],
+  actors: Actor[],
+): ChatStreamingIndicatorItem[] {
+  const actorNameById = new Map(
+    actors.map((actor) => {
+      const actorId = String(actor.id || "").trim();
+      const actorName = String(actor.title || actorId).trim() || actorId;
+      return [actorId, actorName] as const;
+    }),
+  );
+  const latestByActorId = new Map<string, LedgerEvent>();
+
+  for (const event of streamingEvents) {
+    if (String(event.kind || "").trim() !== "chat.message") continue;
+    const actorId = String(event.by || "").trim();
+    if (!actorId || actorId === "user") continue;
+    const data = event.data && typeof event.data === "object"
+      ? event.data as { activities?: unknown; pending_placeholder?: unknown; text?: unknown }
+      : {};
+    const activities = Array.isArray(data.activities) ? data.activities : [];
+    const isPlaceholder = Boolean(data.pending_placeholder);
+    const hasText = String(data.text || "").trim().length > 0;
+    if (!event._streaming && !isPlaceholder) continue;
+    if (activities.length <= 0 && !isPlaceholder && !hasText) continue;
+
+    const previous = latestByActorId.get(actorId);
+    if (!previous || String(event.ts || "") >= String(previous.ts || "")) {
+      latestByActorId.set(actorId, event);
+    }
+  }
+
+  return Array.from(latestByActorId.entries())
+    .map(([actorId, event]) => {
+      const data = event.data && typeof event.data === "object"
+        ? event.data as { activities?: unknown }
+        : {};
+      const activities = Array.isArray(data.activities)
+        ? data.activities
+            .filter((item): item is { id?: unknown; kind?: unknown; summary?: unknown } => !!item && typeof item === "object")
+            .map((item) => ({
+              id: String(item.id || ""),
+              kind: String(item.kind || ""),
+              summary: String(item.summary || ""),
+            }))
+            .filter((item) => item.id && item.summary)
+            .slice(-3)
+        : [];
+      return {
+        actorId,
+        actorName: actorNameById.get(actorId) || actorId,
+        activities,
+        placeholderLabel: getStreamingIndicatorPlaceholderLabel(event),
+        queuedOnly: isQueuedOnlyActivities(activities),
+      };
+    })
+    .filter((item) => item.activities.length > 0 || item.queuedOnly)
+    .sort((left, right) => left.actorName.localeCompare(right.actorName));
 }
 
 interface UseChatTabOptions {
@@ -489,9 +677,10 @@ export function useChatTab({
   composerRef,
   fileInputRef,
   chatAtBottomRef,
-  scrollRef,
+  scrollRef: _scrollRef,
 }: UseChatTabOptions) {
   const { t } = useTranslation(["chat", "common"]);
+  const [forceStickToBottomToken, setForceStickToBottomToken] = useState(0);
   // ============ Stores ============
   const { events, streamingEvents, chatWindow, hasMoreHistory, hasLoadedTail, isLoadingHistory, isChatWindowLoading } = useGroupStore(
     useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId])
@@ -679,17 +868,27 @@ export function useChatTab({
     };
   }
 
-  // Filtered live chat messages (canonical + optimistic pending merged)
-  const liveChatMessages = useMemo(() => {
+  const processedStreamingMessages = useMemo(() => {
     const all = events.filter((ev) => ev.kind === "chat.message");
-    const streaming = dropOrphanQueuedPlaceholders(
+    return dropOrphanQueuedPlaceholders(
       all,
       collapseActorStreamingPlaceholders(
         dedupeStreamingEvents(streamingEvents.filter((ev) => ev.kind === "chat.message"))
       ),
     );
-    const canonicalClientIds = new Set(
+  }, [events, streamingEvents]);
+
+  const streamingIndicatorItems = useMemo(
+    () => buildChatStreamingIndicatorItems(processedStreamingMessages, actors),
+    [actors, processedStreamingMessages],
+  );
+
+  // Filtered live chat messages (canonical + optimistic pending merged)
+  const liveChatMessages = useMemo(() => {
+    const all = events.filter((ev) => ev.kind === "chat.message");
+    const renderableCanonicalClientIds = new Set(
       all
+        .filter((ev) => hasRenderableChatMessageContent(ev))
         .map((ev) => {
           const data = ev.data && typeof ev.data === "object" ? (ev.data as { client_id?: unknown }) : null;
           return data && typeof data.client_id === "string" ? data.client_id.trim() : "";
@@ -697,18 +896,9 @@ export function useChatTab({
         .filter((clientId) => clientId.length > 0)
     );
     const pendingEvents = outboxEntries
-      .filter((entry) => !canonicalClientIds.has(entry.localId))
+      .filter((entry) => !renderableCanonicalClientIds.has(entry.localId))
       .map((entry) => entry.event);
-    const canonicalStreamIds = getCanonicalStreamingSupersededStreamIds(all);
-    const liveStreaming = streaming.filter((ev) => {
-      const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
-      const streamId = data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
-      return !streamId || !canonicalStreamIds.has(streamId);
-    });
-    const ordered = mergeLogicalMessagesWithStableOrder(
-      [...all, ...pendingEvents, ...liveStreaming],
-      logicalMessageOrderStateRef.current,
-    );
+    const ordered = mergeVisibleChatMessages(all, processedStreamingMessages, pendingEvents, logicalMessageOrderStateRef.current);
 
     if (chatFilter === "attention") {
       return ordered.filter((ev) => {
@@ -733,7 +923,7 @@ export function useChatTab({
       });
     }
     return ordered;
-  }, [events, streamingEvents, chatFilter, outboxEntries]);
+  }, [events, processedStreamingMessages, chatFilter, outboxEntries]);
 
   // Chat messages (window or live)
   const chatMessages = useMemo(() => {
@@ -748,14 +938,16 @@ export function useChatTab({
 
   const chatInitialScrollAnchorId = useMemo(() => {
     if (inChatWindow) return undefined;
-    if (!scrollSnapshot || scrollSnapshot.atBottom || !scrollSnapshot.anchorId) return undefined;
-    return scrollSnapshot.anchorId;
+    const snapshot = scrollSnapshot;
+    if (!shouldRestoreDetachedScrollSnapshot(snapshot)) return undefined;
+    return snapshot!.anchorId;
   }, [inChatWindow, scrollSnapshot]);
 
   const chatInitialScrollAnchorOffsetPx = useMemo(() => {
     if (inChatWindow) return undefined;
-    if (!scrollSnapshot || scrollSnapshot.atBottom || !scrollSnapshot.anchorId) return undefined;
-    return Number(scrollSnapshot.offsetPx || 0);
+    const snapshot = scrollSnapshot;
+    if (!shouldRestoreDetachedScrollSnapshot(snapshot)) return undefined;
+    return Number(snapshot!.offsetPx || 0);
   }, [inChatWindow, scrollSnapshot]);
 
   // Chat window props (for jump-to mode)
@@ -889,7 +1081,7 @@ export function useChatTab({
       const now = new Date().toISOString();
       for (const actor of assistantTargets) {
         const actorId = String(actor.id || "").trim();
-        if (!actorId) continue;
+        if (!actorId || !supportsChatStreamingPlaceholder(actor)) continue;
         upsertStreamingEvent(
           {
             id: `local:${localId}:${actorId}`,
@@ -902,6 +1094,7 @@ export function useChatTab({
               text: "",
               to: ["user"],
               stream_id: `local:${localId}:${actorId}`,
+              pending_event_id: localId,
               pending_placeholder: true,
               activities: [
                 {
@@ -934,16 +1127,14 @@ export function useChatTab({
     };
 
     const applyImmediateComposerFeedback = () => {
+      const shouldLockBottom = chatAtBottomRef ? chatAtBottomRef.current : true;
       clearComposer();
       if (chatAtBottomRef) chatAtBottomRef.current = true;
       if (selectedGroupId) {
         setShowScrollButton(selectedGroupId, false);
       }
-      const scrollEl = scrollRef?.current;
-      if (scrollEl) {
-        requestAnimationFrame(() => {
-          scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: "auto" });
-        });
+      if (shouldLockBottom) {
+        setForceStickToBottomToken((value) => value + 1);
       }
     };
 
@@ -1120,7 +1311,6 @@ export function useChatTab({
     closeChatWindow,
     fileInputRef,
     chatAtBottomRef,
-    scrollRef,
     setChatFilter,
     setChatMobileSurface,
     setShowScrollButton,
@@ -1275,7 +1465,7 @@ export function useChatTab({
     if (selectedGroupId) {
       setShowScrollButton(selectedGroupId, false);
       setChatUnreadCount(selectedGroupId, 0);
-      setChatScrollSnapshot(selectedGroupId, { atBottom: true, anchorId: "", offsetPx: 0 });
+      setChatScrollSnapshot(selectedGroupId, { mode: "follow", anchorId: "", offsetPx: 0, updatedAt: Date.now() });
     }
   }, [chatAtBottomRef, selectedGroupId, setShowScrollButton, setChatUnreadCount, setChatScrollSnapshot]);
 
@@ -1290,7 +1480,10 @@ export function useChatTab({
   );
 
   const handleScrollSnapshot = useCallback(
-    (snap: { atBottom: boolean; anchorId: string; offsetPx: number }, overrideGroupId?: string) => {
+    (
+      snap: { mode: "follow" | "detached"; anchorId: string; offsetPx: number; updatedAt: number },
+      overrideGroupId?: string,
+    ) => {
       if (inChatWindow && !overrideGroupId) return;
       const gid = String(overrideGroupId || selectedGroupId || "").trim();
       if (!gid) return;
@@ -1333,6 +1526,7 @@ export function useChatTab({
     busy,
     showScrollButton,
     chatUnreadCount,
+    forceStickToBottomToken,
 
     // Setup checklist
     showSetupCard,
@@ -1365,6 +1559,7 @@ export function useChatTab({
 
     // Agent state
     agentStates,
+    streamingIndicatorItems,
 
     // Actions
     sendMessage,

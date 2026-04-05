@@ -629,7 +629,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if not rel_path:
             raise HTTPException(status_code=404, detail={"code": "actor_avatar_not_found", "message": "actor avatar not found"})
         try:
-            return FileResponse(resolve_actor_avatar_path(rel_path))
+            response = FileResponse(resolve_actor_avatar_path(rel_path))
+            # Avatar URLs are versioned with ?v=<actor.updated_at>, so they are safe to cache aggressively.
+            response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+            return response
         except Exception as exc:
             raise HTTPException(status_code=404, detail={"code": "actor_avatar_not_found", "message": "actor avatar not found"}) from exc
 

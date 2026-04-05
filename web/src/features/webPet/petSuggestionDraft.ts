@@ -69,6 +69,13 @@ function mergeComposerText(existingText: string, suggestionText: string): string
   return `${existing}\n\n${next}`;
 }
 
+function formatComposerTaskProposalText(reminder: PetReminder): string {
+  if (reminder.action.type !== "task_proposal") return "";
+  const body = buildTaskProposalMessage(reminder.action);
+  if (!body) return "";
+  return `Pet task proposal: please ${body.charAt(0).toLowerCase()}${body.slice(1)}`;
+}
+
 function getReminderDraftPayload(
   reminder: PetReminder,
 ): { groupId: string; text: string; toText: string; replyTo: string } | null {
@@ -83,7 +90,7 @@ function getReminderDraftPayload(
   if (reminder.action.type === "task_proposal") {
     return {
       groupId: String(reminder.action.groupId || "").trim(),
-      text: buildTaskProposalMessage(reminder.action),
+      text: formatComposerTaskProposalText(reminder),
       toText: "@foreman",
       replyTo: "",
     };

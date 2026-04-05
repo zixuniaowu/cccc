@@ -15,7 +15,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { getGroupStatusUnified } from "../../utils/groupStatus";
+import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { GripIcon, MoreIcon } from "../Icons";
 
 interface SortableGroupItemProps {
@@ -62,7 +62,7 @@ export function SortableGroupItem({
     transition,
   };
 
-  const status = getGroupStatusUnified(group.running ?? false, group.state);
+  const status = getGroupStatusFromSource(group);
   const { refs, floatingStyles, context } = useFloating({
     open: menuOpen,
     onOpenChange: setMenuOpen,
