@@ -1,14 +1,16 @@
 import { useTranslation } from 'react-i18next';
-import { Actor, GroupDoc } from "../../types";
+import { Actor, GroupDoc, TextScale, Theme } from "../../types";
 import { getGroupStatusUnified } from "../../utils/groupStatus";
 import { getGroupControlVisual, getLaunchControlMode } from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { LanguageSwitcher } from "../LanguageSwitcher";
+import { TextScaleSwitcher } from "../TextScaleSwitcher";
 import {
   SearchIcon,
   ClipboardIcon,
   SettingsIcon,
+  MonitorIcon,
   SunIcon,
   MoonIcon,
   EditIcon,
@@ -21,13 +23,16 @@ import {
 export interface MobileMenuSheetProps {
   isOpen: boolean;
   isDark: boolean;
+  theme: Theme;
+  textScale: TextScale;
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
   selectedGroupRunning: boolean;
   actors: Actor[];
   busy: string;
   onClose: () => void;
-  onToggleTheme: () => void;
+  onThemeChange: (theme: Theme) => void;
+  onTextScaleChange: (scale: TextScale) => void;
   onOpenSearch: () => void;
   onOpenContext: () => void;
   onOpenSettings: () => void;
@@ -40,13 +45,16 @@ export interface MobileMenuSheetProps {
 export function MobileMenuSheet({
   isOpen,
   isDark,
+  theme,
+  textScale,
   selectedGroupId,
   groupDoc,
   selectedGroupRunning,
   actors,
   busy,
   onClose,
-  onToggleTheme,
+  onThemeChange,
+  onTextScaleChange,
   onOpenSearch,
   onOpenContext,
   onOpenSettings,
@@ -70,7 +78,9 @@ export function MobileMenuSheet({
   const launchDisabled = launchHardUnavailable || isGroupBusy;
   const pauseDisabled = pauseHardUnavailable || isGroupBusy;
   const stopDisabled = stopHardUnavailable || isGroupBusy;
-  const themeLabel = isDark ? t('themeDark') : t('themeLight');
+  const themeLabel = theme === "system" ? t('themeSystem') : theme === "dark" ? t('themeDark') : t('themeLight');
+  const ThemeIcon = theme === "system" ? MonitorIcon : theme === "dark" ? MoonIcon : SunIcon;
+  const nextTheme: Theme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
   const runtimeHint = selectedStatusKey === "paused"
     ? t('runtimeHintPaused')
     : selectedStatusKey === "stop"
@@ -222,20 +232,25 @@ export function MobileMenuSheet({
 
           <section className={sectionCardClass}>
             <div className={sectionTitleClass}>{t('appearanceSection')}</div>
-            <LanguageSwitcher
-              isDark={isDark}
-              variant="row"
-            />
             <button
               className={rowButtonClass}
-              onClick={onToggleTheme}
+              onClick={() => onThemeChange(nextTheme)}
             >
               <div className="flex items-center gap-3">
-                {isDark ? <SunIcon size={18} /> : <MoonIcon size={18} />}
+                <ThemeIcon size={18} />
                 <span>{t('themeLabel')}</span>
               </div>
               <span className="text-[13px] font-medium text-[var(--color-text-tertiary)]">{themeLabel}</span>
             </button>
+            <TextScaleSwitcher
+              textScale={textScale}
+              onTextScaleChange={onTextScaleChange}
+              variant="row"
+            />
+            <LanguageSwitcher
+              isDark={isDark}
+              variant="row"
+            />
           </section>
 
           <section className={sectionCardClass}>

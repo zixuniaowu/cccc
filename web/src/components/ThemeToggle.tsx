@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Theme } from "../types";
 import { classNames } from "../utils/classNames";
-import { SunIcon, MoonIcon, TerminalIcon } from "./Icons";
+import { SunIcon, MoonIcon, MonitorIcon } from "./Icons";
 
 interface ThemeToggleProps {
   theme: Theme;
@@ -16,7 +16,7 @@ export function ThemeToggle({ theme, onThemeChange, isDark: _isDark }: ThemeTogg
   const themes: { value: Theme; label: string; Icon: React.FC<{ size?: number }> }[] = [
     { value: "light", label: t('themeLight'), Icon: SunIcon },
     { value: "dark", label: t('themeDark'), Icon: MoonIcon },
-    { value: "system", label: t('themeSystem'), Icon: TerminalIcon },
+    { value: "system", label: t('themeSystem'), Icon: MonitorIcon },
   ];
 
   return (
@@ -51,7 +51,7 @@ export function ThemeToggleCompact({ theme, onThemeChange, isDark: _isDark, vari
     return "light";
   };
 
-  const Icon = theme === "light" ? SunIcon : theme === "dark" ? MoonIcon : TerminalIcon;
+  const Icon = theme === "light" ? SunIcon : theme === "dark" ? MoonIcon : MonitorIcon;
   const label = theme === "light" ? t('themeLight') : theme === "dark" ? t('themeDark') : t('themeSystem');
 
   return (
@@ -66,7 +66,7 @@ export function ThemeToggleCompact({ theme, onThemeChange, isDark: _isDark, vari
       title={t('themeClickToChange', { theme: label })}
       aria-label={t('currentTheme', { theme: label })}
     >
-      <Icon size={18} />
+      <Icon size={19} />
     </button>
   );
 }

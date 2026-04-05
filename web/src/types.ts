@@ -2,6 +2,7 @@
 
 // Theme types
 export type Theme = "light" | "dark" | "system";
+export type TextScale = 90 | 100 | 125;
 
 export type GroupMeta = {
   group_id: string;

@@ -6,6 +6,7 @@ const WebPet = lazy(() => import("./features/webPet/WebPet").then((m) => ({ defa
 import { AppBackground } from "./components/app/AppBackground";
 import { AppFeedback } from "./components/app/AppFeedback";
 import { AppShell } from "./components/app/AppShell";
+import { useTextScale } from "./hooks/useTextScale";
 import { useTheme } from "./hooks/useTheme";
 import { useActorActions } from "./hooks/useActorActions";
 import { useSSE } from "./hooks/useSSE";
@@ -38,6 +39,7 @@ import { filterVisibleRuntimeActors, isPetRuntimeActor } from "./utils/runtimeVi
 export default function App() {
   // Theme
   const { theme, setTheme, isDark } = useTheme();
+  const { textScale, setTextScale } = useTextScale();
 
   // Virtual keyboard viewport adjustment for mobile
   useViewportHeight();
@@ -385,6 +387,7 @@ export default function App() {
         selectedGroupRunning={selectedGroupRunning}
         selectedGroupActorsHydrating={selectedGroupActorsHydrating}
         theme={theme}
+        textScale={textScale}
         sseStatus={sseStatus}
         groupLabelById={groupLabelById}
         chatUnreadCount={chatUnreadCount}
@@ -396,6 +399,7 @@ export default function App() {
         contentRef={contentRef}
         chatAtBottomRef={chatAtBottomRef}
         onThemeChange={setTheme}
+        onTextScaleChange={setTextScale}
         onSelectGroup={setSelectedGroupId}
         onWarmGroup={(gid) => void warmGroup(gid)}
         onCreateGroup={
@@ -476,11 +480,14 @@ export default function App() {
       <Suspense fallback={null}>
         <AppModals
           isDark={isDark}
+          theme={theme}
+          textScale={textScale}
           readOnly={webReadOnly}
           ccccHome={ccccHome}
           composerRef={composerRef}
           onStartReply={startReply}
-          onThemeToggle={() => setTheme(isDark ? "light" : "dark")}
+          onThemeChange={setTheme}
+          onTextScaleChange={setTextScale}
           onStartGroup={handleStartGroup}
           onStopGroup={handleStopGroup}
           onSetGroupState={handleSetGroupState}

@@ -5,7 +5,7 @@ import { AppHeader } from "../layout/AppHeader";
 import { GroupSidebar } from "../layout/GroupSidebar";
 import { ActorTab } from "../../pages/ActorTab";
 import { ChatTab } from "../../pages/chat";
-import type { Actor, GroupContext, GroupDoc, GroupMeta } from "../../types";
+import type { Actor, GroupContext, GroupDoc, GroupMeta, TextScale } from "../../types";
 import { SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
 
 type AppShellProps = {
@@ -33,6 +33,7 @@ type AppShellProps = {
   selectedGroupRunning: boolean;
   selectedGroupActorsHydrating: boolean;
   theme: "light" | "dark" | "system";
+  textScale: TextScale;
   sseStatus: "connected" | "connecting" | "disconnected";
   groupLabelById: Record<string, string>;
   chatUnreadCount: number;
@@ -44,6 +45,7 @@ type AppShellProps = {
   contentRef: React.MutableRefObject<HTMLDivElement | null>;
   chatAtBottomRef: React.MutableRefObject<boolean>;
   onThemeChange: (theme: "light" | "dark" | "system") => void;
+  onTextScaleChange: (scale: TextScale) => void;
   onSelectGroup: (groupId: string) => void;
   onWarmGroup: (groupId: string) => void;
   onCreateGroup: (() => void) | undefined;
@@ -104,6 +106,7 @@ export function AppShell({
   selectedGroupRunning,
   selectedGroupActorsHydrating,
   theme,
+  textScale,
   sseStatus,
   groupLabelById,
   chatUnreadCount,
@@ -115,6 +118,7 @@ export function AppShell({
   contentRef,
   chatAtBottomRef,
   onThemeChange,
+  onTextScaleChange,
   onSelectGroup,
   onWarmGroup,
   onCreateGroup,
@@ -226,7 +230,9 @@ export function AppShell({
         <AppHeader
           isDark={isDark}
           theme={theme}
+          textScale={textScale}
           onThemeChange={onThemeChange}
+          onTextScaleChange={onTextScaleChange}
           webReadOnly={webReadOnly}
           selectedGroupId={selectedGroupId}
           groupDoc={groupDoc}

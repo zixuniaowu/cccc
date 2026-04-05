@@ -286,6 +286,49 @@ export function WindowViewIcon({ className, size = 18 }: IconProps) {
   );
 }
 
+export function MonitorIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <rect x="2.75" y="3.75" width="18.5" height="12.5" rx="2.25" fill="currentColor" opacity="0.08" />
+      <rect x="2.75" y="3.75" width="18.5" height="12.5" rx="2.25" />
+      <path d="M8.5 20.25h7" />
+      <path d="M12 16.25v4" />
+      <path d="M10.25 20.25h3.5" />
+    </svg>
+  );
+}
+
+export function TextSizeIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M3.5 18L8 6l4.5 12" />
+      <path d="M5.5 13.5h5" />
+      <circle cx="17.5" cy="15" r="2.5" />
+      <path d="M20 12.5V18" />
+    </svg>
+  );
+}
+
 export function CompassIcon({ className, size = 18 }: IconProps) {
   return (
     <svg

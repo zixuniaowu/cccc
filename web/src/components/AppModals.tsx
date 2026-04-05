@@ -40,7 +40,7 @@ import {
 import { getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import { getChatSession } from "../stores/useUIStore";
 import * as api from "../services/api";
-import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, PresentationMessageRef, SupportedRuntime } from "../types";
+import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, PresentationMessageRef, SupportedRuntime, TextScale, Theme } from "../types";
 
 const ContextModal = lazy(() => import("./ContextModal/index").then((module) => ({ default: module.ContextModal })));
 const SettingsModal = lazy(() => import("./SettingsModal").then((module) => ({ default: module.SettingsModal })));
@@ -50,11 +50,14 @@ const PresentationViewerModal = lazy(() =>
 
 interface AppModalsProps {
   isDark: boolean;
+  theme: Theme;
+  textScale: TextScale;
   readOnly?: boolean;
   ccccHome: string;
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
   onStartReply: (ev: LedgerEvent) => void;
-  onThemeToggle: () => void;
+  onThemeChange: (theme: Theme) => void;
+  onTextScaleChange: (scale: TextScale) => void;
   onStartGroup: () => Promise<void>;
   onStopGroup: () => Promise<void>;
   onSetGroupState: (state: "active" | "idle" | "paused") => Promise<void>;
@@ -94,11 +97,14 @@ function LazyModalFallback({ isDark }: { isDark: boolean }) {
 
 export function AppModals({
   isDark,
+  theme,
+  textScale,
   readOnly,
   ccccHome,
   composerRef,
   onStartReply,
-  onThemeToggle,
+  onThemeChange,
+  onTextScaleChange,
   onStartGroup,
   onStopGroup,
   onSetGroupState,
@@ -1403,13 +1409,16 @@ export function AppModals({
       <MobileMenuSheet
         isOpen={modals.mobileMenu}
         isDark={isDark}
+        theme={theme}
+        textScale={textScale}
         selectedGroupId={selectedGroupId}
         groupDoc={groupDoc}
         selectedGroupRunning={selectedGroupRunning}
         actors={actors}
         busy={busy}
         onClose={() => closeModal("mobileMenu")}
-        onToggleTheme={onThemeToggle}
+        onThemeChange={onThemeChange}
+        onTextScaleChange={onTextScaleChange}
         onOpenSearch={() => openModal("search")}
         onOpenContext={() => {
           openModal("context");

@@ -1,8 +1,9 @@
 import { useTranslation } from 'react-i18next';
-import { Actor, GroupDoc, Theme } from "../../types";
+import { Actor, GroupDoc, TextScale, Theme } from "../../types";
 import { getGroupStatusUnified } from "../../utils/groupStatus";
 import { getGroupControlVisual, getLaunchControlMode } from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
+import { TextScaleSwitcher } from "../TextScaleSwitcher";
 import { ThemeToggleCompact } from "../ThemeToggle";
 import { LanguageSwitcher } from "../LanguageSwitcher";
 import {
@@ -20,7 +21,9 @@ import {
 export interface AppHeaderProps {
   isDark: boolean;
   theme: Theme;
+  textScale: TextScale;
   onThemeChange: (theme: Theme) => void;
+  onTextScaleChange: (scale: TextScale) => void;
   webReadOnly?: boolean;
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
@@ -42,7 +45,9 @@ export interface AppHeaderProps {
 export function AppHeader({
   isDark,
   theme,
+  textScale,
   onThemeChange,
+  onTextScaleChange,
   webReadOnly,
   selectedGroupId,
   groupDoc,
@@ -235,6 +240,7 @@ export function AppHeader({
 
               <div className={headerRailClass}>
                 <ThemeToggleCompact theme={theme} onThemeChange={onThemeChange} isDark={isDark} variant="rail" />
+                <TextScaleSwitcher textScale={textScale} onTextScaleChange={onTextScaleChange} variant="rail" />
                 <LanguageSwitcher isDark={isDark} variant="rail" />
                 <button
                   onClick={onOpenSettings}
