@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { getChatTailSnapshot, shouldAutoFollowOnTailAppend } from "../../src/utils/chatAutoFollow";
+import {
+  getChatTailMutationSnapshot,
+  getChatTailSnapshot,
+  shouldAutoFollowOnTailAppend,
+  shouldAutoFollowOnTailMutation,
+} from "../../src/utils/chatAutoFollow";
 
 describe("chatAutoFollow", () => {
   it("auto-follows real tail append", () => {
@@ -30,5 +35,19 @@ describe("chatAutoFollow", () => {
         getChatTailSnapshot("m-3", 2),
       )
     ).toBe(false);
+  });
+
+  it("auto-follows same-tail content mutation", () => {
+    const prev = getChatTailMutationSnapshot("m-2", "m-2|10|0");
+    const next = getChatTailMutationSnapshot("m-2", "m-2|24|0");
+
+    expect(shouldAutoFollowOnTailMutation(prev, next)).toBe(true);
+  });
+
+  it("does not treat real tail append as a tail mutation", () => {
+    const prev = getChatTailMutationSnapshot("m-2", "m-2|10|0");
+    const next = getChatTailMutationSnapshot("m-3", "m-3|4|0");
+
+    expect(shouldAutoFollowOnTailMutation(prev, next)).toBe(false);
   });
 });

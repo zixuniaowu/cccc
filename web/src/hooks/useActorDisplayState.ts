@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getTerminalSignalKey, useTerminalSignalsStore } from "../stores";
 import type { Actor } from "../types";
@@ -26,12 +26,21 @@ export function useActorDisplayState({
   selectedGroupActorsHydrating = false,
 }: UseActorDisplayStateInput): ActorDisplayState {
   const terminalSignal = useTerminalSignalsStore((state) => state.signals[getTerminalSignalKey(groupId, actor.id)]);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!terminalSignal) return;
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [terminalSignal]);
 
   return useMemo(() => {
     const runningKnown = typeof actor.running === "boolean";
     const isRunning = runningKnown ? actor.running : (actor.enabled ?? false);
     const assumeRunning = !runningKnown && selectedGroupRunning && selectedGroupActorsHydrating && actor.enabled !== false;
-    const workingState = getActorDisplayWorkingState(actor, terminalSignal);
+    const workingState = getActorDisplayWorkingState(actor, terminalSignal, now);
     const indicator = getActorTabIndicatorState({
       isRunning: Boolean(isRunning),
       workingState,
@@ -44,5 +53,5 @@ export function useActorDisplayState({
       workingState,
       indicator,
     };
-  }, [actor, selectedGroupActorsHydrating, selectedGroupRunning, terminalSignal]);
+  }, [actor, now, selectedGroupActorsHydrating, selectedGroupRunning, terminalSignal]);
 }

@@ -1232,10 +1232,6 @@ def get_headless_targets_for_message(
         if runner_kind != "headless" and not (runner_kind == "pty" and not pty_supported):
             continue
         
-        # Actor must be running
-        if not headless_runner.SUPERVISOR.actor_running(group.group_id, aid):
-            continue
-        
         # Check delivery/visibility rules
         if not is_message_for_actor(group, actor_id=aid, event=event):
             continue

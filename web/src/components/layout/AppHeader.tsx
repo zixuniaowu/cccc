@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Actor, GroupDoc, TextScale, Theme } from "../../types";
-import { getGroupStatusUnified } from "../../utils/groupStatus";
-import { getGroupControlVisual, getLaunchControlMode } from "../../utils/groupControls";
+import { getGroupStatusFromSource } from "../../utils/groupStatus";
+import { getGroupControlVisual, getLaunchControlMode, resolveGroupControls } from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
 import { TextScaleSwitcher } from "../TextScaleSwitcher";
 import { ThemeToggleCompact } from "../ThemeToggle";
@@ -72,19 +72,29 @@ export function AppHeader({
     "flex items-center gap-1 rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1 shadow-sm backdrop-blur-xl";
   const headerRailButtonClass =
     "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]";
-  const selectedStatus = selectedGroupId ? getGroupStatusUnified(selectedGroupRunning, groupDoc?.state) : null;
+  const selectedStatus = selectedGroupId ? getGroupStatusFromSource({
+    running: selectedGroupRunning,
+    state: groupDoc?.state,
+    runtime_status: groupDoc?.runtime_status,
+  }) : null;
   const selectedStatusKey = selectedStatus?.key ?? null;
   const launchMode = getLaunchControlMode(selectedStatusKey);
   const launchControl = getGroupControlVisual(selectedStatusKey, "launch", busy);
   const pauseControl = getGroupControlVisual(selectedStatusKey, "pause", busy);
   const stopControl = getGroupControlVisual(selectedStatusKey, "stop", busy);
-  const isGroupBusy = busy.startsWith("group-");
-  const launchHardUnavailable = !selectedGroupId || actors.length === 0;
-  const pauseHardUnavailable = !selectedGroupId || !selectedGroupRunning;
-  const stopHardUnavailable = !selectedGroupId;
-  const launchDisabled = launchHardUnavailable || isGroupBusy;
-  const pauseDisabled = pauseHardUnavailable || isGroupBusy;
-  const stopDisabled = stopHardUnavailable || isGroupBusy;
+  const {
+    launchHardUnavailable,
+    pauseHardUnavailable,
+    stopHardUnavailable,
+    launchDisabled,
+    pauseDisabled,
+    stopDisabled,
+  } = resolveGroupControls({
+    selectedGroupId,
+    actorCount: actors.length,
+    statusKey: selectedStatusKey,
+    busy,
+  });
 
   const handleLaunchClick = () => {
     if (launchDisabled || selectedStatusKey === "run") return;

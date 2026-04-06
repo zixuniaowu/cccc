@@ -19,9 +19,11 @@ from ...kernel.messaging import (
     get_default_send_to,
     targets_any_agent,
 )
+from ...kernel.message_sender_snapshot import build_sender_snapshot
 from ...kernel.scope import detect_scope
 from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
 from ...util.time import utc_now_iso
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .delivery import (
     flush_pending_messages,
     get_headless_targets_for_message,
@@ -298,6 +300,7 @@ def handle_send(
     by = str(args.get("by") or "user").strip()
     priority = str(args.get("priority") or "normal").strip() or "normal"
     reply_required = coerce_bool(args.get("reply_required"))
+    quote_text = str(args.get("quote_text") or "").strip()
     src_group_id = str(args.get("src_group_id") or "").strip()
     src_event_id = str(args.get("src_event_id") or "").strip()
     dst_group_id = str(args.get("dst_group_id") or "").strip()
@@ -376,8 +379,8 @@ def handle_send(
         matched_enabled = enabled_recipient_actor_ids(group, to)
         if by and by in matched_enabled:
             matched_enabled = [actor_id for actor_id in matched_enabled if actor_id != by]
+        woken = auto_wake_recipients(group, to, by)
         if not matched_enabled:
-            woken = auto_wake_recipients(group, to, by)
             if not woken:
                 wanted = " ".join(to) if to else "@all"
                 return _error(
@@ -429,6 +432,7 @@ def handle_send(
             format="plain",
             priority=priority,
             reply_required=reply_required,
+            quote_text=quote_text or None,
             to=to,
             refs=refs,
             attachments=attachments,
@@ -436,6 +440,7 @@ def handle_send(
             source_user_name=source_user_name or None,
             source_user_id=source_user_id or None,
             mention_user_ids=mention_user_ids or None,
+            **build_sender_snapshot(group, by=by),
             src_group_id=src_group_id or None,
             src_event_id=src_event_id or None,
             dst_group_id=dst_group_id or None,
@@ -471,8 +476,20 @@ def handle_send(
         if not is_message_for_actor(group, actor_id=actor_id, event=event_with_effective_to):
             logger.debug(f"[SEND] skip actor={actor_id} (not for actor)")
             continue
+        runtime = str(actor.get("runtime") or "codex").strip() or "codex"
         runner_kind = str(actor.get("runner") or "pty").strip()
-        if effective_runner_kind(runner_kind) == "pty":
+        if (
+            runtime == "codex"
+            and effective_runner_kind(runner_kind) == "headless"
+            and codex_app_supervisor.actor_running(group.group_id, actor_id)
+        ):
+            codex_app_supervisor.submit_user_message(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                text=delivery_text,
+                event_id=event_id,
+            )
+        elif effective_runner_kind(runner_kind) == "pty":
             queue_chat_message(
                 group,
                 actor_id=actor_id,
@@ -600,8 +617,8 @@ def handle_reply(
         matched_enabled = enabled_recipient_actor_ids(group, to)
         if by and by in matched_enabled:
             matched_enabled = [actor_id for actor_id in matched_enabled if actor_id != by]
+        woken = auto_wake_recipients(group, to, by)
         if not matched_enabled:
-            woken = auto_wake_recipients(group, to, by)
             if not woken:
                 wanted = " ".join(to) if to else "@all"
                 return _error(
@@ -643,6 +660,7 @@ def handle_reply(
             source_user_name=original_source_user_name or None,
             source_user_id=original_source_user_id or None,
             mention_user_ids=original_mention_user_ids or None,
+            **build_sender_snapshot(group, by=by),
             client_id=client_id or None,
         ).model_dump(),
     )
@@ -690,8 +708,21 @@ def handle_reply(
             continue
         if not is_message_for_actor(group, actor_id=actor_id, event=event_with_effective_to):
             continue
+        runtime = str(actor.get("runtime") or "codex").strip() or "codex"
         runner_kind = str(actor.get("runner") or "pty").strip()
-        if effective_runner_kind(runner_kind) == "pty":
+        if (
+            runtime == "codex"
+            and effective_runner_kind(runner_kind) == "headless"
+            and codex_app_supervisor.actor_running(group.group_id, actor_id)
+        ):
+            codex_app_supervisor.submit_user_message(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                text=delivery_text,
+                event_id=event_id,
+                reply_to=target_event_id or reply_to,
+            )
+        elif effective_runner_kind(runner_kind) == "pty":
             queue_chat_message(
                 group,
                 actor_id=actor_id,

@@ -106,6 +106,8 @@ export interface PetReminder {
   kind: ReminderKind;
   priority: number;
   summary: string;
+  confidence?: "low" | "medium" | "high";
+  reasoningBrief?: string;
   agent: string;
   ephemeral?: boolean;
   source: {

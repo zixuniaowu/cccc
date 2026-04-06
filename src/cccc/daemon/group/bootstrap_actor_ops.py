@@ -9,7 +9,8 @@ from typing import Any, Callable, Dict, Optional
 from ...kernel.context import ContextStorage
 from ...kernel.actors import list_actors
 from ...kernel.group import load_group
-from ...kernel.runtime import runtime_start_preflight_error
+from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...util.conv import coerce_bool
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -57,6 +58,7 @@ def autostart_running_groups(
             continue
         if not coerce_bool(group.doc.get("running"), default=False):
             continue
+        logger.info("autostart group=%s state=%s running=%s", group_id, str(group.doc.get("state") or "active"), True)
 
         group_scope_key = str(group.doc.get("active_scope_key") or "").strip()
         if not group_scope_key:
@@ -125,6 +127,12 @@ def autostart_running_groups(
             effective_runner = str(launch_spec["effective_runner"])
             cwd = launch_spec["cwd"]
             runtime = str(launch_spec["runtime"])
+            effective_env = inject_runtime_home_env(
+                launch_spec["merged_env"],
+                runtime=runtime,
+                group_id=group.group_id,
+                actor_id=actor_id,
+            )
 
             ok_mcp = True
             effective_cmd = list(launch_spec["effective_command"])
@@ -132,10 +140,11 @@ def autostart_running_groups(
             if runtime_error:
                 logger.warning("Autostart skipped for %s/%s: %s", group_id, actor_id, runtime_error)
                 continue
-            try:
-                ok_mcp = bool(ensure_mcp_installed(runtime, cwd))
-            except Exception:
-                ok_mcp = False
+            if effective_runner != "headless":
+                try:
+                    ok_mcp = bool(ensure_mcp_installed(runtime, cwd))
+                except Exception:
+                    ok_mcp = False
             if not ok_mcp and runtime in auto_mcp_runtimes:
                 logger.warning(
                     "MCP server 'cccc' is not installed for %s/%s (runtime=%s); actor will start but tools may not work.",
@@ -147,12 +156,27 @@ def autostart_running_groups(
             clear_preamble_sent(group, actor_id)
 
             try:
-                if effective_runner == "headless":
+                logger.info(
+                    "autostart start group=%s actor=%s runtime=%s runner=%s runner_effective=%s",
+                    group.group_id,
+                    actor_id,
+                    runtime,
+                    str(launch_spec["runner"]),
+                    effective_runner,
+                )
+                if runtime == "codex" and effective_runner == "headless":
+                    codex_app_supervisor.start_actor(
+                        group_id=group.group_id,
+                        actor_id=actor_id,
+                        cwd=cwd,
+                        env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                    )
+                elif effective_runner == "headless":
                     headless_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
                         actor_id=actor_id,
                         cwd=cwd,
-                        env=dict(inject_actor_context_env(launch_spec["merged_env"], group.group_id, actor_id)),
+                        env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
                     )
                 else:
                     session = pty_runner.SUPERVISOR.start_actor(
@@ -160,15 +184,25 @@ def autostart_running_groups(
                         actor_id=actor_id,
                         cwd=cwd,
                         command=effective_cmd,
-                        env=prepare_pty_env(inject_actor_context_env(launch_spec["merged_env"], group.group_id, actor_id)),
+                        env=prepare_pty_env(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                        runtime=runtime,
                         max_backlog_bytes=pty_backlog_bytes(),
                     )
+                logger.info(
+                    "autostart started group=%s actor=%s runtime=%s runner_effective=%s",
+                    group.group_id,
+                    actor_id,
+                    runtime,
+                    effective_runner,
+                )
             except Exception as e:
                 logger.warning("Autostart failed for %s/%s: %s", group_id, actor_id, e)
                 continue
 
             try:
-                if effective_runner == "headless":
+                if runtime == "codex" and effective_runner == "headless":
+                    pass
+                elif effective_runner == "headless":
                     write_headless_state(group.group_id, actor_id)
                 else:
                     write_pty_state(group.group_id, actor_id, session.pid)
@@ -186,6 +220,8 @@ def autostart_running_groups(
             if (
                 get_group_state(group) == "active"
                 and (
+                    codex_app_supervisor.group_running(group.group_id)
+                    or
                     pty_runner.SUPERVISOR.group_running(group.group_id)
                     or headless_runner.SUPERVISOR.group_running(group.group_id)
                 )

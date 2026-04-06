@@ -222,6 +222,11 @@ export function petPeerContextRequestKey(groupId: string, fresh: boolean, verbos
   return `pet-peer-context:${String(groupId || "").trim()}:${fresh ? "fresh" : "default"}:${verbose ? "verbose" : "lite"}`;
 }
 
+export function ledgerStatusesRequestKey(groupId: string, eventIds: string[]): string {
+  const normalizedIds = eventIds.map((eventId) => String(eventId || "").trim()).filter((eventId) => eventId);
+  return `ledger-statuses:${String(groupId || "").trim()}:${normalizedIds.join(",")}`;
+}
+
 export function pingRequestKey(includeHome: boolean): string {
   return includeHome ? "ping:include-home" : "ping:default";
 }

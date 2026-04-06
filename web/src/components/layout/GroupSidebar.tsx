@@ -1,15 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from 'react-i18next';
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { CloseIcon, FolderIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "../Icons";
 import { GroupSidebarItem } from "./GroupSidebarItem";
+import { GroupSidebarSortableList } from "./GroupSidebarSortableList";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../../stores/useUIStore";
 import { useBrandingStore } from "../../stores";
-
-const GroupSidebarSortableList = lazy(() =>
-  import("./GroupSidebarSortableList").then((module) => ({ default: module.GroupSidebarSortableList }))
-);
 
 export interface GroupSidebarProps {
   orderedGroups: GroupMeta[];
@@ -54,7 +51,6 @@ export function GroupSidebar({
   const branding = useBrandingStore((s) => s.branding);
   const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [isResizing, setIsResizing] = useState(false);
-  const [sortableReady, setSortableReady] = useState(false);
   const archivedSet = useMemo(() => new Set(archivedGroupIds), [archivedGroupIds]);
   const workingGroups = useMemo(
     () => orderedGroups.filter((g) => !archivedSet.has(String(g.group_id || "").trim())),
@@ -108,37 +104,6 @@ export function GroupSidebar({
     };
   }, [isResizing, onResizeWidth]);
 
-  useEffect(() => {
-    if (sortableReady) return;
-    if (typeof window === "undefined") return;
-    if (!window.matchMedia("(min-width: 768px)").matches) return;
-
-    let cancelled = false;
-    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
-    let idleId: number | null = null;
-    const loadSortableList = () => {
-      void import("./GroupSidebarSortableList").then(() => {
-        if (!cancelled) setSortableReady(true);
-      });
-    };
-
-    if ("requestIdleCallback" in window) {
-      idleId = window.requestIdleCallback(() => loadSortableList(), { timeout: 1200 });
-    } else {
-      timeoutId = globalThis.setTimeout(() => loadSortableList(), 400);
-    }
-
-    return () => {
-      cancelled = true;
-      if (idleId !== null && "cancelIdleCallback" in window) {
-        window.cancelIdleCallback(idleId);
-      }
-      if (timeoutId !== null) {
-        globalThis.clearTimeout(timeoutId);
-      }
-    };
-  }, [sortableReady]);
-
   const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (isCollapsed) return;
     event.preventDefault();
@@ -165,48 +130,23 @@ export function GroupSidebar({
         onArchiveGroup(gid);
       };
 
-      if (!isCollapsed && !readOnly && sortableReady) {
+      if (!isCollapsed && !readOnly) {
         return (
-          <Suspense fallback={
-            <div className="space-y-1">
-              {groups.map((g) => {
-                const gid = String(g.group_id || "");
-                return (
-                  <GroupSidebarItem
-                    key={gid}
-                    group={g}
-                    isActive={gid === selectedGroupId}
-                    isCollapsed={false}
-                    isArchived={isArchivedSection}
-                    menuActionLabel={menuActionLabel}
-                    menuAriaLabel={`${t("groupActions")} · ${g.title || gid}`}
-                    onMenuAction={() => handleMenuAction(gid)}
-                    onSelect={() => {
-                      onSelectGroup(gid);
-                      if (window.matchMedia("(max-width: 767px)").matches) onClose();
-                    }}
-                    onWarm={gid === selectedGroupId ? undefined : () => onWarmGroup?.(gid)}
-                  />
-                );
-              })}
-            </div>
-          }>
-            <GroupSidebarSortableList
-              groups={groups}
-              section={section}
-              selectedGroupId={selectedGroupId}
-              isDark={isDark}
-              isCollapsed={false}
-              readOnly={readOnly}
-              menuActionLabel={menuActionLabel}
-              menuAriaLabel={t("groupActions")}
-              onMenuAction={handleMenuAction}
-              onReorderSection={onReorderSection}
-              onSelectGroup={onSelectGroup}
-              onWarmGroup={onWarmGroup}
-              onClose={onClose}
-            />
-          </Suspense>
+          <GroupSidebarSortableList
+            groups={groups}
+            section={section}
+            selectedGroupId={selectedGroupId}
+            isDark={isDark}
+            isCollapsed={false}
+            readOnly={readOnly}
+            menuActionLabel={menuActionLabel}
+            menuAriaLabel={t("groupActions")}
+            onMenuAction={handleMenuAction}
+            onReorderSection={onReorderSection}
+            onSelectGroup={onSelectGroup}
+            onWarmGroup={onWarmGroup}
+            onClose={onClose}
+          />
         );
       }
 
@@ -235,7 +175,7 @@ export function GroupSidebar({
         </div>
       );
     },
-    [isCollapsed, isDark, onArchiveGroup, onClose, onReorderSection, onRestoreGroup, onSelectGroup, onWarmGroup, readOnly, selectedGroupId, sortableReady, t]
+    [isCollapsed, isDark, onArchiveGroup, onClose, onReorderSection, onRestoreGroup, onSelectGroup, onWarmGroup, readOnly, selectedGroupId, t]
   );
 
   return (

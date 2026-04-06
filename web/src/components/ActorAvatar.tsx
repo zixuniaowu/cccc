@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState } from "react";
 import { classNames } from "../utils/classNames";
 import { withAuthToken } from "../services/api/base";
 
@@ -8,7 +8,6 @@ const RUNTIME_LOGO: Record<string, string> = {
   codex: `${RUNTIME_LOGO_BASE}logos/codex.png`,
   gemini: `${RUNTIME_LOGO_BASE}logos/gemini.png`,
 };
-
 export type ActorAvatarProps = {
   avatarUrl?: string | null;
   previewUrl?: string | null;
@@ -43,8 +42,11 @@ export const ActorAvatar = memo(function ActorAvatar({
   const customAvatarSrc = useMemo(() => {
     if (isUser) return null;
     const raw = String(avatarUrl || "").trim();
-    return raw ? withAuthToken(raw) : null;
+    if (!raw) return null;
+    return raw.includes("token=") ? raw : withAuthToken(raw);
   }, [avatarUrl, isUser]);
+  const [failedCustomAvatarSrc, setFailedCustomAvatarSrc] = useState<string | null>(null);
+  const customAvatarFailed = !!customAvatarSrc && failedCustomAvatarSrc === customAvatarSrc;
 
   const logoSrc = useMemo(() => {
     if (isUser) return null;
@@ -71,8 +73,13 @@ export const ActorAvatar = memo(function ActorAvatar({
     >
       {previewSrc ? (
         <img src={previewSrc} alt="" className="h-full w-full object-contain" />
-      ) : customAvatarSrc ? (
-        <img src={customAvatarSrc} alt="" className="h-full w-full object-contain" />
+      ) : customAvatarSrc && !customAvatarFailed ? (
+        <img
+          src={customAvatarSrc}
+          alt=""
+          className="h-full w-full object-contain"
+          onError={() => setFailedCustomAvatarSrc(customAvatarSrc)}
+        />
       ) : logoSrc ? (
         <img src={logoSrc} alt="" className="h-full w-full object-cover" />
       ) : (

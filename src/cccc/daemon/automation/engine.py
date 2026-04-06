@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -128,6 +129,47 @@ def _load_state(group: Group) -> Dict[str, Any]:
 def _save_state(group: Group, doc: Dict[str, Any]) -> None:
     doc["updated_at"] = utc_now_iso()
     atomic_write_json(_state_path(group), doc)
+
+
+def _read_help_ledger_events(group: Group, start_pos: int) -> Tuple[int, List[Dict[str, Any]]]:
+    ledger_path = group.ledger_path
+    if not ledger_path.exists():
+        return 0, []
+    try:
+        ledger_size = int(ledger_path.stat().st_size)
+    except Exception:
+        ledger_size = 0
+    pos = max(0, int(start_pos or 0))
+    if pos > ledger_size:
+        return ledger_size, []
+
+    events: List[Dict[str, Any]] = []
+    next_pos = pos
+    try:
+        with ledger_path.open("rb") as handle:
+            handle.seek(pos)
+            while True:
+                start = handle.tell()
+                line = handle.readline()
+                if not line:
+                    break
+                if not line.endswith(b"\n"):
+                    # Partial write; retry next tick without advancing the cursor.
+                    handle.seek(start)
+                    break
+                next_pos = int(handle.tell())
+                s = line.decode("utf-8", errors="replace").strip()
+                if not s:
+                    continue
+                try:
+                    ev = json.loads(s)
+                except Exception:
+                    continue
+                if isinstance(ev, dict):
+                    events.append(ev)
+    except Exception:
+        return pos, []
+    return next_pos, events
 
 
 def _actor_state(doc: Dict[str, Any], actor_id: str) -> Dict[str, Any]:
@@ -677,6 +719,19 @@ class AutomationManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._memory_auto_in_flight: set[str] = set()
+        self._group_tick_at: dict[str, float] = {}
+
+    def _group_tick_due(self, group_id: str, *, now_monotonic: float, min_interval_seconds: float) -> bool:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return False
+        interval = max(0.0, float(min_interval_seconds or 0.0))
+        with self._lock:
+            last_at = float(self._group_tick_at.get(gid) or 0.0)
+            if last_at > 0.0 and (now_monotonic - last_at) < interval:
+                return False
+            self._group_tick_at[gid] = now_monotonic
+            return True
 
     def on_resume(self, group: Group) -> None:
         """Reset automation timers on resume (idle/paused -> active).
@@ -739,6 +794,7 @@ class AutomationManager:
         base = home / "groups"
         if not base.exists():
             return
+        now_monotonic = time.monotonic()
         for p in base.glob("*/group.yaml"):
             gid = p.parent.name
             group = load_group(gid)
@@ -754,6 +810,8 @@ class AutomationManager:
             if state == "paused":
                 continue  # paused: all automation disabled
             if state == "idle":
+                if not self._group_tick_due(gid, now_monotonic=now_monotonic, min_interval_seconds=30.0):
+                    continue
                 # idle: only run user-defined rules (Level 4);
                 # internal automation (Level 1-3) stays silent
                 try:
@@ -761,6 +819,8 @@ class AutomationManager:
                     self._check_rules(group, now, group_state="idle")
                 except Exception:
                     pass
+                continue
+            if not self._group_tick_due(gid, now_monotonic=now_monotonic, min_interval_seconds=5.0):
                 continue
             # active: run all automation (Level 1-4)
             try:
@@ -1793,15 +1853,11 @@ class AutomationManager:
         except Exception:
             agents_by_id = {}
 
+        pos_key = "help_ledger_pos"
+        read_start: Optional[int] = None
         with self._lock:
             state = _load_state(group)
             dirty = False
-
-            # Increment per-actor work counters by ingesting newly appended ledger events.
-            #
-            # We intentionally do not backfill on first run: start counting from "now" to
-            # avoid catch-up bursts from historical ledgers.
-            pos_key = "help_ledger_pos"
             try:
                 ledger_size = int(group.ledger_path.stat().st_size)
             except Exception:
@@ -1812,56 +1868,48 @@ class AutomationManager:
             if pos is None or pos < 0 or pos > ledger_size:
                 state[pos_key] = ledger_size
                 dirty = True
-                pos = ledger_size
             else:
-                events: list[dict[str, Any]] = []
-                try:
-                    with group.ledger_path.open("rb") as f:
-                        f.seek(pos)
-                        while True:
-                            start = f.tell()
-                            line = f.readline()
-                            if not line:
-                                break
-                            if not line.endswith(b"\n"):
-                                # Partial write; retry next tick.
-                                f.seek(start)
-                                break
-                            pos = f.tell()
-                            s = line.decode("utf-8", errors="replace").strip()
-                            if not s:
-                                continue
+                read_start = pos
+
+            if dirty:
+                _save_state(group, state)
+
+        events: List[Dict[str, Any]] = []
+        next_pos: Optional[int] = None
+        if read_start is not None:
+            next_pos, events = _read_help_ledger_events(group, read_start)
+
+        with self._lock:
+            state = _load_state(group)
+            dirty = False
+
+            if read_start is not None:
+                current_raw_pos = state.get(pos_key)
+                current_pos = int(current_raw_pos) if isinstance(current_raw_pos, int) else None
+                if current_pos == read_start:
+                    if next_pos is None:
+                        next_pos = read_start
+                    if current_pos != next_pos:
+                        state[pos_key] = next_pos
+                        dirty = True
+
+                    for ev in events:
+                        kind = str(ev.get("kind") or "")
+                        if kind not in ("chat.message", "system.notify"):
+                            continue
+                        for aid in running_ids:
                             try:
-                                ev = json.loads(s)
+                                if not is_message_for_actor(group, actor_id=aid, event=ev):
+                                    continue
                             except Exception:
                                 continue
-                            if isinstance(ev, dict):
-                                events.append(ev)
-                except Exception:
-                    events = []
-
-                next_pos = int(pos or 0)
-                if int(state.get(pos_key) or 0) != next_pos:
-                    state[pos_key] = next_pos
-                    dirty = True
-
-                for ev in events:
-                    kind = str(ev.get("kind") or "")
-                    if kind not in ("chat.message", "system.notify"):
-                        continue
-                    for aid in running_ids:
-                        try:
-                            if not is_message_for_actor(group, actor_id=aid, event=ev):
-                                continue
-                        except Exception:
-                            continue
-                        st = _actor_state(state, aid)
-                        try:
-                            cur = int(st.get("help_msg_count_since") or 0)
-                        except Exception:
-                            cur = 0
-                        st["help_msg_count_since"] = cur + 1
-                        dirty = True
+                            st = _actor_state(state, aid)
+                            try:
+                                cur = int(st.get("help_msg_count_since") or 0)
+                            except Exception:
+                                cur = 0
+                            st["help_msg_count_since"] = cur + 1
+                            dirty = True
 
             # Decide which actors should be nudged.
             for aid, runner_kind, session_key in running:

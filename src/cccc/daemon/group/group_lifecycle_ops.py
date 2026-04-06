@@ -12,7 +12,8 @@ from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
-from ...kernel.runtime import runtime_start_preflight_error
+from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
@@ -184,6 +185,12 @@ def handle_group_start(
             runtime = str(launch_spec["runtime"])
             runner_effective = str(launch_spec["effective_runner"])
             update_actor(group, aid, {"enabled": True})
+            effective_env = inject_runtime_home_env(
+                launch_spec["merged_env"],
+                runtime=runtime,
+                group_id=group.group_id,
+                actor_id=aid,
+            )
             if runner_effective != "headless":
                 try:
                     mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
@@ -203,12 +210,19 @@ def handle_group_start(
                         },
                     )
 
-            if runner_effective == "headless":
+            if runtime == "codex" and runner_effective == "headless":
+                codex_app_supervisor.start_actor(
+                    group_id=group.group_id,
+                    actor_id=aid,
+                    cwd=cwd,
+                    env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=aid)),
+                )
+            elif runner_effective == "headless":
                 headless_runner.SUPERVISOR.start_actor(
                     group_id=group.group_id,
                     actor_id=aid,
                     cwd=cwd,
-                    env=dict(inject_actor_context_env(launch_spec["merged_env"], group_id=group.group_id, actor_id=aid)),
+                    env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=aid)),
                 )
                 try:
                     write_headless_state(group.group_id, aid)
@@ -220,9 +234,8 @@ def handle_group_start(
                     actor_id=aid,
                     cwd=cwd,
                     command=launch_spec["effective_command"],
-                    env=prepare_pty_env(
-                        inject_actor_context_env(launch_spec["merged_env"], group_id=group.group_id, actor_id=aid)
-                    ),
+                    env=prepare_pty_env(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=aid)),
+                    runtime=runtime,
                     max_backlog_bytes=pty_backlog_bytes(),
                 )
                 try:
@@ -307,6 +320,7 @@ def handle_group_stop(
 
         pty_runner.SUPERVISOR.stop_group(group_id=group.group_id)
         headless_runner.SUPERVISOR.stop_group(group_id=group.group_id)
+        codex_app_supervisor.stop_group(group_id=group.group_id)
 
         try:
             pdir = pty_state_dir_for_group(group.group_id)

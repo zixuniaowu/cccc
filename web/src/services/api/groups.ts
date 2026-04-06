@@ -479,6 +479,8 @@ export type PetPeerContextResponse = {
     kind?: string;
     priority?: number;
     summary?: string | null;
+    confidence?: "low" | "medium" | "high" | string | null;
+    reasoning_brief?: string | null;
     agent?: string | null;
     fingerprint?: string | null;
     ephemeral?: boolean;
@@ -504,6 +506,43 @@ export type PetPeerContextResponse = {
       assignee?: string | null;
     };
     updated_at?: string | null;
+  }>;
+  task_evidence?: Array<{
+    kind?: string | null;
+    priority?: number;
+    hypothesis?: string | null;
+    actor?: {
+      id?: string | null;
+      active_task_id?: string | null;
+      focus?: string | null;
+      next_action?: string | null;
+      blockers?: string[] | null;
+    };
+    task?: {
+      id?: string | null;
+      title?: string | null;
+      status?: string | null;
+      assignee?: string | null;
+      waiting_on?: string | null;
+      blocked_by?: string[] | null;
+      handoff_to?: string | null;
+      updated_at?: string | null;
+    };
+    current_active_task?: {
+      id?: string | null;
+      title?: string | null;
+      status?: string | null;
+      assignee?: string | null;
+      waiting_on?: string | null;
+      blocked_by?: string[] | null;
+      handoff_to?: string | null;
+      updated_at?: string | null;
+    };
+    signals?: {
+      task_stale_minutes?: number;
+      same_workstream_hint?: boolean;
+      blocker_count?: number;
+    };
   }>;
   persona: string;
   help?: string;

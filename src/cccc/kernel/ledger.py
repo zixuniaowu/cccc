@@ -107,6 +107,12 @@ def append_event(
         append_event_to_index(ledger_path, out, next_offset_bytes=next_offset)
     except Exception:
         pass
+    try:
+        from .ledger_status_cache import update_message_status_cache_on_append
+
+        update_message_status_cache_on_append(out)
+    except Exception:
+        pass
     _notify_append(out)
     return out
 

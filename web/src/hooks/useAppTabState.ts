@@ -6,7 +6,7 @@ type UseAppTabStateOptions = {
   actors: Actor[];
   runtimeActors: Actor[];
   selectedGroupId: string;
-  chatSessionAtBottom: boolean | undefined;
+  chatSessionFollowMode: boolean | undefined;
   isSmallScreen: boolean;
   setActiveTab: (tab: string) => void;
   setShowScrollButton: (groupId: string, value: boolean) => void;
@@ -32,7 +32,7 @@ export function useAppTabState({
   actors,
   runtimeActors,
   selectedGroupId,
-  chatSessionAtBottom,
+  chatSessionFollowMode,
   isSmallScreen,
   setActiveTab,
   setShowScrollButton,
@@ -67,11 +67,11 @@ export function useAppTabState({
     if (!el) return;
 
     const threshold = 100;
-    const atBottom = (chatSessionAtBottom ?? false) || (el.scrollHeight - el.scrollTop - el.clientHeight < threshold);
+    const atBottom = (chatSessionFollowMode ?? false) || (el.scrollHeight - el.scrollTop - el.clientHeight < threshold);
     chatAtBottomRef.current = atBottom;
     setShowScrollButton(selectedGroupId, !atBottom);
     if (atBottom) setChatUnreadCount(selectedGroupId, 0);
-  }, [activeTab, selectedGroupId, chatSessionAtBottom, setChatUnreadCount, setShowScrollButton]);
+  }, [activeTab, selectedGroupId, chatSessionFollowMode, setChatUnreadCount, setShowScrollButton]);
 
   useEffect(() => {
     if (activeTab !== "chat") return;

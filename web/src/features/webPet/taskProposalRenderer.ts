@@ -1,6 +1,6 @@
 import i18n from "../../i18n";
 import { getDefaultTaskProposalStylePolicy } from "./taskProposalStylePolicy";
-import type { ReminderAction, TaskProposalReason, TaskProposalStylePolicy } from "./types";
+import type { ReminderAction, TaskProposalStylePolicy } from "./types";
 
 type TaskProposalAction = Extract<ReminderAction, { type: "task_proposal" }>;
 type TaskProposalRenderMode = "summary" | "draft";

@@ -11,6 +11,8 @@ from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
+from ...kernel.runtime import inject_runtime_home_env
+from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
@@ -114,7 +116,12 @@ def handle_actor_stop(
         actor = update_actor(group, actor_id, {"enabled": False})
         runner_kind = str(actor.get("runner") or "pty").strip()
         runner_effective = effective_runner_kind(runner_kind)
-        if runner_effective == "headless":
+        runtime = str(actor.get("runtime") or "codex").strip() or "codex"
+        if runtime == "codex" and runner_effective == "headless":
+            codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
+            remove_headless_state(group.group_id, actor_id)
+            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+        elif runner_effective == "headless":
             headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
             remove_headless_state(group.group_id, actor_id)
             remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
@@ -211,8 +218,12 @@ def handle_actor_restart(
             is_admin=is_admin,
         )
         runner_kind = str(actor.get("runner") or "pty").strip()
-        runner_effective = effective_runner_kind(runner_kind)
-        if runner_effective == "headless":
+        runtime = str(actor.get("runtime") or "codex").strip() or "codex"
+        if runtime == "codex" and effective_runner_kind(runner_kind) == "headless":
+            codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
+            remove_headless_state(group.group_id, actor_id)
+            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+        elif effective_runner_kind(runner_kind) == "headless":
             headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
             remove_headless_state(group.group_id, actor_id)
             remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
@@ -308,6 +319,12 @@ def handle_actor_restart(
         runner_kind = str(launch_spec["runner"])
         runner_effective = str(launch_spec["effective_runner"])
         runtime = str(launch_spec["runtime"])
+        effective_env = inject_runtime_home_env(
+            launch_spec["merged_env"],
+            runtime=runtime,
+            group_id=group.group_id,
+            actor_id=actor_id,
+        )
         if runner_effective != "headless":
             try:
                 mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
@@ -316,12 +333,19 @@ def handle_actor_restart(
             if not mcp_ready:
                 return _error("actor_restart_failed", f"failed to install MCP for runtime: {runtime}")
 
-        if runner_effective == "headless":
+        if runtime == "codex" and runner_effective == "headless":
+            codex_app_supervisor.start_actor(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+            )
+        elif runner_effective == "headless":
             headless_runner.SUPERVISOR.start_actor(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 cwd=cwd,
-                env=dict(inject_actor_context_env(launch_spec["merged_env"], group_id=group.group_id, actor_id=actor_id)),
+                env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
             )
             try:
                 write_headless_state(group.group_id, actor_id)
@@ -333,9 +357,8 @@ def handle_actor_restart(
                 actor_id=actor_id,
                 cwd=cwd,
                 command=launch_spec["effective_command"],
-                env=prepare_pty_env(
-                    inject_actor_context_env(launch_spec["merged_env"], group_id=group.group_id, actor_id=actor_id)
-                ),
+                env=prepare_pty_env(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+                runtime=runtime,
                 max_backlog_bytes=pty_backlog_bytes(),
             )
             try:
@@ -346,6 +369,13 @@ def handle_actor_restart(
             ContextStorage(group).clear_agent_status_if_present(actor_id)
         except Exception:
             pass
+        try:
+            if str(group.doc.get("state") or "").strip() == "stopped":
+                group.doc["state"] = "active"
+            group.doc["running"] = True
+            group.save()
+        except Exception:
+            pass
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
     event = append_event(
@@ -354,7 +384,11 @@ def handle_actor_restart(
         group_id=group.group_id,
         scope_key="",
         by=by,
-        data={"actor_id": actor_id, "runner": str(actor.get("runner") or "pty")},
+        data={
+            "actor_id": actor_id,
+            "runner": str(actor.get("runner") or "pty"),
+            "runner_effective": runner_effective,
+        },
     )
 
     from ...kernel.events import publish_event

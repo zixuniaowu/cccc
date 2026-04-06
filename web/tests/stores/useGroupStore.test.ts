@@ -894,3 +894,537 @@ describe("useGroupStore actors fetch policy", () => {
     expect(bucket?.hasMoreHistory).toBe(false);
   });
 });
+
+describe("useGroupStore streaming placeholder cleanup", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    localStorageMock.clear();
+    const mod = await importFreshStore();
+    mod.useGroupStore.setState({
+      groups: [{ group_id: "g-demo", title: "Demo", topic: "", state: "active" }],
+      groupOrder: ["g-demo"],
+      archivedGroupIds: [],
+      selectedGroupId: "g-demo",
+      chatByGroup: {
+        "g-demo": {
+          events: [],
+          streamingEvents: [],
+          streamingTextByStreamId: {},
+          streamingActivitiesByStreamId: {},
+          chatWindow: null,
+          hasMoreHistory: false,
+          hasLoadedTail: true,
+          isLoadingHistory: false,
+          isChatWindowLoading: false,
+        },
+      },
+      groupDoc: null,
+      events: [],
+      chatWindow: null,
+      actors: [],
+      groupContext: null,
+      groupSettings: null,
+      groupPresentation: null,
+      runtimes: [],
+      hasMoreHistory: false,
+      isLoadingHistory: false,
+      isChatWindowLoading: false,
+    });
+  });
+
+  it("clearEmptyStreamingEventsForActor removes unanchored placeholder-only entries and cached activity state", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "pending:e1:peer-1",
+      ts: "2026-04-03T15:53:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "pending:e1:peer-1",
+        pending_placeholder: true,
+        activities: [{ id: "a1", kind: "queued", status: "started", summary: "queued", ts: "2026-04-03T15:53:00Z" }],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingActivities("pending:e1:peer-1", [
+      { id: "a1", kind: "queued", status: "started", summary: "queued", ts: "2026-04-03T15:53:00Z" },
+    ], "g-demo");
+
+    mod.useGroupStore.getState().clearEmptyStreamingEventsForActor("peer-1", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toEqual([]);
+    expect(bucket.streamingActivitiesByStreamId).toEqual({});
+    expect(bucket.streamingTextByStreamId).toEqual({});
+  });
+
+  it("clearEmptyStreamingEventsForActor preserves pending-bound queued placeholders before canonical reply arrives", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "pending:e1:peer-1",
+      ts: "2026-04-03T15:53:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "pending:e1:peer-1",
+        pending_event_id: "e1",
+        pending_placeholder: true,
+        activities: [{ id: "a1", kind: "queued", status: "started", summary: "queued", ts: "2026-04-03T15:53:00Z" }],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingActivities("pending:e1:peer-1", [
+      { id: "a1", kind: "queued", status: "started", summary: "queued", ts: "2026-04-03T15:53:00Z" },
+    ], "g-demo");
+
+    mod.useGroupStore.getState().clearEmptyStreamingEventsForActor("peer-1", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.data?.pending_event_id).toBe("e1");
+    expect(bucket.streamingActivitiesByStreamId["pending:e1:peer-1"]).toEqual([
+      { id: "a1", kind: "queued", status: "started", summary: "queued", ts: "2026-04-03T15:53:00Z" },
+    ]);
+  });
+
+  it("clearEmptyStreamingEventsForActor preserves completed streaming text entries", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "stream:s1",
+      ts: "2026-04-03T15:53:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: false,
+      data: {
+        text: "final answer",
+        to: ["user"],
+        stream_id: "s1",
+        activities: [],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingText("s1", "final answer", "g-demo");
+
+    mod.useGroupStore.getState().clearEmptyStreamingEventsForActor("peer-1", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingTextByStreamId["s1"]).toBe("final answer");
+  });
+
+  it("clearTransientStreamingEventsForActor removes commentary-only transient streams", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "stream:c1",
+      ts: "2026-04-03T16:12:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: false,
+      data: {
+        text: "Inspecting stream wiring",
+        to: ["user"],
+        stream_id: "c1",
+        transient_stream: true,
+        stream_phase: "commentary",
+        activities: [],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingText("c1", "Inspecting stream wiring", "g-demo");
+
+    mod.useGroupStore.getState().clearTransientStreamingEventsForActor("peer-1", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toEqual([]);
+    expect(bucket.streamingTextByStreamId).toEqual({});
+    expect(bucket.streamingActivitiesByStreamId).toEqual({});
+  });
+
+  it("clearTransientStreamingEventsForActor keeps the current transient bubble until a non-transient stream takes over", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "stream:c2",
+      ts: "2026-04-03T16:12:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "Inspecting stream wiring",
+        to: ["user"],
+        stream_id: "c2",
+        pending_event_id: "evt-2",
+        transient_stream: true,
+        stream_phase: "commentary",
+        activities: [],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingText("c2", "Inspecting stream wiring", "g-demo");
+
+    mod.useGroupStore.getState().clearTransientStreamingEventsForActor("peer-1", "g-demo");
+
+    let bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.data?.stream_id).toBe("c2");
+
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "stream:f2",
+      ts: "2026-04-03T16:12:01Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "Final answer",
+        to: ["user"],
+        stream_id: "f2",
+        pending_event_id: "evt-2",
+        transient_stream: false,
+        stream_phase: "final_answer",
+        activities: [],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingText("f2", "Final answer", "g-demo");
+
+    mod.useGroupStore.getState().clearTransientStreamingEventsForActor("peer-1", "g-demo");
+
+    bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.data?.stream_id).toBe("f2");
+    expect(bucket.streamingTextByStreamId["c2"]).toBeUndefined();
+    expect(bucket.streamingTextByStreamId["f2"]).toBe("Final answer");
+    expect(bucket.replySessionsByPendingEventId["evt-2"]).toMatchObject({
+      pendingEventId: "evt-2",
+      actorId: "peer-1",
+      currentStreamId: "f2",
+      streamIds: ["f2"],
+    });
+  });
+
+  it("clearEmptyStreamingEventsForActor preserves non-queued process bubbles", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "pending:e-process:peer-1",
+      ts: "2026-04-03T16:20:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "pending:e-process:peer-1",
+        pending_event_id: "e-process",
+        pending_placeholder: true,
+        activities: [{ id: "a-process", kind: "command", status: "completed", summary: "RUN sed -n '1,260p' src/foo.ts", ts: "2026-04-03T16:20:00Z" }],
+      },
+    }, "g-demo");
+
+    mod.useGroupStore.getState().clearEmptyStreamingEventsForActor("peer-1", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.data?.activities).toEqual([
+      { id: "a-process", kind: "command", status: "completed", summary: "RUN sed -n '1,260p' src/foo.ts", ts: "2026-04-03T16:20:00Z" },
+    ]);
+  });
+
+  it("completeStreamingEventsForActor turns process bubbles into stable non-streaming entries", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "pending:e3:peer-1",
+      ts: "2026-04-03T16:21:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "pending:e3:peer-1",
+        pending_event_id: "e3",
+        pending_placeholder: true,
+        activities: [{ id: "a3", kind: "command", status: "completed", summary: "RUN rg -n foo", ts: "2026-04-03T16:21:00Z" }],
+      },
+    }, "g-demo");
+
+    mod.useGroupStore.getState().completeStreamingEventsForActor("peer-1", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?._streaming).toBe(false);
+    expect(bucket.streamingEvents[0]?.data?.pending_placeholder).toBe(false);
+  });
+
+  it("completeStreamingEventsForActor keeps fresh local queued placeholders streaming", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "local:msg-1:peer-1",
+      ts: "2026-04-03T16:22:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "local:msg-1:peer-1",
+        pending_event_id: "local_123",
+        pending_placeholder: true,
+        activities: [{ id: "queued:local-1", kind: "queued", status: "started", summary: "queued", ts: "2026-04-03T16:22:00Z" }],
+      },
+    }, "g-demo");
+
+    mod.useGroupStore.getState().completeStreamingEventsForActor("peer-1", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?._streaming).toBe(true);
+    expect(bucket.streamingEvents[0]?.data?.pending_placeholder).toBe(true);
+  });
+
+  it("promoteStreamingEventToStream upgrades pending placeholder in place", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "pending:e2:peer-1",
+      ts: "2026-04-03T16:10:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "pending:e2:peer-1",
+        pending_event_id: "e2",
+        pending_placeholder: true,
+        activities: [{ id: "a2", kind: "tool", status: "started", summary: "reading files", ts: "2026-04-03T16:10:00Z" }],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingActivities("pending:e2:peer-1", [
+      { id: "a2", kind: "tool", status: "started", summary: "reading files", ts: "2026-04-03T16:10:00Z" },
+    ], "g-demo");
+
+    mod.useGroupStore.getState().promoteStreamingEventToStream("peer-1", "e2", "stream-2", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.data?.stream_id).toBe("stream-2");
+    expect(bucket.streamingEvents[0]?.data?.pending_placeholder).toBe(false);
+    expect(bucket.streamingActivitiesByStreamId["stream-2"]).toEqual([
+      { id: "a2", kind: "tool", status: "started", summary: "reading files", ts: "2026-04-03T16:10:00Z" },
+    ]);
+    expect(bucket.streamingActivitiesByStreamId["pending:e2:peer-1"]).toBeUndefined();
+  });
+
+  it("reconcileStreamingMessage upgrades a pending placeholder to the final stream in one record", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "pending:e4:peer-1",
+      ts: "2026-04-03T16:25:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "pending:e4:peer-1",
+        pending_event_id: "e4",
+        pending_placeholder: true,
+        activities: [{ id: "a4", kind: "thinking", status: "started", summary: "thinking", ts: "2026-04-03T16:25:00Z" }],
+      },
+    }, "g-demo");
+
+    mod.useGroupStore.getState().reconcileStreamingMessage({
+      actorId: "peer-1",
+      pendingEventId: "e4",
+      streamId: "stream-4",
+      ts: "2026-04-03T16:25:02Z",
+      fullText: "final answer",
+      eventText: "final answer",
+      activities: [{ id: "a4", kind: "thinking", status: "completed", summary: "thinking", ts: "2026-04-03T16:25:01Z" }],
+      completed: false,
+      transientStream: false,
+      phase: "final_answer",
+      groupId: "g-demo",
+    });
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.data?.stream_id).toBe("stream-4");
+    expect(bucket.streamingEvents[0]?.data?.pending_placeholder).toBe(false);
+    expect(bucket.streamingTextByStreamId["stream-4"]).toBe("final answer");
+    expect(bucket.streamingTextByStreamId["pending:e4:peer-1"]).toBeUndefined();
+    expect(bucket.streamingActivitiesByStreamId["stream-4"]).toEqual([
+      { id: "a4", kind: "thinking", status: "completed", summary: "thinking", ts: "2026-04-03T16:25:01Z" },
+    ]);
+    expect(bucket.pendingEventIdByStreamId["stream-4"]).toBe("e4");
+    expect(bucket.replySessionsByPendingEventId["e4"]).toMatchObject({
+      pendingEventId: "e4",
+      actorId: "peer-1",
+      currentStreamId: "stream-4",
+      text: "final answer",
+      phase: "streaming",
+      activities: [
+        { id: "a4", kind: "thinking", status: "completed", summary: "thinking", ts: "2026-04-03T16:25:01Z" },
+      ],
+    });
+  });
+
+  it("promoteStreamingEventToStream binds the latest local queued placeholder when server pending ids differ", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "local:msg-1:peer-1",
+      ts: "2026-04-03T16:26:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "local:msg-1:peer-1",
+        pending_event_id: "local_123",
+        pending_placeholder: true,
+        activities: [{ id: "queued:local-1", kind: "queued", status: "started", summary: "queued", ts: "2026-04-03T16:26:00Z" }],
+      },
+    }, "g-demo");
+
+    mod.useGroupStore.getState().promoteStreamingEventToStream("peer-1", "server-e5", "stream-5", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.id).toBe("local:msg-1:peer-1");
+    expect(bucket.streamingEvents[0]?.data?.stream_id).toBe("stream-5");
+    expect(bucket.streamingEvents[0]?.data?.pending_event_id).toBe("server-e5");
+    expect(bucket.streamingEvents[0]?.data?.pending_placeholder).toBe(false);
+  });
+
+  it("reconcileStreamingMessage reuses the latest local queued placeholder when server pending ids differ", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "local:msg-2:peer-1",
+      ts: "2026-04-03T16:27:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "local:msg-2:peer-1",
+        pending_event_id: "local_456",
+        pending_placeholder: true,
+        activities: [{ id: "queued:local-2", kind: "queued", status: "started", summary: "queued", ts: "2026-04-03T16:27:00Z" }],
+      },
+    }, "g-demo");
+
+    mod.useGroupStore.getState().reconcileStreamingMessage({
+      actorId: "peer-1",
+      pendingEventId: "server-e6",
+      streamId: "stream-6",
+      ts: "2026-04-03T16:27:02Z",
+      fullText: "hello world",
+      eventText: "hello world",
+      activities: [],
+      completed: false,
+      transientStream: false,
+      phase: "final_answer",
+      groupId: "g-demo",
+    });
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.id).toBe("local:msg-2:peer-1");
+    expect(bucket.streamingEvents[0]?.data?.stream_id).toBe("stream-6");
+    expect(bucket.streamingEvents[0]?.data?.pending_event_id).toBe("server-e6");
+    expect(bucket.streamingEvents[0]?.data?.text).toBe("hello world");
+    expect(bucket.streamingTextByStreamId["stream-6"]).toBe("hello world");
+    expect(bucket.streamingTextByStreamId["local:msg-2:peer-1"]).toBeUndefined();
+  });
+
+  it("upsertStreamingActivity keeps streamless process activity off commentary text streams", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "stream:commentary-1",
+      ts: "2026-04-04T14:39:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "我已经在真实 UI 里抓到现象了。",
+        to: ["user"],
+        stream_id: "commentary-1",
+        pending_event_id: "evt-1",
+        pending_placeholder: false,
+        stream_phase: "commentary",
+        transient_stream: true,
+        activities: [],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingText("commentary-1", "我已经在真实 UI 里抓到现象了。", "g-demo");
+
+    mod.useGroupStore.getState().upsertStreamingActivity("peer-1", { pendingEventId: "evt-1" }, {
+      id: "tool-1",
+      kind: "tool",
+      status: "started",
+      summary: "chrome-devtools:wait_for",
+      ts: "2026-04-04T14:39:01Z",
+    }, "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(2);
+    expect(bucket.streamingEvents.find((event) => event.data?.stream_id === "commentary-1")?.data?.text).toBe("我已经在真实 UI 里抓到现象了。");
+    expect(bucket.streamingEvents.find((event) => event.data?.stream_id === "commentary-1")?.data?.activities).toEqual([]);
+    expect(bucket.streamingEvents.find((event) => event.data?.stream_id === "pending:evt-1:peer-1")?.data?.activities).toEqual([
+      { id: "tool-1", kind: "tool", status: "started", summary: "chrome-devtools:wait_for", ts: "2026-04-04T14:39:01Z" },
+    ]);
+    expect(bucket.replySessionsByPendingEventId["evt-1"]).toMatchObject({
+      pendingEventId: "evt-1",
+      actorId: "peer-1",
+      currentStreamId: "pending:evt-1:peer-1",
+      text: "我已经在真实 UI 里抓到现象了。",
+      activities: [
+        { id: "tool-1", kind: "tool", status: "started", summary: "chrome-devtools:wait_for", ts: "2026-04-04T14:39:01Z" },
+      ],
+    });
+  });
+
+  it("promoteStreamingEventsByPrefix migrates local placeholder session to canonical pending event", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "local:msg-3:peer-1",
+      ts: "2026-04-04T15:00:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "local:msg-3:peer-1",
+        pending_event_id: "msg-3",
+        pending_placeholder: true,
+        activities: [{ id: "queued:local-3", kind: "queued", status: "started", summary: "queued", ts: "2026-04-04T15:00:00Z" }],
+      },
+    }, "g-demo");
+
+    mod.useGroupStore.getState().promoteStreamingEventsByPrefix("local:msg-3:", "evt-3", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.replySessionsByPendingEventId["msg-3"]).toBeUndefined();
+    expect(bucket.replySessionsByPendingEventId["evt-3"]).toMatchObject({
+      pendingEventId: "evt-3",
+      actorId: "peer-1",
+      currentStreamId: "local:msg-3:peer-1",
+    });
+  });
+});

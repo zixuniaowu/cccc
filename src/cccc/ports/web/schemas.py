@@ -35,6 +35,7 @@ class SendRequest(BaseModel):
     by: str = Field(default="user")
     to: list[str] = Field(default_factory=list)
     path: str = Field(default="")
+    quote_text: str = Field(default="")
     priority: Literal["normal", "attention"] = "normal"
     reply_required: bool = False
     src_group_id: str = Field(default="")

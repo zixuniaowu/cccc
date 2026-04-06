@@ -100,7 +100,9 @@ def setup_root_json_logging(
                 pass
 
     handler = logging.StreamHandler(stream or sys.stderr)
-    handler.setLevel(_parse_level(level))
+    # Keep filtering on the logger side so per-logger DEBUG overrides still work
+    # when the process default level stays at INFO.
+    handler.setLevel(logging.NOTSET)
     handler.setFormatter(JsonlFormatter(component=component))
 
     # Avoid duplicate handlers on repeated calls (common in reload/dev).
@@ -109,7 +111,7 @@ def setup_root_json_logging(
             # If it already looks like our JSONL handler, keep it.
             fmt = getattr(h, "formatter", None)
             if isinstance(fmt, JsonlFormatter):
-                h.setLevel(_parse_level(level))
+                h.setLevel(logging.NOTSET)
                 root.setLevel(_parse_level(level))
                 return
 

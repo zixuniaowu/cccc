@@ -15,6 +15,7 @@ type EditMode = "custom" | "profile";
 
 export interface EditActorSavePayload {
   mode: EditMode;
+  runner: "pty" | "headless";
   setVars: Record<string, string>;
   unsetKeys: string[];
   clear: boolean;
@@ -43,6 +44,8 @@ export interface EditActorModalProps {
   runtimes: RuntimeInfo[];
   runtime: SupportedRuntime;
   onChangeRuntime: (runtime: SupportedRuntime) => void;
+  runner: "pty" | "headless";
+  onChangeRunner: (runner: "pty" | "headless") => void;
   command: string;
   onChangeCommand: (command: string) => void;
   title: string;
@@ -121,6 +124,8 @@ export function EditActorModal({
   runtimes,
   runtime,
   onChangeRuntime,
+  runner,
+  onChangeRunner,
   command,
   onChangeCommand,
   title,
@@ -446,6 +451,7 @@ export function EditActorModal({
       try {
         await callback({
           mode: "profile",
+          runner: String(selectedProfile?.runner || runner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty",
           setVars: {},
           unsetKeys: [],
           clear: false,
@@ -489,6 +495,7 @@ export function EditActorModal({
     try {
       await callback({
         mode: "custom",
+        runner,
         setVars: setParsed.setVars,
         unsetKeys: unsetParsed.unsetKeys,
         clear: secretsClearAll,
@@ -526,6 +533,7 @@ export function EditActorModal({
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
   const showRuntimeSetup = !effectiveLinked && editMode === "custom" && runtime === "custom";
+  const customRunnerLockedToPty = runtime !== "codex";
 
   return (
     <div
@@ -690,6 +698,7 @@ export function EditActorModal({
                         onChange={(e) => {
                           const next = e.target.value as SupportedRuntime;
                           onChangeRuntime(next);
+                          if (next !== "codex") onChangeRunner("pty");
                           const nextInfo = runtimes.find((r) => r.name === next);
                           const nextDefault = String(nextInfo?.recommended_command || "").trim();
                           onChangeCommand(nextDefault);
@@ -709,6 +718,36 @@ export function EditActorModal({
                         })}
                       </select>
                     </div>
+
+                    {runtime === "codex" ? (
+                      <div>
+                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                          {t("runnerMode", { defaultValue: "运行模式" })}
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            className={modeButtonClass(runner === "pty")}
+                            onClick={() => onChangeRunner("pty")}
+                          >
+                            {t("pty", { defaultValue: "PTY" })}
+                          </button>
+                          <button
+                            type="button"
+                            className={modeButtonClass(runner === "headless")}
+                            onClick={() => onChangeRunner("headless")}
+                            disabled={customRunnerLockedToPty}
+                          >
+                            {t("headless")}
+                          </button>
+                        </div>
+                        <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                          {customRunnerLockedToPty
+                            ? t("runnerModeCodexOnly", { defaultValue: "当前只有 codex runtime 支持切换为 Headless，其他 runtime 固定为 PTY。" })
+                            : t("runnerModeHint", { defaultValue: "PTY 走终端交互；Headless 走结构化事件流。" })}
+                        </div>
+                      </div>
+                    ) : null}
 
                     <div>
                       <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("command")}</label>

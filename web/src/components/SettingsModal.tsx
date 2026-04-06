@@ -1,5 +1,5 @@
 // SettingsModal renders the settings modal.
-import { lazy, Suspense, useState, useEffect, useRef, useMemo } from "react";
+import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform, WebAccessSession, WeixinLoginStatus } from "../types";
 import * as api from "../services/api";
@@ -220,6 +220,69 @@ export function SettingsModal({
     };
   }, [isOpen, groupId]);
 
+  const resetIMState = () => {
+    setImStatus(null);
+    setImPlatform("telegram");
+    setImBotTokenEnv("");
+    setImAppTokenEnv("");
+    setImFeishuDomain("https://open.feishu.cn");
+    setImFeishuAppId("");
+    setImFeishuAppSecret("");
+    setImDingtalkAppKey("");
+    setImDingtalkAppSecret("");
+    setImDingtalkRobotCode("");
+    setImWecomBotId("");
+    setImWecomSecret("");
+    setImWeixinAccountId("");
+    setImWeixinCommand("");
+  };
+
+  const loadIMStatus = useCallback(async (opts?: { resetFirst?: boolean }) => {
+    const gid = String(groupId || "").trim();
+    const seq = ++imLoadSeq.current;
+    if (opts?.resetFirst) resetIMState();
+    if (!gid) return;
+    try {
+      const statusResp = await api.fetchIMStatus(gid);
+      if (seq !== imLoadSeq.current) return;
+      if (statusResp.ok) {
+        setImStatus(statusResp.result);
+        if (statusResp.result.platform) {
+          setImPlatform(statusResp.result.platform as IMPlatform);
+        }
+      }
+      const configResp = await api.fetchIMConfig(gid);
+      if (seq !== imLoadSeq.current) return;
+      if (configResp.ok && configResp.result.im) {
+        const im = configResp.result.im;
+        if (im.platform) setImPlatform(im.platform);
+        setImBotTokenEnv(im.bot_token_env || im.bot_token || im.token_env || im.token || "");
+        setImAppTokenEnv(im.app_token_env || im.app_token || "");
+        {
+          const raw = String(im.feishu_domain || "https://open.feishu.cn").trim();
+          const canon = raw
+            .replace(/\/+$/, "")
+            .replace(/\/open-apis$/, "")
+            .replace(/^open\.larksuite\.com$/i, "https://open.larkoffice.com")
+            .replace(/^https?:\/\/open\.larksuite\.com$/i, "https://open.larkoffice.com")
+            .replace(/^open\.larkoffice\.com$/i, "https://open.larkoffice.com");
+          setImFeishuDomain(canon);
+        }
+        setImFeishuAppId(im.feishu_app_id || im.feishu_app_id_env || "");
+        setImFeishuAppSecret(im.feishu_app_secret || im.feishu_app_secret_env || "");
+        setImDingtalkAppKey(im.dingtalk_app_key || im.dingtalk_app_key_env || "");
+        setImDingtalkAppSecret(im.dingtalk_app_secret || im.dingtalk_app_secret_env || "");
+        setImDingtalkRobotCode(im.dingtalk_robot_code || im.dingtalk_robot_code_env || "");
+        setImWecomBotId(im.wecom_bot_id || "");
+        setImWecomSecret(im.wecom_secret || "");
+        setImWeixinAccountId(im.weixin_account_id || "");
+        setImWeixinCommand(im.weixin_command || "");
+      }
+    } catch (e) {
+      console.error("Failed to load IM status:", e);
+    }
+  }, [groupId]);
+
   useEffect(() => {
     if (!isOpen) return;
     loadIMStatus({ resetFirst: true });
@@ -277,7 +340,7 @@ export function SettingsModal({
         setImBusy(false);
       }
     })();
-  }, [groupId, imPlatform, imStatus, weixinLoginStatus]);
+  }, [groupId, imPlatform, imStatus, loadIMStatus, weixinLoginStatus]);
 
   useEffect(() => {
     if (isOpen && canAccessGlobalSettings === true) loadObservability();
@@ -301,73 +364,6 @@ export function SettingsModal({
   }, [isOpen, scope, globalTab]);
 
   // ============ Data Loading ============
-
-  const resetIMState = () => {
-    setImStatus(null);
-    setImPlatform("telegram");
-    setImBotTokenEnv("");
-    setImAppTokenEnv("");
-    setImFeishuDomain("https://open.feishu.cn");
-    setImFeishuAppId("");
-    setImFeishuAppSecret("");
-    setImDingtalkAppKey("");
-    setImDingtalkAppSecret("");
-    setImDingtalkRobotCode("");
-    setImWecomBotId("");
-    setImWecomSecret("");
-    setImWeixinAccountId("");
-    setImWeixinCommand("");
-  };
-
-  const loadIMStatus = async (opts?: { resetFirst?: boolean }) => {
-    const gid = String(groupId || "").trim();
-    const seq = ++imLoadSeq.current;
-    if (opts?.resetFirst) resetIMState();
-    if (!gid) return;
-    try {
-      const statusResp = await api.fetchIMStatus(gid);
-      if (seq !== imLoadSeq.current) return;
-      if (statusResp.ok) {
-        setImStatus(statusResp.result);
-        if (statusResp.result.platform) {
-          setImPlatform(statusResp.result.platform as IMPlatform);
-        }
-      }
-      const configResp = await api.fetchIMConfig(gid);
-      if (seq !== imLoadSeq.current) return;
-      if (configResp.ok && configResp.result.im) {
-        const im = configResp.result.im;
-        if (im.platform) setImPlatform(im.platform);
-        setImBotTokenEnv(im.bot_token_env || im.bot_token || im.token_env || im.token || "");
-        setImAppTokenEnv(im.app_token_env || im.app_token || "");
-        // Feishu fields
-        {
-          const raw = String(im.feishu_domain || "https://open.feishu.cn").trim();
-          const canon = raw
-            .replace(/\/+$/, "")
-            .replace(/\/open-apis$/, "")
-            .replace(/^open\.larksuite\.com$/i, "https://open.larkoffice.com")
-            .replace(/^https?:\/\/open\.larksuite\.com$/i, "https://open.larkoffice.com")
-            .replace(/^open\.larkoffice\.com$/i, "https://open.larkoffice.com");
-          setImFeishuDomain(canon);
-        }
-        setImFeishuAppId(im.feishu_app_id || im.feishu_app_id_env || "");
-        setImFeishuAppSecret(im.feishu_app_secret || im.feishu_app_secret_env || "");
-        // DingTalk fields
-        setImDingtalkAppKey(im.dingtalk_app_key || im.dingtalk_app_key_env || "");
-        setImDingtalkAppSecret(im.dingtalk_app_secret || im.dingtalk_app_secret_env || "");
-        setImDingtalkRobotCode(im.dingtalk_robot_code || im.dingtalk_robot_code_env || "");
-        // WeCom fields
-        setImWecomBotId(im.wecom_bot_id || "");
-        setImWecomSecret(im.wecom_secret || "");
-        // Weixin fields
-        setImWeixinAccountId(im.weixin_account_id || "");
-        setImWeixinCommand(im.weixin_command || "");
-      }
-    } catch (e) {
-      console.error("Failed to load IM status:", e);
-    }
-  };
 
   const loadObservability = async () => {
     try {

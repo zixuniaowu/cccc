@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -84,10 +85,30 @@ class TestAutomationHelpNudgeMindContext(unittest.TestCase):
         }
         state_path.write_text(json.dumps(payload), encoding="utf-8")
 
+    def _write_automation_state(self, group, payload: dict) -> None:
+        state_path = group.path / "state" / "automation.json"
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def _load_automation_state(self, group) -> dict:
+        state_path = group.path / "state" / "automation.json"
+        return json.loads(state_path.read_text(encoding="utf-8"))
+
     def _latest_notify(self, group):
         lines = [line for line in group.ledger_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         self.assertTrue(lines)
         return json.loads(lines[-1])
+
+    def _append_message(self, group, *, to: list[str], text: str = "ping") -> None:
+        from cccc.kernel.ledger import append_event
+
+        append_event(
+            group.ledger_path,
+            kind="chat.message",
+            group_id=group.group_id,
+            scope_key="",
+            by="user",
+            data={"text": text, "format": "plain", "to": to},
+        )
 
     def test_help_nudge_prefers_execution_refresh_when_execution_state_missing(self) -> None:
         from cccc.daemon.automation import AutomationManager, _cfg
@@ -199,6 +220,105 @@ class TestAutomationHelpNudgeMindContext(unittest.TestCase):
 
                 after = group.ledger_path.read_text(encoding="utf-8")
                 self.assertEqual(after, before)
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+    def test_help_nudge_counts_new_messages_without_holding_lock_for_ledger_read(self) -> None:
+        from cccc.daemon.automation import AutomationManager, _cfg
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                group = self._setup_group()
+                now = datetime(2026, 3, 12, 3, 30, 0, tzinfo=timezone.utc)
+                self._write_automation_state(
+                    group,
+                    {
+                        "v": 5,
+                        "help_ledger_pos": int(group.ledger_path.stat().st_size),
+                        "actors": {
+                            "peer1": {
+                                "help_last_nudge_at": _iso(now),
+                                "help_msg_count_since": 0,
+                                "help_session_key": "sess1",
+                            }
+                        },
+                        "rules": {},
+                    },
+                )
+                self._append_message(group, to=["peer1"])
+
+                manager = AutomationManager()
+                cfg = _cfg(group)
+                with patch("cccc.daemon.automation.engine.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
+                    "cccc.daemon.automation.engine.pty_runner.SUPERVISOR.session_key",
+                    return_value="sess1",
+                ), patch("cccc.daemon.automation.engine._queue_notify_to_pty", return_value=None):
+                    manager._check_help_nudge(group, cfg, now)
+
+                state = self._load_automation_state(group)
+                actor_state = state.get("actors", {}).get("peer1", {})
+                self.assertEqual(int(actor_state.get("help_msg_count_since") or 0), 1)
+                self.assertEqual(int(state.get("help_ledger_pos") or 0), int(group.ledger_path.stat().st_size))
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+    def test_help_nudge_does_not_advance_cursor_on_partial_ledger_line(self) -> None:
+        from cccc.daemon.automation import AutomationManager, _cfg
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                group = self._setup_group()
+                now = datetime(2026, 3, 12, 3, 40, 0, tzinfo=timezone.utc)
+                start_pos = int(group.ledger_path.stat().st_size)
+                self._write_automation_state(
+                    group,
+                    {
+                        "v": 5,
+                        "help_ledger_pos": start_pos,
+                        "actors": {
+                            "peer1": {
+                                "help_last_nudge_at": _iso(now),
+                                "help_msg_count_since": 0,
+                                "help_session_key": "sess1",
+                            }
+                        },
+                        "rules": {},
+                    },
+                )
+                partial = json.dumps(
+                    {
+                        "kind": "chat.message",
+                        "group_id": group.group_id,
+                        "scope_key": "",
+                        "by": "user",
+                        "data": {"text": "partial", "format": "plain", "to": ["peer1"]},
+                    },
+                    ensure_ascii=False,
+                )
+                Path(group.ledger_path).write_text(group.ledger_path.read_text(encoding="utf-8") + partial, encoding="utf-8")
+
+                manager = AutomationManager()
+                cfg = _cfg(group)
+                with patch("cccc.daemon.automation.engine.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
+                    "cccc.daemon.automation.engine.pty_runner.SUPERVISOR.session_key",
+                    return_value="sess1",
+                ), patch("cccc.daemon.automation.engine._queue_notify_to_pty", return_value=None):
+                    manager._check_help_nudge(group, cfg, now)
+
+                state = self._load_automation_state(group)
+                actor_state = state.get("actors", {}).get("peer1", {})
+                self.assertEqual(int(actor_state.get("help_msg_count_since") or 0), 0)
+                self.assertEqual(int(state.get("help_ledger_pos") or 0), start_pos)
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

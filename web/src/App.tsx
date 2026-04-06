@@ -1,5 +1,4 @@
 import React, { lazy, Suspense, useEffect, useMemo } from "react";
-import * as api from "./services/api";
 import { DropOverlay } from "./components/DropOverlay";
 const AppModals = lazy(() => import("./components/AppModals").then((m) => ({ default: m.AppModals })));
 const WebPet = lazy(() => import("./features/webPet/WebPet").then((m) => ({ default: m.WebPet })));
@@ -9,6 +8,7 @@ import { AppShell } from "./components/app/AppShell";
 import { useTextScale } from "./hooks/useTextScale";
 import { useTheme } from "./hooks/useTheme";
 import { useActorActions } from "./hooks/useActorActions";
+import { useSelectedGroupRuntime } from "./hooks/useSelectedGroupRuntime";
 import { useSSE } from "./hooks/useSSE";
 import { useDragDrop } from "./hooks/useDragDrop";
 import { useGroupActions } from "./hooks/useGroupActions";
@@ -31,8 +31,8 @@ import {
   useObservabilityStore,
 } from "./stores";
 import { useChatOutboxStore } from "./stores/chatOutboxStore";
-import type { Actor, ChatMessageData, LedgerEvent } from "./types";
-import { filterVisibleRuntimeActors, isPetRuntimeActor } from "./utils/runtimeVisibility";
+import type { ChatMessageData, LedgerEvent } from "./types";
+import { filterVisibleRuntimeActors } from "./utils/runtimeVisibility";
 
 // ============ Main App Component ============
 
@@ -46,17 +46,18 @@ export default function App() {
 
   // Zustand stores
   const groups = useGroupStore((state) => state.groups);
-  const groupOrder = useGroupStore((state) => state.groupOrder);
   const archivedGroupIds = useGroupStore((state) => state.archivedGroupIds);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groupDoc = useGroupStore((state) => state.groupDoc);
   const actors = useGroupStore((state) => state.actors);
+  const internalRuntimeActorsByGroup = useGroupStore((state) => state.internalRuntimeActorsByGroup);
   const groupContext = useGroupStore((state) => state.groupContext);
   const groupSettings = useGroupStore((state) => state.groupSettings);
   const selectedGroupActorsHydrating = useGroupStore((state) => state.selectedGroupActorsHydrating);
   const setSelectedGroupId = useGroupStore((state) => state.setSelectedGroupId);
   const refreshGroups = useGroupStore((state) => state.refreshGroups);
   const refreshActors = useGroupStore((state) => state.refreshActors);
+  const refreshInternalRuntimeActors = useGroupStore((state) => state.refreshInternalRuntimeActors);
   const loadGroup = useGroupStore((state) => state.loadGroup);
   const warmGroup = useGroupStore((state) => state.warmGroup);
   const openChatWindow = useGroupStore((state) => state.openChatWindow);
@@ -125,12 +126,15 @@ export default function App() {
     [selectedGroupId, chatSessions]
   );
   const chatUnreadCount = chatSession.chatUnreadCount;
-  const chatSessionAtBottom = chatSession.scrollSnapshot?.atBottom;
+  const chatSessionFollowMode = chatSession.scrollSnapshot?.mode === "follow";
 
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [_mentionFilter, setMentionFilter] = React.useState("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
-  const [internalRuntimeActors, setInternalRuntimeActors] = React.useState<Actor[]>([]);
+  const internalRuntimeActors = useMemo(
+    () => internalRuntimeActorsByGroup[String(selectedGroupId || "").trim()] || [],
+    [internalRuntimeActorsByGroup, selectedGroupId]
+  );
   const visibleRuntimeActors = useMemo(
     () =>
       filterVisibleRuntimeActors(
@@ -174,7 +178,7 @@ export default function App() {
     actors,
     runtimeActors: visibleRuntimeActors,
     selectedGroupId,
-    chatSessionAtBottom,
+    chatSessionFollowMode,
     isSmallScreen,
     setActiveTab,
     setShowScrollButton,
@@ -189,30 +193,11 @@ export default function App() {
 
   useEffect(() => {
     const gid = String(selectedGroupId || "").trim();
-    if (!gid || petRuntimeVisibility !== "visible") {
-      setInternalRuntimeActors([]);
+    if (!gid || petRuntimeVisibility !== "visible" || groupSettings?.desktop_pet_enabled === false) {
       return;
     }
-    const controller = new AbortController();
-    let cancelled = false;
-    void api
-      .fetchActors(gid, false, { noCache: true, signal: controller.signal }, { includeInternal: true })
-      .then((resp) => {
-        if (cancelled || !resp.ok) return;
-        const next = Array.isArray(resp.result?.actors)
-          ? resp.result.actors.filter((actor) => isPetRuntimeActor(actor))
-          : [];
-        setInternalRuntimeActors(next);
-      })
-      .catch((error) => {
-        if (cancelled || controller.signal.aborted) return;
-        console.error(`Failed to load internal runtime actors for group=${gid}:`, error);
-      });
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [selectedGroupId, petRuntimeVisibility, groupSettings?.desktop_pet_enabled]);
+    void refreshInternalRuntimeActors(gid);
+  }, [selectedGroupId, petRuntimeVisibility, groupSettings?.desktop_pet_enabled, refreshInternalRuntimeActors]);
 
   // Custom hooks
   const { connectStream, fetchContext, cleanup: cleanupSSE } = useSSE({
@@ -307,16 +292,27 @@ export default function App() {
   });
 
   const hasForeman = useMemo(() => actors.some((a) => a.role === "foreman"), [actors]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- groups and groupOrder trigger recalculation
-  const orderedGroups = useMemo(() => getOrderedGroups(), [groups, groupOrder]);
-  const selectedGroupMeta = useMemo(
-    () => groups.find((g) => String(g.group_id || "") === selectedGroupId) || null,
-    [groups, selectedGroupId]
-  );
-  const selectedGroupRunning = useMemo(() => {
-    const anyActorRunning = actors.some((a) => !!a.running);
-    return anyActorRunning || (selectedGroupMeta?.running ?? false);
-  }, [actors, selectedGroupMeta]);
+  const {
+    selectedGroupRunning,
+    orderedSelectedGroupPatch,
+  } = useSelectedGroupRuntime({
+    groups,
+    selectedGroupId,
+    groupDoc,
+    actors,
+  });
+  const orderedGroups = useMemo(() => {
+    const base = getOrderedGroups();
+    const selectedId = String(selectedGroupId || "").trim();
+    if (!selectedId || !orderedSelectedGroupPatch) return base;
+    return base.map((group) => {
+      if (String(group.group_id || "").trim() !== selectedId) return group;
+      return {
+        ...group,
+        ...orderedSelectedGroupPatch,
+      };
+    });
+  }, [selectedGroupId, orderedSelectedGroupPatch, getOrderedGroups]);
 
   const groupLabelById = useMemo(() => {
     const out: Record<string, string> = {};

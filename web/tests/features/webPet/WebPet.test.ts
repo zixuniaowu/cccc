@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getBackgroundRefreshDelayMs } from "../../../src/features/webPet/reviewTiming";
-import { isManualReviewReminderReady } from "../../../src/features/webPet/WebPet";
+import { isManualReviewReminderReady } from "../../../src/features/webPet/manualReviewReminder";
 import type { PetReminder } from "../../../src/features/webPet/types";
 
 function makeReminder(overrides: Partial<PetReminder> = {}): PetReminder {

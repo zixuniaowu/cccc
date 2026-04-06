@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getGroupControlVisual, getLaunchControlMode } from "../../src/utils/groupControls";
+import { getGroupControlVisual, getLaunchControlMode, resolveGroupControls } from "../../src/utils/groupControls";
 
 describe("groupControls", () => {
   it("treats idle groups as activatable from the launch control", () => {
@@ -16,5 +16,24 @@ describe("groupControls", () => {
   it("keeps pause active only for paused groups", () => {
     expect(getGroupControlVisual("idle", "pause", "").active).toBe(false);
     expect(getGroupControlVisual("paused", "pause", "").active).toBe(true);
+  });
+
+  it("does not mark pause as active for running groups", () => {
+    expect(getGroupControlVisual("run", "pause", "").active).toBe(false);
+  });
+
+  it("disables pause only when there is no selectable running context", () => {
+    expect(resolveGroupControls({
+      selectedGroupId: "g1",
+      actorCount: 1,
+      statusKey: "run",
+      busy: "",
+    }).pauseDisabled).toBe(false);
+    expect(resolveGroupControls({
+      selectedGroupId: "g1",
+      actorCount: 1,
+      statusKey: "stop",
+      busy: "",
+    }).pauseDisabled).toBe(true);
   });
 });

@@ -10,6 +10,7 @@ from ...kernel.context import ContextStorage
 from ...kernel.group import get_group_state, load_group
 from ...kernel.ledger_index import lookup_event_by_id
 from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor, is_desktop_pet_enabled
+from ...kernel.pet_task_evidence import build_pet_task_evidence
 from ...kernel.pet_task_triage import enum_text, trim_task_text
 from . import assistive_jobs
 
@@ -269,6 +270,7 @@ def _build_review_packet(group: Any, reasons: Set[str], source_event_id: str) ->
         storage = ContextStorage(group)
         context = storage.load_context()
         tasks = storage.list_tasks()
+        agents = getattr(storage.load_agents(), "agents", []) or []
         coordination = getattr(context, "coordination", None)
         brief = getattr(coordination, "brief", None)
         brief_focus = _truncate_text(getattr(brief, "current_focus", ""), max_len=140)
@@ -281,6 +283,9 @@ def _build_review_packet(group: Any, reasons: Set[str], source_event_id: str) ->
         focus_task = _pick_focus_task(tasks, reasons=reasons, source_event=source_event if source_event else None)
         if focus_task:
             packet["focus_task"] = focus_task
+        task_evidence = build_pet_task_evidence(tasks, agents, limit=4)
+        if task_evidence:
+            packet["task_evidence"] = task_evidence
     except Exception as exc:
         LOGGER.debug("pet_review_packet_build_failed group_id=%s err=%s", getattr(group, "group_id", ""), exc)
     return packet
