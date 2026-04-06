@@ -137,6 +137,13 @@ class CodexAppSession:
         stream_id: str = "",
         item_id: str = "",
         detail: Optional[str] = None,
+        raw_item_type: str = "",
+        tool_name: str = "",
+        server_name: str = "",
+        command: str = "",
+        cwd: str = "",
+        file_paths: Optional[list[str]] = None,
+        query: str = "",
     ) -> None:
         normalized_status = str(status or "").strip()
         normalized_activity_id = str(activity_id or "").strip()
@@ -157,6 +164,13 @@ class CodexAppSession:
                 "stream_id": str(stream_id or "").strip(),
                 "item_id": str(item_id or "").strip(),
                 "event_id": active_event_id,
+                "raw_item_type": str(raw_item_type or "").strip() or None,
+                "tool_name": str(tool_name or "").strip() or None,
+                "server_name": str(server_name or "").strip() or None,
+                "command": str(command or "").strip() or None,
+                "cwd": str(cwd or "").strip() or None,
+                "file_paths": [str(path).strip() for path in (file_paths or []) if str(path).strip()] or None,
+                "query": str(query or "").strip() or None,
             },
         )
 
@@ -212,6 +226,9 @@ class CodexAppSession:
                 detail=detail or None,
                 turn_id=turn_id,
                 item_id=item_id,
+                raw_item_type=item_type,
+                command=command,
+                cwd=self._trim_single_line(item.get("cwd") or "", limit=120),
             )
             return
 
@@ -232,6 +249,8 @@ class CodexAppSession:
                 summary=summary,
                 turn_id=turn_id,
                 item_id=item_id,
+                raw_item_type=item_type,
+                file_paths=targets,
             )
             return
 
@@ -246,6 +265,9 @@ class CodexAppSession:
                 summary=summary,
                 turn_id=turn_id,
                 item_id=item_id,
+                raw_item_type=item_type,
+                tool_name=tool,
+                server_name=server,
             )
             return
 
@@ -258,6 +280,8 @@ class CodexAppSession:
                 summary=tool,
                 turn_id=turn_id,
                 item_id=item_id,
+                raw_item_type=item_type,
+                tool_name=tool,
             )
             return
 
@@ -270,6 +294,8 @@ class CodexAppSession:
                 summary=query,
                 turn_id=turn_id,
                 item_id=item_id,
+                raw_item_type=item_type,
+                query=query,
             )
             return
 
@@ -641,6 +667,7 @@ class CodexAppSession:
                     summary=delta,
                     turn_id=turn_id,
                     item_id=item_id,
+                    raw_item_type="commandExecution",
                 )
             return
 
@@ -656,6 +683,7 @@ class CodexAppSession:
                     summary=delta,
                     turn_id=turn_id,
                     item_id=item_id,
+                    raw_item_type="fileChange",
                 )
             return
 
@@ -671,6 +699,7 @@ class CodexAppSession:
                     summary=message,
                     turn_id=turn_id,
                     item_id=item_id,
+                    raw_item_type="mcpToolCall",
                 )
             return
 

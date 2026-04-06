@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS,
-  buildChatStreamingIndicatorItems,
   buildReplySlotTsMap,
   collapseActorStreamingPlaceholders,
   dedupeStreamingEvents,
@@ -669,66 +668,6 @@ describe("mergeVisibleChatMessages", () => {
     expect(merged).toHaveLength(1);
     expect(String(merged[0]?.id || "")).toBe("evt-user-final");
     expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("这是最终 canonical reply");
-  });
-});
-
-describe("buildChatStreamingIndicatorItems", () => {
-  it("builds actor-level indicators from active streaming events instead of message bubbles", () => {
-    const items = buildChatStreamingIndicatorItems(
-      [
-        {
-          id: "stream:commentary",
-          ts: "2026-04-06T02:00:00.000Z",
-          kind: "chat.message",
-          by: "coder",
-          _streaming: true,
-          data: {
-            text: "先看下 hook 合并",
-            stream_id: "stream-commentary",
-            pending_event_id: "evt-1",
-            activities: [{ id: "a1", kind: "search", status: "started", summary: "search docs" }],
-            to: ["user"],
-          },
-        },
-      ],
-      [{ id: "coder", title: "Coder", runtime: "codex" } as never],
-    );
-
-    expect(items).toEqual([
-      {
-        actorId: "coder",
-        actorName: "Coder",
-        activities: [{ id: "a1", kind: "search", summary: "search docs" }],
-        placeholderLabel: "Working...",
-        queuedOnly: false,
-      },
-    ]);
-  });
-
-  it("keeps a queued placeholder indicator even before正文 arrives", () => {
-    const items = buildChatStreamingIndicatorItems(
-      [
-        {
-          id: "stream:queued",
-          ts: "2026-04-06T02:00:00.000Z",
-          kind: "chat.message",
-          by: "coder",
-          _streaming: true,
-          data: {
-            text: "",
-            stream_id: "local:msg-1:coder",
-            pending_event_id: "local_1",
-            pending_placeholder: true,
-            activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
-            to: ["user"],
-          },
-        },
-      ],
-      [{ id: "coder", title: "Coder", runtime: "codex" } as never],
-    );
-
-    expect(items).toHaveLength(1);
-    expect(items[0]?.queuedOnly).toBe(true);
   });
 });
 

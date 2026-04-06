@@ -29,8 +29,6 @@ import type { Actor, GroupContext, GroupDoc, GroupSettings, LedgerEvent, LedgerE
 import { mergeLedgerEvents } from "../../utils/mergeLedgerEvents";
 import i18n from "../../i18n";
 
-export { isManualReviewReminderReady } from "./manualReviewReminder";
-
 const lastKnownDesktopPetEnabledByGroup: Record<string, boolean> = {};
 const BACKGROUND_REFRESH_TIMEOUT_MS = 10_000;
 const BACKGROUND_LEDGER_TAIL_LIMIT = 60;

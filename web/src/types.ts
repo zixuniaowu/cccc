@@ -94,6 +94,13 @@ export type StreamingActivity = {
   summary: string;
   detail?: string;
   ts?: string;
+  raw_item_type?: string;
+  tool_name?: string;
+  server_name?: string;
+  command?: string;
+  cwd?: string;
+  file_paths?: string[];
+  query?: string;
 };
 
 // Chat message payload

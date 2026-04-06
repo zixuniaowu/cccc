@@ -92,6 +92,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "by": req.by,
                 "to": list(req.to),
                 "path": req.path,
+                "quote_text": req.quote_text,
                 "priority": req.priority,
                 "reply_required": _normalize_reply_required(req.reply_required),
                 "src_group_id": req.src_group_id,

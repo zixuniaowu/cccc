@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getAutoFollowTrigger, getStableMessageKey, shouldUseVirtualizedMessageList } from "../../src/components/VirtualMessageList";
+import { getAutoFollowTrigger, getStableMessageKey, shouldUseVirtualizedMessageList } from "../../src/components/virtualMessageListHelpers";
 import type { LedgerEvent } from "../../src/types";
 
 describe("getStableMessageKey", () => {

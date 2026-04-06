@@ -613,8 +613,8 @@ select {
 
 .cccc-streaming-status-panel {
   transform-origin: top left;
-  transition: opacity 0.14s ease-out, transform 0.16s ease-out, max-height 0.16s ease-out;
-  will-change: opacity, transform;
+  transition: opacity 0.16s ease-out, transform 0.18s ease-out, filter 0.18s ease-out;
+  will-change: opacity, transform, filter;
 }
 
 .cccc-streaming-status-panel-enter {
@@ -623,6 +623,32 @@ select {
 
 .cccc-streaming-status-panel-exit {
   animation: cccc-status-panel-out 0.14s ease-out forwards;
+}
+
+.cccc-streaming-status-shell {
+  contain: layout paint;
+}
+
+.cccc-streaming-status-layer {
+  transition:
+    opacity 0.16s ease-out,
+    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.18s ease-out;
+  will-change: opacity, transform, filter;
+}
+
+.cccc-streaming-status-layer-active {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+}
+
+.cccc-streaming-status-layer-inactive {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.985);
+  filter: blur(3px);
+  pointer-events: none;
+  user-select: none;
 }
 
 /* ============================================

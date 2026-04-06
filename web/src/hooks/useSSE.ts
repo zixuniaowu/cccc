@@ -7,7 +7,7 @@ import {
   transferOutboxPreviewUrls,
   useChatOutboxStore,
 } from "../stores/chatOutboxStore";
-import { beginContextRequest, isLatestContextRequest } from "../stores/useGroupStore";
+import { beginContextRequest, isLatestContextRequest } from "../stores/groupStoreCore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
 import type { Actor, ChatMessageData, CodexStreamEvent, GroupContext, StreamingActivity } from "../types";
@@ -444,13 +444,23 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         const activityId = typeof data.activity_id === "string" ? data.activity_id.trim() : "";
         const summary = typeof data.summary === "string" ? data.summary.trim() : "";
         if (!activityId || !summary) return;
+        const activityTs = typeof ev.ts === "string" ? ev.ts : new Date().toISOString();
         const activity: StreamingActivity = {
           id: activityId,
           kind: typeof data.kind === "string" ? data.kind.trim() : "thinking",
           status: eventType.replace("codex.activity.", ""),
           summary,
           detail: typeof data.detail === "string" ? data.detail.trim() : undefined,
-          ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
+          ts: activityTs,
+          raw_item_type: typeof data.raw_item_type === "string" ? data.raw_item_type.trim() : undefined,
+          tool_name: typeof data.tool_name === "string" ? data.tool_name.trim() : undefined,
+          server_name: typeof data.server_name === "string" ? data.server_name.trim() : undefined,
+          command: typeof data.command === "string" ? data.command.trim() : undefined,
+          cwd: typeof data.cwd === "string" ? data.cwd.trim() : undefined,
+          file_paths: Array.isArray(data.file_paths)
+            ? data.file_paths.map((item) => String(item || "").trim()).filter((item) => item)
+            : undefined,
+          query: typeof data.query === "string" ? data.query.trim() : undefined,
         };
         const activityKey = `${groupId}:${actorId}:${streamId || pendingEventId || "pending"}`;
         const existingActivityBatch = pendingCodexActivitiesRef.current.get(activityKey);

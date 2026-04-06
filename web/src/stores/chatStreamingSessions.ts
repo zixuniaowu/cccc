@@ -1,0 +1,201 @@
+import type { StreamingActivity } from "../types";
+
+export const STREAMING_ACTIVITY_LOG_LIMIT = 12;
+const STREAMING_REPLY_SESSION_LIMIT = 80;
+
+export type StreamingReplySessionPhase = "pending" | "streaming" | "completed" | "failed";
+
+export type StreamingReplySession = {
+  pendingEventId: string;
+  actorId: string;
+  currentStreamId?: string;
+  streamIds: string[];
+  canonicalEventId?: string;
+  text: string;
+  activities: StreamingActivity[];
+  phase: StreamingReplySessionPhase;
+  updatedAt: number;
+};
+
+export function dedupeStreamingActivities(activities: StreamingActivity[] | undefined): StreamingActivity[] {
+  if (!Array.isArray(activities) || activities.length <= 0) return [];
+
+  const dedupedFromLatest: StreamingActivity[] = [];
+  const seenIds = new Set<string>();
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (!activity || typeof activity !== "object") continue;
+    const activityId = String(activity.id || "").trim();
+    const summary = String(activity.summary || "").trim();
+    if (!activityId || !summary || seenIds.has(activityId)) continue;
+    seenIds.add(activityId);
+    dedupedFromLatest.push({
+      ...activity,
+      id: activityId,
+      summary,
+    });
+  }
+
+  return dedupedFromLatest.reverse();
+}
+
+export function sliceStreamingActivities(activities: StreamingActivity[] | undefined): StreamingActivity[] {
+  return dedupeStreamingActivities(activities).slice(-STREAMING_ACTIVITY_LOG_LIMIT);
+}
+
+export function normalizeReplySessionTimestamp(ts?: string): number {
+  const ms = Date.parse(String(ts || ""));
+  return Number.isFinite(ms) ? ms : Date.now();
+}
+
+export function pruneReplySessions(
+  sessions: Record<string, StreamingReplySession>,
+  pendingEventIdByStreamId: Record<string, string>,
+): {
+  replySessionsByPendingEventId: Record<string, StreamingReplySession>;
+  pendingEventIdByStreamId: Record<string, string>;
+} {
+  const values = Object.values(sessions);
+  if (values.length <= STREAMING_REPLY_SESSION_LIMIT) {
+    return {
+      replySessionsByPendingEventId: sessions,
+      pendingEventIdByStreamId,
+    };
+  }
+
+  const removable = values
+    .filter((session) => session.phase === "completed" || session.phase === "failed")
+    .sort((left, right) => left.updatedAt - right.updatedAt);
+  if (removable.length <= 0) {
+    return {
+      replySessionsByPendingEventId: sessions,
+      pendingEventIdByStreamId,
+    };
+  }
+
+  const overflow = Math.max(0, values.length - STREAMING_REPLY_SESSION_LIMIT);
+  const nextSessions = { ...sessions };
+  const nextPendingEventIdByStreamId = { ...pendingEventIdByStreamId };
+  for (const session of removable.slice(0, overflow)) {
+    delete nextSessions[session.pendingEventId];
+    for (const streamId of session.streamIds) {
+      if (nextPendingEventIdByStreamId[streamId] === session.pendingEventId) {
+        delete nextPendingEventIdByStreamId[streamId];
+      }
+    }
+  }
+
+  return {
+    replySessionsByPendingEventId: nextSessions,
+    pendingEventIdByStreamId: nextPendingEventIdByStreamId,
+  };
+}
+
+export function upsertReplySession(
+  replySessionsByPendingEventId: Record<string, StreamingReplySession>,
+  pendingEventIdByStreamId: Record<string, string>,
+  args: {
+    pendingEventId: string;
+    actorId: string;
+    streamId?: string;
+    text?: string;
+    activities?: StreamingActivity[];
+    phase?: StreamingReplySessionPhase;
+    canonicalEventId?: string;
+    updatedAt?: number;
+  },
+): {
+  replySessionsByPendingEventId: Record<string, StreamingReplySession>;
+  pendingEventIdByStreamId: Record<string, string>;
+} {
+  const pendingEventId = String(args.pendingEventId || "").trim();
+  const actorId = String(args.actorId || "").trim();
+  const streamId = String(args.streamId || "").trim();
+  if (!pendingEventId || !actorId) {
+    return {
+      replySessionsByPendingEventId,
+      pendingEventIdByStreamId,
+    };
+  }
+
+  const existing = replySessionsByPendingEventId[pendingEventId];
+  const existingStreamIds = Array.isArray(existing?.streamIds) ? existing.streamIds : [];
+  const nextStreamIds = streamId
+    ? Array.from(new Set(existingStreamIds.concat(streamId)))
+    : existingStreamIds;
+  const nextActivities = args.activities !== undefined
+    ? sliceStreamingActivities(args.activities)
+    : (existing?.activities || []);
+  const nextText = args.text !== undefined ? String(args.text || "") : (existing?.text || "");
+  const nextPhase = args.phase || existing?.phase || "pending";
+  const nextSession: StreamingReplySession = {
+    pendingEventId,
+    actorId,
+    currentStreamId: streamId || existing?.currentStreamId,
+    streamIds: nextStreamIds,
+    canonicalEventId: args.canonicalEventId || existing?.canonicalEventId,
+    text: nextText,
+    activities: nextActivities,
+    phase: nextPhase,
+    updatedAt: Number.isFinite(Number(args.updatedAt)) ? Number(args.updatedAt) : Date.now(),
+  };
+
+  const nextReplySessionsByPendingEventId = {
+    ...replySessionsByPendingEventId,
+    [pendingEventId]: nextSession,
+  };
+  const nextPendingEventIdByStreamId = { ...pendingEventIdByStreamId };
+  if (streamId) {
+    nextPendingEventIdByStreamId[streamId] = pendingEventId;
+  }
+  return pruneReplySessions(nextReplySessionsByPendingEventId, nextPendingEventIdByStreamId);
+}
+
+export function migrateReplySession(
+  replySessionsByPendingEventId: Record<string, StreamingReplySession>,
+  pendingEventIdByStreamId: Record<string, string>,
+  previousPendingEventId: string,
+  nextPendingEventId: string,
+): {
+  replySessionsByPendingEventId: Record<string, StreamingReplySession>;
+  pendingEventIdByStreamId: Record<string, string>;
+} {
+  const fromKey = String(previousPendingEventId || "").trim();
+  const toKey = String(nextPendingEventId || "").trim();
+  if (!fromKey || !toKey || fromKey === toKey) {
+    return {
+      replySessionsByPendingEventId,
+      pendingEventIdByStreamId,
+    };
+  }
+
+  const source = replySessionsByPendingEventId[fromKey];
+  if (!source) {
+    return {
+      replySessionsByPendingEventId,
+      pendingEventIdByStreamId,
+    };
+  }
+
+  const target = replySessionsByPendingEventId[toKey];
+  const merged: StreamingReplySession = {
+    pendingEventId: toKey,
+    actorId: target?.actorId || source.actorId,
+    currentStreamId: target?.currentStreamId || source.currentStreamId,
+    streamIds: Array.from(new Set((target?.streamIds || []).concat(source.streamIds || []))),
+    canonicalEventId: target?.canonicalEventId || source.canonicalEventId,
+    text: target?.text || source.text,
+    activities: sliceStreamingActivities((target?.activities || []).length > 0 ? target?.activities : source.activities),
+    phase: target?.phase || source.phase,
+    updatedAt: Math.max(target?.updatedAt || 0, source.updatedAt || 0, Date.now()),
+  };
+
+  const nextReplySessionsByPendingEventId = { ...replySessionsByPendingEventId };
+  delete nextReplySessionsByPendingEventId[fromKey];
+  nextReplySessionsByPendingEventId[toKey] = merged;
+  const nextPendingEventIdByStreamId = { ...pendingEventIdByStreamId };
+  for (const streamId of merged.streamIds) {
+    nextPendingEventIdByStreamId[streamId] = toKey;
+  }
+  return pruneReplySessions(nextReplySessionsByPendingEventId, nextPendingEventIdByStreamId);
+}

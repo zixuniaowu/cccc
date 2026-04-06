@@ -369,6 +369,23 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertIn("Inspecting state flow", activity_summaries)
             self.assertIn("npm run typecheck", activity_summaries)
             self.assertIn("reply ready", activity_summaries)
+            command_started = next(
+                item for item in codex_events
+                if str(item.get("type") or "") == "codex.activity.started"
+                and str(((item.get("data") or {}).get("activity_id") or "")).startswith("command:")
+            )
+            command_data = command_started.get("data") if isinstance(command_started.get("data"), dict) else {}
+            self.assertEqual(str(command_data.get("raw_item_type") or ""), "commandExecution")
+            self.assertEqual(str(command_data.get("command") or ""), "npm run typecheck")
+            self.assertEqual(str(command_data.get("cwd") or ""), "/tmp")
+
+            command_updated = next(
+                item for item in codex_events
+                if str(item.get("type") or "") == "codex.activity.updated"
+                and str(((item.get("data") or {}).get("activity_id") or "")).startswith("command:")
+            )
+            command_updated_data = command_updated.get("data") if isinstance(command_updated.get("data"), dict) else {}
+            self.assertEqual(str(command_updated_data.get("raw_item_type") or ""), "commandExecution")
 
             ledger_events = [
                 json.loads(line)

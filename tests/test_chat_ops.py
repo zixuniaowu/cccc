@@ -206,6 +206,36 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_preserves_explicit_quote_text(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "chat-send-quote", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            send, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["user"],
+                    "text": "测试activity消息抖动",
+                    "quote_text": "为什么activity 会出现再消失，当前抖动太严重了",
+                },
+            )
+            self.assertTrue(send.ok, getattr(send, "error", None))
+            sent_event = (send.result or {}).get("event") if isinstance(send.result, dict) else {}
+            self.assertIsInstance(sent_event, dict)
+            assert isinstance(sent_event, dict)
+            data = sent_event.get("data") if isinstance(sent_event.get("data"), dict) else {}
+            self.assertEqual(
+                str(data.get("quote_text") or ""),
+                "为什么activity 会出现再消失，当前抖动太严重了",
+            )
+        finally:
+            cleanup()
+
     def test_reply_preserves_im_source_identity_and_mentions(self) -> None:
         _, cleanup = self._with_home()
         try:

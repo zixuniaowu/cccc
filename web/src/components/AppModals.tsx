@@ -1240,6 +1240,7 @@ export function AppModals({
 
     const d = src.data as ChatMessageData | undefined;
     const srcText = typeof d?.text === "string" ? d.text : "";
+    const srcQuoteText = typeof d?.quote_text === "string" ? d.quote_text.trim() : "";
     const noteText = String(note || "").trim();
     const relayText = (noteText ? noteText + "\n\n" : "") + String(srcText || "");
     if (!relayText.trim()) {
@@ -1251,7 +1252,13 @@ export function AppModals({
 
     setBusy("relay");
     try {
-      const resp = await api.relayMessage(dstGroup, relayText, to, { groupId: srcGroupId, eventId: srcEventId });
+      const resp = await api.relayMessage(
+        dstGroup,
+        relayText,
+        to,
+        { groupId: srcGroupId, eventId: srcEventId },
+        srcQuoteText,
+      );
       if (!resp.ok) {
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;

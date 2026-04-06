@@ -15,7 +15,7 @@ import type { ChatFollowMode } from "../stores/useUIStore";
 
 const VIRTUALIZATION_THRESHOLD = 80;
 
-export function getAutoFollowTrigger(input: {
+function getAutoFollowTrigger(input: {
   previousTailSnapshot: ReturnType<typeof getChatTailSnapshot>;
   nextTailSnapshot: ReturnType<typeof getChatTailSnapshot>;
   previousTailMutationSnapshot: ReturnType<typeof getChatTailMutationSnapshot>;
@@ -30,7 +30,7 @@ export function getAutoFollowTrigger(input: {
   return null;
 }
 
-export function getStableMessageKey(message: LedgerEvent | undefined, index: number): string | number {
+function getStableMessageKey(message: LedgerEvent | undefined, index: number): string | number {
   if (message?.kind === "chat.message" && message.data && typeof message.data === "object") {
     const eventId = typeof message.id === "string" ? String(message.id || "").trim() : "";
     if (eventId && (message._streaming || eventId.startsWith("local:") || eventId.startsWith("stream:"))) {
@@ -54,7 +54,7 @@ export function getStableMessageKey(message: LedgerEvent | undefined, index: num
   return eventId || index;
 }
 
-export function shouldUseVirtualizedMessageList(messageCount: number): boolean {
+function shouldUseVirtualizedMessageList(messageCount: number): boolean {
   return Math.max(0, Number(messageCount) || 0) >= VIRTUALIZATION_THRESHOLD;
 }
 
@@ -139,7 +139,6 @@ type VirtualMessageRowProps = {
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
   measureElement: (node: Element | null) => void;
-  onRowLayoutChange: (node: HTMLDivElement | null) => void;
 };
 
 const VirtualMessageRow = memo(function VirtualMessageRow({
@@ -164,7 +163,6 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
   onOpenSource,
   onOpenPresentationRef,
   measureElement,
-  onRowLayoutChange,
 }: VirtualMessageRowProps) {
   const rowRef = useRef<HTMLDivElement | null>(null);
   const isStreaming = !!message?._streaming;
@@ -176,8 +174,8 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
     const el = rowRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
 
-    const MEASURE_INTERVAL_MS = 120;
-    const HEIGHT_DELTA_PX = 16;
+    const MEASURE_INTERVAL_MS = 180;
+    const HEIGHT_DELTA_PX = 24;
     const runMeasure = () => {
       if (measureRafRef.current != null) return;
       measureRafRef.current = window.requestAnimationFrame(() => {
@@ -185,7 +183,6 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
         lastMeasuredHeightRef.current = el.offsetHeight;
         lastMeasureAtRef.current = performance.now();
         measureElement(el);
-        onRowLayoutChange(el);
       });
     };
     const observer = new ResizeObserver(() => {
@@ -210,7 +207,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
         measureRafRef.current = null;
       }
     };
-  }, [isStreaming, measureElement, onRowLayoutChange]);
+  }, [isStreaming, measureElement]);
 
   return (
     <div
@@ -491,12 +488,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     el.scrollTo({ top: row.offsetTop + Math.max(0, offsetPx), behavior: "auto" });
     return true;
   }, [displayMessages, getMessageRowById, shouldVirtualize, virtualizer]);
-
-  const handleRowLayoutChange = useCallback((node: HTMLDivElement | null) => {
-    if (shouldVirtualize && node) {
-      measureElement(node);
-    }
-  }, [measureElement, shouldVirtualize]);
 
   const checkIsAtBottom = useCallback(() => {
     const el = parentRef.current;
@@ -873,7 +864,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     });
     observer.observe(observedEl);
     return () => observer.disconnect();
-  }, [scheduleScroll, scrollToBottom, shouldForceStickToBottom, shouldVirtualize, displayMessages.length, tailMutationSignature]);
+  }, [scheduleScroll, scrollToBottom, shouldForceStickToBottom]);
 
   useEffect(() => {
     return () => {
@@ -1042,7 +1033,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     onOpenSource={onOpenSource}
                     onOpenPresentationRef={onOpenPresentationRef}
                     measureElement={measureElement}
-                    onRowLayoutChange={handleRowLayoutChange}
                   />
                 );
               })}

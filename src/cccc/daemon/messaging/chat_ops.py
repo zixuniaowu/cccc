@@ -300,6 +300,7 @@ def handle_send(
     by = str(args.get("by") or "user").strip()
     priority = str(args.get("priority") or "normal").strip() or "normal"
     reply_required = coerce_bool(args.get("reply_required"))
+    quote_text = str(args.get("quote_text") or "").strip()
     src_group_id = str(args.get("src_group_id") or "").strip()
     src_event_id = str(args.get("src_event_id") or "").strip()
     dst_group_id = str(args.get("dst_group_id") or "").strip()
@@ -431,6 +432,7 @@ def handle_send(
             format="plain",
             priority=priority,
             reply_required=reply_required,
+            quote_text=quote_text or None,
             to=to,
             refs=refs,
             attachments=attachments,

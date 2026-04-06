@@ -9,7 +9,7 @@ import {
   isQueuedOnlyStreamingPlaceholder,
   shouldReserveStreamingStatusSpace,
   shouldRenderStreamingStatusPanel,
-} from "../../src/components/MessageBubble";
+} from "../../src/components/messageBubble/helpers";
 
 describe("isQueuedOnlyStreamingPlaceholder", () => {
   it("returns true for pure queued placeholder without live text", () => {
@@ -93,6 +93,28 @@ describe("getEffectiveStreamingActivities", () => {
     expect(activities).toHaveLength(1);
     expect(activities[0]?.summary).toBe("patch ui");
   });
+
+  it("drops queued placeholder once real activity timeline arrives", () => {
+    const activities = getEffectiveStreamingActivities({
+      streamId: "stream-final",
+      actorId: "coder",
+      pendingEventId: "evt-1",
+      bucket: {
+        streamingActivitiesByStreamId: {
+          "stream-final": [
+            { id: "queued:1", kind: "queued", status: "started", summary: "queued" },
+            { id: "a2", kind: "tool", status: "started", summary: "search docs" },
+          ],
+        },
+        streamingEvents: [],
+      },
+      fallbackActivities: [],
+    });
+
+    expect(activities).toEqual([
+      { id: "a2", kind: "tool", status: "started", summary: "search docs", detail: undefined, ts: undefined },
+    ]);
+  });
 });
 
 describe("getMessageBubbleMotionClass", () => {
@@ -122,8 +144,17 @@ describe("getMessageBubbleMotionClass", () => {
 });
 
 describe("shouldRenderStreamingStatusPanel", () => {
+  it("keeps the status panel visible while streaming even if text already exists", () => {
+    expect(shouldRenderStreamingStatusPanel({
+      isStreaming: true,
+      hasText: true,
+      activities: [],
+    })).toBe(true);
+  });
+
   it("renders the status panel while activities exist", () => {
     expect(shouldRenderStreamingStatusPanel({
+      isStreaming: false,
       hasText: true,
       activities: [{ id: "a1", kind: "tool", status: "started", summary: "search docs" }],
     })).toBe(true);
@@ -131,6 +162,7 @@ describe("shouldRenderStreamingStatusPanel", () => {
 
   it("renders the placeholder panel when there is no text yet", () => {
     expect(shouldRenderStreamingStatusPanel({
+      isStreaming: false,
       hasText: false,
       activities: [],
     })).toBe(true);
@@ -138,6 +170,7 @@ describe("shouldRenderStreamingStatusPanel", () => {
 
   it("hides the status panel once text exists and activities are empty", () => {
     expect(shouldRenderStreamingStatusPanel({
+      isStreaming: false,
       hasText: true,
       activities: [],
     })).toBe(false);
