@@ -13,6 +13,7 @@ import { useComposerStore, useGroupStore, useModalStore, useUIStore } from "../.
 import { getChatSession } from "../../stores/useUIStore";
 import { findPresentationSlot } from "../../utils/presentation";
 import { buildPresentationRefForSlot } from "../../utils/presentationRefs";
+import { clearPresentationSlot } from "../../services/api";
 import { clampPresentationSplitWidth } from "../../utils/presentationSplitLayout";
 
 const PresentationRail = lazy(() =>
@@ -174,9 +175,11 @@ export function ChatTab({
 
   const { t } = useTranslation('chat');
   const groupPresentation = useGroupStore((state) => state.groupPresentation);
+  const setGroupPresentation = useGroupStore((state) => state.setGroupPresentation);
   const presentationViewer = useModalStore((state) => state.presentationViewer);
   const setPresentationViewer = useModalStore((state) => state.setPresentationViewer);
   const setPresentationPin = useModalStore((state) => state.setPresentationPin);
+  const clearPresentationSlotAttention = useModalStore((state) => state.clearPresentationSlotAttention);
   const mobileSurface = useUIStore((state) =>
     selectedGroupId ? getChatSession(selectedGroupId, state.chatSessions).mobileSurface : "messages"
   );
@@ -326,6 +329,35 @@ export function ChatTab({
     setChatPresentationDisplayMode(gid, "modal");
     setPresentationViewer({ ...splitPresentationViewer, surface: "modal" });
   }, [selectedGroupId, setChatPresentationDisplayMode, setPresentationViewer, splitPresentationViewer]);
+
+  const handleSplitReplaceSlot = useCallback((slotId: string) => {
+    const gid = String(selectedGroupId || "").trim();
+    if (!gid || !slotId) return;
+    setPresentationViewer(null);
+    setPresentationPin({ groupId: gid, slotId });
+  }, [selectedGroupId, setPresentationPin, setPresentationViewer]);
+
+  const handleSplitClearSlot = useCallback(async (slotId: string) => {
+    const gid = String(selectedGroupId || "").trim();
+    const normalized = String(slotId || "").trim();
+    if (!gid || !normalized) return;
+    const confirmed = window.confirm(
+      t("presentationClearConfirm", {
+        index: Number(normalized.replace("slot-", "") || 0) || normalized,
+        defaultValue: `Clear ${normalized}?`,
+      }),
+    );
+    if (!confirmed) return;
+    const resp = await clearPresentationSlot(gid, normalized);
+    if (!resp.ok) {
+      showError(`${resp.error.code}: ${resp.error.message}`);
+      return;
+    }
+    setGroupPresentation(resp.result.presentation);
+    setPresentationViewer(null);
+    setPresentationPin(null);
+    clearPresentationSlotAttention(gid, normalized);
+  }, [clearPresentationSlotAttention, selectedGroupId, setGroupPresentation, setPresentationPin, setPresentationViewer, showError, t]);
 
   const handleSplitResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!showDesktopSplitPresentation) return;
@@ -684,6 +716,8 @@ export function ChatTab({
                     focusRef={splitPresentationViewer.focusRef || null}
                     focusEventId={splitPresentationViewer.focusEventId || null}
                     onQuoteInChat={handleQuotePresentationReference}
+                    onReplaceSlot={handleSplitReplaceSlot}
+                    onClearSlot={(slotId) => { void handleSplitClearSlot(slotId); }}
                     onOpenWindow={handleOpenPresentationWindow}
                     onClose={() => setPresentationViewer(null)}
                   />

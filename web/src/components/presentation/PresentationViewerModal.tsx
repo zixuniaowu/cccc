@@ -1163,6 +1163,34 @@ function PresentationViewer({
                 <WindowViewIcon size={14} />
               </button>
             ) : null}
+            {!readOnly && onReplaceSlot && slot ? (
+              <button
+                type="button"
+                onClick={() => onReplaceSlot(slot.slot_id)}
+                className={classNames(
+                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                  isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+                )}
+                aria-label={editActionLabel}
+                title={editActionLabel}
+              >
+                <EditIcon size={14} />
+              </button>
+            ) : null}
+            {!readOnly && onClearSlot && slot ? (
+              <button
+                type="button"
+                onClick={() => onClearSlot(slot.slot_id)}
+                className={classNames(
+                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                  isDark ? "bg-rose-500/15 text-rose-200 hover:bg-rose-500/25" : "bg-rose-50 text-rose-700 hover:bg-rose-100",
+                )}
+                aria-label={clearActionLabel}
+                title={clearActionLabel}
+              >
+                <TrashIcon size={14} />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onClose}
