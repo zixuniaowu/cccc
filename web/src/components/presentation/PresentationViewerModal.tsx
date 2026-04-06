@@ -712,20 +712,22 @@ function PresentationViewer({
       )}
     />
   ) : card.card_type === "web_preview" ? (
-    <PresentationWebPreviewPanel
-      key={`${slot?.slot_id || ""}:${card.published_at}:${href}`}
-      groupId={groupId}
-      slotId={slot?.slot_id || ""}
-      title={card.title}
-      href={href}
-      isDark={isDark}
-      useSandboxedPreview={useSandboxedPreview}
-      allowLiveBrowser={allowLiveBrowser}
-      mode={webPreviewMode}
-      refreshNonce={refreshTick}
-      viewportClassName={immersiveViewportClassName}
-      onInteractiveFrameUpdate={setBrowserFrameForQuote}
-    />
+    isOpen ? (
+      <PresentationWebPreviewPanel
+        key={`${slot?.slot_id || ""}:${card.published_at}:${href}`}
+        groupId={groupId}
+        slotId={slot?.slot_id || ""}
+        title={card.title}
+        href={href}
+        isDark={isDark}
+        useSandboxedPreview={useSandboxedPreview}
+        allowLiveBrowser={allowLiveBrowser}
+        mode={webPreviewMode}
+        refreshNonce={refreshTick}
+        viewportClassName={immersiveViewportClassName}
+        onInteractiveFrameUpdate={setBrowserFrameForQuote}
+      />
+    ) : null
   ) : (
     <div className={classNames("rounded-3xl border p-6", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
       <div className={classNames("text-base font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
