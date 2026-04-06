@@ -633,7 +633,7 @@ export function ChatTab({
           {showDesktopSplitPresentation ? (
             <>
               <div
-                className="relative hidden w-4 flex-shrink-0 cursor-col-resize md:block"
+                className="relative hidden w-2 flex-shrink-0 cursor-col-resize md:block"
                 onPointerDown={handleSplitResizeStart}
                 aria-hidden="true"
               >
@@ -645,7 +645,7 @@ export function ChatTab({
                 />
                 <div
                   className={classNames(
-                    "absolute inset-y-0 left-1/2 w-2 -translate-x-1/2 rounded-full transition-colors",
+                    "absolute inset-y-0 -left-1 w-4 rounded-full transition-colors",
                     isSplitResizing
                       ? isDark
                         ? "bg-cyan-300/18"
@@ -663,7 +663,7 @@ export function ChatTab({
                 )}
                 style={{ width: `${effectivePresentationSplitWidth}px` }}
               >
-                <Suspense fallback={<ChatLazyFallback className="w-[72px]" />}>
+                <Suspense fallback={<ChatLazyFallback className="w-[52px]" />}>
                   <PresentationRail
                     mode="split"
                     presentation={groupPresentation}

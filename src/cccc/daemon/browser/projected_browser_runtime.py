@@ -802,17 +802,21 @@ class ProjectedBrowserSession:
             }
 
     def can_attach(self) -> tuple[bool, dict[str, Any]]:
-        with self._lock:
-            if self._state not in {"starting", "ready"}:
-                message = str(self._error.get("message") or self._message or "browser surface is not active")
-                return False, {"code": "browser_surface_not_active", "message": message, "details": dict(self._error)}
-            if self._controller_attached:
-                return False, {
-                    "code": "browser_surface_busy",
-                    "message": "browser surface already has an active controller",
-                    "details": {},
-                }
-            return True, {}
+        # Wait briefly for a stale controller to detach (race between WebSocket
+        # close and daemon socket cleanup, typically <0.3s).
+        for _ in range(6):
+            with self._lock:
+                if self._state not in {"starting", "ready"}:
+                    message = str(self._error.get("message") or self._message or "browser surface is not active")
+                    return False, {"code": "browser_surface_not_active", "message": message, "details": dict(self._error)}
+                if not self._controller_attached:
+                    return True, {}
+            time.sleep(0.15)
+        return False, {
+            "code": "browser_surface_busy",
+            "message": "browser surface already has an active controller",
+            "details": {},
+        }
 
     def attach_socket(self, sock: socket.socket) -> bool:
         with self._lock:

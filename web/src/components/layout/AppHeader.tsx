@@ -106,7 +106,7 @@ export function AppHeader({
   };
   return (
     <header
-      className="flex-shrink-0 z-20 px-4 h-14 flex items-center justify-between gap-3 glass-header"
+      className="flex-shrink-0 z-20 px-4 h-12 flex items-center justify-between gap-3 glass-header"
     >
       <div className="flex items-center gap-3 min-w-0">
         <button

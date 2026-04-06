@@ -35,7 +35,7 @@ const AgentTabButton = memo(function AgentTabButton({
       ref={tabRef}
       onClick={() => onTabChange(actor.id)}
       className={classNames(
-        "glass-tab relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0 focus:outline-none",
+        "glass-tab relative flex items-center gap-2 px-3 py-1.5 text-sm font-medium whitespace-nowrap flex-shrink-0 focus:outline-none",
         isActive
           ? "glass-tab-active text-[var(--color-text-primary)]"
           : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
@@ -215,7 +215,7 @@ export function TabBar({
       {/* Scrollable tabs area */}
       <div
         ref={scrollRef}
-        className="flex-1 flex items-center gap-1.5 px-3 py-1.5 overflow-x-auto min-w-0 scrollbar-hide"
+        className="flex-1 flex items-center gap-1.5 px-3 py-1 overflow-x-auto min-w-0 scrollbar-hide"
         style={{
           WebkitOverflowScrolling: "touch",
           ...(canScrollLeft && canScrollRight
@@ -234,7 +234,7 @@ export function TabBar({
             ref={activeTab === "chat" ? activeTabRef : null}
             onClick={() => onTabChange("chat")}
             className={classNames(
-              "glass-tab relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0 focus:outline-none",
+              "glass-tab relative flex items-center gap-2 px-3 py-1.5 text-sm font-medium whitespace-nowrap flex-shrink-0 focus:outline-none",
               activeTab === "chat"
                 ? "glass-tab-active text-[var(--color-text-primary)]"
                 : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
@@ -280,7 +280,7 @@ export function TabBar({
 
       {/* Fixed Add Button when overflowing */}
       {isOverflowing && onAddAgent && (
-        <div className="flex-shrink-0 px-2 py-1.5 border-l border-[var(--glass-border-subtle)]">
+        <div className="flex-shrink-0 px-2 py-1 border-l border-[var(--glass-border-subtle)]">
           {addButton}
         </div>
       )}

@@ -269,7 +269,7 @@ export function useChatTab({
   }, [inChatWindow, chatWindow]);
 
   const effectiveIsLoadingHistory = inChatWindow ? isChatWindowLoading : isLoadingHistory;
-  const effectiveHasMoreHistory = inChatWindow ? false : (!hasLoadedTail || hasMoreHistory);
+  const effectiveHasMoreHistory = !selectedGroupId ? false : inChatWindow ? false : (!hasLoadedTail || hasMoreHistory);
 
   const hasHydratedGroupDoc = useMemo(() => {
     if (!groupDoc || String(groupDoc.group_id || "") !== String(selectedGroupId || "")) return false;

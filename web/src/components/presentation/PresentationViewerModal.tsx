@@ -739,9 +739,10 @@ function PresentationViewer({
 
   const viewerBody = (
       <div className="flex min-h-0 flex-1 flex-col">
+        {variant === "modal" ? (
         <div
           className={classNames(
-            "flex flex-wrap items-center gap-2 border-b px-5 py-3 text-xs",
+            "flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs",
             isDark ? "border-white/10 text-slate-400" : "border-black/10 text-gray-600",
           )}
         >
@@ -846,8 +847,9 @@ function PresentationViewer({
             <span>{t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}</span>
           )}
         </div>
+        ) : null}
 
-        <div className="relative min-h-0 flex-1 overflow-hidden px-5 py-5">
+        <div className={classNames("relative min-h-0 flex-1 overflow-hidden", variant === "split" ? "px-2 py-2" : "px-4 py-3")}>
           {showSnapshotCompare ? (
             <div className="mb-3 flex items-center gap-2 lg:hidden">
               <button
@@ -1051,31 +1053,98 @@ function PresentationViewer({
       >
         <div
           className={classNames(
-            "flex items-center justify-between gap-3 border-b px-4 py-3",
+            "flex items-center justify-between gap-2 border-b px-3 py-1.5",
             isDark ? "border-white/8" : "border-black/8",
           )}
         >
-          <div className="min-w-0">
-            <div className={classNames("text-[11px] font-medium uppercase tracking-[0.16em]", isDark ? "text-slate-400" : "text-gray-500")}>
-              {t("presentationTitle", { defaultValue: "Presentation" })}
-            </div>
-            <div className={classNames("mt-1 truncate text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
+          <div className="min-w-0 flex items-center gap-2">
+            <div className={classNames("truncate text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
               {card?.title || t("presentationTitle", { defaultValue: "Presentation" })}
             </div>
+            {card ? (
+              <span className={classNames("flex-shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium", isDark ? "bg-cyan-500/10 text-cyan-200" : "bg-cyan-50 text-cyan-700")}>
+                {getCardTypeLabel(card.card_type, t)}
+              </span>
+            ) : null}
           </div>
-          <div className="flex flex-shrink-0 items-center gap-1.5">
+          <div className="flex flex-shrink-0 items-center gap-1">
+            {showWebPreviewModeToggle ? (
+              <div
+                className={classNames(
+                  "inline-flex items-center rounded-full border p-0.5",
+                  isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-black/[0.03]",
+                )}
+                role="group"
+                aria-label={previewModeLabel}
+              >
+                <button
+                  type="button"
+                  onClick={() => setWebPreviewMode("embedded")}
+                  className={classNames(
+                    "rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap transition-colors",
+                    webPreviewMode === "embedded"
+                      ? isDark
+                        ? "bg-slate-100 text-slate-950"
+                        : "bg-slate-900 text-white"
+                      : isDark
+                        ? "text-slate-300 hover:bg-white/8"
+                        : "text-gray-600 hover:bg-black/6",
+                  )}
+                  aria-pressed={webPreviewMode === "embedded"}
+                  title={embeddedModeHelp}
+                >
+                  {embeddedModeLabel}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWebPreviewMode("interactive")}
+                  className={classNames(
+                    "rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap transition-colors",
+                    webPreviewMode === "interactive"
+                      ? isDark
+                        ? "bg-cyan-400/18 text-cyan-50"
+                        : "bg-cyan-50 text-cyan-700"
+                      : isDark
+                        ? "text-slate-300 hover:bg-white/8"
+                        : "text-gray-600 hover:bg-black/6",
+                  )}
+                  aria-pressed={webPreviewMode === "interactive"}
+                  title={interactiveModeHelp}
+                >
+                  {interactiveModeLabel}
+                </button>
+              </div>
+            ) : null}
             {canRefresh ? (
               <button
                 type="button"
                 onClick={() => setRefreshTick((value) => value + 1)}
                 className={classNames(
-                  "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
                   isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
                 )}
                 aria-label={refreshActionLabel}
                 title={refreshActionLabel}
               >
-                <RefreshIcon size={16} />
+                <RefreshIcon size={14} />
+              </button>
+            ) : null}
+            {copyReferenceValue ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void handleCopyReference();
+                }}
+                className={classNames(
+                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                  copiedReference
+                    ? isDark ? "bg-cyan-500/20 text-cyan-100" : "bg-cyan-50 text-cyan-700"
+                    : isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+                )}
+                aria-label={copyActionLabel}
+                title={copyActionLabel}
+              >
+                <CopyIcon size={14} />
               </button>
             ) : null}
             {onOpenWindow ? (
@@ -1083,26 +1152,26 @@ function PresentationViewer({
                 type="button"
                 onClick={onOpenWindow}
                 className={classNames(
-                  "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
                   isDark ? "bg-slate-800 text-cyan-200 hover:bg-slate-700 hover:text-cyan-100" : "bg-gray-100 text-cyan-700 hover:bg-gray-200 hover:text-cyan-800",
                 )}
                 aria-label={t("presentationOpenWindowAction", { defaultValue: "Open in window" })}
                 title={t("presentationOpenWindowAction", { defaultValue: "Open in window" })}
               >
-                <WindowViewIcon size={16} />
+                <WindowViewIcon size={14} />
               </button>
             ) : null}
             <button
               type="button"
               onClick={onClose}
               className={classNames(
-                "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+                "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
                 isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
               )}
               aria-label={t("presentationCloseSplitAction", { defaultValue: "Close presentation" })}
               title={t("presentationCloseSplitAction", { defaultValue: "Close presentation" })}
             >
-              <CloseIcon size={16} />
+              <CloseIcon size={14} />
             </button>
           </div>
         </div>

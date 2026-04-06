@@ -186,7 +186,7 @@ export function PresentationRail({
       >
         <div
           className={classNames(
-            "flex items-center justify-between gap-3 px-4 py-3 border-b",
+            "flex items-center justify-between gap-3 px-4 py-2 border-b",
             isDark ? "border-white/5" : "border-black/5"
           )}
         >
@@ -315,21 +315,21 @@ export function PresentationRail({
     return (
       <aside
         className={classNames(
-          "flex h-full w-[72px] flex-shrink-0 flex-col items-center border-r px-2.5 py-3",
+          "flex h-full w-[52px] flex-shrink-0 flex-col items-center border-r px-1 py-2",
           isDark ? "border-white/8 bg-slate-950/24" : "border-black/8 bg-white/56"
         )}
         aria-label={t("presentationDockAriaLabel", { defaultValue: "Presentation slots" })}
       >
         <div
           className={classNames(
-            "inline-flex min-h-[24px] items-center justify-center rounded-full px-2 text-[11px] font-medium",
+            "inline-flex min-h-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-medium",
             isDark ? "bg-white/[0.06] text-slate-300" : "bg-black/[0.05] text-gray-600"
           )}
         >
           {filledSlots.length}/{normalizedPresentation.slots.length}
         </div>
 
-        <div className="mt-3 flex flex-1 flex-col items-center gap-2">
+        <div className="mt-2 flex flex-1 flex-col items-center gap-1.5">
           {normalizedPresentation.slots.map((slot) => {
             const card = slot.card;
             const isHighlighted = slot.slot_id === highlightSlotId;
@@ -350,7 +350,7 @@ export function PresentationRail({
                   }
                 }}
                 className={classNames(
-                  "group relative flex h-12 w-12 items-center justify-center rounded-[16px] border text-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50",
+                  "group relative flex h-10 w-10 items-center justify-center rounded-[14px] border text-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50",
                   card || !readOnly ? "cursor-pointer" : "cursor-default",
                   card
                     ? tone?.buttonClassName
@@ -381,14 +381,14 @@ export function PresentationRail({
                 {card ? (
                   <span
                     className={classNames(
-                      "pointer-events-none absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-1",
+                      "pointer-events-none absolute right-1 top-1 h-2 w-2 rounded-full ring-1",
                       tone?.indicatorClassName
                     )}
                   />
                 ) : null}
                 <span
                   className={classNames(
-                    "text-[14px] font-semibold tracking-[0.01em]",
+                    "text-[13px] font-semibold tracking-[0.01em]",
                     card ? "text-current" : isDark ? "text-slate-200" : "text-gray-800"
                   )}
                 >
