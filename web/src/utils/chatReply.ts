@@ -43,7 +43,9 @@ export function buildReplyComposerState(
   if (!replyEventId) return null;
 
   const data = event.data && typeof event.data === "object" ? (event.data as ChatMessageData) : null;
-  const text = data && typeof data.text === "string" ? String(data.text) : "";
+  const quoteText = data && typeof data.quote_text === "string" ? String(data.quote_text) : "";
+  const messageText = data && typeof data.text === "string" ? String(data.text) : "";
+  const text = quoteText || messageText;
   const by = String(event.by || "").trim();
   const authorIsActor = by && by !== "user" && actors.some((actor) => String(actor.id || "") === by);
   const originalTo = Array.isArray(data?.to)

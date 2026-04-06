@@ -794,6 +794,7 @@ export function useChatTab({
   // Filtered live chat messages (canonical + optimistic pending merged)
   const liveChatMessages = useMemo(() => {
     const all = events.filter((ev: LedgerEvent) => ev.kind === "chat.message");
+    const replySlotTsByKey = buildReplySlotTsMap(processedStreamingMessages);
     const renderableCanonicalClientIds = new Set(
       all
         .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
@@ -806,7 +807,10 @@ export function useChatTab({
     const pendingEvents = outboxEntries
       .filter((entry) => !renderableCanonicalClientIds.has(entry.localId))
       .map((entry) => entry.event);
-    const ordered = mergeVisibleChatMessages(all, processedStreamingMessages, pendingEvents, logicalMessageOrderStateRef.current);
+    const ordered = sortChatMessages(
+      mergeVisibleChatMessages(all, processedStreamingMessages, pendingEvents, logicalMessageOrderStateRef.current),
+      replySlotTsByKey,
+    );
 
     if (chatFilter === "attention") {
       return ordered.filter((ev: LedgerEvent) => {

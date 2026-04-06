@@ -1099,6 +1099,12 @@ describe("useGroupStore streaming placeholder cleanup", () => {
     expect(bucket.streamingEvents[0]?.data?.stream_id).toBe("f2");
     expect(bucket.streamingTextByStreamId["c2"]).toBeUndefined();
     expect(bucket.streamingTextByStreamId["f2"]).toBe("Final answer");
+    expect(bucket.replySessionsByPendingEventId["evt-2"]).toMatchObject({
+      pendingEventId: "evt-2",
+      actorId: "peer-1",
+      currentStreamId: "f2",
+      streamIds: ["f2"],
+    });
   });
 
   it("clearEmptyStreamingEventsForActor preserves non-queued process bubbles", async () => {

@@ -669,6 +669,46 @@ describe("mergeVisibleChatMessages", () => {
     expect(String(merged[0]?.id || "")).toBe("evt-user-final");
     expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("这是最终 canonical reply");
   });
+
+  it("can be re-sorted by reply slot ts so a resumed streaming reply stays in its original slot after refresh", () => {
+    const streaming: LedgerEvent[] = [
+      {
+        id: "stream:old-slot",
+        ts: "2026-04-04T16:41:00.000Z",
+        kind: "chat.message",
+        by: "project-director",
+        _streaming: true,
+        data: {
+          text: "继续输出旧槽位",
+          pending_event_id: "user-msg-1",
+          stream_id: "stream-old-slot",
+          to: ["user"],
+        },
+      },
+    ];
+    const canonical: LedgerEvent[] = [
+      {
+        id: "evt-later",
+        ts: "2026-04-04T16:42:00.000Z",
+        kind: "chat.message",
+        by: "user",
+        data: {
+          text: "后来的用户消息",
+          to: ["project-director"],
+        },
+      },
+    ];
+
+    const merged = mergeVisibleChatMessages(
+      canonical,
+      streaming,
+      [],
+      { map: new Map(), next: 0 },
+    );
+    const ordered = sortChatMessages(merged, buildReplySlotTsMap(streaming));
+
+    expect(ordered.map((event) => String(event.id || ""))).toEqual(["stream:old-slot", "evt-later"]);
+  });
 });
 
 describe("shouldRestoreDetachedScrollSnapshot", () => {
