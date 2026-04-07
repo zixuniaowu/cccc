@@ -51,6 +51,52 @@ describe("getStableMessageKey", () => {
     expect(getStableMessageKey(liveStream, 0)).toBe("message-event:local:msg-1:coder");
     expect(getStableMessageKey(completed, 0)).toBe("message-event:local:msg-1:coder");
   });
+
+  it("uses stream identity for canonical stream-backed replies even when pending_event_id exists", () => {
+    const first: LedgerEvent = {
+      id: "evt-1",
+      kind: "chat.message",
+      by: "coder",
+      data: {
+        text: "先看一下",
+        to: ["user"],
+        stream_id: "stream-1",
+        pending_event_id: "evt-user-1",
+      },
+    };
+
+    const second: LedgerEvent = {
+      id: "evt-2",
+      kind: "chat.message",
+      by: "coder",
+      data: {
+        text: "再补一句",
+        to: ["user"],
+        stream_id: "stream-2",
+        pending_event_id: "evt-user-1",
+      },
+    };
+
+    expect(getStableMessageKey(first, 0)).toBe("stream:stream-1");
+    expect(getStableMessageKey(second, 1)).toBe("stream:stream-2");
+  });
+
+  it("keeps placeholder-like same-slot messages on the pending key", () => {
+    const placeholder: LedgerEvent = {
+      id: "evt-placeholder",
+      kind: "chat.message",
+      by: "coder",
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "pending:evt-user-1:coder",
+        pending_event_id: "evt-user-1",
+        pending_placeholder: true,
+      },
+    };
+
+    expect(getStableMessageKey(placeholder, 0)).toBe("pending:coder:evt-user-1");
+  });
 });
 
 describe("shouldUseVirtualizedMessageList", () => {

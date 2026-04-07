@@ -103,6 +103,16 @@ function isPlaceholderLikeStreamingEvent(data: ChatMessageData & { pending_place
   return Boolean(data.pending_placeholder) || streamId.startsWith("local:") || streamId.startsWith("pending:");
 }
 
+function hasOnlyQueuedActivities(value: unknown): boolean {
+  const activities = Array.isArray(value) ? value : [];
+  return activities.length === 0 || activities.every((item) => {
+    if (!item || typeof item !== "object") return true;
+    const kind = String((item as { kind?: unknown }).kind || "").trim();
+    const summary = String((item as { summary?: unknown }).summary || "").trim();
+    return kind === "queued" && summary === "queued";
+  });
+}
+
 function getStreamingEventDedupeKey(event: LedgerEvent): string {
   const data = event.data && typeof event.data === "object"
     ? event.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
@@ -111,11 +121,17 @@ function getStreamingEventDedupeKey(event: LedgerEvent): string {
   const pendingEventId = String(data.pending_event_id || "").trim();
   const streamId = String(data.stream_id || "").trim();
   if (!actorId) return "";
-  if (pendingEventId) {
+  // Placeholder lifecycle events still collapse by pending reply slot, but a
+  // real text-bearing stream must keep stream_id identity or short streaming
+  // messages will overwrite each other before they ever reach the list.
+  if (pendingEventId && (!hasRenderableChatMessageContent(event) || isPlaceholderLikeStreamingEvent(data))) {
     return `pending:${actorId}:${pendingEventId}`;
   }
-  if (streamId && !isPlaceholderLikeStreamingEvent(data)) {
+  if (streamId) {
     return `stream:${actorId}:${streamId}`;
+  }
+  if (pendingEventId) {
+    return `pending:${actorId}:${pendingEventId}`;
   }
   return "";
 }
@@ -206,11 +222,12 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
           ? event.data as ChatMessageData & { pending_placeholder?: unknown; activities?: unknown[]; stream_id?: unknown }
           : {};
         const text = typeof data.text === "string" ? data.text.trim() : "";
+        const onlyQueuedActivities = hasOnlyQueuedActivities(data.activities);
         const isPlaceholderLike =
           Boolean(data.pending_placeholder) ||
           String(data.stream_id || "").trim().startsWith("local:") ||
           String(data.stream_id || "").trim().startsWith("pending:");
-        if (isPlaceholderLike && !text) {
+        if (!text && (isPlaceholderLike || onlyQueuedActivities)) {
           shouldDrop.add(event);
         }
       }
@@ -223,13 +240,7 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
         : {};
       const text = typeof data.text === "string" ? data.text.trim() : "";
       if (text) return false;
-      const activities = Array.isArray(data.activities) ? data.activities : [];
-      const onlyQueuedActivities = activities.length === 0 || activities.every((item) => {
-        if (!item || typeof item !== "object") return true;
-        const kind = String((item as { kind?: unknown }).kind || "").trim();
-        const summary = String((item as { summary?: unknown }).summary || "").trim();
-        return kind === "queued" && summary === "queued";
-      });
+      const onlyQueuedActivities = hasOnlyQueuedActivities(data.activities);
       const streamId = String(data.stream_id || "").trim();
       return (
         onlyQueuedActivities &&
@@ -371,11 +382,11 @@ function getLogicalMessageOrderKey(event: LedgerEvent): string {
       : typeof data?.reply_to === "string" && data.reply_to.trim()
         ? data.reply_to.trim()
         : "";
-  if (actorId && actorId !== "user" && replyAnchor) {
+  const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
+  if (actorId && actorId !== "user" && replyAnchor && (event._streaming || !hasRenderableChatMessageContent(event) || streamId)) {
     return `reply:${actorId}:${replyAnchor}`;
   }
 
-  const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
   if (streamId) return `stream:${streamId}`;
 
   const eventId = String(event.id || "").trim();
@@ -388,25 +399,32 @@ function getLogicalMessageReplacementKey(event: LedgerEvent): string {
     return `event:${String(event.id || "").trim() || String(event.ts || "").trim()}`;
   }
   const data = event.data && typeof event.data === "object"
-    ? event.data as ChatMessageData & { client_id?: unknown; stream_id?: unknown }
+    ? event.data as ChatMessageData & { client_id?: unknown; pending_event_id?: unknown; reply_to?: unknown; stream_id?: unknown }
     : undefined;
   const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
   if (clientId) return `client:${clientId}`;
 
-  if (event._streaming || !hasRenderableChatMessageContent(event)) {
-    const actorId = String(event.by || "").trim();
-    const replyAnchor =
-      typeof data?.pending_event_id === "string" && data.pending_event_id.trim()
-        ? data.pending_event_id.trim()
-        : typeof (data as { reply_to?: unknown } | undefined)?.reply_to === "string" && String((data as { reply_to?: string }).reply_to || "").trim()
-          ? String((data as { reply_to?: string }).reply_to || "").trim()
-          : "";
-    if (actorId && actorId !== "user" && replyAnchor) {
+  const actorId = String(event.by || "").trim();
+  const replyAnchor =
+    typeof data?.pending_event_id === "string" && data.pending_event_id.trim()
+      ? data.pending_event_id.trim()
+      : typeof data?.reply_to === "string" && data.reply_to.trim()
+        ? data.reply_to.trim()
+        : "";
+  const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
+  const placeholderLike = isPlaceholderLikeStreamingEvent((data || {}) as ChatMessageData & {
+    pending_placeholder?: unknown;
+    stream_id?: unknown;
+  });
+  if (actorId && actorId !== "user" && replyAnchor) {
+    if (streamId && !placeholderLike) {
+      return `stream:${streamId}`;
+    }
+    if (placeholderLike || !hasRenderableChatMessageContent(event)) {
       return `reply:${actorId}:${replyAnchor}`;
     }
   }
 
-  const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
   if (streamId) return `stream:${streamId}`;
 
   const eventId = String(event.id || "").trim();
@@ -484,14 +502,30 @@ export function mergeVisibleChatMessages(
       .map((ev: LedgerEvent) => getReplySlotKey(ev))
       .filter((key: string) => key.length > 0),
   );
+  const renderableStreamingReplySlots = new Set(
+    streamingEvents
+      .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
+      .map((ev: LedgerEvent) => getReplySlotKey(ev))
+      .filter((key: string) => key.length > 0),
+  );
   const liveStreaming = streamingEvents.filter((ev: LedgerEvent) => {
-    const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
+    const data = ev.data && typeof ev.data === "object"
+      ? (ev.data as { stream_id?: unknown; pending_placeholder?: unknown; activities?: unknown })
+      : null;
     const streamId = data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
+    const slotKey = getReplySlotKey(ev);
+    const renderable = hasRenderableChatMessageContent(ev);
     if (streamId && canonicalStreamIds.has(streamId)) return false;
     // Backup: drop empty streaming events whose reply slot is covered by a canonical event
-    if (!hasRenderableChatMessageContent(ev)) {
-      const slotKey = getReplySlotKey(ev);
+    if (!renderable) {
       if (slotKey && canonicalReplySlots.has(slotKey)) return false;
+      if (slotKey && renderableStreamingReplySlots.has(slotKey)) {
+        const placeholderLike = isPlaceholderLikeStreamingEvent(((data || {}) as ChatMessageData & {
+          pending_placeholder?: unknown;
+          stream_id?: unknown;
+        }));
+        if (placeholderLike || hasOnlyQueuedActivities(data?.activities)) return false;
+      }
     }
     return true;
   });

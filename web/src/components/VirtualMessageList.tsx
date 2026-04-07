@@ -7,56 +7,14 @@ import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
 import {
   getChatTailMutationSnapshot,
   getChatTailSnapshot,
-  shouldAutoFollowOnTailAppend,
-  shouldAutoFollowOnTailMutation,
 } from "../utils/chatAutoFollow";
 import { estimateMessageRowHeight } from "./messageBubble/estimate";
 import type { ChatFollowMode } from "../stores/useUIStore";
-
-const VIRTUALIZATION_THRESHOLD = 80;
-
-function getAutoFollowTrigger(input: {
-  previousTailSnapshot: ReturnType<typeof getChatTailSnapshot>;
-  nextTailSnapshot: ReturnType<typeof getChatTailSnapshot>;
-  previousTailMutationSnapshot: ReturnType<typeof getChatTailMutationSnapshot>;
-  nextTailMutationSnapshot: ReturnType<typeof getChatTailMutationSnapshot>;
-}): "append" | "mutation" | null {
-  if (shouldAutoFollowOnTailAppend(input.previousTailSnapshot, input.nextTailSnapshot)) {
-    return "append";
-  }
-  if (shouldAutoFollowOnTailMutation(input.previousTailMutationSnapshot, input.nextTailMutationSnapshot)) {
-    return "mutation";
-  }
-  return null;
-}
-
-function getStableMessageKey(message: LedgerEvent | undefined, index: number): string | number {
-  if (message?.kind === "chat.message" && message.data && typeof message.data === "object") {
-    const eventId = typeof message.id === "string" ? String(message.id || "").trim() : "";
-    if (eventId && (message._streaming || eventId.startsWith("local:") || eventId.startsWith("stream:"))) {
-      return `message-event:${eventId}`;
-    }
-    const pendingEventId = typeof (message.data as { pending_event_id?: unknown }).pending_event_id === "string"
-      ? String((message.data as { pending_event_id?: string }).pending_event_id || "").trim()
-      : "";
-    const actorId = typeof message.by === "string" ? String(message.by || "").trim() : "";
-    if (pendingEventId && actorId) return `pending:${actorId}:${pendingEventId}`;
-    const streamId = typeof (message.data as { stream_id?: unknown }).stream_id === "string"
-      ? String((message.data as { stream_id?: string }).stream_id || "").trim()
-      : "";
-    if (streamId) return `stream:${streamId}`;
-    const clientId = typeof (message.data as { client_id?: unknown }).client_id === "string"
-      ? String((message.data as { client_id?: string }).client_id || "").trim()
-      : "";
-    if (clientId) return `client:${clientId}`;
-  }
-  const eventId = typeof message?.id === "string" ? String(message.id || "").trim() : "";
-  return eventId || index;
-}
-
-function shouldUseVirtualizedMessageList(messageCount: number): boolean {
-  return Math.max(0, Number(messageCount) || 0) >= VIRTUALIZATION_THRESHOLD;
-}
+import {
+  getAutoFollowTrigger,
+  getStableMessageKey,
+  shouldUseVirtualizedMessageList,
+} from "./virtualMessageListHelpers";
 
 function shouldCollapseMessageHeader(previousMessage: LedgerEvent | undefined, message: LedgerEvent | undefined): boolean {
   return (
@@ -164,64 +122,16 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
   onOpenPresentationRef,
   measureElement,
 }: VirtualMessageRowProps) {
-  const rowRef = useRef<HTMLDivElement | null>(null);
-  const isStreaming = !!message?._streaming;
-  const lastMeasuredHeightRef = useRef(0);
-  const lastMeasureAtRef = useRef(0);
-  const measureRafRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const el = rowRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-
-    const MEASURE_INTERVAL_MS = 180;
-    const HEIGHT_DELTA_PX = 24;
-    const runMeasure = () => {
-      if (measureRafRef.current != null) return;
-      measureRafRef.current = window.requestAnimationFrame(() => {
-        measureRafRef.current = null;
-        lastMeasuredHeightRef.current = el.offsetHeight;
-        lastMeasureAtRef.current = performance.now();
-        measureElement(el);
-      });
-    };
-    const observer = new ResizeObserver(() => {
-      if (isStreaming) {
-        const now = performance.now();
-        const nextHeight = el.offsetHeight;
-        const lastHeight = lastMeasuredHeightRef.current || nextHeight;
-        const elapsed = now - lastMeasureAtRef.current;
-        if (Math.abs(nextHeight - lastHeight) < HEIGHT_DELTA_PX && elapsed < MEASURE_INTERVAL_MS) {
-          return;
-        }
-        runMeasure();
-        return;
-      }
-      runMeasure();
-    });
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-      if (measureRafRef.current != null) {
-        window.cancelAnimationFrame(measureRafRef.current);
-        measureRafRef.current = null;
-      }
-    };
-  }, [isStreaming, measureElement]);
+  const attachMeasuredRow = useCallback((node: HTMLDivElement | null) => {
+    measureElement(node);
+  }, [measureElement]);
 
   return (
     <div
       data-index={virtualRow.index}
       data-message-row="true"
       data-message-id={message.id ? String(message.id) : ""}
-      ref={(node) => {
-        rowRef.current = node;
-        if (node) {
-          lastMeasuredHeightRef.current = node.offsetHeight;
-          lastMeasureAtRef.current = performance.now();
-        }
-        measureElement(node);
-      }}
+      ref={attachMeasuredRow}
       style={{
         position: "absolute",
         top: 0,
@@ -294,38 +204,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const parentRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const remeasureRafRef = useRef<number | null>(null);
-  const displayOrderRef = useRef<Map<string, number>>(new Map());
-  const nextDisplayOrderRef = useRef(0);
-  const displayMessages = useMemo(() => {
-    const hasStreaming = messages.some((message) => !!message?._streaming);
-    if (!hasStreaming) {
-      displayOrderRef.current = new Map();
-      nextDisplayOrderRef.current = 0;
-      return messages;
-    }
-
-    const nextOrderMap = new Map(displayOrderRef.current);
-    let nextOrder = nextDisplayOrderRef.current;
-    for (let index = 0; index < messages.length; index += 1) {
-      const key = String(getStableMessageKey(messages[index], index));
-      if (!nextOrderMap.has(key)) {
-        nextOrderMap.set(key, nextOrder);
-        nextOrder += 1;
-      }
-    }
-    displayOrderRef.current = nextOrderMap;
-    nextDisplayOrderRef.current = nextOrder;
-
-    return messages.slice().sort((a, b) => {
-      const ao = nextOrderMap.get(String(getStableMessageKey(a, 0))) ?? Number.MAX_SAFE_INTEGER;
-      const bo = nextOrderMap.get(String(getStableMessageKey(b, 0))) ?? Number.MAX_SAFE_INTEGER;
-      if (ao !== bo) return ao - bo;
-      const ats = String(a?.ts || "");
-      const bts = String(b?.ts || "");
-      if (ats && bts && ats !== bts) return ats.localeCompare(bts);
-      return 0;
-    });
-  }, [messages]);
+  // Message ordering is resolved upstream in useChatTab. The virtual list
+  // should render that order verbatim instead of maintaining a second,
+  // divergent streaming-order cache locally.
+  const displayMessages = messages;
   const shouldVirtualize = shouldUseVirtualizedMessageList(displayMessages.length);
 
   const agentStateById = useMemo(() => {
@@ -381,12 +263,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const snapshotFlushTimerRef = useRef<number | null>(null);
   // For history loading scroll position preservation (prepend older messages)
   const topLoadArmedRef = useRef(true);
-  const pendingRestoreRef = useRef(false);
-  const pendingRestoreSeqRef = useRef<number | null>(null);
-  const lastScrollEventAtRef = useRef(0);
-  const scrollEventSeqRef = useRef(0);
-  const anchorMessageIdRef = useRef<string>("");
-  const anchorOffsetRef = useRef(0);
+  const pendingPrependCompensationRef = useRef<{ previousOffset: number; previousTotalSize: number } | null>(null);
   const lastScrollTopRef = useRef(0);
   // 标记容器正在处理 resize（如 footer 回复栏出现/消失），
   // 防止 handleScroll 将浏览器裁剪 scrollTop 误判为用户上滑
@@ -411,6 +288,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: displayMessages.length,
+    enabled: shouldVirtualize,
     getScrollElement: () => parentRef.current,
     getItemKey: (index) => getStableMessageKey(displayMessages[index], index),
     estimateSize: getEstimatedSize,
@@ -419,9 +297,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   });
 
 
-  // Direct ref — synchronous measurement eliminates the jitter caused by
-  // the old queueMicrotask wrapper (which deferred measurement by one frame,
-  // making the first paint use the stale estimate height).
+  // Let tanstack own row measurement via its built-in observer. Layering an
+  // extra per-row ResizeObserver on top of measureElement creates duplicate
+  // measure -> notify cycles that can recurse during rapid scrolling.
   const measureElement = virtualizer.measureElement;
 
   const getMessageRowById = useCallback((eventId: string): HTMLDivElement | null => {
@@ -458,6 +336,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       offsetPx: Math.max(0, scrollTop - anchorRow.offsetTop),
     };
   }, [displayMessages, shouldVirtualize, virtualizer]);
+
+  const getCurrentContentSize = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return 0;
+    return shouldVirtualize ? virtualizer.getTotalSize() : el.scrollHeight;
+  }, [shouldVirtualize, virtualizer]);
 
   const setAtBottom = useCallback((next: boolean) => {
     isAtBottomRef.current = next;
@@ -588,8 +472,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const el = parentRef.current;
     if (!el) return;
 
-    scrollEventSeqRef.current += 1;
-    lastScrollEventAtRef.current = performance.now();
     const curTop = el.scrollTop;
     const previousTop = lastScrollTopRef.current;
     const userScrolledUp = curTop < previousTop - 4;
@@ -647,17 +529,15 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const atTop = curTop < topTriggerPx;
     if (atTop && topLoadArmedRef.current && hasMoreHistory && !isLoadingHistory && onLoadMore) {
       topLoadArmedRef.current = false;
-      pendingRestoreRef.current = true;
-      pendingRestoreSeqRef.current = scrollEventSeqRef.current;
-
-      const pendingAnchor = getAnchorSnapshot(curTop);
-      anchorMessageIdRef.current = pendingAnchor?.anchorId || "";
-      anchorOffsetRef.current = pendingAnchor?.offsetPx || 0;
+      pendingPrependCompensationRef.current = {
+        previousOffset: curTop,
+        previousTotalSize: getCurrentContentSize(),
+      };
 
       onLoadMore();
     }
     });
-  }, [cancelScheduledScroll, checkIsAtBottom, getAnchorSnapshot, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange, onScrollSnapshot, setAtBottom, setFollowMode]);
+  }, [cancelScheduledScroll, checkIsAtBottom, getAnchorSnapshot, getCurrentContentSize, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange, onScrollSnapshot, setAtBottom, setFollowMode]);
 
   // When switching views (group or window-mode), reset internal scroll bookkeeping.
   //
@@ -694,10 +574,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       window.clearTimeout(snapshotFlushTimerRef.current);
       snapshotFlushTimerRef.current = null;
     }
-    pendingRestoreRef.current = false;
-    pendingRestoreSeqRef.current = null;
-    anchorMessageIdRef.current = "";
-    anchorOffsetRef.current = 0;
+    pendingPrependCompensationRef.current = null;
     lastScrollTopRef.current = 0;
     prevTailSnapshotRef.current = getChatTailSnapshot(
       displayMessages.length > 0 ? getStableMessageKey(displayMessages[displayMessages.length - 1], displayMessages.length - 1) : null,
@@ -817,7 +694,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     prevTailSnapshotRef.current = nextTailSnapshot;
     prevTailMutationSnapshotRef.current = nextSnapshot;
     if (!didInitialScrollRef.current) return;
-    if (isLoadingHistory || pendingRestoreRef.current) return;
+    if (isLoadingHistory) return;
     if (followModeRef.current !== "follow" && !shouldForceStickToBottom()) return;
     if (
       !getAutoFollowTrigger({
@@ -831,7 +708,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     }
 
     scheduleScroll(() => {
-      if ((followModeRef.current !== "follow" && !shouldForceStickToBottom()) || pendingRestoreRef.current) return;
+      if (followModeRef.current !== "follow" && !shouldForceStickToBottom()) return;
       scrollToBottom();
     });
   }, [displayMessages, isLoadingHistory, scheduleScroll, scrollToBottom, shouldForceStickToBottom, tailMutationSignature]);
@@ -898,52 +775,27 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     };
   }, [onScrollSnapshot, resetKey, scrollRef]);
 
-  // Restore scroll position after loading older messages (prepend).
-  //
-  // The old implementation used a scrollEventSeq check to detect "user scrolled
-  // away during loading, so skip restore". But layout-triggered scroll events
-  // from the virtualizer (Loading indicator appearing, row re-measurement, etc.)
-  // also increment the seq, causing the restore to be falsely skipped — leaving
-  // scrollTop near 0 and immediately re-triggering onLoadMore in a loop.
-  //
-  // The arm/disarm gate (topLoadArmedRef) already prevents duplicate loads, so
-  // the seq check is unnecessary. Removed.
-  const restorePendingAnchor = useCallback(() => {
-    if (isLoadingHistory) return;
-    if (!pendingRestoreRef.current) return;
-    const el = parentRef.current;
-    if (!el) return;
-
-    const idleMs = performance.now() - lastScrollEventAtRef.current;
-    if (idleMs < 120) {
-      const remaining = Math.max(20, 120 - idleMs);
-      window.setTimeout(() => restorePendingAnchor(), remaining);
-      return;
-    }
-
-    pendingRestoreRef.current = false;
-    pendingRestoreSeqRef.current = null;
-
-    const anchorId = anchorMessageIdRef.current;
-    const offsetInRow = anchorOffsetRef.current;
-    anchorMessageIdRef.current = "";
-    anchorOffsetRef.current = 0;
-
-    if (anchorId) {
-      const restored = scrollToMessageAnchor(anchorId, offsetInRow);
-      if (restored) {
-        // Keep topLoad disarmed so the restored position (which may still be
-        // near the top) doesn't immediately re-trigger another load.
-        topLoadArmedRef.current = false;
-      }
-    }
-  }, [isLoadingHistory, scrollToMessageAnchor]);
-
   useLayoutEffect(() => {
     if (isLoadingHistory) return;
-    if (!pendingRestoreRef.current) return;
-    restorePendingAnchor();
-  }, [isLoadingHistory, restorePendingAnchor]);
+    const pending = pendingPrependCompensationRef.current;
+    const el = parentRef.current;
+    if (!pending || !el) return;
+
+    pendingPrependCompensationRef.current = null;
+
+    const nextTotalSize = getCurrentContentSize();
+    const delta = Math.max(0, nextTotalSize - pending.previousTotalSize);
+    if (delta <= 0) return;
+
+    const nextTop = pending.previousOffset + delta;
+    if (shouldVirtualize) {
+      virtualizer.scrollToOffset(nextTop, { align: "start", behavior: "auto" });
+    } else {
+      el.scrollTo({ top: nextTop, behavior: "auto" });
+    }
+    lastScrollTopRef.current = nextTop;
+    topLoadArmedRef.current = false;
+  }, [displayMessages, getCurrentContentSize, isLoadingHistory, shouldVirtualize, virtualizer]);
 
   return (
     <div
@@ -1116,8 +968,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
 export const VirtualMessageList = memo(function VirtualMessageList(props: VirtualMessageListProps) {
   const resetKey = props.viewKey ?? props.groupId;
-  // No `key` prop — avoid full unmount/remount on group switch which causes
-  // a visible flash (virtualizer needs 1-2 frames to measure after mount).
-  // Internal state is reset via the resetKey useEffect instead.
-  return <VirtualMessageListInner {...props} resetKey={resetKey} />;
+  // Group/window switches must remount the virtualizer instance. Reusing a
+  // single instance across transcripts lets measurement/order caches bleed
+  // into the next view, which is worse than a brief re-measure on mount.
+  return <VirtualMessageListInner key={resetKey} {...props} resetKey={resetKey} />;
 });
