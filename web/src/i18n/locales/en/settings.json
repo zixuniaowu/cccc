@@ -569,7 +569,7 @@
     "weixinAccountIdHint": "Optional; falls back to the first logged-in account managed by `weixin-agent-sdk`.",
     "weixinCommand": "Sidecar command (optional)",
     "weixinCommandHint": "Optional; overrides the default `node scripts/im/weixin_sidecar.mjs` launch command.",
-    "weixinPackageHint": "The host needs Node.js and the `weixin-agent-sdk` npm package. Complete WeChat login before first use.",
+    "weixinPackageHint": "The host needs Node.js. Run `cd scripts/im && npm install` first so the pinned `weixin-agent-sdk@0.4.0` dependency is installed before the first WeChat login.",
     "weixinLoginTitle": "Weixin Login",
     "weixinLoginStatus": "Login status",
     "weixinCurrentAccount": "Current account",

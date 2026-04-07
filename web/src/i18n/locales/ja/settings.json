@@ -569,7 +569,7 @@
     "weixinAccountIdHint": "任意です。空欄の場合は `weixin-agent-sdk` が管理する最初のログイン済みアカウントを使います。",
     "weixinCommand": "Sidecar コマンド（任意）",
     "weixinCommandHint": "任意です。既定の `node scripts/im/weixin_sidecar.mjs` 起動コマンドを上書きします。",
-    "weixinPackageHint": "ホスト側に Node.js と npm パッケージ `weixin-agent-sdk` が必要です。初回利用前に WeChat ログインを済ませてください。",
+    "weixinPackageHint": "ホスト側に Node.js が必要です。初回の WeChat ログイン前に、`scripts/im` で `npm install` を実行して固定済みの `weixin-agent-sdk@0.4.0` 依存関係を導入してください。",
     "weixinLoginTitle": "Weixin ログイン",
     "weixinLoginStatus": "ログイン状態",
     "weixinCurrentAccount": "現在のアカウント",
