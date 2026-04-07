@@ -1,5 +1,7 @@
 import os
+import shutil
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,11 +15,20 @@ class TestChatOps(unittest.TestCase):
         os.environ["CCCC_HOME"] = td
 
         def cleanup() -> None:
-            td_ctx.__exit__(None, None, None)
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)
             else:
                 os.environ["CCCC_HOME"] = old_home
+            for attempt in range(5):
+                try:
+                    shutil.rmtree(td)
+                    break
+                except FileNotFoundError:
+                    break
+                except OSError:
+                    if attempt >= 4:
+                        raise
+                    time.sleep(0.05)
 
         return td, cleanup
 

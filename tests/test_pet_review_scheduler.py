@@ -24,6 +24,9 @@ class _FakeGroup:
 
 
 class TestPetReviewScheduler(unittest.TestCase):
+    def setUp(self) -> None:
+        review_scheduler.cancel_pet_review("g-test")
+
     def tearDown(self) -> None:
         review_scheduler.cancel_pet_review("g-test")
 
