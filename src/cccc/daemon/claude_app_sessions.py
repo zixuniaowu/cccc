@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..contracts.v1.message import ChatMessageData
+from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.headless_events import append_headless_event
 from ..kernel.group import load_group
 from ..kernel.ledger import append_event
@@ -58,6 +59,7 @@ class _PendingTurn:
     text: str
     event_id: str
     reply_to: Optional[str] = None
+    attachments: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -315,10 +317,22 @@ class ClaudeAppSession:
 
     # ── user message submission ─────────────────────────────────────────
 
-    def submit_user_message(self, *, text: str, event_id: str, reply_to: Optional[str] = None) -> bool:
+    def submit_user_message(
+        self,
+        *,
+        text: str,
+        event_id: str,
+        reply_to: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
+    ) -> bool:
         if not self.is_running():
             return False
-        payload = _PendingTurn(text=str(text or ""), event_id=str(event_id or "").strip(), reply_to=reply_to)
+        payload = _PendingTurn(
+            text=str(text or ""),
+            event_id=str(event_id or "").strip(),
+            reply_to=reply_to,
+            attachments=[item for item in (attachments or []) if isinstance(item, dict)],
+        )
         try:
             self._turn_queue.put_nowait(payload)
             self._emit(
@@ -385,6 +399,36 @@ class ClaudeAppSession:
                 return
             _safe_logger_call("exception", "claude stderr loop failed: %s/%s", self.group_id, self.actor_id)
 
+    def _compose_user_content(self, payload: _PendingTurn) -> str:
+        text = str(payload.text or "")
+        group = load_group(self.group_id)
+        image_paths: list[str] = []
+        if group is not None:
+            for attachment in payload.attachments:
+                if str(attachment.get("kind") or "").strip().lower() != "image":
+                    continue
+                rel_path = str(attachment.get("path") or "").strip()
+                if not rel_path:
+                    continue
+                try:
+                    abs_path = resolve_blob_attachment_path(group, rel_path=rel_path)
+                except Exception:
+                    continue
+                if abs_path.exists() and abs_path.is_file():
+                    image_paths.append(str(abs_path))
+
+        if not image_paths:
+            return text
+
+        lines = [text.rstrip()] if text.strip() else []
+        lines.append("[cccc] 图片附件已保存到本地文件。Claude stream-json 当前仅支持文本输入，不能直接内嵌图片。")
+        lines.append("[cccc] 请优先基于以下图片文件路径继续处理：")
+        for path in image_paths[:8]:
+            lines.append(f"- {path}")
+        if len(image_paths) > 8:
+            lines.append(f"- … ({len(image_paths) - 8} more)")
+        return "\n".join([line for line in lines if line]).strip()
+
     # ── turn loop ───────────────────────────────────────────────────────
 
     def _turn_loop(self) -> None:
@@ -424,11 +468,12 @@ class ClaudeAppSession:
             )
 
             # Send user message to claude via stdin
+            user_content = self._compose_user_content(payload)
             ok = self._write_stdin({
                 "type": "user",
                 "message": {
                     "role": "user",
-                    "content": payload.text,
+                    "content": user_content,
                 },
             })
             if not ok:
@@ -955,13 +1000,14 @@ class ClaudeAppSessionManager:
         text: str,
         event_id: str,
         reply_to: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> bool:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             session = self._sessions.get(key)
         if session is None:
             return False
-        return session.submit_user_message(text=text, event_id=event_id, reply_to=reply_to)
+        return session.submit_user_message(text=text, event_id=event_id, reply_to=reply_to, attachments=attachments)
 
 
 SUPERVISOR = ClaudeAppSessionManager()

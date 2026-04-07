@@ -17,14 +17,9 @@ import {
 } from "./virtualMessageListHelpers";
 
 function shouldCollapseMessageHeader(previousMessage: LedgerEvent | undefined, message: LedgerEvent | undefined): boolean {
-  return (
-    !!previousMessage &&
-    !!message &&
-    String(previousMessage.kind || "") === "chat.message" &&
-    String(message.kind || "") === "chat.message" &&
-    String(previousMessage.by || "").trim() !== "" &&
-    String(previousMessage.by || "").trim() === String(message.by || "").trim()
-  );
+  void previousMessage;
+  void message;
+  return false;
 }
 
 function getMessageRowGrouping(previousMessage: LedgerEvent | undefined, message: LedgerEvent | undefined): {

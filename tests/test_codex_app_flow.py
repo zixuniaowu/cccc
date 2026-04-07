@@ -140,6 +140,122 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_routes_headless_codex_image_attachments_to_app_supervisor(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_send
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-send-image", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            attachments = [{"kind": "image", "path": "state/blobs/test.png", "title": "test.png", "mime_type": "image/png"}]
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=[]),
+            ):
+                resp = handle_send(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "look at this",
+                        "to": ["peer1"],
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: attachments,
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_called_once()
+            kwargs = submit_user_message.call_args.kwargs
+            self.assertEqual(kwargs.get("attachments"), attachments)
+            queue_chat_message.assert_not_called()
+            request_flush_pending_messages.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_send_routes_headless_claude_image_attachments_to_app_supervisor(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_send
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "claude-send-image", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "claude",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            attachments = [{"kind": "image", "path": "state/blobs/test.png", "title": "test.png", "mime_type": "image/png"}]
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.claude_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.claude_app_supervisor.submit_user_message") as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=[]),
+            ):
+                resp = handle_send(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "look at this",
+                        "to": ["peer1"],
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: attachments,
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_called_once()
+            kwargs = submit_user_message.call_args.kwargs
+            self.assertEqual(kwargs.get("attachments"), attachments)
+            queue_chat_message.assert_not_called()
+            request_flush_pending_messages.assert_not_called()
+        finally:
+            cleanup()
+
     def test_send_routes_running_pty_codex_actor_to_pty_delivery(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_send
 
@@ -338,6 +454,7 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertIn("headless.activity.updated", event_types)
             self.assertIn("headless.activity.completed", event_types)
             self.assertIn("headless.message.started", event_types)
+
             self.assertIn("headless.message.delta", event_types)
             self.assertIn("headless.message.completed", event_types)
             self.assertIn("headless.turn.completed", event_types)
@@ -401,6 +518,80 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(str(data.get("stream_id") or ""), "msg-1")
             self.assertEqual(str(data.get("pending_event_id") or ""), "evt-1")
             self.assertEqual(data.get("to"), ["user"])
+        finally:
+            cleanup()
+
+    def test_codex_session_build_turn_input_items_includes_local_image_blob(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+        from cccc.kernel.blobs import store_blob_bytes
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="codex-image-input", topic="")
+            stored = store_blob_bytes(
+                group,
+                data=b"\x89PNG\r\n\x1a\nfake-png",
+                filename="image.png",
+                mime_type="image/png",
+                kind="image",
+            )
+            session = CodexAppSession(
+                group_id=group.group_id,
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            items = session._build_turn_input_items(
+                _PendingTurn(
+                    text="请看图",
+                    event_id="evt-1",
+                    attachments=[stored],
+                )
+            )
+
+            self.assertEqual(items[0], {"type": "text", "text": "请看图"})
+            self.assertEqual(items[1]["type"], "local_image")
+            self.assertEqual(items[1]["path"], str(group.path / str(stored.get("path") or "")))
+        finally:
+            cleanup()
+
+    def test_claude_session_compose_user_content_includes_local_image_blob_path(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
+        from cccc.kernel.blobs import store_blob_bytes
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="claude-image-input", topic="")
+            stored = store_blob_bytes(
+                group,
+                data=b"\x89PNG\r\n\x1a\nfake-png",
+                filename="image.png",
+                mime_type="image/png",
+                kind="image",
+            )
+            session = ClaudeAppSession(
+                group_id=group.group_id,
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            content = session._compose_user_content(
+                _PendingTurn(
+                    text="请看图",
+                    event_id="evt-1",
+                    attachments=[stored],
+                )
+            )
+
+            self.assertIn("请看图", content)
+            self.assertIn("Claude stream-json 当前仅支持文本输入", content)
+            self.assertIn(str(group.path / str(stored.get("path") or "")), content)
         finally:
             cleanup()
 

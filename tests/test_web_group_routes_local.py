@@ -27,6 +27,11 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
 
         return TestClient(create_app())
 
+    def _app(self):
+        from cccc.ports.web.app import create_app
+
+        return create_app()
+
     def _create_group(self) -> str:
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry
@@ -48,5 +53,22 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
                     self.assertEqual(str(group.get("group_id") or ""), group_id)
                     self.assertEqual(str(group.get("title") or ""), "group-local-read")
                     self.assertEqual(str(group.get("topic") or ""), "local topic")
+        finally:
+            cleanup()
+
+    def test_legacy_codex_headless_routes_remain_available(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            app = self._app()
+            route_paths = {getattr(route, "path", "") for route in app.routes}
+            self.assertIn("/api/v1/groups/{group_id}/codex/stream", route_paths)
+
+            with TestClient(app) as client:
+                snapshot_resp = client.get(f"/api/v1/groups/{group_id}/codex/snapshot")
+                self.assertEqual(snapshot_resp.status_code, 200)
+                snapshot_body = snapshot_resp.json()
+                self.assertTrue(bool(snapshot_body.get("ok")), snapshot_body)
+                self.assertEqual(str((snapshot_body.get("result") or {}).get("group_id") or ""), group_id)
         finally:
             cleanup()

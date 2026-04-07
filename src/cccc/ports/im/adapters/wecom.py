@@ -18,11 +18,13 @@ import json
 import mimetypes
 import os
 import random
+import subprocess
 import threading
 import time
 import urllib.parse
 import urllib.request
 import uuid
+from base64 import b64decode
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -45,6 +47,8 @@ WS_RECONNECT_JITTER = 0.2  # 0-20%
 # Keep the latest callback handle per chat for the lifetime of this bridge
 # process. We only need a bounded cache, not a time-based expiry.
 REPLY_REF_MAX_ENTRIES = 256
+WECOM_MEDIA_CIPHER = "aes-256-cbc"
+WECOM_MEDIA_BLOCK_SIZE = 32
 
 
 class RateLimiter:
@@ -210,6 +214,65 @@ class WecomAdapter(IMAdapter):
         }
         params.update({k: v for k, v in query.items() if str(v or "").strip()})
         return f"{self.api_base}{path}?{urllib.parse.urlencode(params)}"
+
+    def _decode_media_aes_key(self, raw_key: str) -> bytes:
+        trimmed = str(raw_key or "").strip()
+        if not trimmed:
+            raise ValueError("missing wecom attachment aeskey")
+
+        utf8_key = trimmed.encode("utf-8")
+        if len(utf8_key) == 32:
+            return utf8_key
+
+        padded = trimmed if trimmed.endswith("=") else f"{trimmed}="
+        try:
+            decoded = b64decode(padded)
+        except Exception as e:
+            raise ValueError(f"invalid wecom attachment aeskey: {e}") from e
+
+        if len(decoded) == 32:
+            return decoded
+        raise ValueError(
+            f"invalid wecom attachment aeskey length: utf8={len(utf8_key)} base64={len(decoded)}"
+        )
+
+    def _strip_pkcs7_padding(self, raw: bytes, block_size: int = WECOM_MEDIA_BLOCK_SIZE) -> bytes:
+        if not raw:
+            raise ValueError("empty decrypted media payload")
+        pad = raw[-1]
+        if pad < 1 or pad > block_size or pad > len(raw):
+            raise ValueError("invalid wecom media pkcs7 padding")
+        if raw[-pad:] != bytes([pad]) * pad:
+            raise ValueError("invalid wecom media pkcs7 padding")
+        return raw[:-pad]
+
+    def _decrypt_media_bytes(self, encrypted: bytes, aes_key: str) -> bytes:
+        key = self._decode_media_aes_key(aes_key)
+        iv = key[:16]
+        cmd = [
+            "openssl",
+            "enc",
+            "-d",
+            f"-{WECOM_MEDIA_CIPHER}",
+            "-nopad",
+            "-K",
+            key.hex(),
+            "-iv",
+            iv.hex(),
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=encrypted,
+                capture_output=True,
+                check=False,
+            )
+        except Exception as e:
+            raise ValueError(f"wecom media decrypt command failed: {e}") from e
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+            raise ValueError(f"wecom media decrypt failed: {stderr or f'openssl exit {proc.returncode}'}")
+        return self._strip_pkcs7_padding(proc.stdout)
 
     def _upload_media(self, raw: bytes, filename: str, media_type: str) -> str:
         boundary = "----cccc" + uuid.uuid4().hex
@@ -531,6 +594,89 @@ class WecomAdapter(IMAdapter):
 
         return True
 
+    def _pick_text(self, *values: Any) -> str:
+        for value in values:
+            text = str(value or "").strip()
+            if text:
+                return text
+        return ""
+
+    def _collect_media_payload(self, payload: Dict[str, Any], msg_type: str, content: Any) -> Dict[str, str]:
+        media: Dict[str, Any] = {}
+        if isinstance(content, dict):
+            media.update(content)
+        nested = payload.get(msg_type)
+        if isinstance(nested, dict):
+            media.update(nested)
+
+        media_id = self._pick_text(media.get("media_id"), media.get("mediaId"))
+        download_url = self._pick_text(media.get("url"), media.get("download_url"), media.get("downloadUrl"))
+        aeskey = self._pick_text(media.get("aeskey"), media.get("aes_key"), media.get("decryption_key"))
+        filename = self._pick_text(
+            media.get("filename"),
+            media.get("file_name"),
+            media.get("fileName"),
+            media.get("name"),
+        )
+        content_type = self._pick_text(media.get("content_type"), media.get("contentType"), media.get("mime_type"))
+        return {
+            "media_id": media_id,
+            "download_url": download_url,
+            "aeskey": aeskey,
+            "filename": filename,
+            "content_type": content_type,
+        }
+
+    def _build_media_attachment(self, msg_type: str, media_meta: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        media_id = media_meta["media_id"]
+        download_url = media_meta["download_url"]
+        aeskey = media_meta["aeskey"]
+        filename = media_meta["filename"]
+        content_type = media_meta["content_type"]
+
+        if not (media_id or download_url):
+            return None
+
+        if msg_type == "image":
+            attachment: Dict[str, Any] = {
+                "provider": "wecom",
+                "kind": "image",
+                "file_name": filename or "image.png",
+                "mime_type": content_type or "image/png",
+            }
+        elif msg_type == "file":
+            attachment = {
+                "provider": "wecom",
+                "kind": "file",
+                "file_name": filename or "file",
+                "mime_type": content_type or self._guess_content_type(filename or "file", "file"),
+            }
+        elif msg_type == "video":
+            attachment = {
+                "provider": "wecom",
+                "kind": "video",
+                "file_name": filename or "video.mp4",
+                "mime_type": content_type or self._guess_content_type(filename or "video.mp4", "file"),
+            }
+        elif msg_type == "voice":
+            attachment = {
+                "provider": "wecom",
+                "kind": "voice",
+                "file_name": filename or "voice.amr",
+                "mime_type": content_type or self._guess_content_type(filename or "voice.amr", "file"),
+            }
+        else:
+            return None
+
+        if media_id:
+            attachment["media_id"] = media_id
+        if download_url:
+            attachment["download_url"] = download_url
+        if aeskey:
+            attachment["aeskey"] = aeskey
+            attachment["decryption_key"] = aeskey
+        return attachment
+
     def _enqueue_message(self, data: Dict[str, Any]) -> None:
         """
         Process incoming aibot_msg_callback and enqueue normalized message.
@@ -566,6 +712,7 @@ class WecomAdapter(IMAdapter):
             # Extract text based on msg_type
             msg_type = str(payload.get("msg_type") or payload.get("msgtype") or "text").strip()
             content = payload.get("content") or {}
+            media_meta = self._collect_media_payload(payload, msg_type, content)
 
             if msg_type == "text":
                 text = str(
@@ -576,11 +723,7 @@ class WecomAdapter(IMAdapter):
             elif msg_type == "image":
                 text = "[image]"
             elif msg_type == "file":
-                filename = ""
-                if isinstance(content, dict):
-                    filename = str(content.get("file_name") or "").strip()
-                if not filename and isinstance(payload.get("file"), dict):
-                    filename = str((payload.get("file") or {}).get("filename") or "").strip()
+                filename = media_meta["filename"]
                 text = f"[file: {filename or 'unknown'}]"
             elif msg_type == "voice":
                 text = str(((payload.get("voice") or {}).get("content") if isinstance(payload.get("voice"), dict) else "") or "").strip() or "[voice]"
@@ -589,13 +732,31 @@ class WecomAdapter(IMAdapter):
             elif msg_type == "mixed":
                 mixed = (payload.get("mixed") or {}).get("msg_item") if isinstance(payload.get("mixed"), dict) else None
                 text_parts: List[str] = []
+                mixed_media_types: List[str] = []
+                mixed_attachments: List[Dict[str, Any]] = []
                 if isinstance(mixed, list):
                     for item in mixed:
-                        if isinstance(item, dict) and str(item.get("msgtype") or "") == "text":
+                        if not isinstance(item, dict):
+                            continue
+                        item_type = str(item.get("msgtype") or "").strip()
+                        if item_type == "text":
                             part = str(((item.get("text") or {}).get("content") if isinstance(item.get("text"), dict) else "") or "").strip()
                             if part:
                                 text_parts.append(part)
-                text = "\n".join(text_parts).strip() or "[mixed]"
+                            continue
+                        media_meta_item = self._collect_media_payload(item, item_type, item.get(item_type) or {})
+                        attachment = self._build_media_attachment(item_type, media_meta_item)
+                        if attachment:
+                            mixed_attachments.append(attachment)
+                            mixed_media_types.append(item_type)
+                if text_parts:
+                    text = "\n".join(text_parts).strip()
+                elif "image" in mixed_media_types:
+                    text = "[image]"
+                elif mixed_media_types:
+                    text = f"[{mixed_media_types[0]}]"
+                else:
+                    text = "[mixed]"
             else:
                 text = f"[{msg_type}]"
 
@@ -619,67 +780,11 @@ class WecomAdapter(IMAdapter):
                 chat_type = raw_chat_type or "unknown"
 
             attachments: List[Dict[str, Any]] = []
-            media_id = ""
-            if isinstance(content, dict):
-                media_id = str(content.get("media_id") or "").strip()
-            if not media_id and msg_type == "image" and isinstance(payload.get("image"), dict):
-                media_id = str((payload.get("image") or {}).get("media_id") or "").strip()
-            if not media_id and msg_type == "file" and isinstance(payload.get("file"), dict):
-                media_id = str((payload.get("file") or {}).get("media_id") or "").strip()
-            if not media_id and msg_type == "video" and isinstance(payload.get("video"), dict):
-                media_id = str((payload.get("video") or {}).get("media_id") or "").strip()
-            if not media_id and msg_type == "voice" and isinstance(payload.get("voice"), dict):
-                media_id = str((payload.get("voice") or {}).get("media_id") or "").strip()
-
-            if media_id:
-                if msg_type == "image":
-                    filename = str(content.get("file_name") or "").strip() if isinstance(content, dict) else ""
-                    attachments.append({
-                        "provider": "wecom",
-                        "kind": "image",
-                        "media_id": media_id,
-                        "file_name": filename or "image.png",
-                        "mime_type": "image/png",
-                    })
-                elif msg_type == "file":
-                    filename = ""
-                    if isinstance(content, dict):
-                        filename = str(content.get("file_name") or "").strip()
-                    if not filename and isinstance(payload.get("file"), dict):
-                        filename = str((payload.get("file") or {}).get("filename") or "").strip()
-                    attachments.append({
-                        "provider": "wecom",
-                        "kind": "file",
-                        "media_id": media_id,
-                        "file_name": filename or "file",
-                        "mime_type": self._guess_content_type(filename or "file", "file"),
-                    })
-                elif msg_type == "video":
-                    filename = ""
-                    if isinstance(content, dict):
-                        filename = str(content.get("file_name") or "").strip()
-                    if not filename and isinstance(payload.get("video"), dict):
-                        filename = str((payload.get("video") or {}).get("file_name") or "").strip()
-                    attachments.append({
-                        "provider": "wecom",
-                        "kind": "video",
-                        "media_id": media_id,
-                        "file_name": filename or "video.mp4",
-                        "mime_type": self._guess_content_type(filename or "video.mp4", "file"),
-                    })
-                elif msg_type == "voice":
-                    filename = ""
-                    if isinstance(content, dict):
-                        filename = str(content.get("file_name") or "").strip()
-                    if not filename and isinstance(payload.get("voice"), dict):
-                        filename = str((payload.get("voice") or {}).get("file_name") or "").strip()
-                    attachments.append({
-                        "provider": "wecom",
-                        "kind": "voice",
-                        "media_id": media_id,
-                        "file_name": filename or "voice.amr",
-                        "mime_type": self._guess_content_type(filename or "voice.amr", "file"),
-                    })
+            attachment = self._build_media_attachment(msg_type, media_meta)
+            if attachment:
+                attachments.append(attachment)
+            if msg_type == "mixed":
+                attachments.extend(mixed_attachments)
 
             # In p2p, always routed; in group, routed if bot is mentioned
             is_at_bot = bool(
@@ -780,9 +885,36 @@ class WecomAdapter(IMAdapter):
         return ok
 
     def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
+        download_url = str(
+            attachment.get("download_url")
+            or attachment.get("url")
+            or ""
+        ).strip()
+        decryption_key = str(
+            attachment.get("decryption_key")
+            or attachment.get("aeskey")
+            or attachment.get("aes_key")
+            or ""
+        ).strip()
+
+        if download_url:
+            req = urllib.request.Request(download_url, method="GET")
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    raw = resp.read()
+            except Exception as e:
+                raise ValueError(f"download failed: {e}") from e
+
+            if decryption_key:
+                try:
+                    return self._decrypt_media_bytes(raw, decryption_key)
+                except Exception as e:
+                    raise ValueError(f"decrypt failed: {e}") from e
+            return raw
+
         media_id = str(attachment.get("media_id") or "").strip()
         if not media_id:
-            raise ValueError("missing wecom attachment media_id")
+            raise ValueError("missing wecom attachment media_id or download_url")
 
         req = urllib.request.Request(
             self._build_media_api_url("/media/get", media_id=media_id),

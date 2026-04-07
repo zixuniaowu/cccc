@@ -58,6 +58,58 @@ def _is_env_var_name(value: str) -> bool:
 _PRESERVED_RECIPIENT_TOKENS = frozenset({"user", "@user", "@all", "@peers", "@foreman"})
 
 
+def _sniff_attachment_content_type(raw: bytes) -> Tuple[str, str]:
+    head = raw[:64]
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ("image/png", ".png")
+    if head.startswith(b"\xff\xd8\xff"):
+        return ("image/jpeg", ".jpg")
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return ("image/gif", ".gif")
+    if head.startswith(b"BM"):
+        return ("image/bmp", ".bmp")
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ("image/webp", ".webp")
+
+    try:
+        text_head = raw[:512].decode("utf-8", errors="ignore").lstrip().lower()
+    except Exception:
+        text_head = ""
+    if text_head.startswith("<svg") or text_head.startswith("<?xml") and "<svg" in text_head:
+        return ("image/svg+xml", ".svg")
+    return ("", "")
+
+
+def _normalize_inbound_attachment_metadata(
+    *,
+    raw: bytes,
+    filename: str,
+    mime_type: str,
+    kind: str,
+) -> Tuple[str, str, str]:
+    normalized_filename = str(filename or "").strip() or "file"
+    normalized_mime_type = str(mime_type or "").strip().lower()
+    normalized_kind = str(kind or "").strip().lower() or "file"
+
+    sniffed_mime_type = ""
+    sniffed_ext = ""
+    if not normalized_mime_type or normalized_kind != "image":
+        sniffed_mime_type, sniffed_ext = _sniff_attachment_content_type(raw)
+
+    effective_mime_type = normalized_mime_type or sniffed_mime_type
+    effective_kind = normalized_kind
+    if effective_mime_type.startswith("image/"):
+        effective_kind = "image"
+    elif sniffed_mime_type.startswith("image/"):
+        effective_kind = "image"
+
+    has_suffix = bool(Path(normalized_filename).suffix)
+    if effective_kind == "image" and not has_suffix and sniffed_ext:
+        normalized_filename = f"{normalized_filename}{sniffed_ext}"
+
+    return (normalized_filename, effective_mime_type, effective_kind)
+
+
 def _acquire_singleton_lock(lock_path: Path) -> Optional[Any]:
     """
     Acquire singleton lock to prevent multiple bridge instances.
@@ -1272,13 +1324,19 @@ class IMBridge:
                 if max_bytes and len(raw) > max_bytes:
                     self.adapter.send_message(chat_id, f"⚠️ Ignored: file too large (> {max_mb}MB).", thread_id=thread_id)
                     continue
+                normalized_filename, normalized_mime_type, normalized_kind = _normalize_inbound_attachment_metadata(
+                    raw=raw,
+                    filename=str(a.get("file_name") or a.get("filename") or "file"),
+                    mime_type=str(a.get("mime_type") or a.get("content_type") or ""),
+                    kind=str(a.get("kind") or "file"),
+                )
                 stored_attachments.append(
                     store_blob_bytes(
                         group,
                         data=raw,
-                        filename=str(a.get("file_name") or a.get("filename") or "file"),
-                        mime_type=str(a.get("mime_type") or a.get("content_type") or ""),
-                        kind=str(a.get("kind") or "file"),
+                        filename=normalized_filename,
+                        mime_type=normalized_mime_type,
+                        kind=normalized_kind,
                     )
                 )
 

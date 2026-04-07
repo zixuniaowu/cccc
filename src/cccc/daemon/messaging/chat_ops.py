@@ -489,6 +489,7 @@ def handle_send(
                 actor_id=actor_id,
                 text=delivery_text,
                 event_id=event_id,
+                attachments=attachments,
             )
         elif (
             runtime == "claude"
@@ -500,6 +501,7 @@ def handle_send(
                 actor_id=actor_id,
                 text=delivery_text,
                 event_id=event_id,
+                attachments=attachments,
             )
         elif effective_runner_kind(runner_kind) == "pty":
             queue_chat_message(
@@ -733,6 +735,7 @@ def handle_reply(
                 text=delivery_text,
                 event_id=event_id,
                 reply_to=target_event_id or reply_to,
+                attachments=attachments,
             )
         elif (
             runtime == "claude"
@@ -745,6 +748,7 @@ def handle_reply(
                 text=delivery_text,
                 event_id=event_id,
                 reply_to=target_event_id or reply_to,
+                attachments=attachments,
             )
         elif effective_runner_kind(runner_kind) == "pty":
             queue_chat_message(

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..contracts.v1.message import ChatMessageData
+from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.headless_events import append_headless_event
 from ..kernel.group import load_group
 from ..kernel.ledger import append_event
@@ -52,6 +53,7 @@ class _PendingTurn:
     text: str
     event_id: str
     reply_to: Optional[str] = None
+    attachments: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -410,10 +412,22 @@ class CodexAppSession:
         with self._lock:
             return str(self._session_state.thread_id or "").strip()
 
-    def submit_user_message(self, *, text: str, event_id: str, reply_to: Optional[str] = None) -> bool:
+    def submit_user_message(
+        self,
+        *,
+        text: str,
+        event_id: str,
+        reply_to: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
+    ) -> bool:
         if not self.is_running():
             return False
-        payload = _PendingTurn(text=str(text or ""), event_id=str(event_id or "").strip(), reply_to=reply_to)
+        payload = _PendingTurn(
+            text=str(text or ""),
+            event_id=str(event_id or "").strip(),
+            reply_to=reply_to,
+            attachments=[item for item in (attachments or []) if isinstance(item, dict)],
+        )
         try:
             self._turn_queue.put_nowait(payload)
             self._emit(
@@ -493,6 +507,32 @@ class CodexAppSession:
                 return
             _safe_logger_call("exception", "codex stderr loop failed: %s/%s", self.group_id, self.actor_id)
 
+    def _build_turn_input_items(self, payload: _PendingTurn) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        text = str(payload.text or "")
+        if text.strip():
+            items.append({"type": "text", "text": text})
+
+        group = load_group(self.group_id)
+        if group is not None:
+            for attachment in payload.attachments:
+                if str(attachment.get("kind") or "").strip().lower() != "image":
+                    continue
+                rel_path = str(attachment.get("path") or "").strip()
+                if not rel_path:
+                    continue
+                try:
+                    abs_path = resolve_blob_attachment_path(group, rel_path=rel_path)
+                except Exception:
+                    continue
+                if not abs_path.exists() or not abs_path.is_file():
+                    continue
+                items.append({"type": "local_image", "path": str(abs_path)})
+
+        if not items:
+            items.append({"type": "text", "text": text})
+        return items
+
     def _turn_loop(self) -> None:
         while self.is_running():
             try:
@@ -507,14 +547,62 @@ class CodexAppSession:
             self._turn_done.clear()
             turn_id = ""
             try:
+                input_items = self._build_turn_input_items(payload)
                 response = self._request(
                     "turn/start",
                     {
                         "threadId": thread_id,
-                        "input": [{"type": "text", "text": payload.text}],
+                        "input": input_items,
                     },
                     timeout=30.0,
                 )
+            except Exception as exc:
+                has_local_image = any(str(item.get("type") or "").strip() == "local_image" for item in locals().get("input_items", []))
+                if has_local_image:
+                    try:
+                        response = self._request(
+                            "turn/start",
+                            {
+                                "threadId": thread_id,
+                                "input": [{"type": "text", "text": payload.text}],
+                            },
+                            timeout=30.0,
+                        )
+                    except Exception as retry_exc:
+                        logger.warning("codex turn start failed: group=%s actor=%s err=%s", self.group_id, self.actor_id, retry_exc)
+                        with self._lock:
+                            self._session_state.status = "idle"
+                            self._active_event_id = ""
+                            self._session_state.current_task_id = None
+                            self._session_state.updated_at = utc_now_iso()
+                        self._persist_state()
+                        self._emit(
+                            "headless.turn.failed",
+                            {
+                                "turn_id": turn_id,
+                                "event_id": payload.event_id,
+                                "error": str(retry_exc),
+                            },
+                        )
+                        continue
+                else:
+                    logger.warning("codex turn start failed: group=%s actor=%s err=%s", self.group_id, self.actor_id, exc)
+                    with self._lock:
+                        self._session_state.status = "idle"
+                        self._active_event_id = ""
+                        self._session_state.current_task_id = None
+                        self._session_state.updated_at = utc_now_iso()
+                    self._persist_state()
+                    self._emit(
+                        "headless.turn.failed",
+                        {
+                            "turn_id": turn_id,
+                            "event_id": payload.event_id,
+                            "error": str(exc),
+                        },
+                    )
+                    continue
+            try:
                 turn = response.get("turn") if isinstance(response, dict) else {}
                 turn_id = str((turn or {}).get("id") or "").strip()
                 with self._lock:
@@ -875,13 +963,22 @@ class CodexAppSessionManager:
             session = self._sessions.get(key)
         return session.state() if session is not None and session.is_running() else None
 
-    def submit_user_message(self, *, group_id: str, actor_id: str, text: str, event_id: str, reply_to: Optional[str] = None) -> bool:
+    def submit_user_message(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        text: str,
+        event_id: str,
+        reply_to: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
+    ) -> bool:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             session = self._sessions.get(key)
         if session is None:
             return False
-        return session.submit_user_message(text=text, event_id=event_id, reply_to=reply_to)
+        return session.submit_user_message(text=text, event_id=event_id, reply_to=reply_to, attachments=attachments)
 
 
 SUPERVISOR = CodexAppSessionManager()

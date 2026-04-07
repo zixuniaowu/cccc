@@ -231,6 +231,96 @@ class TestWecomEnqueueMessage(unittest.TestCase):
         self.assertEqual(msgs[0]["attachments"][0]["media_id"], "media_voice")
         self.assertEqual(msgs[0]["attachments"][0]["file_name"], "voice.amr")
 
+    def test_mixed_text_and_image_preserves_image_attachment(self):
+        adapter = self._make_adapter()
+        data = {
+            "action": "aibot_msg_callback",
+            "data": {
+                "conversation_id": "conv_mixed",
+                "msg_id": "msg_mixed_img",
+                "chat_type": "single",
+                "msg_type": "mixed",
+                "mixed": {
+                    "msg_item": [
+                        {"msgtype": "text", "text": {"content": "看下这张图"}},
+                        {"msgtype": "image", "image": {"media_id": "media_mix_img", "filename": "demo.png"}},
+                    ]
+                },
+                "sender": {"user_id": "u1"},
+            },
+        }
+        adapter._enqueue_message(data)
+        msgs = adapter.poll()
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0]["text"], "看下这张图")
+        self.assertEqual(len(msgs[0]["attachments"]), 1)
+        self.assertEqual(msgs[0]["attachments"][0]["kind"], "image")
+        self.assertEqual(msgs[0]["attachments"][0]["media_id"], "media_mix_img")
+        self.assertEqual(msgs[0]["attachments"][0]["file_name"], "demo.png")
+
+    def test_mixed_image_only_uses_image_placeholder(self):
+        adapter = self._make_adapter()
+        data = {
+            "action": "aibot_msg_callback",
+            "data": {
+                "conversation_id": "conv_mixed",
+                "msg_id": "msg_mixed_only_img",
+                "chat_type": "single",
+                "msg_type": "mixed",
+                "mixed": {
+                    "msg_item": [
+                        {
+                            "msgtype": "image",
+                            "image": {
+                                "media_id": "media_only_img",
+                                "url": "https://example.test/media.png",
+                                "aeskey": "12345678901234567890123456789012",
+                            },
+                        }
+                    ]
+                },
+                "sender": {"user_id": "u1"},
+            },
+        }
+        adapter._enqueue_message(data)
+        msgs = adapter.poll()
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0]["text"], "[image]")
+        self.assertEqual(len(msgs[0]["attachments"]), 1)
+        att = msgs[0]["attachments"][0]
+        self.assertEqual(att["kind"], "image")
+        self.assertEqual(att["media_id"], "media_only_img")
+        self.assertEqual(att["download_url"], "https://example.test/media.png")
+        self.assertEqual(att["decryption_key"], "12345678901234567890123456789012")
+
+    def test_ws_file_message_preserves_download_url_and_aeskey(self):
+        adapter = self._make_adapter()
+        data = {
+            "cmd": "aibot_msg_callback",
+            "headers": {"req_id": "req_media"},
+            "body": {
+                "chatid": "conv_1",
+                "msgid": "msg_file_ws",
+                "chattype": "single",
+                "msgtype": "file",
+                "file": {
+                    "url": "https://example.test/file.bin",
+                    "filename": "report.pdf",
+                    "aeskey": "12345678901234567890123456789012",
+                },
+                "from": {"userid": "u1"},
+            },
+        }
+        adapter._enqueue_message(data)
+        msgs = adapter.poll()
+        self.assertEqual(len(msgs), 1)
+        att = msgs[0]["attachments"][0]
+        self.assertEqual(msgs[0]["text"], "[file: report.pdf]")
+        self.assertEqual(att["download_url"], "https://example.test/file.bin")
+        self.assertEqual(att["aeskey"], "12345678901234567890123456789012")
+        self.assertEqual(att["decryption_key"], "12345678901234567890123456789012")
+        self.assertEqual(att["file_name"], "report.pdf")
+
     def test_empty_data_ignored(self):
         adapter = self._make_adapter()
         adapter._enqueue_message({"action": "aibot_msg_callback"})
@@ -627,6 +717,41 @@ class TestWecomAttachments(unittest.TestCase):
             raw = adapter.download_attachment({"media_id": "media_abc"})
 
         self.assertEqual(raw, b"image-bytes")
+
+    def test_download_attachment_uses_direct_url_and_decrypts_when_aeskey_present(self):
+        adapter = self._make_adapter()
+
+        def fake_urlopen(req, timeout=0):
+            self.assertEqual(req.full_url, "https://example.test/media.enc")
+            self.assertEqual(timeout, 60)
+            return _FakeHttpResponse(b"encrypted-bytes")
+
+        with patch("cccc.ports.im.adapters.wecom.urllib.request.urlopen", side_effect=fake_urlopen):
+            with patch.object(adapter, "_decrypt_media_bytes", return_value=b"plain-bytes") as mock_decrypt:
+                raw = adapter.download_attachment({
+                    "download_url": "https://example.test/media.enc",
+                    "aeskey": "12345678901234567890123456789012",
+                })
+
+        self.assertEqual(raw, b"plain-bytes")
+        mock_decrypt.assert_called_once_with(b"encrypted-bytes", "12345678901234567890123456789012")
+
+    def test_download_attachment_uses_direct_url_without_decrypt_when_no_aeskey(self):
+        adapter = self._make_adapter()
+
+        def fake_urlopen(req, timeout=0):
+            self.assertEqual(req.full_url, "https://example.test/media.bin")
+            self.assertEqual(timeout, 60)
+            return _FakeHttpResponse(b"raw-bytes")
+
+        with patch("cccc.ports.im.adapters.wecom.urllib.request.urlopen", side_effect=fake_urlopen):
+            with patch.object(adapter, "_decrypt_media_bytes") as mock_decrypt:
+                raw = adapter.download_attachment({
+                    "download_url": "https://example.test/media.bin",
+                })
+
+        self.assertEqual(raw, b"raw-bytes")
+        mock_decrypt.assert_not_called()
 
     def test_send_file_uploads_image_and_sends_caption(self):
         adapter = self._make_adapter()

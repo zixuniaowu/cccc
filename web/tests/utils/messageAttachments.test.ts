@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isImageAttachment, isSvgAttachment } from "../../src/utils/messageAttachments";
+import {
+  isImageAttachment,
+  isRedundantWecomImagePlaceholder,
+  isSvgAttachment,
+} from "../../src/utils/messageAttachments";
 
 describe("messageAttachments", () => {
   it("recognizes SVG attachments from mime type", () => {
@@ -33,5 +37,34 @@ describe("messageAttachments", () => {
     };
     expect(isImageAttachment(attachment)).toBe(false);
     expect(isSvgAttachment(attachment)).toBe(false);
+  });
+
+  it("hides redundant wecom image placeholders when image attachments exist", () => {
+    const attachment = {
+      kind: "image",
+      path: "state/blobs/sha_demo.png",
+      title: "demo.png",
+      mime_type: "image/png",
+    };
+    expect(isRedundantWecomImagePlaceholder("[image]", [attachment], "wecom")).toBe(true);
+    expect(isRedundantWecomImagePlaceholder("[file: unknown]", [attachment], "wecom")).toBe(true);
+  });
+
+  it("keeps non-wecom or non-image placeholder text visible", () => {
+    const imageAttachment = {
+      kind: "image",
+      path: "state/blobs/sha_demo.png",
+      title: "demo.png",
+      mime_type: "image/png",
+    };
+    const fileAttachment = {
+      kind: "file",
+      path: "state/blobs/sha_demo.txt",
+      title: "demo.txt",
+      mime_type: "text/plain",
+    };
+    expect(isRedundantWecomImagePlaceholder("[image]", [imageAttachment], "telegram")).toBe(false);
+    expect(isRedundantWecomImagePlaceholder("需要人工确认", [imageAttachment], "wecom")).toBe(false);
+    expect(isRedundantWecomImagePlaceholder("[image]", [fileAttachment], "wecom")).toBe(false);
   });
 });

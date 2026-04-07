@@ -113,6 +113,7 @@ export type ChatMessageData = {
   sender_title?: string;
   sender_runtime?: string;
   sender_avatar_path?: string;
+  source_platform?: string;
   reply_to?: string;
   stream_id?: string;
   stream_phase?: string;
