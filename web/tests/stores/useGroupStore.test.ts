@@ -34,6 +34,7 @@ vi.stubGlobal("window", { setTimeout, clearTimeout });
 
 let useGroupStore: typeof import("../../src/stores/useGroupStore").useGroupStore;
 let api: typeof import("../../src/services/api");
+let groupStoreCore: typeof import("../../src/stores/groupStoreCore");
 const SELECTED_GROUP_ID_KEY = "cccc-selected-group-id";
 const ARCHIVED_GROUP_IDS_KEY = "cccc-archived-group-ids";
 
@@ -46,6 +47,7 @@ async function flushDeferredUnreadRefresh() {
 async function importFreshStore() {
   vi.resetModules();
   api = await import("../../src/services/api");
+  groupStoreCore = await import("../../src/stores/groupStoreCore");
   const mod = await import("../../src/stores/useGroupStore");
   useGroupStore = mod.useGroupStore;
   return mod;
@@ -53,6 +55,7 @@ async function importFreshStore() {
 
 beforeAll(async () => {
   api = await import("../../src/services/api");
+  groupStoreCore = await import("../../src/stores/groupStoreCore");
   ({ useGroupStore } = await import("../../src/stores/useGroupStore"));
 });
 
@@ -60,6 +63,7 @@ describe("useGroupStore selection and archive persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorageMock.clear();
+    groupStoreCore.groupViewCache.clear();
   });
 
   it("initializes selectedGroupId from localStorage", async () => {
@@ -185,6 +189,44 @@ describe("useGroupStore selection and archive persistence", () => {
 
     mod.useGroupStore.getState().reorderGroupsInSection("archived", 1, 0);
     expect(mod.useGroupStore.getState().groupOrder).toEqual(["g-3", "g-4", "g-1", "g-2"]);
+  });
+
+  it("projects cached runtime state for non-selected groups in ordered results", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.setState({
+      groups: [
+        { group_id: "g-1", title: "One", state: "active", running: false, topic: "" },
+        { group_id: "g-2", title: "Two", state: "active", running: false, topic: "" },
+      ],
+      groupOrder: ["g-1", "g-2"],
+      selectedGroupId: "g-1",
+      groupDoc: { group_id: "g-1", state: "active", running: false },
+      actors: [],
+    });
+    groupStoreCore.saveGroupView("g-2", {
+      groupDoc: {
+        group_id: "g-2",
+        state: "active",
+        runtime_status: {
+          lifecycle_state: "active",
+          runtime_running: false,
+          running_actor_count: 0,
+          has_running_foreman: false,
+        },
+      },
+      actors: [{ id: "a-2", running: true }],
+    });
+
+    const ordered = mod.useGroupStore.getState().getOrderedGroups();
+    expect(ordered[1]).toMatchObject({
+      group_id: "g-2",
+      running: true,
+      state: "active",
+      runtime_status: {
+        lifecycle_state: "active",
+        runtime_running: true,
+      },
+    });
   });
 });
 

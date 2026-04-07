@@ -5,7 +5,7 @@ import { AppHeader } from "../layout/AppHeader";
 import { GroupSidebar } from "../layout/GroupSidebar";
 import { ActorTab } from "../../pages/ActorTab";
 import { ChatTab } from "../../pages/chat";
-import type { Actor, GroupContext, GroupDoc, GroupMeta, TextScale } from "../../types";
+import type { Actor, GroupContext, GroupDoc, GroupMeta, GroupRuntimeStatus, TextScale } from "../../types";
 import { SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
 
 type AppShellProps = {
@@ -31,6 +31,7 @@ type AppShellProps = {
   isSmallScreen: boolean;
   webReadOnly: boolean;
   selectedGroupRunning: boolean;
+  selectedGroupRuntimeStatus: GroupRuntimeStatus | null;
   selectedGroupActorsHydrating: boolean;
   theme: "light" | "dark" | "system";
   textScale: TextScale;
@@ -104,6 +105,7 @@ export function AppShell({
   isSmallScreen,
   webReadOnly,
   selectedGroupRunning,
+  selectedGroupRuntimeStatus,
   selectedGroupActorsHydrating,
   theme,
   textScale,
@@ -237,6 +239,7 @@ export function AppShell({
           selectedGroupId={selectedGroupId}
           groupDoc={groupDoc}
           selectedGroupRunning={selectedGroupRunning}
+          selectedGroupRuntimeStatus={selectedGroupRuntimeStatus}
           actors={actors}
           sseStatus={sseStatus}
           busy={busy}

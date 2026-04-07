@@ -43,6 +43,7 @@ from .commands import (
 from .config_schema import canonicalize_im_config
 from .auth import KeyManager
 from .subscribers import SubscriberManager
+from .weixin_sidecar import resolve_weixin_sidecar_script_path
 from ...util.file_lock import LockUnavailableError, acquire_lockfile
 
 
@@ -1512,8 +1513,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         if raw_weixin_command:
             weixin_command = [part for part in shlex.split(raw_weixin_command) if part]
         else:
-            repo_root = Path(__file__).resolve().parents[4]
-            default_script = repo_root / "scripts" / "im" / "weixin_sidecar.mjs"
+            default_script = resolve_weixin_sidecar_script_path()
             if not default_script.exists():
                 print(
                     "[error] Default weixin sidecar script not found. "

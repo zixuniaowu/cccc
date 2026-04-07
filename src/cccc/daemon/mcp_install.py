@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -147,7 +148,14 @@ def build_mcp_remove_command(runtime: str) -> list[str] | None:
     return None
 
 
-def _run_cli(argv: list[str], *, cwd: Path | None = None, timeout: int, text: bool = True) -> subprocess.CompletedProcess[Any]:
+def _run_cli(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: int,
+    text: bool = True,
+    env: Dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[Any]:
     kwargs: dict[str, object] = {
         "capture_output": True,
         "timeout": timeout,
@@ -155,6 +163,10 @@ def _run_cli(argv: list[str], *, cwd: Path | None = None, timeout: int, text: bo
     }
     if cwd is not None:
         kwargs["cwd"] = str(cwd)
+    if env is not None:
+        merged_env = dict(os.environ)
+        merged_env.update({str(k): str(v) for k, v in env.items() if isinstance(k, str)})
+        kwargs["env"] = merged_env
     return subprocess.run(resolve_subprocess_argv(argv), **kwargs)
 
 
@@ -174,18 +186,18 @@ def _json_mcp_state(paths: tuple[Path, ...], expected_cmd: list[str]) -> str:
     return state
 
 
-def _runtime_mcp_state(runtime: str) -> str:
+def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> str:
     expected_cmd = _runtime_expected_cccc_command(runtime)
 
     if runtime == "claude":
-        result = _run_cli(["claude", "mcp", "get", "cccc"], timeout=10, text=False)
+        result = _run_cli(["claude", "mcp", "get", "cccc"], timeout=10, text=False, env=env)
         if result.returncode != 0:
             return "missing"
         output = _coerce_output_text(result.stdout)
         return "ready" if _claude_mcp_entry_matches_expected(output, expected_cmd) else "stale"
 
     if runtime == "codex":
-        result = _run_cli(["codex", "mcp", "get", "cccc"], timeout=10)
+        result = _run_cli(["codex", "mcp", "get", "cccc"], timeout=10, env=env)
         if result.returncode != 0:
             return "missing"
         return "ready" if _codex_mcp_entry_matches_expected(result.stdout, expected_cmd) else "stale"
@@ -254,9 +266,9 @@ def _runtime_mcp_state(runtime: str) -> str:
     return "missing"
 
 
-def is_mcp_installed(runtime: str) -> bool:
+def is_mcp_installed(runtime: str, *, env: Dict[str, str] | None = None) -> bool:
     try:
-        return _runtime_mcp_state(runtime) == "ready"
+        return _runtime_mcp_state(runtime, env=env) == "ready"
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     except Exception:
@@ -264,11 +276,17 @@ def is_mcp_installed(runtime: str) -> bool:
     return False
 
 
-def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[str, ...]) -> bool:
+def ensure_mcp_installed(
+    runtime: str,
+    cwd: Path,
+    *,
+    auto_mcp_runtimes: tuple[str, ...],
+    env: Dict[str, str] | None = None,
+) -> bool:
     if runtime not in auto_mcp_runtimes:
         return True
     try:
-        state = _runtime_mcp_state(runtime)
+        state = _runtime_mcp_state(runtime, env=env)
         if state == "ready":
             return True
         add_cmd = build_mcp_add_command(runtime)
@@ -278,12 +296,12 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
         if state == "stale":
             remove_cmd = build_mcp_remove_command(runtime)
             if remove_cmd:
-                remove_result = _run_cli(remove_cmd, cwd=cwd, timeout=30)
+                remove_result = _run_cli(remove_cmd, cwd=cwd, timeout=30, env=env)
                 if remove_result.returncode != 0:
                     return False
 
-        result = _run_cli(add_cmd, cwd=cwd, timeout=30)
-        return result.returncode == 0 and is_mcp_installed(runtime)
+        result = _run_cli(add_cmd, cwd=cwd, timeout=30, env=env)
+        return result.returncode == 0 and is_mcp_installed(runtime, env=env)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     return False

@@ -16,6 +16,7 @@ export const getMessageBubbleMotionClass = _getMessageBubbleMotionClass;
 export const isQueuedOnlyStreamingPlaceholder = _isQueuedOnlyStreamingPlaceholder;
 
 const STREAMING_STATUS_EXIT_MS = 140;
+const STREAMING_ACTIVITY_DISPLAY_LIMIT = 5;
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_STREAMING_EVENTS: LedgerEvent[] = [];
 
@@ -126,11 +127,12 @@ const StreamingActivityList = memo(function StreamingActivityList({
 }: {
   activities: StreamingActivity[];
 }) {
-  if (activities.length <= 0) return null;
+  const displayActivities = activities.slice(-STREAMING_ACTIVITY_DISPLAY_LIMIT);
+  if (displayActivities.length <= 0) return null;
 
   return (
     <div className="flex flex-col gap-1 rounded-xl border border-[var(--glass-border-subtle)]/80 bg-[var(--glass-tab-bg)]/70 px-2.5 py-2 cccc-streaming-status-panel">
-      {activities.map((activity, index) => (
+      {displayActivities.map((activity, index) => (
         <div key={activity.id} className="relative min-w-0 pl-4 text-[11px] leading-4 text-[var(--color-text-secondary)]">
           <div className="flex min-w-0 items-baseline gap-2">
             <span
@@ -139,7 +141,7 @@ const StreamingActivityList = memo(function StreamingActivityList({
                 activity.status === "completed" ? "opacity-70" : "opacity-100",
               )}
             />
-            {index < activities.length - 1 ? (
+            {index < displayActivities.length - 1 ? (
               <span className="absolute left-[3px] top-[0.85rem] bottom-[-10px] w-px bg-[var(--glass-border-subtle)]/90" />
             ) : null}
             <span className="min-w-[2.75rem] font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">

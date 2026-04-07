@@ -77,6 +77,11 @@ export function SortableGroupItem({
   const { getReferenceProps, getFloatingProps } = useInteractions([click, dismiss, role]);
   const setReference = useCallback((node: HTMLElement | null) => refs.setReference(node), [refs]);
   const setFloating = useCallback((node: HTMLElement | null) => refs.setFloating(node), [refs]);
+  const dragListeners = listeners ?? {};
+  const handleDragHandlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    dragListeners.onPointerDown?.(event);
+    event.stopPropagation();
+  }, [dragListeners]);
 
   if (isCollapsed) {
     const initial = (group.title || gid).charAt(0).toUpperCase();
@@ -146,14 +151,14 @@ export function SortableGroupItem({
         {/* Drag handle */}
         {!dragDisabled && (
           <div
-            {...listeners}
+            {...dragListeners}
             className={classNames(
               "flex-shrink-0 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded transition-opacity touch-none",
               "hidden md:block md:opacity-0 md:group-hover/item:opacity-100",
               isDragging && "!block !opacity-100",
               "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
             )}
-            onPointerDown={(event) => event.stopPropagation()}
+            onPointerDown={handleDragHandlePointerDown}
             onClick={(event) => event.stopPropagation()}
           >
             <GripIcon size={14} />

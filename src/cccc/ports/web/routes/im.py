@@ -15,6 +15,7 @@ from ....daemon.im.im_bridge_ops import stop_im_bridges_for_group
 from ....kernel.group import load_group
 from ....paths import ensure_home
 from ....ports.im.config_schema import canonicalize_im_config
+from ....ports.im.weixin_sidecar import resolve_weixin_sidecar_script_path
 from ....util.conv import coerce_bool
 from ....util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive, resolve_background_python_argv, supervised_process_popen_kwargs
 from ..schemas import (
@@ -50,8 +51,7 @@ def _resolve_weixin_command(im_cfg: Dict[str, Any]) -> list[str]:
     if raw:
         return [part for part in shlex.split(raw) if part]
 
-    repo_root = Path(__file__).resolve().parents[5]
-    script_path = repo_root / "scripts" / "im" / "weixin_sidecar.mjs"
+    script_path = resolve_weixin_sidecar_script_path()
     return ["node", str(script_path)]
 
 

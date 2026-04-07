@@ -553,6 +553,67 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_activity_thread_does_not_clear_persisted_group_running_intent(self) -> None:
+        from cccc.daemon.serve_ops import start_actor_activity_thread
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            created = create_group(reg, title="codex-running-intent", topic="")
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="headless")  # type: ignore[arg-type]
+            group.doc["running"] = True
+            group.save()
+
+            class _Broadcaster:
+                def publish(self, event: dict) -> None:
+                    return None
+
+            stop_event = threading.Event()
+            thread = start_actor_activity_thread(
+                stop_event=stop_event,
+                home=Path(home),
+                pty_supervisor=type(
+                    "_PTYSupervisor",
+                    (),
+                    {"actor_running": staticmethod(lambda _group_id, _actor_id: False)},
+                )(),
+                headless_supervisor=type(
+                    "_HeadlessSupervisor",
+                    (),
+                    {
+                        "get_state": staticmethod(lambda group_id, actor_id: None),
+                        "actor_running": staticmethod(lambda _group_id, _actor_id: False),
+                    },
+                )(),
+                codex_supervisor=type(
+                    "_CodexSupervisor",
+                    (),
+                    {
+                        "get_state": staticmethod(lambda group_id, actor_id: None),
+                        "actor_running": staticmethod(lambda _group_id, _actor_id: False),
+                    },
+                )(),
+                event_broadcaster=_Broadcaster(),
+                load_group=load_group,
+                interval_seconds=1.0,
+            )
+            time.sleep(0.15)
+            stop_event.set()
+            thread.join(timeout=1.0)
+
+            reloaded = load_group(created.group_id)
+            self.assertIsNotNone(reloaded)
+            assert reloaded is not None
+            self.assertTrue(bool(reloaded.doc.get("running")))
+        finally:
+            cleanup()
+
     def test_codex_session_persists_headless_state_file(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
         from cccc.daemon.runner_state_ops import headless_state_path

@@ -5,6 +5,45 @@ from unittest.mock import patch
 
 
 class TestMcpToolBoolCoercion(unittest.TestCase):
+    def test_headless_codex_message_send_is_blocked(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import cccc_messaging
+
+        class _FakeGroup:
+            pass
+
+        with patch.object(cccc_messaging, "load_group", return_value=_FakeGroup()), patch.object(
+            cccc_messaging, "find_actor", return_value={"id": "peer1", "runtime": "codex", "runner": "headless"}
+        ):
+            with self.assertRaises(mcp_server.MCPError) as cm:
+                mcp_server.message_send(
+                    group_id="g_test",
+                    actor_id="peer1",
+                    text="hello",
+                    to=["user"],
+                )
+        self.assertEqual(cm.exception.code, "tool_disabled_for_runtime")
+
+    def test_headless_codex_message_reply_is_blocked(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp.handlers import cccc_messaging
+
+        class _FakeGroup:
+            pass
+
+        with patch.object(cccc_messaging, "load_group", return_value=_FakeGroup()), patch.object(
+            cccc_messaging, "find_actor", return_value={"id": "peer1", "runtime": "codex", "runner": "headless"}
+        ):
+            with self.assertRaises(mcp_server.MCPError) as cm:
+                mcp_server.message_reply(
+                    group_id="g_test",
+                    actor_id="peer1",
+                    reply_to="ev_1",
+                    text="hello",
+                    to=["user"],
+                )
+        self.assertEqual(cm.exception.code, "tool_disabled_for_runtime")
+
     def test_group_info_running_string_false(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp.handlers import cccc_group_actor

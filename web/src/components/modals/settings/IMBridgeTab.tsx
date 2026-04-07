@@ -162,6 +162,7 @@ export function IMBridgeTab({
   const { t } = useTranslation("settings");
   const [weixinQrCopyState, setWeixinQrCopyState] = useState<"idle" | "done" | "failed">("idle");
   const weixinStatus = String(weixinLoginStatus?.status || "").trim().toLowerCase();
+  const weixinErrorText = String(weixinLoginStatus?.error || "").trim();
   const weixinLoggedIn = !!weixinLoginStatus?.logged_in;
   const weixinHasQr = !!String(weixinLoginStatus?.qrcode_url || "").trim();
   const weixinHasCustomAdvanced = !!String(imWeixinAccountId || "").trim() || !!String(imWeixinCommand || "").trim();
@@ -639,9 +640,6 @@ export function IMBridgeTab({
                       {t("imBridge.weixinCurrentAccount")}: {weixinLoginStatus.account_id}
                     </div>
                   )}
-                  {weixinLoginStatus?.error && (
-                    <div className="text-xs mt-2 text-red-500">{weixinLoginStatus.error}</div>
-                  )}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -660,6 +658,17 @@ export function IMBridgeTab({
                   </button>
                 </div>
               </div>
+              {weixinErrorText && (
+                <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-600 dark:text-red-400">
+                  <div className="font-medium">{t("imBridge.weixinErrorDetails")}</div>
+                  <div className="mt-1 break-words">{weixinErrorText}</div>
+                  {weixinLoginStatus?.updated_at && (
+                    <div className="mt-2 text-[11px] text-red-500/80 dark:text-red-300/80">
+                      {t("imBridge.weixinLastUpdated")}: {weixinLoginStatus.updated_at}
+                    </div>
+                  )}
+                </div>
+              )}
               {weixinLoginStatus?.qrcode_url && (
                 <div className="mt-3 flex flex-col items-start gap-2">
                   <WeixinQrCode
@@ -731,6 +740,11 @@ export function IMBridgeTab({
                   <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                     {t("imBridge.weixinCommandHint")}
                   </p>
+                  {imWeixinCommand.trim() && (
+                    <p className="text-xs mt-1 text-amber-600 dark:text-amber-400">
+                      {t("imBridge.weixinCustomCommandWarning")}
+                    </p>
+                  )}
                   <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                     {t("imBridge.weixinPackageHint")}
                   </p>

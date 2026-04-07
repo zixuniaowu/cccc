@@ -190,7 +190,7 @@ def handle_actor_restart(
     normalize_runtime_command: Callable[[str, list[str]], list[str]],
     prepare_pty_env: Callable[[Dict[str, Any]], Dict[str, Any]],
     pty_backlog_bytes: Callable[[], int],
-    ensure_mcp_installed: Callable[[str, Path], bool],
+    ensure_mcp_installed: Callable[..., bool],
     write_headless_state: Callable[[str, str], None],
     write_pty_state: Callable[..., None],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
@@ -336,7 +336,13 @@ def handle_actor_restart(
         )
         if runner_effective != "headless":
             try:
-                mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
+                mcp_ready = bool(
+                    ensure_mcp_installed(
+                        runtime,
+                        cwd,
+                        env={str(k): str(v) for k, v in effective_env.items() if isinstance(k, str)},
+                    )
+                )
             except Exception as e:
                 return _error("actor_restart_failed", f"failed to install MCP: {e}")
             if not mcp_ready:
@@ -440,7 +446,7 @@ def try_handle_actor_lifecycle_op(
     normalize_runtime_command: Callable[[str, list[str]], list[str]],
     prepare_pty_env: Callable[[Dict[str, Any]], Dict[str, Any]],
     pty_backlog_bytes: Callable[[], int],
-    ensure_mcp_installed: Callable[[str, Path], bool],
+    ensure_mcp_installed: Callable[..., bool],
     write_headless_state: Callable[[str, str], None],
     write_pty_state: Callable[..., None],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],

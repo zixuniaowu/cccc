@@ -110,6 +110,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const updateActorActivity = useGroupStore((s) => s.updateActorActivity);
   const upsertStreamingActivity = useGroupStore((s) => s.upsertStreamingActivity);
   const promoteStreamingEventToStream = useGroupStore((s) => s.promoteStreamingEventToStream);
+  const promoteStreamingEventsByPrefix = useGroupStore((s) => s.promoteStreamingEventsByPrefix);
   const reconcileStreamingMessage = useGroupStore((s) => s.reconcileStreamingMessage);
   const completeStreamingEventsForActor = useGroupStore((s) => s.completeStreamingEventsForActor);
   const removeStreamingEvent = useGroupStore((s) => s.removeStreamingEvent);
@@ -393,6 +394,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       if (!actorId || !eventType) return;
 
       if (eventType === "headless.turn.started" || eventType === "headless.turn.progress") {
+        updateGroupRuntimeState(groupId, {
+          lifecycle_state: "active",
+          runtime_running: true,
+        });
         updateActorActivity([{
           id: actorId,
           running: true,
@@ -411,6 +416,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         clearPendingHeadlessBuffers(groupId, actorId);
         completeStreamingEventsForActor(actorId, groupId);
         clearTransientStreamingEventsForActor(actorId, groupId);
+        updateGroupRuntimeState(groupId, {
+          lifecycle_state: "idle",
+          runtime_running: true,
+        });
         updateActorActivity([{
           id: actorId,
           running: true,
@@ -660,16 +669,15 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           const actors = ev.data?.actors;
           if (Array.isArray(actors) && actors.length > 0) {
             updateActorActivity(actors);
+            const hasRunningActor = actors.some((actor) => !!actor.running);
             const hasBusyActor = actors.some((actor) => {
               const state = String(actor.effective_working_state || "").trim().toLowerCase();
               return !!actor.running && state !== "idle" && state !== "stopped";
             });
-            if (hasBusyActor && selectedGroupIdRef.current === groupId) {
-              updateGroupRuntimeState(groupId, {
-                lifecycle_state: "active",
-                runtime_running: true,
-              });
-            }
+            updateGroupRuntimeState(groupId, {
+              lifecycle_state: hasBusyActor ? "active" : (hasRunningActor ? "idle" : "stopped"),
+              runtime_running: hasRunningActor,
+            });
           }
           return;
         }
@@ -743,7 +751,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         if (isChatMessageEvent(nextEvent) && String(nextEvent.by || "") === "user" && hasRenderableChatMessageContent(nextEvent)) {
           const msgData = nextEvent.data && typeof nextEvent.data === "object" ? (nextEvent.data as { client_id?: unknown }) : null;
           const clientId = msgData && typeof msgData.client_id === "string" ? msgData.client_id.trim() : "";
+          const canonicalEventId = String(nextEvent.id || "").trim();
           if (clientId) {
+            if (canonicalEventId) {
+              promoteStreamingEventsByPrefix(`local:${clientId}:`, canonicalEventId, groupId);
+            }
             useChatOutboxStore.getState().remove(groupId, clientId);
             releaseTransferredPreviewUrls(reconciled.transferredPreviewUrls);
           }

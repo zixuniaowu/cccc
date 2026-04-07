@@ -23,6 +23,7 @@ import {
   buildPrimedGroupState,
   clearDeferredUnreadRefresh,
   ensureGroupChatBucket,
+  getCachedGroupView,
   getGroupChatBucket,
   GroupChatBucket,
   loadArchivedGroupIds,
@@ -68,6 +69,7 @@ import {
   upsertStreamingEventPatch,
   upsertStreamingTextPatch,
 } from "./groupStreamingReducers";
+import { computeGroupRuntimePatch } from "../utils/groupRuntimeProjection";
 
 
 export const useGroupStore = create<GroupState>((set, get) => ({
@@ -131,7 +133,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     set({ archivedGroupIds: next });
   },
   getOrderedGroups: () => {
-    const { groups, groupOrder } = get();
+    const { groups, groupOrder, selectedGroupId, groupDoc, actors } = get();
     const groupMap = new Map(groups.map((g) => [String(g.group_id || ""), g]));
     const ordered: GroupMeta[] = [];
     for (const id of groupOrder) {
@@ -143,7 +145,20 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const id = String(g.group_id || "");
       if (!groupOrder.includes(id)) ordered.push(g);
     }
-    return ordered;
+    return ordered.map((group) => {
+      const gid = String(group.group_id || "").trim();
+      const isSelected = gid === String(selectedGroupId || "").trim();
+      const cached = isSelected ? null : getCachedGroupView(gid);
+      const patch = computeGroupRuntimePatch({
+        group,
+        groupDoc: isSelected ? groupDoc : (cached?.groupDoc || null),
+        actors: isSelected ? actors : (cached?.actors || []),
+      });
+      return {
+        ...group,
+        ...patch,
+      };
+    });
   },
   setSelectedGroupId: (id) => {
     const gid = String(id || "").trim();

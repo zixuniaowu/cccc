@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { Actor, GroupDoc, TextScale, Theme } from "../../types";
+import { Actor, GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { getGroupControlVisual, getLaunchControlMode, resolveGroupControls } from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
@@ -28,6 +28,7 @@ export interface AppHeaderProps {
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
   selectedGroupRunning: boolean;
+  selectedGroupRuntimeStatus: GroupRuntimeStatus | null;
   actors: Actor[];
   sseStatus: "connected" | "connecting" | "disconnected";
   busy: string;
@@ -52,6 +53,7 @@ export function AppHeader({
   selectedGroupId,
   groupDoc,
   selectedGroupRunning,
+  selectedGroupRuntimeStatus,
   actors,
   busy,
   onOpenSidebar,
@@ -74,8 +76,8 @@ export function AppHeader({
     "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]";
   const selectedStatus = selectedGroupId ? getGroupStatusFromSource({
     running: selectedGroupRunning,
-    state: groupDoc?.state,
-    runtime_status: groupDoc?.runtime_status,
+    state: (selectedGroupRuntimeStatus?.lifecycle_state as GroupDoc["state"] | undefined) || groupDoc?.state,
+    runtime_status: selectedGroupRuntimeStatus || undefined,
   }) : null;
   const selectedStatusKey = selectedStatus?.key ?? null;
   const launchMode = getLaunchControlMode(selectedStatusKey);

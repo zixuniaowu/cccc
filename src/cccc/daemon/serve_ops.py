@@ -14,7 +14,6 @@ from ..kernel.context import ContextStorage
 from ..kernel.working_state import (
     derive_effective_working_state,
 )
-from ..util.conv import coerce_bool
 
 _LOG = logging.getLogger("cccc.daemon.serve_ops")
 _LOOP_ERROR_LAST_TS: Dict[str, float] = {}
@@ -288,11 +287,9 @@ def start_actor_activity_thread(
     event_broadcaster: Any,
     load_group: Callable[[str], Any],
     interval_seconds: float = 1.0,
-    startup_grace_seconds: float = 8.0,
 ) -> threading.Thread:
     """Periodically publish actor.activity SSE events with effective runtime status."""
     import uuid
-    started_at = time.monotonic()
 
     def _actor_activity_loop() -> None:
         interval = max(1.0, float(interval_seconds or 1.0))
@@ -380,15 +377,6 @@ def start_actor_activity_thread(
                             actors_data.append(payload)
                             actors_snapshot[aid] = payload
                         replace_group_runtime(gid, actors_snapshot)
-                        any_running = bool(actors_snapshot)
-                        within_startup_grace = (time.monotonic() - started_at) < max(0.0, float(startup_grace_seconds or 0.0))
-                        should_reconcile_group_running = any_running or not within_startup_grace
-                        if should_reconcile_group_running and coerce_bool(group.doc.get("running"), default=False) != any_running:
-                            try:
-                                group.doc["running"] = any_running
-                                group.save()
-                            except Exception:
-                                pass
                         if actors_data:
                             event_broadcaster.publish({
                                 "id": uuid.uuid4().hex,

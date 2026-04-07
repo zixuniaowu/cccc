@@ -184,7 +184,7 @@ def start_actor_process(
     effective_runner_kind: Callable[[str], str],
     merge_actor_env_with_private: Callable[[str, str, Dict[str, Any]], Dict[str, Any]],
     normalize_runtime_command: Callable[[str, List[str]], List[str]],
-    ensure_mcp_installed: Callable[[str, Path], bool],
+    ensure_mcp_installed: Callable[..., bool],
     inject_actor_context_env: Callable[[Dict[str, Any], str, str], Dict[str, Any]],
     prepare_pty_env: Callable[[Dict[str, Any]], Dict[str, str]],
     pty_backlog_bytes: Callable[[], int],
@@ -235,7 +235,13 @@ def start_actor_process(
             error_message = pty_support_error_message() or "PTY runner is not supported in this environment."
             return {"success": False, "error": error_message}
         try:
-            mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
+            mcp_ready = bool(
+                ensure_mcp_installed(
+                    runtime,
+                    cwd,
+                    env={str(k): str(v) for k, v in effective_env.items() if isinstance(k, str)},
+                )
+            )
         except Exception as e:
             return {"success": False, "error": f"failed to install MCP: {e}"}
         if not mcp_ready:

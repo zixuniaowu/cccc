@@ -7,6 +7,7 @@ import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/tim
 import { classNames } from "../utils/classNames";
 import { getReplyEventId } from "../utils/chatReply";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
+import { selectStreamingReplySession, useGroupStore } from "../stores";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { MessageFooter, MessageMetadataHeader } from "./messageBubble/MessageBubbleChrome";
 import { withAuthToken } from "../services/api/base";
@@ -592,18 +593,31 @@ export const MessageBubble = memo(function MessageBubble({
     const streamingActivities = useMemo(() => {
         return normalizeStreamingActivities((msgData as { activities?: unknown } | undefined)?.activities);
     }, [msgData]);
-    const pendingEventId = String((msgData as { pending_event_id?: unknown } | undefined)?.pending_event_id || "").trim();
+    const pendingEventId = String(
+        (msgData as { pending_event_id?: unknown; reply_to?: unknown } | undefined)?.pending_event_id
+        || (msgData as { pending_event_id?: unknown; reply_to?: unknown } | undefined)?.reply_to
+        || ""
+    ).trim();
     const actorId = String(ev.by || "").trim();
+    const hasLiveReplySession = useGroupStore(useCallback((state) => {
+        if (isUserMessage || !actorId || !pendingEventId) return false;
+        return !!selectStreamingReplySession(state, groupId, {
+            pendingEventId,
+            streamId,
+            actorId,
+        });
+    }, [actorId, groupId, isUserMessage, pendingEventId, streamId]));
+    const shouldRenderStreamingBody = isStreaming || hasLiveReplySession;
     const isQueuedOnlyPlaceholder = useMemo(() => {
         return isQueuedOnlyStreamingPlaceholder({
-            isStreaming,
+            isStreaming: shouldRenderStreamingBody,
             messageText,
             liveStreamingText: "",
             blobAttachmentCount: blobAttachments.length,
             presentationRefCount: presentationRefs.length,
             activities: streamingActivities,
         });
-    }, [blobAttachments.length, isStreaming, messageText, presentationRefs.length, streamingActivities]);
+    }, [blobAttachments.length, messageText, presentationRefs.length, shouldRenderStreamingBody, streamingActivities]);
     const streamPhase = String((msgData as { stream_phase?: unknown } | undefined)?.stream_phase || "").trim().toLowerCase();
     const bubbleMotionClass = useMemo(() => getMessageBubbleMotionClass({
         isStreaming,
@@ -879,7 +893,7 @@ export const MessageBubble = memo(function MessageBubble({
                         relayChipClass={relayChipClass}
                         quoteText={quoteText}
                         presentationRefs={presentationRefs}
-                        isStreaming={isStreaming}
+                        isStreaming={shouldRenderStreamingBody}
                         streamingActivities={streamingActivities}
                         streamId={streamId}
                         actorId={actorId}

@@ -36,7 +36,7 @@ def handle_group_start(
     *,
     effective_runner_kind: Callable[[str], str],
     find_scope_url: Callable[[Any, str], str],
-    ensure_mcp_installed: Callable[[str, Path], Any],
+    ensure_mcp_installed: Callable[..., Any],
     merge_actor_env_with_private: Callable[[str, str, Dict[str, Any]], Dict[str, Any]],
     inject_actor_context_env: Callable[..., Dict[str, Any]],
     normalize_runtime_command: Callable[[str, list[str]], list[str]],
@@ -194,7 +194,13 @@ def handle_group_start(
             )
             if runner_effective != "headless":
                 try:
-                    mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
+                    mcp_ready = bool(
+                        ensure_mcp_installed(
+                            runtime,
+                            cwd,
+                            env={str(k): str(v) for k, v in effective_env.items() if isinstance(k, str)},
+                        )
+                    )
                 except Exception as e:
                     raise RuntimeError(f"failed to install MCP for actor {aid}: {e}") from e
                 if not mcp_ready:
@@ -368,7 +374,7 @@ def try_handle_group_lifecycle_op(
     *,
     effective_runner_kind: Callable[[str], str],
     find_scope_url: Callable[[Any, str], str],
-    ensure_mcp_installed: Callable[[str, Path], Any],
+    ensure_mcp_installed: Callable[..., Any],
     merge_actor_env_with_private: Callable[[str, str, Dict[str, Any]], Dict[str, Any]],
     inject_actor_context_env: Callable[..., Dict[str, Any]],
     normalize_runtime_command: Callable[[str, list[str]], list[str]],

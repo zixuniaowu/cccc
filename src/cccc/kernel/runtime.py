@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 import shutil
 import sys
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -103,8 +102,6 @@ def _safe_runtime_path_part(value: str, *, fallback: str) -> str:
 def _has_explicit_codex_auth_env(env: Dict[str, Any]) -> bool:
     for key in _CODEX_ISOLATION_TRIGGER_ENV_KEYS:
         if str(env.get(key) or "").strip():
-            return True
-        if str(os.environ.get(key) or "").strip():
             return True
     return False
 

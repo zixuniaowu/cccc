@@ -44,6 +44,20 @@ class TestRuntimeCodexHome(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_inject_runtime_home_env_ignores_process_auth_env_when_actor_env_is_empty(self) -> None:
+        _, cleanup = self._with_home()
+        old_key = os.environ.get("OPENAI_API_KEY")
+        os.environ["OPENAI_API_KEY"] = "sk-process-only"
+        try:
+            env = inject_runtime_home_env({}, runtime="codex", group_id="g_demo", actor_id="peer1")
+            self.assertNotIn("CODEX_HOME", env)
+        finally:
+            if old_key is None:
+                os.environ.pop("OPENAI_API_KEY", None)
+            else:
+                os.environ["OPENAI_API_KEY"] = old_key
+            cleanup()
+
     def test_inject_runtime_home_env_does_not_isolate_for_base_url_only(self) -> None:
         _, cleanup = self._with_home()
         try:

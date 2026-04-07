@@ -2,6 +2,7 @@ import { useMemo } from "react";
 
 import type { Actor, GroupDoc, GroupMeta, GroupRuntimeStatus } from "../types";
 import { getGroupRuntimeStatus } from "../utils/groupStatus";
+import { computeGroupRuntimePatch } from "../utils/groupRuntimeProjection";
 
 type UseSelectedGroupRuntimeArgs = {
   groups: GroupMeta[];
@@ -24,28 +25,20 @@ export function computeSelectedGroupRuntime({
   actors,
 }: UseSelectedGroupRuntimeArgs): SelectedGroupRuntime {
   const selectedGroupMeta = groups.find((group) => String(group.group_id || "") === selectedGroupId) || null;
-  const metaRuntime = getGroupRuntimeStatus(selectedGroupMeta);
-  const docRuntime = getGroupRuntimeStatus(groupDoc);
-  const runtimeRunning =
-    docRuntime.runtime_running || metaRuntime.runtime_running || actors.some((actor) => !!actor.running);
-
-  const selectedGroupRuntimeStatus = {
-    ...metaRuntime,
-    ...docRuntime,
-    runtime_running: runtimeRunning,
-  };
+  const orderedSelectedGroupPatch = selectedGroupMeta
+    ? computeGroupRuntimePatch({
+        group: selectedGroupMeta,
+        groupDoc,
+        actors,
+      })
+    : null;
+  const selectedGroupRuntimeStatus = orderedSelectedGroupPatch?.runtime_status || getGroupRuntimeStatus(groupDoc);
 
   return {
     selectedGroupMeta,
     selectedGroupRunning: selectedGroupRuntimeStatus.runtime_running,
     selectedGroupRuntimeStatus,
-    orderedSelectedGroupPatch: selectedGroupId
-      ? {
-          running: selectedGroupRuntimeStatus.runtime_running,
-          state: selectedGroupRuntimeStatus.lifecycle_state as GroupMeta["state"],
-          runtime_status: selectedGroupRuntimeStatus,
-        }
-      : null,
+    orderedSelectedGroupPatch: selectedGroupId ? orderedSelectedGroupPatch : null,
   };
 }
 

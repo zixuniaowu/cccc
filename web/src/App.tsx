@@ -46,6 +46,7 @@ export default function App() {
 
   // Zustand stores
   const groups = useGroupStore((state) => state.groups);
+  const groupOrder = useGroupStore((state) => state.groupOrder);
   const archivedGroupIds = useGroupStore((state) => state.archivedGroupIds);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groupDoc = useGroupStore((state) => state.groupDoc);
@@ -294,25 +295,14 @@ export default function App() {
   const hasForeman = useMemo(() => actors.some((a) => a.role === "foreman"), [actors]);
   const {
     selectedGroupRunning,
-    orderedSelectedGroupPatch,
+    selectedGroupRuntimeStatus,
   } = useSelectedGroupRuntime({
     groups,
     selectedGroupId,
     groupDoc,
     actors,
   });
-  const orderedGroups = useMemo(() => {
-    const base = getOrderedGroups();
-    const selectedId = String(selectedGroupId || "").trim();
-    if (!selectedId || !orderedSelectedGroupPatch) return base;
-    return base.map((group) => {
-      if (String(group.group_id || "").trim() !== selectedId) return group;
-      return {
-        ...group,
-        ...orderedSelectedGroupPatch,
-      };
-    });
-  }, [selectedGroupId, orderedSelectedGroupPatch, getOrderedGroups]);
+  const orderedGroups = useMemo(() => getOrderedGroups(), [actors, getOrderedGroups, groupDoc, groupOrder, groups, selectedGroupId]);
 
   const groupLabelById = useMemo(() => {
     const out: Record<string, string> = {};
@@ -381,6 +371,7 @@ export default function App() {
         isSmallScreen={isSmallScreen}
         webReadOnly={webReadOnly}
         selectedGroupRunning={selectedGroupRunning}
+        selectedGroupRuntimeStatus={selectedGroupRuntimeStatus}
         selectedGroupActorsHydrating={selectedGroupActorsHydrating}
         theme={theme}
         textScale={textScale}

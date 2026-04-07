@@ -289,17 +289,34 @@ export function SettingsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Only load when the modal opens or groupId changes.
   }, [isOpen, groupId]);
 
+  const toWeixinErrorStatus = useCallback((message: string): WeixinLoginStatus => ({
+    status: "error",
+    logged_in: false,
+    account_id: "",
+    qrcode_url: "",
+    qr_ascii: "",
+    error: String(message || "").trim(),
+    running: false,
+    pid: null,
+    updated_at: new Date().toISOString(),
+  }), []);
+
   useEffect(() => {
     if (!isOpen || !groupId || imPlatform !== "weixin") return;
     let cancelled = false;
     const loadWeixinStatus = async () => {
       try {
         const resp = await api.fetchWeixinLoginStatus(groupId);
-        if (!cancelled && resp.ok) {
+        if (cancelled) return;
+        if (resp.ok) {
           setWeixinLoginStatus(resp.result ?? null);
+        } else {
+          setWeixinLoginStatus(toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStatusLoadFailed")));
         }
       } catch {
-        if (!cancelled) setWeixinLoginStatus(null);
+        if (!cancelled) {
+          setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinStatusLoadFailed")));
+        }
       }
     };
     void loadWeixinStatus();
@@ -310,7 +327,7 @@ export function SettingsModal({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isOpen, groupId, imPlatform]);
+  }, [isOpen, groupId, imPlatform, t, toWeixinErrorStatus]);
 
   useEffect(() => {
     if (imPlatform !== "weixin") {
@@ -362,6 +379,12 @@ export function SettingsModal({
     if (scope !== "global" || globalTab !== "developer") return;
     void loadRuntimeInfo();
   }, [isOpen, scope, globalTab]);
+
+  useEffect(() => {
+    if (!isOpen || !developerMode) return;
+    if (scope !== "global" || globalTab !== "developer") return;
+    void loadLogTail();
+  }, [developerMode, globalTab, groupId, isOpen, logComponent, logLines, scope]);
 
   // ============ Data Loading ============
 
@@ -679,12 +702,20 @@ export function SettingsModal({
     setImBusy(true);
     try {
       const saveResp = await saveIMConfigDraft(getCurrentIMSaveRequest());
-      if (!saveResp.ok) return;
+      if (!saveResp.ok) {
+        setWeixinLoginStatus(toWeixinErrorStatus(saveResp.error?.message || t("imBridge.weixinStartFailed")));
+        return;
+      }
       await loadIMStatus();
       weixinAutoStartRef.current = false;
       const resp = await api.startWeixinLogin(groupId);
-      if (resp.ok) setWeixinLoginStatus(resp.result ?? null);
+      if (resp.ok) {
+        setWeixinLoginStatus(resp.result ?? null);
+      } else {
+        setWeixinLoginStatus(toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")));
+      }
     } catch (e) {
+      setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinStartFailed")));
       console.error("Failed to start weixin login:", e);
     } finally {
       setImBusy(false);
@@ -697,8 +728,13 @@ export function SettingsModal({
     try {
       weixinAutoStartRef.current = false;
       const resp = await api.logoutWeixin(groupId);
-      if (resp.ok) setWeixinLoginStatus(resp.result ?? null);
+      if (resp.ok) {
+        setWeixinLoginStatus(resp.result ?? null);
+      } else {
+        setWeixinLoginStatus(toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinLogoutFailed")));
+      }
     } catch (e) {
+      setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinLogoutFailed")));
       console.error("Failed to logout weixin:", e);
     } finally {
       setImBusy(false);
@@ -792,6 +828,11 @@ export function SettingsModal({
   };
 
   const loadLogTail = async () => {
+    if (logComponent === "im" && !groupId) {
+      setLogText("");
+      setLogErr(t("developer.imLogsRequireGroup"));
+      return;
+    }
     setLogBusy(true);
     setLogErr("");
     try {

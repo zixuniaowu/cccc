@@ -29,7 +29,7 @@ def autostart_running_groups(
     effective_runner_kind: Callable[[str], str],
     find_scope_url: Callable[[Any, str], str],
     supported_runtimes: tuple[str, ...],
-    ensure_mcp_installed: Callable[[str, Path], bool],
+    ensure_mcp_installed: Callable[..., bool],
     auto_mcp_runtimes: tuple[str, ...],
     pty_supported: Optional[Callable[[], bool]] = None,
     merge_actor_env_with_private: Callable[[str, str, dict[str, Any]], dict[str, Any]],
@@ -143,7 +143,13 @@ def autostart_running_groups(
                 continue
             if effective_runner != "headless":
                 try:
-                    ok_mcp = bool(ensure_mcp_installed(runtime, cwd))
+                    ok_mcp = bool(
+                        ensure_mcp_installed(
+                            runtime,
+                            cwd,
+                            env={str(k): str(v) for k, v in effective_env.items() if isinstance(k, str)},
+                        )
+                    )
                 except Exception:
                     ok_mcp = False
             if not ok_mcp and runtime in auto_mcp_runtimes:

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -256,6 +257,27 @@ class TestMcpInstall(unittest.TestCase):
                         text=True,
                         cwd=str(cwd),
                         timeout=30,
+                    )
+
+    def test_ensure_mcp_installed_codex_passes_isolated_codex_home_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            env = {"CODEX_HOME": "/tmp/cccc-isolated-codex-home", "OPENAI_API_KEY": "sk-test"}
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=["missing", "ready"]), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ), patch("cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ok = ensure_mcp_installed("codex", cwd, auto_mcp_runtimes=("codex",), env=env)
+                    self.assertTrue(ok)
+                    mock_run.assert_called_once_with(
+                        ["codex", "mcp", "add", "cccc", "--", "/abs/cccc", "mcp"],
+                        capture_output=True,
+                        text=True,
+                        cwd=str(cwd),
+                        timeout=30,
+                        env={**os.environ, **env},
                     )
 
     def test_ensure_mcp_installed_returns_false_when_initial_probe_times_out(self) -> None:
