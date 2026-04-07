@@ -23,6 +23,7 @@ from ...kernel.message_sender_snapshot import build_sender_snapshot
 from ...kernel.scope import detect_scope
 from ...kernel.pet_actor import PET_ACTOR_ID, get_pet_actor
 from ...util.time import utc_now_iso
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .delivery import (
     flush_pending_messages,
@@ -489,6 +490,17 @@ def handle_send(
                 text=delivery_text,
                 event_id=event_id,
             )
+        elif (
+            runtime == "claude"
+            and effective_runner_kind(runner_kind) == "headless"
+            and claude_app_supervisor.actor_running(group.group_id, actor_id)
+        ):
+            claude_app_supervisor.submit_user_message(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                text=delivery_text,
+                event_id=event_id,
+            )
         elif effective_runner_kind(runner_kind) == "pty":
             queue_chat_message(
                 group,
@@ -716,6 +728,18 @@ def handle_reply(
             and codex_app_supervisor.actor_running(group.group_id, actor_id)
         ):
             codex_app_supervisor.submit_user_message(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                text=delivery_text,
+                event_id=event_id,
+                reply_to=target_event_id or reply_to,
+            )
+        elif (
+            runtime == "claude"
+            and effective_runner_kind(runner_kind) == "headless"
+            and claude_app_supervisor.actor_running(group.group_id, actor_id)
+        ):
+            claude_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 text=delivery_text,

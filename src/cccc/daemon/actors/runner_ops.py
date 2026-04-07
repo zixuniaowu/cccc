@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ...contracts.v1 import DaemonResponse, DaemonError
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...kernel.actors import find_actor
 from ...kernel.group import load_group
@@ -111,6 +112,8 @@ def is_actor_running(group_id: str, actor_id: str, runner_kind: str) -> bool:
     runtime = str(actor.get("runtime") or "").strip().lower() if isinstance(actor, dict) else ""
     if runtime == "codex":
         return codex_app_supervisor.actor_running(group_id, actor_id)
+    if runtime == "claude" and _effective_runner_kind(runner_kind) == "headless":
+        return claude_app_supervisor.actor_running(group_id, actor_id)
     if _effective_runner_kind(runner_kind) == "headless":
         return headless_runner.SUPERVISOR.actor_running(group_id, actor_id)
     else:
@@ -121,6 +124,7 @@ def is_group_running(group_id: str) -> bool:
     """Check if any actor in a group is running (either PTY or headless)."""
     return (
         codex_app_supervisor.group_running(group_id)
+        or claude_app_supervisor.group_running(group_id)
         or
         pty_runner.SUPERVISOR.group_running(group_id)
         or headless_runner.SUPERVISOR.group_running(group_id)
@@ -134,6 +138,8 @@ def stop_actor(group_id: str, actor_id: str, runner_kind: str) -> None:
     runtime = str(actor.get("runtime") or "").strip().lower() if isinstance(actor, dict) else ""
     if runtime == "codex":
         codex_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
+    elif runtime == "claude" and _effective_runner_kind(runner_kind) == "headless":
+        claude_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
     elif _effective_runner_kind(runner_kind) == "headless":
         headless_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
     else:
@@ -143,6 +149,7 @@ def stop_actor(group_id: str, actor_id: str, runner_kind: str) -> None:
 def stop_group(group_id: str) -> None:
     """Stop all actors in a group (both PTY and headless)."""
     codex_app_supervisor.stop_group(group_id=group_id)
+    claude_app_supervisor.stop_group(group_id=group_id)
     pty_runner.SUPERVISOR.stop_group(group_id=group_id)
     headless_runner.SUPERVISOR.stop_group(group_id=group_id)
 
@@ -150,6 +157,7 @@ def stop_group(group_id: str) -> None:
 def stop_all() -> None:
     """Stop all actors (both PTY and headless)."""
     codex_app_supervisor.stop_all()
+    claude_app_supervisor.stop_all()
     pty_runner.SUPERVISOR.stop_all()
     headless_runner.SUPERVISOR.stop_all()
 

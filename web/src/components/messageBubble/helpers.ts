@@ -1,4 +1,5 @@
 import type { ChatMessageData, LedgerEvent, StreamingActivity } from "../../types";
+import { dedupeStreamingActivities } from "../../stores/chatStreamingSessions";
 import { formatTime } from "../../utils/time";
 
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
@@ -6,26 +7,7 @@ const EMPTY_STREAMING_EVENTS: LedgerEvent[] = [];
 const STREAMING_PENDING_MIN_MS = 80;
 const STREAMING_ACTIVITY_LOG_LIMIT = 12;
 
-function dedupeStreamingActivities(value: StreamingActivity[]): StreamingActivity[] {
-  if (!Array.isArray(value) || value.length <= 0) return EMPTY_STREAMING_ACTIVITIES;
-  const dedupedFromLatest: StreamingActivity[] = [];
-  const seenIds = new Set<string>();
-  for (let index = value.length - 1; index >= 0; index -= 1) {
-    const activity = value[index];
-    const activityId = String(activity?.id || "").trim();
-    const summary = String(activity?.summary || "").trim();
-    if (!activityId || !summary || seenIds.has(activityId)) continue;
-    seenIds.add(activityId);
-    dedupedFromLatest.push({
-      ...activity,
-      id: activityId,
-      summary,
-    });
-  }
-  return dedupedFromLatest.reverse();
-}
-
-function normalizeStreamingActivities(value: unknown): StreamingActivity[] {
+export function normalizeStreamingActivities(value: unknown): StreamingActivity[] {
   if (!Array.isArray(value)) return EMPTY_STREAMING_ACTIVITIES;
   const normalized = dedupeStreamingActivities(value
     .filter((item): item is StreamingActivity => !!item && typeof item === "object")

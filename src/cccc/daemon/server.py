@@ -39,6 +39,7 @@ from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
 from ..util.time import utc_now_iso
 from .automation import AutomationManager
+from .claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from .codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .im.bootstrap_im_ops import autostart_enabled_im_bridges
 from .group.bootstrap_actor_ops import autostart_running_groups
@@ -825,6 +826,11 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
                     and codex_app_supervisor.actor_running(wake_group.group_id, actor_id)
                 )
                 or (
+                    str((find_actor(wake_group, actor_id) or {}).get("runtime") or "").strip().lower() == "claude"
+                    and _effective_runner_kind(str((find_actor(wake_group, actor_id) or {}).get("runner") or "pty")) == "headless"
+                    and claude_app_supervisor.actor_running(wake_group.group_id, actor_id)
+                )
+                or (
                     _effective_runner_kind(str((find_actor(wake_group, actor_id) or {}).get("runner") or "pty")) == "headless"
                     and headless_runner.SUPERVISOR.actor_running(wake_group.group_id, actor_id)
                 )
@@ -984,6 +990,8 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         group_running=lambda gid: (
             codex_app_supervisor.group_running(gid)
             or
+            claude_app_supervisor.group_running(gid)
+            or
             pty_runner.SUPERVISOR.group_running(gid)
             or headless_runner.SUPERVISOR.group_running(gid)
         ),
@@ -1050,6 +1058,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             pty_supervisor=pty_runner.SUPERVISOR,
             headless_supervisor=headless_runner.SUPERVISOR,
             codex_supervisor=codex_app_supervisor,
+            claude_supervisor=claude_app_supervisor,
             event_broadcaster=_activity_broadcaster,
             load_group=load_group,
             interval_seconds=1.0,
@@ -1193,6 +1202,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         best_effort_killpg=_best_effort_killpg,
         im_stop_all=im_stop_all,
         codex_stop_all=codex_app_supervisor.stop_all,
+        claude_stop_all=claude_app_supervisor.stop_all,
         pty_stop_all=pty_runner.SUPERVISOR.stop_all,
         headless_stop_all=headless_runner.SUPERVISOR.stop_all,
         sock_path=p.sock_path,

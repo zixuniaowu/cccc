@@ -533,7 +533,7 @@ export function EditActorModal({
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
   const showRuntimeSetup = !effectiveLinked && editMode === "custom" && runtime === "custom";
-  const customRunnerLockedToPty = runtime !== "codex";
+  const customRunnerLockedToPty = !["codex", "claude"].includes(runtime);
 
   return (
     <div
@@ -698,7 +698,7 @@ export function EditActorModal({
                         onChange={(e) => {
                           const next = e.target.value as SupportedRuntime;
                           onChangeRuntime(next);
-                          if (next !== "codex") onChangeRunner("pty");
+                          if (!["codex", "claude"].includes(next)) onChangeRunner("pty");
                           const nextInfo = runtimes.find((r) => r.name === next);
                           const nextDefault = String(nextInfo?.recommended_command || "").trim();
                           onChangeCommand(nextDefault);
@@ -719,7 +719,7 @@ export function EditActorModal({
                       </select>
                     </div>
 
-                    {runtime === "codex" ? (
+                    {["codex", "claude"].includes(runtime) ? (
                       <div>
                         <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
                           {t("runnerMode", { defaultValue: "运行模式" })}
@@ -743,7 +743,7 @@ export function EditActorModal({
                         </div>
                         <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
                           {customRunnerLockedToPty
-                            ? t("runnerModeCodexOnly", { defaultValue: "当前只有 codex runtime 支持切换为 Headless，其他 runtime 固定为 PTY。" })
+                            ? t("runnerModeHeadlessNote", { defaultValue: "仅部分运行时（如 codex、claude）支持 Headless 模式，其他运行时固定为 PTY。" })
                             : t("runnerModeHint", { defaultValue: "PTY 走终端交互；Headless 走结构化事件流。" })}
                         </div>
                       </div>

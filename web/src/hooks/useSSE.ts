@@ -10,7 +10,7 @@ import {
 import { beginContextRequest, isLatestContextRequest } from "../stores/groupStoreCore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
-import type { Actor, ChatMessageData, CodexStreamEvent, GroupContext, StreamingActivity } from "../types";
+import type { Actor, ChatMessageData, HeadlessStreamEvent, GroupContext, StreamingActivity } from "../types";
 import { runReconnectCatchup, scheduleContextSummaryCatchup } from "./sseCatchup";
 import {
   isContextSyncEvent,
@@ -27,6 +27,7 @@ import {
   getActorRefreshMode,
   isPresentationPublishEvent,
   isPresentationClearEvent,
+  hasRenderableChatMessageContent,
   // Re-export for consumers
   getRecipientActorIdsForEvent,
   getAckRecipientIdsForEvent,
@@ -39,19 +40,6 @@ export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
 
 const MAX_RECONCILED_EVENTS = 800;
 const RECONNECT_LEDGER_TAIL_LIMIT = 60;
-
-function hasRenderableChatMessageContent(event: Record<string, unknown>): boolean {
-  if (String(event.kind || "").trim() !== "chat.message") return false;
-  const data = event.data && typeof event.data === "object"
-    ? event.data as { text?: unknown; attachments?: unknown; refs?: unknown }
-    : null;
-  const text = typeof data?.text === "string" ? data.text.trim() : "";
-  if (text) return true;
-  const attachments = Array.isArray(data?.attachments) ? data.attachments : [];
-  if (attachments.length > 0) return true;
-  const refs = Array.isArray(data?.refs) ? data.refs : [];
-  return refs.length > 0;
-}
 
 function mergeCanonicalAttachmentsWithOptimisticPreview(
   ev: Record<string, unknown>,
@@ -139,17 +127,17 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const clearPresentationSlotAttention = useModalStore((s) => s.clearPresentationSlotAttention);
 
   const eventSourceRef = useRef<EventSource | null>(null);
-  const codexEventSourceRef = useRef<EventSource | null>(null);
+  const headlessEventSourceRef = useRef<EventSource | null>(null);
   const contextRefreshTimerRef = useRef<number | null>(null);
   const selectedGroupIdRef = useRef<string>("");
   const reconnectDelayRef = useRef<number>(1000);
   const reconnectTimerRef = useRef<number | null>(null);
-  const codexReconnectDelayRef = useRef<number>(1000);
-  const codexReconnectTimerRef = useRef<number | null>(null);
+  const headlessReconnectDelayRef = useRef<number>(1000);
+  const headlessReconnectTimerRef = useRef<number | null>(null);
   const hasConnectedOnceRef = useRef<boolean>(false);
-  const pendingCodexMessageFlushRef = useRef<number | null>(null);
-  const pendingCodexActivityFlushRef = useRef<number | null>(null);
-  const pendingCodexMessagesRef = useRef(new Map<string, {
+  const pendingHeadlessMessageFlushRef = useRef<number | null>(null);
+  const pendingHeadlessActivityFlushRef = useRef<number | null>(null);
+  const pendingHeadlessMessagesRef = useRef(new Map<string, {
     groupId: string;
     actorId: string;
     streamId: string;
@@ -162,7 +150,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     transientStream: boolean;
     phase: string;
   }>());
-  const pendingCodexActivitiesRef = useRef(new Map<string, {
+  const pendingHeadlessActivitiesRef = useRef(new Map<string, {
     actorId: string;
     groupId: string;
     match: { pendingEventId?: string; streamId?: string };
@@ -240,11 +228,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     });
   }
 
-  function flushPendingCodexMessages(targetGroupId?: string, targetActorId?: string) {
+  function flushPendingHeadlessMessages(targetGroupId?: string, targetActorId?: string) {
     if (targetGroupId == null && targetActorId == null) {
-      pendingCodexMessageFlushRef.current = null;
+      pendingHeadlessMessageFlushRef.current = null;
     }
-    const pendingEntries = pendingCodexMessagesRef.current;
+    const pendingEntries = pendingHeadlessMessagesRef.current;
     if (pendingEntries.size <= 0) return;
 
     for (const [key, entry] of pendingEntries.entries()) {
@@ -335,19 +323,19 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
   }
 
-  function schedulePendingCodexMessageFlush(groupId: string) {
-    if (pendingCodexMessageFlushRef.current != null) return;
-    pendingCodexMessageFlushRef.current = window.requestAnimationFrame(() => {
-      pendingCodexMessageFlushRef.current = null;
-      flushPendingCodexMessages(groupId);
+  function schedulePendingHeadlessMessageFlush(groupId: string) {
+    if (pendingHeadlessMessageFlushRef.current != null) return;
+    pendingHeadlessMessageFlushRef.current = window.requestAnimationFrame(() => {
+      pendingHeadlessMessageFlushRef.current = null;
+      flushPendingHeadlessMessages(groupId);
     });
   }
 
-  function flushPendingCodexActivities(targetGroupId?: string, targetActorId?: string) {
+  function flushPendingHeadlessActivities(targetGroupId?: string, targetActorId?: string) {
     if (targetGroupId == null && targetActorId == null) {
-      pendingCodexActivityFlushRef.current = null;
+      pendingHeadlessActivityFlushRef.current = null;
     }
-    const pendingEntries = pendingCodexActivitiesRef.current;
+    const pendingEntries = pendingHeadlessActivitiesRef.current;
     if (pendingEntries.size <= 0) return;
 
     for (const [key, entry] of pendingEntries.entries()) {
@@ -360,42 +348,42 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
   }
 
-  function schedulePendingCodexActivityFlush() {
-    if (pendingCodexActivityFlushRef.current != null) return;
-    pendingCodexActivityFlushRef.current = window.requestAnimationFrame(() => {
-      pendingCodexActivityFlushRef.current = null;
-      flushPendingCodexActivities();
+  function schedulePendingHeadlessActivityFlush() {
+    if (pendingHeadlessActivityFlushRef.current != null) return;
+    pendingHeadlessActivityFlushRef.current = window.requestAnimationFrame(() => {
+      pendingHeadlessActivityFlushRef.current = null;
+      flushPendingHeadlessActivities();
     });
   }
 
-  function clearPendingCodexBuffers(groupId: string, actorId: string) {
+  function clearPendingHeadlessBuffers(groupId: string, actorId: string) {
     const targetGroupId = String(groupId || "").trim();
     const targetActorId = String(actorId || "").trim();
     if (!targetGroupId || !targetActorId) return;
 
-    for (const [key, entry] of pendingCodexMessagesRef.current.entries()) {
+    for (const [key, entry] of pendingHeadlessMessagesRef.current.entries()) {
       if (key.startsWith(`${targetGroupId}:`) && entry.actorId === targetActorId) {
-        pendingCodexMessagesRef.current.delete(key);
+        pendingHeadlessMessagesRef.current.delete(key);
       }
     }
 
-    for (const [key, entry] of pendingCodexActivitiesRef.current.entries()) {
+    for (const [key, entry] of pendingHeadlessActivitiesRef.current.entries()) {
       if (entry.groupId === targetGroupId && entry.actorId === targetActorId) {
-        pendingCodexActivitiesRef.current.delete(key);
+        pendingHeadlessActivitiesRef.current.delete(key);
       }
     }
 
-    if (pendingCodexMessagesRef.current.size === 0 && pendingCodexMessageFlushRef.current != null) {
-      window.cancelAnimationFrame(pendingCodexMessageFlushRef.current);
-      pendingCodexMessageFlushRef.current = null;
+    if (pendingHeadlessMessagesRef.current.size === 0 && pendingHeadlessMessageFlushRef.current != null) {
+      window.cancelAnimationFrame(pendingHeadlessMessageFlushRef.current);
+      pendingHeadlessMessageFlushRef.current = null;
     }
-    if (pendingCodexActivitiesRef.current.size === 0 && pendingCodexActivityFlushRef.current != null) {
-      window.cancelAnimationFrame(pendingCodexActivityFlushRef.current);
-      pendingCodexActivityFlushRef.current = null;
+    if (pendingHeadlessActivitiesRef.current.size === 0 && pendingHeadlessActivityFlushRef.current != null) {
+      window.cancelAnimationFrame(pendingHeadlessActivityFlushRef.current);
+      pendingHeadlessActivityFlushRef.current = null;
     }
   }
 
-  function handleCodexEvent(groupId: string, ev: CodexStreamEvent) {
+  function handleHeadlessEvent(groupId: string, ev: HeadlessStreamEvent) {
     try {
       const actorId = String(ev.actor_id || "").trim();
       const eventType = String(ev.type || "").trim();
@@ -404,23 +392,23 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       const pendingEventId = typeof data.event_id === "string" ? data.event_id.trim() : "";
       if (!actorId || !eventType) return;
 
-      if (eventType === "codex.turn.started" || eventType === "codex.turn.progress") {
+      if (eventType === "headless.turn.started" || eventType === "headless.turn.progress") {
         updateActorActivity([{
           id: actorId,
           running: true,
           idle_seconds: null,
           effective_working_state: "working",
-          effective_working_reason: "codex_turn_active",
+          effective_working_reason: "headless_turn_active",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: typeof data.turn_id === "string" ? data.turn_id : null,
         }]);
         return;
       }
 
-      if (eventType === "codex.turn.completed" || eventType === "codex.turn.failed") {
-        flushPendingCodexActivities(groupId, actorId);
-        flushPendingCodexMessages(groupId, actorId);
-        clearPendingCodexBuffers(groupId, actorId);
+      if (eventType === "headless.turn.completed" || eventType === "headless.turn.failed") {
+        flushPendingHeadlessActivities(groupId, actorId);
+        flushPendingHeadlessMessages(groupId, actorId);
+        clearPendingHeadlessBuffers(groupId, actorId);
         completeStreamingEventsForActor(actorId, groupId);
         clearTransientStreamingEventsForActor(actorId, groupId);
         updateActorActivity([{
@@ -428,11 +416,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           running: true,
           idle_seconds: null,
           effective_working_state: "idle",
-          effective_working_reason: "codex_turn_idle",
+          effective_working_reason: "headless_turn_idle",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: null,
         }]);
-        if (eventType === "codex.turn.failed") {
+        if (eventType === "headless.turn.failed") {
           clearStreamingEventsForActor(actorId, groupId);
         } else {
           clearEmptyStreamingEventsForActor(actorId, groupId);
@@ -440,7 +428,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         return;
       }
 
-      if (eventType === "codex.activity.started" || eventType === "codex.activity.updated" || eventType === "codex.activity.completed") {
+      if (eventType === "headless.activity.started" || eventType === "headless.activity.updated" || eventType === "headless.activity.completed") {
         const activityId = typeof data.activity_id === "string" ? data.activity_id.trim() : "";
         const summary = typeof data.summary === "string" ? data.summary.trim() : "";
         if (!activityId || !summary) return;
@@ -448,7 +436,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         const activity: StreamingActivity = {
           id: activityId,
           kind: typeof data.kind === "string" ? data.kind.trim() : "thinking",
-          status: eventType.replace("codex.activity.", ""),
+          status: eventType.replace("headless.activity.", ""),
           summary,
           detail: typeof data.detail === "string" ? data.detail.trim() : undefined,
           ts: activityTs,
@@ -463,27 +451,27 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           query: typeof data.query === "string" ? data.query.trim() : undefined,
         };
         const activityKey = `${groupId}:${actorId}:${streamId || pendingEventId || "pending"}`;
-        const existingActivityBatch = pendingCodexActivitiesRef.current.get(activityKey);
+        const existingActivityBatch = pendingHeadlessActivitiesRef.current.get(activityKey);
         if (existingActivityBatch) {
           existingActivityBatch.match = { pendingEventId, streamId };
           existingActivityBatch.activities.set(activityId, activity);
         } else {
-          pendingCodexActivitiesRef.current.set(activityKey, {
+          pendingHeadlessActivitiesRef.current.set(activityKey, {
             actorId,
             groupId,
             match: { pendingEventId, streamId },
             activities: new Map([[activityId, activity]]),
           });
         }
-        schedulePendingCodexActivityFlush();
+        schedulePendingHeadlessActivityFlush();
         return;
       }
 
-      if (eventType === "codex.message.started" || eventType === "codex.message.delta" || eventType === "codex.message.completed") {
+      if (eventType === "headless.message.started" || eventType === "headless.message.delta" || eventType === "headless.message.completed") {
         if (!streamId) return;
         const delta = typeof data.delta === "string" ? data.delta : "";
         const explicitTextRaw = typeof data.text === "string" ? data.text : null;
-        const explicitText = explicitTextRaw === "" && eventType === "codex.message.started" ? null : explicitTextRaw;
+        const explicitText = explicitTextRaw === "" && eventType === "headless.message.started" ? null : explicitTextRaw;
         const phase = typeof data.phase === "string" ? data.phase.trim().toLowerCase() : "";
         const transientStream = !!phase && phase !== "final_answer";
         const shouldBindToPendingPlaceholder = !!pendingEventId;
@@ -491,7 +479,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           promoteStreamingEventToStream(actorId, pendingEventId, streamId, groupId);
         }
         const messageKey = `${groupId}:${streamId}`;
-        const existingMessageBatch = pendingCodexMessagesRef.current.get(messageKey);
+        const existingMessageBatch = pendingHeadlessMessagesRef.current.get(messageKey);
         if (existingMessageBatch) {
           existingMessageBatch.pendingEventId = pendingEventId || existingMessageBatch.pendingEventId;
           existingMessageBatch.ts = typeof ev.ts === "string" ? ev.ts : existingMessageBatch.ts;
@@ -506,11 +494,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           if (pendingEventId && shouldBindToPendingPlaceholder) {
             existingMessageBatch.shouldClearPlaceholder = true;
           }
-          if (eventType === "codex.message.completed") {
+          if (eventType === "headless.message.completed") {
             existingMessageBatch.completed = true;
           }
         } else {
-          pendingCodexMessagesRef.current.set(messageKey, {
+          pendingHeadlessMessagesRef.current.set(messageKey, {
             groupId,
             actorId,
             streamId,
@@ -518,83 +506,83 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
             ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
             explicitText,
             deltaText: explicitText == null ? delta : "",
-            completed: eventType === "codex.message.completed",
+            completed: eventType === "headless.message.completed",
             shouldClearPlaceholder: !!pendingEventId && shouldBindToPendingPlaceholder,
             transientStream,
             phase,
           });
         }
-        schedulePendingCodexMessageFlush(groupId);
+        schedulePendingHeadlessMessageFlush(groupId);
       }
     } catch {
       /* ignore parse errors */
     }
   }
 
-  async function hydrateCodexSnapshot(groupId: string) {
-    const resp = await api.fetchCodexSnapshot(groupId, { noCache: true });
+  async function hydrateHeadlessSnapshot(groupId: string) {
+    const resp = await api.fetchHeadlessSnapshot(groupId, { noCache: true });
     if (!resp.ok || selectedGroupIdRef.current !== groupId) return;
     const events = Array.isArray(resp.result.events) ? resp.result.events : [];
     for (const event of events) {
       const eventType = String(event?.type || "").trim();
       if (
-        eventType === "codex.activity.started" ||
-        eventType === "codex.activity.updated" ||
-        eventType === "codex.activity.completed" ||
-        eventType === "codex.message.started" ||
-        eventType === "codex.message.delta" ||
-        eventType === "codex.message.completed"
+        eventType === "headless.activity.started" ||
+        eventType === "headless.activity.updated" ||
+        eventType === "headless.activity.completed" ||
+        eventType === "headless.message.started" ||
+        eventType === "headless.message.delta" ||
+        eventType === "headless.message.completed"
       ) {
         continue;
       }
-      handleCodexEvent(groupId, event);
+      handleHeadlessEvent(groupId, event);
     }
-    flushPendingCodexActivities(groupId);
-    flushPendingCodexMessages(groupId);
+    flushPendingHeadlessActivities(groupId);
+    flushPendingHeadlessMessages(groupId);
   }
 
-  function connectCodexStream(groupId: string, options?: { replay?: boolean }) {
-    if (codexReconnectTimerRef.current) {
-      window.clearTimeout(codexReconnectTimerRef.current);
-      codexReconnectTimerRef.current = null;
+  function connectHeadlessStream(groupId: string, options?: { replay?: boolean }) {
+    if (headlessReconnectTimerRef.current) {
+      window.clearTimeout(headlessReconnectTimerRef.current);
+      headlessReconnectTimerRef.current = null;
     }
-    if (codexEventSourceRef.current) {
-      codexEventSourceRef.current.close();
-      codexEventSourceRef.current = null;
+    if (headlessEventSourceRef.current) {
+      headlessEventSourceRef.current.close();
+      headlessEventSourceRef.current = null;
     }
 
     const replay = options?.replay !== false;
     const params = new URLSearchParams();
     if (!replay) params.set("replay", "0");
-    const codexPath = `/api/v1/groups/${encodeURIComponent(groupId)}/codex/stream${params.toString() ? `?${params.toString()}` : ""}`;
-    const codexEs = new EventSource(api.withAuthToken(codexPath));
-    codexEs.onopen = () => {
-      codexReconnectDelayRef.current = 1000;
+    const headlessPath = `/api/v1/groups/${encodeURIComponent(groupId)}/headless/stream${params.toString() ? `?${params.toString()}` : ""}`;
+    const headlessEs = new EventSource(api.withAuthToken(headlessPath));
+    headlessEs.onopen = () => {
+      headlessReconnectDelayRef.current = 1000;
     };
-    codexEs.onerror = () => {
-      codexEs.close();
-      codexEventSourceRef.current = null;
-      if (codexReconnectTimerRef.current) {
-        window.clearTimeout(codexReconnectTimerRef.current);
+    headlessEs.onerror = () => {
+      headlessEs.close();
+      headlessEventSourceRef.current = null;
+      if (headlessReconnectTimerRef.current) {
+        window.clearTimeout(headlessReconnectTimerRef.current);
       }
-      const delay = codexReconnectDelayRef.current;
-      codexReconnectTimerRef.current = window.setTimeout(() => {
-        codexReconnectTimerRef.current = null;
+      const delay = headlessReconnectDelayRef.current;
+      headlessReconnectTimerRef.current = window.setTimeout(() => {
+        headlessReconnectTimerRef.current = null;
         if (selectedGroupIdRef.current === groupId) {
-          connectCodexStream(groupId, { replay: true });
+          connectHeadlessStream(groupId, { replay: true });
         }
       }, delay);
-      codexReconnectDelayRef.current = Math.min(delay * 2, 30000);
+      headlessReconnectDelayRef.current = Math.min(delay * 2, 30000);
     };
-    codexEs.addEventListener("codex", (e) => {
+    headlessEs.addEventListener("headless", (e) => {
       const msg = e as MessageEvent;
       try {
-        handleCodexEvent(groupId, JSON.parse(String(msg.data || "{}")) as CodexStreamEvent);
+        handleHeadlessEvent(groupId, JSON.parse(String(msg.data || "{}")) as HeadlessStreamEvent);
       } catch {
         /* ignore parse errors */
       }
     });
-    codexEventSourceRef.current = codexEs;
+    headlessEventSourceRef.current = headlessEs;
   }
 
   function connectStream(groupId: string) {
@@ -602,17 +590,17 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
-    if (codexReconnectTimerRef.current) {
-      window.clearTimeout(codexReconnectTimerRef.current);
-      codexReconnectTimerRef.current = null;
+    if (headlessReconnectTimerRef.current) {
+      window.clearTimeout(headlessReconnectTimerRef.current);
+      headlessReconnectTimerRef.current = null;
     }
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    if (codexEventSourceRef.current) {
-      codexEventSourceRef.current.close();
-      codexEventSourceRef.current = null;
+    if (headlessEventSourceRef.current) {
+      headlessEventSourceRef.current.close();
+      headlessEventSourceRef.current = null;
     }
 
     setSSEStatus("connecting");
@@ -771,6 +759,17 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           }
         }
 
+        // When a renderable canonical reply arrives from a non-user actor,
+        // clear any resolved queued-only streaming placeholders for that actor.
+        // For headless actors this is handled by headless.turn.completed; this path
+        // covers all other runtimes (claude, gemini, etc.).
+        if (isChatMessageEvent(nextEvent) && hasRenderableChatMessageContent(nextEvent)) {
+          const actorId = String(nextEvent.by || "").trim();
+          if (actorId && actorId !== "user") {
+            clearEmptyStreamingEventsForActor(actorId, groupId);
+          }
+        }
+
         if (isChatMessageEvent(nextEvent) && String(nextEvent.by || "").trim() !== "user") {
           const msgData = nextEvent.data && typeof nextEvent.data === "object" ? (nextEvent.data as ChatMessageData) : null;
           const presentationRefs = getPresentationMessageRefs(msgData?.refs);
@@ -818,13 +817,13 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     });
     eventSourceRef.current = es;
 
-    void hydrateCodexSnapshot(groupId)
+    void hydrateHeadlessSnapshot(groupId)
       .catch(() => {
         /* ignore snapshot hydration failures */
       })
       .finally(() => {
         if (selectedGroupIdRef.current === groupId) {
-          connectCodexStream(groupId, { replay: false });
+          connectHeadlessStream(groupId, { replay: false });
         }
       });
   }
@@ -834,34 +833,34 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
-    if (codexReconnectTimerRef.current) {
-      window.clearTimeout(codexReconnectTimerRef.current);
-      codexReconnectTimerRef.current = null;
+    if (headlessReconnectTimerRef.current) {
+      window.clearTimeout(headlessReconnectTimerRef.current);
+      headlessReconnectTimerRef.current = null;
     }
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    if (codexEventSourceRef.current) {
-      codexEventSourceRef.current.close();
-      codexEventSourceRef.current = null;
+    if (headlessEventSourceRef.current) {
+      headlessEventSourceRef.current.close();
+      headlessEventSourceRef.current = null;
     }
-    if (pendingCodexMessageFlushRef.current != null) {
-      window.cancelAnimationFrame(pendingCodexMessageFlushRef.current);
-      pendingCodexMessageFlushRef.current = null;
+    if (pendingHeadlessMessageFlushRef.current != null) {
+      window.cancelAnimationFrame(pendingHeadlessMessageFlushRef.current);
+      pendingHeadlessMessageFlushRef.current = null;
     }
-    if (pendingCodexActivityFlushRef.current != null) {
-      window.cancelAnimationFrame(pendingCodexActivityFlushRef.current);
-      pendingCodexActivityFlushRef.current = null;
+    if (pendingHeadlessActivityFlushRef.current != null) {
+      window.cancelAnimationFrame(pendingHeadlessActivityFlushRef.current);
+      pendingHeadlessActivityFlushRef.current = null;
     }
-    pendingCodexMessagesRef.current.clear();
-    pendingCodexActivitiesRef.current.clear();
+    pendingHeadlessMessagesRef.current.clear();
+    pendingHeadlessActivitiesRef.current.clear();
     if (contextRefreshTimerRef.current) {
       window.clearTimeout(contextRefreshTimerRef.current);
       contextRefreshTimerRef.current = null;
     }
     reconnectDelayRef.current = 1000;
-    codexReconnectDelayRef.current = 1000;
+    headlessReconnectDelayRef.current = 1000;
     hasConnectedOnceRef.current = false;
     setSSEStatus("disconnected");
   }

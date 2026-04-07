@@ -267,7 +267,7 @@ class TestCodexAppFlow(unittest.TestCase):
 
     def test_codex_notifications_write_stream_events_and_single_final_message(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
-        from cccc.kernel.codex_events import codex_events_path
+        from cccc.kernel.headless_events import headless_events_path
         from cccc.kernel.group import create_group, load_group
         from cccc.kernel.registry import load_registry
 
@@ -325,53 +325,53 @@ class TestCodexAppFlow(unittest.TestCase):
             )
             session._handle_notification("turn/completed", {"turn": {"id": "turn-1", "status": "completed"}})
 
-            events_path = codex_events_path(loaded_group.path)
+            events_path = headless_events_path(loaded_group.path)
             self.assertTrue(events_path.exists())
-            codex_events = [
+            headless_events = [
                 json.loads(line)
                 for line in events_path.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
-            event_types = [str(item.get("type") or "") for item in codex_events]
-            self.assertIn("codex.turn.progress", event_types)
-            self.assertIn("codex.activity.started", event_types)
-            self.assertIn("codex.activity.updated", event_types)
-            self.assertIn("codex.activity.completed", event_types)
-            self.assertIn("codex.message.started", event_types)
-            self.assertIn("codex.message.delta", event_types)
-            self.assertIn("codex.message.completed", event_types)
-            self.assertIn("codex.turn.completed", event_types)
+            event_types = [str(item.get("type") or "") for item in headless_events]
+            self.assertIn("headless.turn.progress", event_types)
+            self.assertIn("headless.activity.started", event_types)
+            self.assertIn("headless.activity.updated", event_types)
+            self.assertIn("headless.activity.completed", event_types)
+            self.assertIn("headless.message.started", event_types)
+            self.assertIn("headless.message.delta", event_types)
+            self.assertIn("headless.message.completed", event_types)
+            self.assertIn("headless.turn.completed", event_types)
             commentary_started = next(
-                item for item in codex_events
-                if str(item.get("type") or "") == "codex.message.started"
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.message.started"
                 and str(((item.get("data") or {}).get("phase") or "")) == "commentary"
             )
             self.assertEqual(str(((commentary_started.get("data") or {}).get("stream_id") or "")), "commentary-1")
             commentary_completed = next(
-                item for item in codex_events
-                if str(item.get("type") or "") == "codex.message.completed"
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.message.completed"
                 and str(((item.get("data") or {}).get("phase") or "")) == "commentary"
             )
             self.assertEqual(str(((commentary_completed.get("data") or {}).get("text") or "")), "Inspecting")
             message_started = next(
-                item for item in codex_events
-                if str(item.get("type") or "") == "codex.message.started"
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.message.started"
                 and str(((item.get("data") or {}).get("phase") or "")) == "final_answer"
             )
             started_data = message_started.get("data") if isinstance(message_started.get("data"), dict) else {}
             self.assertEqual(str(started_data.get("event_id") or ""), "evt-1")
             activity_summaries = [
                 str((item.get("data") or {}).get("summary") or "")
-                for item in codex_events
-                if str(item.get("type") or "").startswith("codex.activity.")
+                for item in headless_events
+                if str(item.get("type") or "").startswith("headless.activity.")
             ]
             self.assertIn("Inspect src/app.ts", activity_summaries)
             self.assertIn("Inspecting state flow", activity_summaries)
             self.assertIn("npm run typecheck", activity_summaries)
             self.assertIn("reply ready", activity_summaries)
             command_started = next(
-                item for item in codex_events
-                if str(item.get("type") or "") == "codex.activity.started"
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.activity.started"
                 and str(((item.get("data") or {}).get("activity_id") or "")).startswith("command:")
             )
             command_data = command_started.get("data") if isinstance(command_started.get("data"), dict) else {}
@@ -380,8 +380,8 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(str(command_data.get("cwd") or ""), "/tmp")
 
             command_updated = next(
-                item for item in codex_events
-                if str(item.get("type") or "") == "codex.activity.updated"
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.activity.updated"
                 and str(((item.get("data") or {}).get("activity_id") or "")).startswith("command:")
             )
             command_updated_data = command_updated.get("data") if isinstance(command_updated.get("data"), dict) else {}
@@ -406,7 +406,7 @@ class TestCodexAppFlow(unittest.TestCase):
 
     def test_codex_notifications_keep_streaming_when_agent_message_phase_missing(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
-        from cccc.kernel.codex_events import codex_events_path
+        from cccc.kernel.headless_events import headless_events_path
         from cccc.kernel.group import create_group, load_group
         from cccc.kernel.registry import load_registry
 
@@ -448,31 +448,31 @@ class TestCodexAppFlow(unittest.TestCase):
             )
             session._handle_notification("turn/completed", {"turn": {"id": "turn-fallback", "status": "completed"}})
 
-            events_path = codex_events_path(loaded_group.path)
+            events_path = headless_events_path(loaded_group.path)
             self.assertTrue(events_path.exists())
-            codex_events = [
+            headless_events = [
                 json.loads(line)
                 for line in events_path.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
             started = next(
-                item for item in codex_events
-                if str(item.get("type") or "") == "codex.message.started"
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.message.started"
                 and str(((item.get("data") or {}).get("stream_id") or "")) == "msg-fallback"
             )
             started_data = started.get("data") if isinstance(started.get("data"), dict) else {}
             self.assertEqual(str(started_data.get("phase") or ""), "")
 
             deltas = [
-                item for item in codex_events
-                if str(item.get("type") or "") == "codex.message.delta"
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.message.delta"
                 and str(((item.get("data") or {}).get("stream_id") or "")) == "msg-fallback"
             ]
             self.assertEqual([str((item.get("data") or {}).get("delta") or "") for item in deltas], ["Hel", "lo"])
 
             completed = next(
-                item for item in codex_events
-                if str(item.get("type") or "") == "codex.message.completed"
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.message.completed"
                 and str(((item.get("data") or {}).get("stream_id") or "")) == "msg-fallback"
             )
             completed_data = completed.get("data") if isinstance(completed.get("data"), dict) else {}

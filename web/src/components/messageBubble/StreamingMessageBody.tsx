@@ -2,172 +2,22 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LedgerEvent, StreamingActivity } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { selectStreamingReplySession, useGroupStore } from "../../stores";
+import {
+  normalizeStreamingActivities as _normalizeStreamingActivities,
+  getMessageBubbleMotionClass as _getMessageBubbleMotionClass,
+  isQueuedOnlyStreamingPlaceholder as _isQueuedOnlyStreamingPlaceholder,
+  getEffectiveStreamingActivities,
+  deriveStreamingRenderPhase,
+  getStreamingPendingDelayMs,
+} from "./helpers";
 
+export const normalizeStreamingActivities = _normalizeStreamingActivities;
+export const getMessageBubbleMotionClass = _getMessageBubbleMotionClass;
+export const isQueuedOnlyStreamingPlaceholder = _isQueuedOnlyStreamingPlaceholder;
+
+const STREAMING_STATUS_EXIT_MS = 140;
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_STREAMING_EVENTS: LedgerEvent[] = [];
-const STREAMING_PENDING_MIN_MS = 80;
-const STREAMING_STATUS_EXIT_MS = 140;
-const STREAMING_ACTIVITY_LOG_LIMIT = 12;
-
-function dedupeStreamingActivities(value: StreamingActivity[]): StreamingActivity[] {
-  if (!Array.isArray(value) || value.length <= 0) return EMPTY_STREAMING_ACTIVITIES;
-  const dedupedFromLatest: StreamingActivity[] = [];
-  const seenIds = new Set<string>();
-  for (let index = value.length - 1; index >= 0; index -= 1) {
-    const activity = value[index];
-    const activityId = String(activity?.id || "").trim();
-    const summary = String(activity?.summary || "").trim();
-    if (!activityId || !summary || seenIds.has(activityId)) continue;
-    seenIds.add(activityId);
-    dedupedFromLatest.push({
-      ...activity,
-      id: activityId,
-      summary,
-    });
-  }
-  return dedupedFromLatest.reverse();
-}
-
-export function normalizeStreamingActivities(value: unknown): StreamingActivity[] {
-  if (!Array.isArray(value)) return EMPTY_STREAMING_ACTIVITIES;
-  const normalized = dedupeStreamingActivities(value
-    .filter((item): item is StreamingActivity => !!item && typeof item === "object")
-    .map((item) => ({
-      id: String(item.id || ""),
-      kind: String(item.kind || "thinking"),
-      status: String(item.status || "updated"),
-      summary: String(item.summary || ""),
-      detail: item.detail ? String(item.detail) : undefined,
-      ts: item.ts ? String(item.ts) : undefined,
-      raw_item_type: item.raw_item_type ? String(item.raw_item_type) : undefined,
-      tool_name: item.tool_name ? String(item.tool_name) : undefined,
-      server_name: item.server_name ? String(item.server_name) : undefined,
-      command: item.command ? String(item.command) : undefined,
-      cwd: item.cwd ? String(item.cwd) : undefined,
-      file_paths: Array.isArray(item.file_paths) ? item.file_paths.map((part) => String(part || "")) : undefined,
-      query: item.query ? String(item.query) : undefined,
-    }))
-    .filter((item) => item.id && item.summary)
-    .slice(-STREAMING_ACTIVITY_LOG_LIMIT));
-  const hasRealActivities = normalized.some((item) => item.kind !== "queued" || item.summary !== "queued");
-  return hasRealActivities
-    ? normalized.filter((item) => item.kind !== "queued" || item.summary !== "queued")
-    : normalized;
-}
-
-export function getMessageBubbleMotionClass({
-  isStreaming,
-  isOptimistic,
-  streamPhase,
-}: {
-  isStreaming: boolean;
-  isOptimistic: boolean;
-  streamPhase?: string;
-}): string {
-  const phase = String(streamPhase || "").trim().toLowerCase();
-  if (!isStreaming && !isOptimistic) return "";
-  if (phase === "commentary") return "cccc-transient-bubble cccc-transient-bubble-commentary";
-  return "cccc-transient-bubble";
-}
-
-export function isQueuedOnlyStreamingPlaceholder({
-  isStreaming,
-  messageText,
-  liveStreamingText,
-  blobAttachmentCount,
-  presentationRefCount,
-  activities,
-}: {
-  isStreaming: boolean;
-  messageText: string;
-  liveStreamingText: string;
-  blobAttachmentCount: number;
-  presentationRefCount: number;
-  activities: StreamingActivity[];
-}): boolean {
-  if (!isStreaming) return false;
-  if (String(messageText || "").trim()) return false;
-  if (String(liveStreamingText || "").trim()) return false;
-  if (blobAttachmentCount > 0 || presentationRefCount > 0) return false;
-  if (activities.length !== 1) return false;
-  const [activity] = activities;
-  return activity.kind === "queued" && activity.summary === "queued";
-}
-
-function getEffectiveStreamingActivities({
-  streamId,
-  actorId,
-  pendingEventId,
-  bucket,
-  fallbackActivities,
-}: {
-  streamId: string;
-  actorId: string;
-  pendingEventId: string;
-  bucket?: {
-    streamingActivitiesByStreamId?: Record<string, StreamingActivity[]>;
-    streamingEvents?: LedgerEvent[];
-  } | null;
-  fallbackActivities?: StreamingActivity[];
-}): StreamingActivity[] {
-  const normalizedFallback = Array.isArray(fallbackActivities) ? fallbackActivities : EMPTY_STREAMING_ACTIVITIES;
-  const activitiesByStreamId = bucket?.streamingActivitiesByStreamId || {};
-  const direct = streamId ? normalizeStreamingActivities(activitiesByStreamId[streamId]) : EMPTY_STREAMING_ACTIVITIES;
-  const events = Array.isArray(bucket?.streamingEvents) ? (bucket?.streamingEvents || EMPTY_STREAMING_EVENTS) : EMPTY_STREAMING_EVENTS;
-
-  const latestCandidate = events
-    .filter((event) => {
-      if (String(event.by || "").trim() !== actorId) return false;
-      const data = event.data && typeof event.data === "object"
-        ? event.data as { stream_id?: unknown; pending_event_id?: unknown }
-        : {};
-      const eventStreamId = String(data.stream_id || "").trim();
-      const eventPendingEventId = String(data.pending_event_id || "").trim();
-      if (streamId && eventStreamId === streamId) return true;
-      if (pendingEventId && eventPendingEventId === pendingEventId) return true;
-      return false;
-    })
-    .map((event, index) => {
-      const data = event.data && typeof event.data === "object"
-        ? event.data as { stream_id?: unknown; activities?: unknown }
-        : {};
-      const eventStreamId = String(data.stream_id || "").trim();
-      const liveActivities = eventStreamId ? normalizeStreamingActivities(activitiesByStreamId[eventStreamId]) : EMPTY_STREAMING_ACTIVITIES;
-      return {
-        index,
-        ts: String(event.ts || "").trim(),
-        activities: liveActivities.length > 0 ? liveActivities : normalizeStreamingActivities(data.activities),
-      };
-    })
-    .filter((item) => item.activities.length > 0)
-    .sort((left, right) => {
-      if (left.ts && right.ts && left.ts !== right.ts) return right.ts.localeCompare(left.ts);
-      if (left.ts && !right.ts) return -1;
-      if (!left.ts && right.ts) return 1;
-      return right.index - left.index;
-    })[0];
-
-  if (latestCandidate?.activities?.length) return latestCandidate.activities;
-  if (direct.length > 0) return direct;
-  return normalizedFallback;
-}
-
-function deriveStreamingRenderPhase({
-  isStreaming,
-  hasText,
-  activities,
-  previousPhase,
-}: {
-  isStreaming: boolean;
-  hasText: boolean;
-  activities: StreamingActivity[];
-  previousPhase?: "pending" | "active" | "exiting" | "completed";
-}): "pending" | "active" | "completed" {
-  if (!isStreaming) return "completed";
-  if (hasText || activities.length > 0) return "active";
-  if (previousPhase === "active" || previousPhase === "exiting") return "active";
-  return "pending";
-}
 
 function formatActivityKind(kind: string): string {
   const normalized = String(kind || "").trim();
@@ -207,11 +57,6 @@ function getStructuredActivityLabel(activity: StreamingActivity): string {
   const query = String(activity.query || "").trim();
   if (query) return query;
   return String(activity.summary || "").trim();
-}
-
-function getStreamingPendingDelayMs(startedAtMs: number | null, nowMs: number): number {
-  if (startedAtMs == null) return 0;
-  return Math.max(0, STREAMING_PENDING_MIN_MS - Math.max(0, nowMs - startedAtMs));
 }
 
 function PlainMessageText({
@@ -504,10 +349,10 @@ const StreamingContent = memo(function StreamingContent({
       ? (exitSnapshot?.activities || EMPTY_STREAMING_ACTIVITIES)
       : effectiveStreamingActivities;
   const shouldShowText = hasText || renderPhase !== "completed";
-  const showActivitiesPanel = visibleActivities.length > 0;
+  const showActivitiesPanel = visibleActivities.length > 0 && !isQueuedOnlyPlaceholder;
 
   return (
-    <div className="flex min-h-[4.25rem] flex-col gap-1.5">
+    <div className={classNames("flex flex-col gap-1.5", isQueuedOnlyPlaceholder ? "" : "min-h-[4.25rem]")}>
       {showActivitiesPanel ? (
         <div className="flex min-h-[2rem] items-start transition-opacity duration-150 opacity-100" aria-hidden={false}>
           <div className="flex w-full flex-col gap-2">

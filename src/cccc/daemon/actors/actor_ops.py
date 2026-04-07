@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ..actor_runtime_cache import get_group_runtime
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...kernel.actors import find_actor, get_effective_role, list_actors
 from ...kernel.context import ContextStorage
@@ -90,6 +91,10 @@ def handle_actor_list(
             state = codex_app_supervisor.get_state(group_id=group_id, actor_id=aid)
             headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)
             running = bool(state is not None and codex_app_supervisor.actor_running(group_id, aid))
+        elif runtime.lower() == "claude" and effective_runner == "headless":
+            state = claude_app_supervisor.get_state(group_id=group_id, actor_id=aid)
+            headless_state = dict(state) if isinstance(state, dict) else None
+            running = bool(state is not None and claude_app_supervisor.actor_running(group_id, aid))
         elif effective_runner == "headless":
             state = headless_runner.SUPERVISOR.get_state(group_id=group_id, actor_id=aid)
             headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)

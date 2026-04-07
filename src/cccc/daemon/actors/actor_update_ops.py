@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...kernel.actors import find_actor, list_actors, update_actor
 from ...kernel.group import load_group
@@ -306,6 +307,13 @@ def handle_actor_update(
                             cwd=cwd,
                             env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
                         )
+                    elif runtime == "claude":
+                        claude_app_supervisor.start_actor(
+                            group_id=group.group_id,
+                            actor_id=actor_id,
+                            cwd=cwd,
+                            env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+                        )
                     else:
                         headless_runner.SUPERVISOR.start_actor(
                             group_id=group.group_id,
@@ -340,6 +348,10 @@ def handle_actor_update(
             runtime = str(actor.get("runtime") or "codex").strip() or "codex"
             if runtime == "codex" and runner_effective == "headless":
                 codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
+                remove_headless_state(group.group_id, actor_id)
+                remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+            elif runtime == "claude" and runner_effective == "headless":
+                claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
                 remove_headless_state(group.group_id, actor_id)
                 remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
             elif runner_effective == "headless":

@@ -9,6 +9,7 @@ from ...kernel.actors import find_actor
 from ...kernel.context import ContextStorage
 from ...kernel.ledger import append_event
 from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -247,6 +248,13 @@ def start_actor_process(
     try:
         if runtime == "codex" and effective_runner == "headless":
             codex_app_supervisor.start_actor(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+            )
+        elif runtime == "claude" and effective_runner == "headless":
+            claude_app_supervisor.start_actor(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 cwd=cwd,

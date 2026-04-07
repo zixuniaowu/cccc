@@ -12,6 +12,7 @@ from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
 from ...kernel.runtime import inject_runtime_home_env
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -121,6 +122,10 @@ def handle_actor_stop(
             codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
             remove_headless_state(group.group_id, actor_id)
             remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+        elif runtime == "claude" and runner_effective == "headless":
+            claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
+            remove_headless_state(group.group_id, actor_id)
+            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
         elif runner_effective == "headless":
             headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
             remove_headless_state(group.group_id, actor_id)
@@ -221,6 +226,10 @@ def handle_actor_restart(
         runtime = str(actor.get("runtime") or "codex").strip() or "codex"
         if runtime == "codex" and effective_runner_kind(runner_kind) == "headless":
             codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
+            remove_headless_state(group.group_id, actor_id)
+            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+        elif runtime == "claude" and effective_runner_kind(runner_kind) == "headless":
+            claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
             remove_headless_state(group.group_id, actor_id)
             remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
         elif effective_runner_kind(runner_kind) == "headless":
@@ -335,6 +344,13 @@ def handle_actor_restart(
 
         if runtime == "codex" and runner_effective == "headless":
             codex_app_supervisor.start_actor(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+            )
+        elif runtime == "claude" and runner_effective == "headless":
+            claude_app_supervisor.start_actor(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 cwd=cwd,

@@ -24,6 +24,7 @@ import {
     normalizeStreamingActivities,
     StreamingMessageBody,
 } from "./messageBubble/StreamingMessageBody";
+import { formatEventLine } from "./messageBubble/helpers";
 
 const LazyMarkdownRenderer = lazy(() =>
     import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
@@ -42,14 +43,6 @@ function ensureTypingDotStyle(): void {
       }
     `;
     document.head.appendChild(style);
-}
-
-function formatEventLine(ev: LedgerEvent): string {
-    if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
-        const msg = ev.data as ChatMessageData;
-        return String(msg.text || "");
-    }
-    return "";
 }
 
 function buildSenderAvatarUrl(groupId: string, senderAvatarPath?: string): string {

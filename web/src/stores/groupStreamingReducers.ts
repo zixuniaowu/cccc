@@ -899,8 +899,12 @@ export function clearEmptyStreamingEventsForActorPatch(
       if (!pendingEventId && streamId.startsWith("local:")) {
         return false;
       }
+      // When a canonical reply already arrived, remove the empty placeholder
+      // regardless of activity status (activities are stale once canonical text exists).
+      if (pendingEventId && hasCanonicalReplyForPendingEvent(bucket, targetActorId, pendingEventId)) return true;
       if (!isQueuedOnlyActivityList(data.activities)) return false;
-      if (pendingEventId && !hasCanonicalReplyForPendingEvent(bucket, targetActorId, pendingEventId)) return false;
+      // No canonical reply yet — keep waiting.
+      if (pendingEventId) return false;
       return true;
     })
     .map((item) => String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim())

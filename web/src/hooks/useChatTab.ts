@@ -17,12 +17,12 @@ import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxSto
 import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment } from "../types";
 import * as api from "../services/api";
 import { buildReplyComposerState } from "../utils/chatReply";
+import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
 
 export function supportsChatStreamingPlaceholder(actor: Pick<Actor, "runtime" | "runner" | "runner_effective">): boolean {
   const runtime = String(actor.runtime || "").trim();
-  if (runtime !== "codex") return false;
-  const runner = String(actor.runner_effective || actor.runner || "pty").trim() || "pty";
-  return runner === "headless";
+  if (!runtime) return false;
+  return runtime !== "custom";
 }
 
 export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
@@ -271,33 +271,15 @@ function dropOrphanQueuedPlaceholders(
       : {};
     const text = typeof data.text === "string" ? data.text.trim() : "";
     if (text) return true;
-    const activities = Array.isArray(data.activities) ? data.activities : [];
-    const onlyQueuedActivities = activities.length === 0 || activities.every((item) => {
-      if (!item || typeof item !== "object") return true;
-      const kind = String((item as { kind?: unknown }).kind || "").trim();
-      const summary = String((item as { summary?: unknown }).summary || "").trim();
-      return kind === "queued" && summary === "queued";
-    });
+    // Canonical reply exists and placeholder has no text — drop it even if activities
+    // are non-queued (stale activities are irrelevant once canonical text arrived).
     const streamId = String(data.stream_id || "").trim();
     const isPlaceholderLike =
       Boolean(data.pending_placeholder) ||
       streamId.startsWith("local:") ||
       streamId.startsWith("pending:");
-    return !isPlaceholderLike || !onlyQueuedActivities;
+    return !isPlaceholderLike;
   });
-}
-
-function hasRenderableChatMessageContent(event: LedgerEvent): boolean {
-  if (String(event.kind || "").trim() !== "chat.message") return false;
-  const data = event.data && typeof event.data === "object"
-    ? event.data as ChatMessageData
-    : undefined;
-  const text = typeof data?.text === "string" ? data.text.trim() : "";
-  if (text) return true;
-  const attachments = Array.isArray(data?.attachments) ? data.attachments : [];
-  if (attachments.length > 0) return true;
-  const refs = Array.isArray(data?.refs) ? data.refs : [];
-  return refs.length > 0;
 }
 
 function getCanonicalStreamingSupersededStreamIds(canonicalEvents: LedgerEvent[]): Set<string> {
@@ -311,61 +293,6 @@ function getCanonicalStreamingSupersededStreamIds(canonicalEvents: LedgerEvent[]
         return data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
       })
       .filter((streamId) => streamId.length > 0)
-  );
-}
-
-function dropSupersededReplyPlaceholders(
-  canonicalEvents: LedgerEvent[],
-  streamingEvents: LedgerEvent[],
-): LedgerEvent[] {
-  const renderableCanonicalReplySlots = new Set(
-    canonicalEvents
-      .filter((event) => hasRenderableChatMessageContent(event))
-      .map((event) => getReplySlotKey(event))
-      .filter((slotKey) => slotKey.length > 0),
-  );
-
-  return streamingEvents.filter((event) => {
-    const slotKey = getReplySlotKey(event);
-    if (!slotKey || !renderableCanonicalReplySlots.has(slotKey)) return true;
-
-    const data = event.data && typeof event.data === "object"
-      ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown }
-      : {};
-    const text = typeof data.text === "string" ? data.text.trim() : "";
-    const attachments = Array.isArray(data.attachments) ? data.attachments : [];
-    const refs = Array.isArray(data.refs) ? data.refs : [];
-    const activities = Array.isArray(data.activities) ? data.activities : [];
-    const onlyQueuedActivities = activities.length === 0 || activities.every((item) => {
-      if (!item || typeof item !== "object") return true;
-      const kind = String((item as { kind?: unknown }).kind || "").trim();
-      const summary = String((item as { summary?: unknown }).summary || "").trim();
-      return kind === "queued" && summary === "queued";
-    });
-    const streamId = String(data.stream_id || "").trim();
-    const isPlaceholderLike =
-      Boolean(data.pending_placeholder) ||
-      streamId.startsWith("local:") ||
-      streamId.startsWith("pending:");
-
-    if (!isPlaceholderLike) return true;
-    if (text || attachments.length > 0 || refs.length > 0) return true;
-    return !onlyQueuedActivities ? true : false;
-  });
-}
-
-export function mergeLiveChatMessageEvents(
-  canonicalEvents: LedgerEvent[],
-  streamingEvents: LedgerEvent[],
-  pendingEvents: LedgerEvent[],
-): LedgerEvent[] {
-  const replySlotTsByKey = buildReplySlotTsMap(streamingEvents);
-  return sortChatMessages(
-    mergeVisibleChatMessages(canonicalEvents, streamingEvents, pendingEvents, {
-      map: new Map(),
-      next: 0,
-    }),
-    replySlotTsByKey,
   );
 }
 
@@ -551,10 +478,22 @@ export function mergeVisibleChatMessages(
   orderState: { map: Map<string, number>; next: number },
 ): LedgerEvent[] {
   const canonicalStreamIds = getCanonicalStreamingSupersededStreamIds(canonicalEvents);
-  const liveStreaming = dropSupersededReplyPlaceholders(canonicalEvents, streamingEvents).filter((ev) => {
+  const canonicalReplySlots = new Set(
+    canonicalEvents
+      .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
+      .map((ev: LedgerEvent) => getReplySlotKey(ev))
+      .filter((key: string) => key.length > 0),
+  );
+  const liveStreaming = streamingEvents.filter((ev: LedgerEvent) => {
     const data = ev.data && typeof ev.data === "object" ? (ev.data as { stream_id?: unknown }) : null;
     const streamId = data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
-    return !streamId || !canonicalStreamIds.has(streamId);
+    if (streamId && canonicalStreamIds.has(streamId)) return false;
+    // Backup: drop empty streaming events whose reply slot is covered by a canonical event
+    if (!hasRenderableChatMessageContent(ev)) {
+      const slotKey = getReplySlotKey(ev);
+      if (slotKey && canonicalReplySlots.has(slotKey)) return false;
+    }
+    return true;
   });
 
   return mergeLogicalMessagesWithStableOrder(

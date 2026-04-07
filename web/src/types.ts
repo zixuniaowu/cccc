@@ -158,7 +158,7 @@ export type LedgerEvent = {
   _obligation_status?: Record<string, ObligationStatus>;
 };
 
-export type CodexStreamEvent = {
+export type HeadlessStreamEvent = {
   id?: string;
   ts?: string;
   group_id?: string;

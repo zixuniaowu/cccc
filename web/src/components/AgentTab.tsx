@@ -872,8 +872,8 @@ export function AgentTab({
             <div className="mb-4"><RocketIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">{t('headlessAgent')}</div>
             <div className="text-sm text-center max-w-md">
-              {String(actor.runtime || "").trim() === "codex"
-                ? t('headlessCodexDescription', { defaultValue: '该智能体以无终端模式运行，回复会直接在 Chat 中流式输出。' })
+              {["codex", "claude"].includes(String(actor.runtime || "").trim())
+                ? t('headlessStreamDescription', { defaultValue: '该智能体以无终端模式运行，回复会直接在 Chat 中流式输出。' })
                 : t('headlessDescription')}
             </div>
             {isRunning && (

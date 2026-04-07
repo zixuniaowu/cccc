@@ -178,7 +178,7 @@ describe("stagePetReminderDraft", () => {
     expect(useComposerStore.getState().toText).toBe("@foreman");
     expect(useComposerStore.getState().replyTarget).toBe(null);
     expect(useComposerStore.getState().composerText).toBe(
-      "Use cccc_task to move this task (task_id=T315, status=active).",
+      "Pet task proposal: please use cccc_task to move this task (task_id=T315, status=active).",
     );
   });
 

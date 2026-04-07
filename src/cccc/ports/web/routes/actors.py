@@ -163,6 +163,23 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
                 running = bool(state is not None and codex_app_supervisor.actor_running(gid, aid))
             if running:
                 effective_runner = "headless"
+        if not running and runtime.lower() == "claude" and effective_runner == "headless":
+            try:
+                state_doc = read_json(headless_state_path(gid, aid))
+            except Exception:
+                state_doc = {}
+            pid = int(state_doc.get("pid") or 0) if isinstance(state_doc, dict) else 0
+            headless_state = dict(state_doc) if isinstance(state_doc, dict) else None
+            running = bool(
+                isinstance(state_doc, dict)
+                and str(state_doc.get("kind") or "") == "headless"
+                and str(state_doc.get("group_id") or "") == gid
+                and str(state_doc.get("actor_id") or "") == aid
+                and str(state_doc.get("runtime") or "").strip().lower() == "claude"
+                and pid > 0
+                and pid_is_alive(pid)
+                and str(state_doc.get("status") or "").strip().lower() != "stopped"
+            )
         if not running and effective_runner == "headless":
             state = headless_runner.SUPERVISOR.get_state(group_id=gid, actor_id=aid)
             headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)

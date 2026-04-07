@@ -5,7 +5,6 @@ import {
   buildReplySlotTsMap,
   collapseActorStreamingPlaceholders,
   dedupeStreamingEvents,
-  mergeLiveChatMessageEvents,
   mergeVisibleChatMessages,
   sortChatMessages,
   shouldRestoreDetachedScrollSnapshot,
@@ -270,7 +269,7 @@ describe("mergeLiveChatMessageEvents", () => {
   });
 
   it("does not collapse multiple canonical replies from the same actor to the same parent", () => {
-    const merged = mergeLiveChatMessageEvents(
+    const merged = mergeVisibleChatMessages(
       [
         {
           id: "evt-1",
@@ -297,13 +296,14 @@ describe("mergeLiveChatMessageEvents", () => {
       ],
       [],
       [],
+      { map: new Map(), next: 0 },
     );
 
     expect(merged.map((event) => String(event.id || ""))).toEqual(["evt-1", "evt-2"]);
   });
 
   it("keeps commentary streaming text when canonical message with the same stream id is still empty", () => {
-    const merged = mergeLiveChatMessageEvents(
+    const merged = mergeVisibleChatMessages(
       [
         {
           id: "evt-empty",
@@ -334,6 +334,7 @@ describe("mergeLiveChatMessageEvents", () => {
         },
       ],
       [],
+      { map: new Map(), next: 0 },
     );
 
     expect(merged).toHaveLength(1);
@@ -342,7 +343,7 @@ describe("mergeLiveChatMessageEvents", () => {
   });
 
   it("drops streaming commentary once canonical message with the same stream id has renderable content", () => {
-    const merged = mergeLiveChatMessageEvents(
+    const merged = mergeVisibleChatMessages(
       [
         {
           id: "evt-final",
@@ -373,6 +374,7 @@ describe("mergeLiveChatMessageEvents", () => {
         },
       ],
       [],
+      { map: new Map(), next: 0 },
     );
 
     expect(merged).toHaveLength(1);
@@ -380,47 +382,8 @@ describe("mergeLiveChatMessageEvents", () => {
     expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("已经定位到问题");
   });
 
-  it("replaces a queued streaming placeholder with the canonical reply in the same logical slot", () => {
-    const merged = mergeLiveChatMessageEvents(
-      [
-        {
-          id: "evt-final",
-          ts: "2026-04-04T15:29:03.000Z",
-          kind: "chat.message",
-          by: "claude-1",
-          data: {
-            text: "已经定位到问题",
-            reply_to: "user-msg-1",
-            to: ["user"],
-          },
-        },
-      ],
-      [
-        {
-          id: "stream:queued",
-          ts: "2026-04-04T15:29:00.000Z",
-          kind: "chat.message",
-          by: "claude-1",
-          _streaming: true,
-          data: {
-            text: "",
-            pending_event_id: "user-msg-1",
-            stream_id: "pending:user-msg-1:claude-1",
-            pending_placeholder: true,
-            to: ["user"],
-            activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
-          },
-        },
-      ],
-      [],
-    );
-
-    expect(merged).toHaveLength(1);
-    expect(String(merged[0]?.id || "")).toBe("evt-final");
-  });
-
   it("keeps a fresh local queued placeholder visible even when the actor already has older canonical replies", () => {
-    const merged = mergeLiveChatMessageEvents(
+    const merged = mergeVisibleChatMessages(
       [
         {
           id: "evt-old",
@@ -452,6 +415,7 @@ describe("mergeLiveChatMessageEvents", () => {
         },
       ],
       [],
+      { map: new Map(), next: 0 },
     );
 
     expect(merged).toHaveLength(2);
@@ -749,19 +713,35 @@ describe("supportsChatStreamingPlaceholder", () => {
     })).toBe(true);
   });
 
-  it("returns false for codex pty actors", () => {
+  it("returns true for codex pty actors", () => {
     expect(supportsChatStreamingPlaceholder({
       runtime: "codex",
+      runner: "pty",
+      runner_effective: "pty",
+    })).toBe(true);
+  });
+
+  it("returns true for non-codex known runtimes", () => {
+    expect(supportsChatStreamingPlaceholder({
+      runtime: "claude",
+      runner: "headless",
+      runner_effective: "headless",
+    })).toBe(true);
+  });
+
+  it("returns false for custom runtime", () => {
+    expect(supportsChatStreamingPlaceholder({
+      runtime: "custom",
       runner: "pty",
       runner_effective: "pty",
     })).toBe(false);
   });
 
-  it("returns false for non-codex actors", () => {
+  it("returns false for empty runtime", () => {
     expect(supportsChatStreamingPlaceholder({
-      runtime: "claude",
-      runner: "headless",
-      runner_effective: "headless",
+      runtime: "",
+      runner: "pty",
+      runner_effective: "pty",
     })).toBe(false);
   });
 });

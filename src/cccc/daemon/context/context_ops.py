@@ -46,6 +46,7 @@ from ...kernel.group import load_group
 from ...kernel.query_projections import get_actor_list_projection
 from ...kernel.pet_actor import PET_ACTOR_ID
 from ...kernel.ledger import append_event
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -375,6 +376,8 @@ def _actor_runtime_state_to_dict(
     if effective_runner == "headless":
         if runtime.lower() == "codex":
             running = bool(codex_app_supervisor.actor_running(group_id, actor_id))
+        elif runtime.lower() == "claude":
+            running = bool(claude_app_supervisor.actor_running(group_id, actor_id))
         else:
             running = bool(headless_runner.SUPERVISOR.actor_running(group_id=group_id, actor_id=actor_id))
     else:

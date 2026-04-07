@@ -19,6 +19,7 @@ All operations go through daemon IPC to ensure single-writer principle.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Dict, List, Optional
 
@@ -158,6 +159,27 @@ from .handlers.notify import (  # noqa: F401
 )
 from .utils.help_markdown import _select_help_markdown
 from .utils.space_args import _normalize_space_query_options_mcp
+
+
+def _normalize_to_arg(raw: Any) -> Optional[List[str]]:
+    """Normalise the ``to`` argument from MCP tool calls.
+
+    Agents sometimes serialise the array as a JSON string (e.g.
+    ``'["user"]'`` instead of ``["user"]``).  Detect and recover.
+    """
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()] or None
+    if isinstance(raw, str) and raw.strip():
+        s = raw.strip()
+        if s.startswith("["):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()] or None
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return [s]
+    return None
 
 
 # =============================================================================
@@ -304,12 +326,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
         refs_raw = arguments.get("refs")
-        if isinstance(to_raw, list):
-            to_val: Optional[List[str]] = [str(x).strip() for x in to_raw if str(x).strip()]
-        elif isinstance(to_raw, str) and to_raw.strip():
-            to_val = [to_raw.strip()]
-        else:
-            to_val = None
+        to_val = _normalize_to_arg(to_raw)
         refs_val = [item for item in refs_raw if isinstance(item, dict)] if isinstance(refs_raw, list) else None
         return message_send(
             group_id=gid,
@@ -327,12 +344,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
         refs_raw = arguments.get("refs")
-        if isinstance(to_raw, list):
-            to_val_reply: Optional[List[str]] = [str(x).strip() for x in to_raw if str(x).strip()]
-        elif isinstance(to_raw, str) and to_raw.strip():
-            to_val_reply = [to_raw.strip()]
-        else:
-            to_val_reply = None
+        to_val_reply = _normalize_to_arg(to_raw)
         refs_val_reply = [item for item in refs_raw if isinstance(item, dict)] if isinstance(refs_raw, list) else None
         reply_to = str(arguments.get("event_id") or arguments.get("reply_to") or "").strip()
         return message_reply(

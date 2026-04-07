@@ -155,7 +155,7 @@ export function AddActorModal({
   const showCommandEditor = !newActorUseProfile && (newActorRuntime === "custom" || !newActorUseDefaultCommand);
   const previewRuntime = newActorUseProfile ? selectedProfileRuntime || null : newActorRuntime;
   const previewTitle = String(newActorId || "").trim() || suggestedActorId;
-  const customRunnerLockedToPty = !newActorUseProfile && newActorRuntime !== "codex";
+  const customRunnerLockedToPty = !newActorUseProfile && !["codex", "claude"].includes(newActorRuntime);
 
   const sectionCardClass = "rounded-2xl p-4 sm:p-5 glass-panel";
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
@@ -373,7 +373,7 @@ export function AddActorModal({
                         onChange={(e) => {
                           const next = e.target.value as SupportedRuntime;
                           setNewActorRuntime(next);
-                          if (next !== "codex") setNewActorRunner("pty");
+                          if (!["codex", "claude"].includes(next)) setNewActorRunner("pty");
                           setNewActorCommand("");
                           setNewActorUseDefaultCommand(next !== "custom");
                         }}
@@ -413,7 +413,7 @@ export function AddActorModal({
                       </label>
                     ) : null}
 
-                    {newActorRuntime === "codex" ? (
+                    {["codex", "claude"].includes(newActorRuntime) ? (
                       <div>
                         <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
                           {t("runnerMode", { defaultValue: "运行模式" })}
@@ -437,7 +437,7 @@ export function AddActorModal({
                         </div>
                         <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
                           {customRunnerLockedToPty
-                            ? t("runnerModeCodexOnly", { defaultValue: "当前只有 codex runtime 支持切换为 Headless，其他 runtime 固定为 PTY。" })
+                            ? t("runnerModeHeadlessNote", { defaultValue: "仅部分运行时（如 codex、claude）支持 Headless 模式，其他运行时固定为 PTY。" })
                             : t("runnerModeHint", { defaultValue: "PTY 走终端交互；Headless 走结构化事件流。" })}
                         </div>
                       </div>

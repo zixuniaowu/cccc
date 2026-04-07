@@ -10,6 +10,7 @@ from ...kernel.context import ContextStorage
 from ...kernel.actors import list_actors
 from ...kernel.group import load_group
 from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...util.conv import coerce_bool
 from ...runners import headless as headless_runner
@@ -171,6 +172,13 @@ def autostart_running_groups(
                         cwd=cwd,
                         env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
                     )
+                elif runtime == "claude" and effective_runner == "headless":
+                    claude_app_supervisor.start_actor(
+                        group_id=group.group_id,
+                        actor_id=actor_id,
+                        cwd=cwd,
+                        env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                    )
                 elif effective_runner == "headless":
                     headless_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
@@ -202,6 +210,8 @@ def autostart_running_groups(
             try:
                 if runtime == "codex" and effective_runner == "headless":
                     pass
+                elif runtime == "claude" and effective_runner == "headless":
+                    pass
                 elif effective_runner == "headless":
                     write_headless_state(group.group_id, actor_id)
                 else:
@@ -221,6 +231,8 @@ def autostart_running_groups(
                 get_group_state(group) == "active"
                 and (
                     codex_app_supervisor.group_running(group.group_id)
+                    or
+                    claude_app_supervisor.group_running(group.group_id)
                     or
                     pty_runner.SUPERVISOR.group_running(group.group_id)
                     or headless_runner.SUPERVISOR.group_running(group.group_id)

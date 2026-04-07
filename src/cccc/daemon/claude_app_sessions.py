@@ -1,0 +1,967 @@
+"""Claude Code headless session manager.
+
+Manages Claude Code CLI subprocesses in stream-json mode (bidirectional NDJSON
+over stdio), mapping streaming events to headless-compatible events for the
+existing frontend streaming pipeline.
+
+Architecture mirrors ``codex_app_sessions.py``: one long-lived subprocess per
+actor, stdin for user messages, stdout for NDJSON event stream.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import queue
+import subprocess
+import threading
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from ..contracts.v1.message import ChatMessageData
+from ..kernel.headless_events import append_headless_event
+from ..kernel.group import load_group
+from ..kernel.ledger import append_event
+from ..kernel.message_sender_snapshot import build_sender_snapshot
+from .runner_state_ops import headless_state_path, remove_headless_state
+from ..util.fs import atomic_write_json
+from ..util.process import pid_is_alive
+from ..util.time import utc_now_iso
+
+logger = logging.getLogger(__name__)
+
+
+def _is_closed_stream_logging_error(exc: BaseException) -> bool:
+    if not isinstance(exc, ValueError):
+        return False
+    message = str(exc or "").strip().lower()
+    return "i/o operation on closed file" in message or "closed stream" in message
+
+
+def _safe_logger_call(method: str, message: str, *args: Any, **kwargs: Any) -> None:
+    log_method = getattr(logger, method, None)
+    if not callable(log_method):
+        return
+    try:
+        log_method(message, *args, **kwargs)
+    except Exception as exc:
+        if _is_closed_stream_logging_error(exc):
+            return
+        raise
+
+
+@dataclass
+class _PendingTurn:
+    text: str
+    event_id: str
+    reply_to: Optional[str] = None
+
+
+@dataclass
+class ClaudeSessionState:
+    status: str = "idle"
+    current_task_id: Optional[str] = None
+    updated_at: str = field(default_factory=utc_now_iso)
+    session_id: Optional[str] = None
+
+    def to_headless_state(self, *, group_id: str, actor_id: str) -> Dict[str, Any]:
+        return {
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "status": self.status,
+            "current_task_id": self.current_task_id,
+            "updated_at": self.updated_at,
+        }
+
+
+class ClaudeAppSession:
+    """Manages a single Claude Code CLI subprocess in stream-json headless mode."""
+
+    def __init__(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        cwd: Path,
+        env: Dict[str, str],
+        model: str = "",
+    ) -> None:
+        self.group_id = str(group_id or "").strip()
+        self.actor_id = str(actor_id or "").strip()
+        self.cwd = cwd
+        self.env = dict(env or {})
+        self.model = str(model or "").strip()
+        self._proc: Optional[subprocess.Popen[str]] = None
+        self._lock = threading.Lock()
+        self._running = False
+        self._session_state = ClaudeSessionState(status="idle")
+        self._turn_queue: "queue.Queue[Optional[_PendingTurn]]" = queue.Queue()
+        self._turn_done = threading.Event()
+        self._active_turn_id = ""
+        self._active_event_id = ""
+        self._stdout_thread: Optional[threading.Thread] = None
+        self._stderr_thread: Optional[threading.Thread] = None
+        self._turn_thread: Optional[threading.Thread] = None
+
+        # Streaming text delta tracking (snapshot diffing)
+        self._last_text_snapshot = ""
+        self._current_stream_id = ""
+        self._current_message_id = ""
+        self._message_started = False
+
+        # stream_event end-of-turn tracking (for providers that skip result events)
+        self._stream_end_turn_pending = False
+
+        # Activity tracking
+        self._active_tool_activities: Dict[str, str] = {}  # tool_use_id → activity_id
+
+    # ── state persistence ───────────────────────────────────────────────
+
+    def _persist_state(self) -> None:
+        with self._lock:
+            proc = self._proc
+            running = bool(self._running and proc is not None and proc.poll() is None)
+            state = self._session_state.to_headless_state(group_id=self.group_id, actor_id=self.actor_id)
+            pid = int(proc.pid) if running and proc is not None else 0
+        if not running or pid <= 0 or not pid_is_alive(pid):
+            remove_headless_state(self.group_id, self.actor_id)
+            return
+        atomic_write_json(
+            headless_state_path(self.group_id, self.actor_id),
+            {
+                "v": 1,
+                "kind": "headless",
+                "runtime": "claude",
+                "pid": pid,
+                **state,
+            },
+        )
+
+    # ── headless streaming event emission ─────────────────────────────────
+
+    def _emit(self, event_type: str, data: Dict[str, Any]) -> None:
+        group = load_group(self.group_id)
+        if group is None:
+            return
+        try:
+            append_headless_event(
+                group.path,
+                group_id=self.group_id,
+                actor_id=self.actor_id,
+                event_type=event_type,
+                data=data,
+            )
+        except Exception:
+            logger.exception("failed to append claude event: %s/%s %s", self.group_id, self.actor_id, event_type)
+
+    def _emit_activity(
+        self,
+        *,
+        status: str,
+        activity_id: str,
+        kind: str,
+        summary: str,
+        turn_id: str = "",
+        stream_id: str = "",
+        detail: Optional[str] = None,
+        raw_item_type: str = "",
+        tool_name: str = "",
+        server_name: str = "",
+        command: str = "",
+        file_paths: Optional[list[str]] = None,
+    ) -> None:
+        if not status or not activity_id or not kind or not summary:
+            return
+        with self._lock:
+            active_event_id = str(self._active_event_id or "").strip()
+        self._emit(
+            f"headless.activity.{status}",
+            {
+                "activity_id": activity_id,
+                "kind": kind,
+                "summary": summary,
+                "detail": detail or None,
+                "turn_id": turn_id,
+                "stream_id": stream_id,
+                "event_id": active_event_id,
+                "raw_item_type": raw_item_type or None,
+                "tool_name": tool_name or None,
+                "server_name": server_name or None,
+                "command": command or None,
+                "file_paths": file_paths or None,
+            },
+        )
+
+    @staticmethod
+    def _trim(value: Any, *, limit: int = 120) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
+
+    # ── lifecycle ───────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        with self._lock:
+            if self._running:
+                return
+            env = os.environ.copy()
+            env.update(self.env)
+
+            cmd: List[str] = [
+                "claude",
+                "-p",
+                "--input-format", "stream-json",
+                "--output-format", "stream-json",
+                "--include-partial-messages",
+                "--verbose",
+                "--dangerously-skip-permissions",
+                "--no-session-persistence",
+            ]
+            if self.model:
+                cmd.extend(["--model", self.model])
+
+            self._proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=str(self.cwd),
+                env=env,
+                text=True,
+                bufsize=1,
+            )
+            self._running = True
+
+        self._stdout_thread = threading.Thread(
+            target=self._stdout_loop,
+            name=f"cccc-claude-out:{self.group_id}:{self.actor_id}",
+            daemon=True,
+        )
+        self._stderr_thread = threading.Thread(
+            target=self._stderr_loop,
+            name=f"cccc-claude-err:{self.group_id}:{self.actor_id}",
+            daemon=True,
+        )
+        self._turn_thread = threading.Thread(
+            target=self._turn_loop,
+            name=f"cccc-claude-turn:{self.group_id}:{self.actor_id}",
+            daemon=True,
+        )
+
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+
+        # Wait briefly for process to prove it's alive (MCP init may take time)
+        time.sleep(1.0)
+        if not self.is_running():
+            raise RuntimeError("claude process exited immediately")
+
+        with self._lock:
+            self._session_state.status = "idle"
+            self._session_state.updated_at = utc_now_iso()
+        self._persist_state()
+        self._turn_thread.start()
+        logger.info("claude headless started: group=%s actor=%s pid=%s", self.group_id, self.actor_id, self._proc.pid if self._proc else "?")
+
+    def stop(self) -> None:
+        with self._lock:
+            proc = self._proc
+            was_running = self._running
+            self._running = False
+            self._proc = None
+            self._session_state.status = "stopped"
+            self._session_state.current_task_id = None
+            self._session_state.updated_at = utc_now_iso()
+        if was_running:
+            exit_code = proc.poll() if proc else None
+            logger.info("claude headless stopping: group=%s actor=%s exit_code=%s", self.group_id, self.actor_id, exit_code)
+        self._persist_state()
+        self._turn_done.set()
+        try:
+            self._turn_queue.put_nowait(None)
+        except Exception:
+            pass
+        if proc is not None:
+            try:
+                if proc.stdin:
+                    proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=3.0)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        self._emit("headless.session.stopped", {})
+
+    def is_running(self) -> bool:
+        with self._lock:
+            proc = self._proc
+            return bool(self._running and proc is not None and proc.poll() is None)
+
+    def state(self) -> Dict[str, Any]:
+        with self._lock:
+            return self._session_state.to_headless_state(group_id=self.group_id, actor_id=self.actor_id)
+
+    # ── user message submission ─────────────────────────────────────────
+
+    def submit_user_message(self, *, text: str, event_id: str, reply_to: Optional[str] = None) -> bool:
+        if not self.is_running():
+            return False
+        payload = _PendingTurn(text=str(text or ""), event_id=str(event_id or "").strip(), reply_to=reply_to)
+        try:
+            self._turn_queue.put_nowait(payload)
+            self._emit(
+                "headless.turn.queued",
+                {
+                    "event_id": payload.event_id,
+                    "reply_to": payload.reply_to,
+                },
+            )
+            return True
+        except Exception:
+            return False
+
+    # ── stdin writer ────────────────────────────────────────────────────
+
+    def _write_stdin(self, data: Dict[str, Any]) -> bool:
+        with self._lock:
+            proc = self._proc
+            if not self._running or proc is None or proc.stdin is None:
+                return False
+            try:
+                line = json.dumps(data, ensure_ascii=False)
+                proc.stdin.write(line + "\n")
+                proc.stdin.flush()
+                return True
+            except Exception:
+                return False
+
+    # ── stdout event loop ───────────────────────────────────────────────
+
+    def _stdout_loop(self) -> None:
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            return
+        try:
+            for raw_line in proc.stdout:
+                line = str(raw_line or "").strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except Exception:
+                    logger.debug("ignore non-json claude output: %s", line[:200])
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                self._handle_event(event)
+        except Exception:
+            logger.exception("claude stdout loop failed: %s/%s", self.group_id, self.actor_id)
+        finally:
+            self.stop()
+
+    def _stderr_loop(self) -> None:
+        proc = self._proc
+        if proc is None or proc.stderr is None:
+            return
+        try:
+            for raw_line in proc.stderr:
+                line = str(raw_line or "").rstrip()
+                if line:
+                    _safe_logger_call("info", "[claude-app %s/%s] %s", self.group_id, self.actor_id, line)
+        except Exception as exc:
+            if _is_closed_stream_logging_error(exc):
+                return
+            _safe_logger_call("exception", "claude stderr loop failed: %s/%s", self.group_id, self.actor_id)
+
+    # ── turn loop ───────────────────────────────────────────────────────
+
+    def _turn_loop(self) -> None:
+        while self.is_running():
+            try:
+                payload = self._turn_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if payload is None:
+                return
+            self._turn_done.clear()
+            turn_id = uuid.uuid4().hex[:12]
+
+            # Reset streaming state for new turn
+            self._last_text_snapshot = ""
+            self._current_stream_id = ""
+            self._current_message_id = ""
+            self._message_started = False
+            self._stream_end_turn_pending = False
+            self._active_tool_activities.clear()
+
+            with self._lock:
+                self._active_turn_id = turn_id
+                self._active_event_id = payload.event_id
+                self._session_state.status = "working"
+                self._session_state.current_task_id = turn_id or payload.event_id or None
+                self._session_state.updated_at = utc_now_iso()
+            self._persist_state()
+
+            self._emit(
+                "headless.turn.started",
+                {
+                    "turn_id": turn_id,
+                    "event_id": payload.event_id,
+                    "reply_to": payload.reply_to,
+                },
+            )
+
+            # Send user message to claude via stdin
+            ok = self._write_stdin({
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": payload.text,
+                },
+            })
+            if not ok:
+                logger.warning("claude stdin write failed: group=%s actor=%s", self.group_id, self.actor_id)
+                with self._lock:
+                    self._session_state.status = "idle"
+                    self._active_event_id = ""
+                    self._session_state.current_task_id = None
+                    self._session_state.updated_at = utc_now_iso()
+                self._persist_state()
+                self._emit(
+                    "headless.turn.failed",
+                    {
+                        "turn_id": turn_id,
+                        "event_id": payload.event_id,
+                        "error": "failed to write to claude stdin",
+                    },
+                )
+                continue
+
+            # Wait for turn completion (signaled from _handle_event)
+            self._turn_done.wait()
+
+    # ── event handling ──────────────────────────────────────────────────
+
+    def _handle_event(self, event: Dict[str, Any]) -> None:
+        event_type = str(event.get("type") or "").strip()
+        if not event_type:
+            return
+
+        if event_type == "system":
+            self._handle_system_event(event)
+        elif event_type == "assistant":
+            self._handle_assistant_event(event)
+        elif event_type == "tool_result":
+            self._handle_tool_result_event(event)
+        elif event_type == "result":
+            self._handle_result_event(event)
+        elif event_type == "stream_event":
+            self._handle_stream_event(event)
+        elif event_type == "user":
+            pass  # echo of user/tool_result messages sent back — no action needed
+        else:
+            logger.debug("claude unhandled event type=%s: %s", event_type, str(event)[:300])
+
+    def _handle_system_event(self, event: Dict[str, Any]) -> None:
+        subtype = str(event.get("subtype") or "").strip()
+        if subtype == "init":
+            session_id = str(event.get("session_id") or "").strip()
+            with self._lock:
+                self._session_state.session_id = session_id or None
+            logger.info(
+                "claude session init: group=%s actor=%s session=%s model=%s",
+                self.group_id, self.actor_id, session_id,
+                str(event.get("model") or "").strip(),
+            )
+
+    def _handle_stream_event(self, event: Dict[str, Any]) -> None:
+        """Handle raw Anthropic streaming events from --include-partial-messages."""
+        inner = event.get("event") if isinstance(event.get("event"), dict) else {}
+        inner_type = str(inner.get("type") or "").strip()
+        if not inner_type:
+            return
+
+        with self._lock:
+            active_event_id = str(self._active_event_id or "").strip()
+            turn_id = str(self._active_turn_id or "").strip()
+
+        if inner_type == "message_start":
+            # Extract message id for stream tracking
+            msg = inner.get("message") if isinstance(inner.get("message"), dict) else {}
+            message_id = str(msg.get("id") or "").strip()
+            effective_id = message_id or (f"turn-{turn_id}" if turn_id else "")
+            if effective_id and effective_id != self._current_message_id:
+                self._current_message_id = effective_id
+                self._current_stream_id = effective_id
+                self._last_text_snapshot = ""
+                self._message_started = False
+
+        elif inner_type == "content_block_start":
+            block = inner.get("content_block") if isinstance(inner.get("content_block"), dict) else {}
+            block_type = str(block.get("type") or "").strip()
+            if block_type == "tool_use":
+                tool_use_id = str(block.get("id") or "").strip()
+                tool_name = str(block.get("name") or "").strip()
+                if tool_use_id and tool_name and tool_use_id not in self._active_tool_activities:
+                    activity_id = f"tool:{tool_use_id}"
+                    self._active_tool_activities[tool_use_id] = activity_id
+                    kind, summary, server_name = self._classify_tool(tool_name)
+                    self._emit_activity(
+                        status="started",
+                        activity_id=activity_id,
+                        kind=kind,
+                        summary=summary,
+                        turn_id=turn_id,
+                        stream_id=self._current_stream_id,
+                        tool_name=tool_name,
+                        server_name=server_name,
+                    )
+
+        elif inner_type == "content_block_delta":
+            delta_obj = inner.get("delta") if isinstance(inner.get("delta"), dict) else {}
+            delta_type = str(delta_obj.get("type") or "").strip()
+            if delta_type == "text_delta":
+                text = str(delta_obj.get("text") or "")
+                if text:
+                    stream_id = self._current_stream_id
+                    if not stream_id and turn_id:
+                        stream_id = f"turn-{turn_id}"
+                        self._current_stream_id = stream_id
+                    if stream_id:
+                        if not self._message_started:
+                            self._message_started = True
+                            self._emit(
+                                "headless.message.started",
+                                {
+                                    "turn_id": turn_id,
+                                    "event_id": active_event_id,
+                                    "stream_id": stream_id,
+                                },
+                            )
+                        self._last_text_snapshot += text
+                        self._emit(
+                            "headless.message.delta",
+                            {
+                                "turn_id": turn_id,
+                                "event_id": active_event_id,
+                                "stream_id": stream_id,
+                                "delta": text,
+                            },
+                        )
+
+        elif inner_type == "message_delta":
+            delta_obj = inner.get("delta") if isinstance(inner.get("delta"), dict) else {}
+            if str(delta_obj.get("stop_reason") or "").strip() == "end_turn":
+                self._stream_end_turn_pending = True
+
+        elif inner_type == "message_stop":
+            if self._stream_end_turn_pending:
+                self._complete_turn_from_stream()
+
+    def _complete_turn_from_stream(self) -> None:
+        """Complete a turn using accumulated stream_event data (for providers that don't send result events)."""
+        now = utc_now_iso()
+
+        with self._lock:
+            turn_id = str(self._active_turn_id or "").strip()
+            active_event_id = str(self._active_event_id or "").strip()
+            # Guard: if turn already completed by _handle_result_event, no-op.
+            if not turn_id:
+                return
+            self._active_turn_id = ""
+            self._active_event_id = ""
+            self._session_state.status = "idle"
+            self._session_state.current_task_id = None
+            self._session_state.updated_at = now
+        self._persist_state()
+
+        stream_id = self._current_stream_id or ""
+        text = self._last_text_snapshot or ""
+
+        # Complete any remaining tool activities
+        for tool_use_id, activity_id in list(self._active_tool_activities.items()):
+            self._emit_activity(
+                status="completed",
+                activity_id=activity_id,
+                kind="tool",
+                summary="done",
+                turn_id=turn_id,
+            )
+        self._active_tool_activities.clear()
+
+        # Emit message completed + append to ledger if we have text
+        if text and stream_id:
+            self._emit(
+                "headless.message.completed",
+                {
+                    "turn_id": turn_id,
+                    "event_id": active_event_id,
+                    "stream_id": stream_id,
+                    "text": text,
+                },
+            )
+            self._append_actor_message(stream_id=stream_id, text=text, pending_event_id=active_event_id)
+
+        # Reset streaming state so _handle_assistant_event won't re-emit for same turn.
+        self._message_started = False
+        self._last_text_snapshot = ""
+        self._current_stream_id = ""
+        self._current_message_id = ""
+
+        self._emit(
+            "headless.turn.completed",
+            {
+                "turn_id": turn_id,
+                "event_id": active_event_id,
+                "status": "completed",
+            },
+        )
+
+        self._turn_done.set()
+
+    def _handle_assistant_event(self, event: Dict[str, Any]) -> None:
+        message = event.get("message") if isinstance(event.get("message"), dict) else {}
+        content = message.get("content") if isinstance(message.get("content"), list) else []
+        message_id = str(message.get("id") or "").strip()
+        is_partial = bool(event.get("partial"))
+
+        with self._lock:
+            active_event_id = str(self._active_event_id or "").strip()
+            turn_id = str(self._active_turn_id or "").strip()
+
+        # Track new message — use message_id if present, else generate a fallback per turn.
+        # Don't reset streaming state if we already have an active stream (from stream_events).
+        effective_id = message_id or (f"turn-{turn_id}" if turn_id else "")
+        if effective_id and effective_id != self._current_message_id and not self._message_started:
+            self._current_message_id = effective_id
+            self._current_stream_id = effective_id
+            self._last_text_snapshot = ""
+            self._message_started = False
+
+        stream_id = self._current_stream_id or effective_id
+
+        # Process content blocks
+        accumulated_text = ""
+        tool_use_blocks: List[Dict[str, Any]] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type") or "").strip()
+            if block_type == "text":
+                accumulated_text += str(block.get("text") or "")
+            elif block_type == "tool_use":
+                tool_use_blocks.append(block)
+
+        # Emit text streaming events
+        if accumulated_text and stream_id:
+            if not self._message_started:
+                self._message_started = True
+                self._emit(
+                    "headless.message.started",
+                    {
+                        "turn_id": turn_id,
+                        "event_id": active_event_id,
+                        "stream_id": stream_id,
+                    },
+                )
+
+            # Compute delta from snapshot
+            delta = accumulated_text[len(self._last_text_snapshot):]
+            if delta:
+                self._last_text_snapshot = accumulated_text
+                self._emit(
+                    "headless.message.delta",
+                    {
+                        "turn_id": turn_id,
+                        "event_id": active_event_id,
+                        "stream_id": stream_id,
+                        "delta": delta,
+                    },
+                )
+
+        # Handle tool use blocks — emit activity events
+        for block in tool_use_blocks:
+            tool_use_id = str(block.get("id") or "").strip()
+            tool_name = str(block.get("name") or "").strip()
+            if not tool_use_id or not tool_name:
+                continue
+            if tool_use_id not in self._active_tool_activities:
+                activity_id = f"tool:{tool_use_id}"
+                self._active_tool_activities[tool_use_id] = activity_id
+                # Determine kind and summary from tool name
+                kind, summary, server_name = self._classify_tool(tool_name)
+                self._emit_activity(
+                    status="started",
+                    activity_id=activity_id,
+                    kind=kind,
+                    summary=summary,
+                    turn_id=turn_id,
+                    stream_id=stream_id,
+                    tool_name=tool_name,
+                    server_name=server_name,
+                )
+
+        # If this is a final (non-partial) assistant message with text, emit completed
+        if not is_partial and accumulated_text and stream_id and self._message_started:
+            self._emit(
+                "headless.message.completed",
+                {
+                    "turn_id": turn_id,
+                    "event_id": active_event_id,
+                    "stream_id": stream_id,
+                    "text": accumulated_text,
+                },
+            )
+            # Append to ledger as chat.message
+            self._append_actor_message(
+                stream_id=stream_id,
+                text=accumulated_text,
+                pending_event_id=active_event_id,
+            )
+            # Reset for potential next message in same turn
+            self._last_text_snapshot = ""
+            self._current_stream_id = ""
+            self._current_message_id = ""
+            self._message_started = False
+
+    def _handle_tool_result_event(self, event: Dict[str, Any]) -> None:
+        tool_use_id = str(event.get("tool_use_id") or "").strip()
+        with self._lock:
+            turn_id = str(self._active_turn_id or "").strip()
+        activity_id = self._active_tool_activities.pop(tool_use_id, "")
+        if activity_id:
+            # Summary from tool result
+            content = event.get("content")
+            summary = "done"
+            if isinstance(content, str):
+                summary = self._trim(content, limit=80) or "done"
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        summary = self._trim(block.get("text") or "", limit=80) or "done"
+                        break
+            self._emit_activity(
+                status="completed",
+                activity_id=activity_id,
+                kind="tool",
+                summary=summary,
+                turn_id=turn_id,
+            )
+
+    def _handle_result_event(self, event: Dict[str, Any]) -> None:
+        subtype = str(event.get("subtype") or "").strip()
+        now = utc_now_iso()
+
+        with self._lock:
+            active_event_id = str(self._active_event_id or "").strip()
+            turn_id = str(self._active_turn_id or "").strip()
+            # Guard: if turn already completed by _complete_turn_from_stream, no-op.
+            if not turn_id:
+                return
+            self._active_turn_id = ""
+            self._active_event_id = ""
+            self._session_state.status = "idle"
+            self._session_state.current_task_id = None
+            self._session_state.updated_at = now
+        self._persist_state()
+
+        # Complete any remaining tool activities
+        for tool_use_id, activity_id in list(self._active_tool_activities.items()):
+            self._emit_activity(
+                status="completed",
+                activity_id=activity_id,
+                kind="tool",
+                summary="done",
+                turn_id=turn_id,
+            )
+        self._active_tool_activities.clear()
+
+        if subtype in ("success", ""):
+            self._emit(
+                "headless.turn.completed",
+                {
+                    "turn_id": turn_id,
+                    "event_id": active_event_id,
+                    "status": "completed",
+                },
+            )
+        else:
+            error_text = str(event.get("error") or event.get("result") or "unknown error")
+            self._emit(
+                "headless.turn.failed" if subtype == "error" else "headless.turn.completed",
+                {
+                    "turn_id": turn_id,
+                    "event_id": active_event_id,
+                    "status": subtype or "completed",
+                    "error": {"message": error_text} if subtype == "error" else None,
+                },
+            )
+
+        self._turn_done.set()
+
+    # ── tool classification ─────────────────────────────────────────────
+
+    @staticmethod
+    def _classify_tool(tool_name: str) -> tuple[str, str, str]:
+        """Classify a Claude tool into (kind, summary, server_name)."""
+        name = str(tool_name or "").strip()
+
+        # MCP tools: mcp__<server>__<tool>
+        if name.startswith("mcp__"):
+            parts = name.split("__", 2)
+            server = parts[1] if len(parts) > 1 else ""
+            tool = parts[2] if len(parts) > 2 else name
+            return "tool", f"{server}:{tool}" if server else tool, server
+
+        # Built-in Claude Code tools
+        lower = name.lower()
+        if lower in ("bash",):
+            return "command", name, ""
+        if lower in ("edit", "write", "notebookedit"):
+            return "patch", name, ""
+        if lower in ("read", "glob", "grep"):
+            return "search", name, ""
+        if lower in ("websearch", "webfetch"):
+            return "search", name, ""
+        if lower == "task":
+            return "thinking", "sub-task", ""
+
+        return "tool", name, ""
+
+    # ── ledger message ──────────────────────────────────────────────────
+
+    def _append_actor_message(self, *, stream_id: str, text: str, pending_event_id: str = "") -> None:
+        group = load_group(self.group_id)
+        if group is None:
+            return
+        try:
+            append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key=str(group.doc.get("active_scope_key") or "").strip(),
+                by=self.actor_id,
+                data=ChatMessageData(
+                    text=str(text or ""),
+                    format="plain",
+                    to=["user"],
+                    stream_id=str(stream_id or "").strip() or None,
+                    pending_event_id=str(pending_event_id or "").strip() or None,
+                    **build_sender_snapshot(group, by=self.actor_id),
+                ).model_dump(),
+            )
+        except Exception:
+            logger.exception("failed to append claude actor message: %s/%s", self.group_id, self.actor_id)
+
+
+# ── session manager ────────────────────────────────────────────────────
+
+
+class ClaudeAppSessionManager:
+    """Manages Claude headless sessions across groups/actors."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sessions: Dict[tuple[str, str], ClaudeAppSession] = {}
+
+    def start_actor(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        cwd: Path,
+        env: Dict[str, str],
+        model: str = "",
+    ) -> ClaudeAppSession:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            raise ValueError("missing group_id/actor_id")
+        with self._lock:
+            session = self._sessions.get(key)
+            if session is not None and session.is_running():
+                return session
+            session = ClaudeAppSession(group_id=key[0], actor_id=key[1], cwd=cwd, env=env, model=model)
+            self._sessions[key] = session
+        try:
+            session.start()
+        except Exception:
+            with self._lock:
+                if self._sessions.get(key) is session:
+                    self._sessions.pop(key, None)
+            raise
+        return session
+
+    def stop_actor(self, *, group_id: str, actor_id: str) -> None:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            session = self._sessions.pop(key, None)
+        if session is not None:
+            session.stop()
+
+    def stop_group(self, *, group_id: str) -> None:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return
+        with self._lock:
+            keys = [key for key in self._sessions if key[0] == gid]
+            sessions = [self._sessions.pop(key) for key in keys]
+        for session in sessions:
+            session.stop()
+
+    def stop_all(self) -> None:
+        with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
+            session.stop()
+
+    def actor_running(self, group_id: str, actor_id: str) -> bool:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            session = self._sessions.get(key)
+        return bool(session and session.is_running())
+
+    def group_running(self, group_id: str) -> bool:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return False
+        with self._lock:
+            sessions = [s for (g, _), s in self._sessions.items() if g == gid]
+        return any(s.is_running() for s in sessions)
+
+    def get_state(self, *, group_id: str, actor_id: str) -> Optional[Dict[str, Any]]:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            session = self._sessions.get(key)
+        return session.state() if session is not None and session.is_running() else None
+
+    def submit_user_message(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        text: str,
+        event_id: str,
+        reply_to: Optional[str] = None,
+    ) -> bool:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            session = self._sessions.get(key)
+        if session is None:
+            return False
+        return session.submit_user_message(text=text, event_id=event_id, reply_to=reply_to)
+
+
+SUPERVISOR = ClaudeAppSessionManager()

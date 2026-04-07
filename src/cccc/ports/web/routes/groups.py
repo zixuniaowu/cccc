@@ -21,7 +21,7 @@ from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_s
 from ....runners import headless as headless_runner
 from ....runners import pty as pty_runner
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
-from ....kernel.codex_events import codex_events_path
+from ....kernel.headless_events import headless_events_path
 from ....kernel.group import get_group_state, load_group
 from ....kernel.context import ContextStorage
 from ....kernel.query_projections import get_groups_projection
@@ -109,6 +109,17 @@ def _actor_running_local(group_id: str, actor: Any) -> bool:
             status = ""
             state_runtime = ""
         return bool(pid > 0 and pid_is_alive(pid) and status != "stopped" and (not state_runtime or state_runtime == "codex"))
+    if runtime == "claude" and effective_runner == "headless":
+        try:
+            raw = json.loads(headless_state_path(gid, aid).read_text(encoding="utf-8"))
+            pid = int(raw.get("pid") or 0)
+            status = str(raw.get("status") or "").strip().lower()
+            state_runtime = str(raw.get("runtime") or "").strip().lower()
+        except Exception:
+            pid = 0
+            status = ""
+            state_runtime = ""
+        return bool(pid > 0 and pid_is_alive(pid) and status != "stopped" and (not state_runtime or state_runtime == "claude"))
     if effective_runner == "pty":
         pty_state = pty_state_path(gid, aid)
         if pty_state.exists():
@@ -202,8 +213,8 @@ def _read_group_local(group_id: str) -> Dict[str, Any]:
     return {"ok": True, "result": {"group": doc}}
 
 
-def _read_active_codex_replay_lines(group: Any, *, limit: int = 400) -> list[str]:
-    path = codex_events_path(group.path)
+def _read_active_headless_replay_lines(group: Any, *, limit: int = 400) -> list[str]:
+    path = headless_events_path(group.path)
     try:
       raw_lines = read_last_lines(path, max(50, int(limit or 400)))
     except Exception:
@@ -224,9 +235,9 @@ def _read_active_codex_replay_lines(group: Any, *, limit: int = 400) -> list[str
 
     active_start_by_actor: dict[str, int] = {}
     for idx, _raw, actor_id, event_type in indexed:
-      if event_type == "codex.turn.started":
+      if event_type == "headless.turn.started":
         active_start_by_actor[actor_id] = idx
-      elif event_type in {"codex.turn.completed", "codex.turn.failed"}:
+      elif event_type in {"headless.turn.completed", "headless.turn.failed"}:
         active_start_by_actor.pop(actor_id, None)
 
     if not active_start_by_actor:
@@ -241,9 +252,9 @@ def _read_active_codex_replay_lines(group: Any, *, limit: int = 400) -> list[str
     return replay_lines
 
 
-def _read_active_codex_snapshot(group: Any, *, limit: int = 400) -> Dict[str, Any]:
+def _read_active_headless_snapshot(group: Any, *, limit: int = 400) -> Dict[str, Any]:
     events: list[Dict[str, Any]] = []
-    for raw in _read_active_codex_replay_lines(group, limit=limit):
+    for raw in _read_active_headless_replay_lines(group, limit=limit):
         try:
             payload = json.loads(raw)
         except Exception:
@@ -435,7 +446,7 @@ def _collect_ledger_event_statuses(
                     obligation_status_by_event=obligation_status_by_event,
                 )
             except Exception:
-                pass
+                logger.debug("ledger_status_cache_store_failed group_id=%s", str(getattr(group, "group_id", "") or ""), exc_info=True)
 
     logger.debug(
         "ledger_statuses group_id=%s total=%d chat=%d cache_hit=%d cache_miss=%d elapsed_ms=%.1f",
@@ -2038,6 +2049,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         event_ids = payload.get("event_ids") if isinstance(payload, dict) else []
         if not isinstance(event_ids, list):
             raise HTTPException(status_code=400, detail={"code": "invalid_event_ids", "message": "event_ids must be a list"})
+        if len(event_ids) > 500:
+            raise HTTPException(status_code=400, detail={"code": "too_many_event_ids", "message": "event_ids must not exceed 500 items"})
         return await run_in_threadpool(_load, [str(item or "") for item in event_ids])
 
     @global_router.websocket("/groups/{group_id}/presentation/browser_surface/ws")
@@ -2180,25 +2193,25 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
         return create_sse_response(sse_ledger_tail(group.ledger_path))
 
-    @group_router.get("/codex/snapshot")
-    async def codex_snapshot(group_id: str) -> Dict[str, Any]:
+    @group_router.get("/headless/snapshot")
+    async def headless_snapshot(group_id: str) -> Dict[str, Any]:
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
-        return {"ok": True, "result": _read_active_codex_snapshot(group)}
+        return {"ok": True, "result": _read_active_headless_snapshot(group)}
 
-    @group_router.get("/codex/stream")
-    async def codex_stream(group_id: str, replay: bool = True) -> StreamingResponse:
+    @group_router.get("/headless/stream")
+    async def headless_stream(group_id: str, replay: bool = True) -> StreamingResponse:
         from ..streams import create_sse_response, sse_jsonl_tail_shared
 
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
-        replay_lines = _read_active_codex_replay_lines(group) if replay else []
+        replay_lines = _read_active_headless_replay_lines(group) if replay else []
         return create_sse_response(
             sse_jsonl_tail_shared(
-                codex_events_path(group.path),
-                event_name="codex",
+                headless_events_path(group.path),
+                event_name="headless",
                 heartbeat_s=30.0,
                 poll_interval_s=0.05,
                 initial_lines=replay_lines,

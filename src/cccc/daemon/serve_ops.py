@@ -284,6 +284,7 @@ def start_actor_activity_thread(
     pty_supervisor: Any,
     headless_supervisor: Any,
     codex_supervisor: Any,
+    claude_supervisor: Any = None,
     event_broadcaster: Any,
     load_group: Callable[[str], Any],
     interval_seconds: float = 1.0,
@@ -341,6 +342,9 @@ def start_actor_activity_thread(
                             if runtime == "codex" and effective_runner == "headless":
                                 headless_state = codex_supervisor.get_state(group_id=gid, actor_id=aid)
                                 running = bool(headless_state is not None and codex_supervisor.actor_running(gid, aid))
+                            elif runtime == "claude" and effective_runner == "headless" and claude_supervisor is not None:
+                                headless_state = claude_supervisor.get_state(group_id=gid, actor_id=aid)
+                                running = bool(headless_state is not None and claude_supervisor.actor_running(gid, aid))
                             elif effective_runner == "headless":
                                 state = headless_supervisor.get_state(group_id=gid, actor_id=aid)
                                 headless_state = state.model_dump() if state is not None else None
@@ -430,6 +434,7 @@ def cleanup_after_stop(
     best_effort_killpg: Callable[[int, Any], Any],
     im_stop_all: Callable[..., Any],
     codex_stop_all: Callable[[], Any],
+    claude_stop_all: Callable[[], Any] = lambda: None,
     pty_stop_all: Callable[[], Any],
     headless_stop_all: Callable[[], Any],
     sock_path: Path,
@@ -445,6 +450,10 @@ def cleanup_after_stop(
         pass
     try:
         codex_stop_all()
+    except Exception:
+        pass
+    try:
+        claude_stop_all()
     except Exception:
         pass
     try:

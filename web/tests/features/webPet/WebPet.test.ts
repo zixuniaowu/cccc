@@ -38,8 +38,8 @@ describe("isManualReviewReminderReady", () => {
     expect(isManualReviewReminderReady(makeReminder(), "active")).toBe(true);
   });
 
-  it("surfaces reminders when group is idle", () => {
-    expect(isManualReviewReminderReady(makeReminder(), "idle")).toBe(true);
+  it("suppresses draft reminders when group is idle", () => {
+    expect(isManualReviewReminderReady(makeReminder(), "idle")).toBe(false);
   });
 
   it("still treats restart reminders as ready while idle", () => {

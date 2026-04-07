@@ -14,6 +14,7 @@ from ...kernel.permissions import require_actor_permission
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..context.context_ops import _schedule_summary_snapshot_rebuild
 
@@ -50,6 +51,7 @@ def handle_actor_remove(
             avatar_rel_path = str(actor_doc.get("avatar_asset_path") or "").strip()
         remove_actor(group, actor_id)
         codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
+        claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
         pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
         remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
         headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)

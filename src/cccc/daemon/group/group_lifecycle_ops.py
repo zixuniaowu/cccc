@@ -13,6 +13,7 @@ from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
 from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
+from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -217,6 +218,13 @@ def handle_group_start(
                     cwd=cwd,
                     env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=aid)),
                 )
+            elif runtime == "claude" and runner_effective == "headless":
+                claude_app_supervisor.start_actor(
+                    group_id=group.group_id,
+                    actor_id=aid,
+                    cwd=cwd,
+                    env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=aid)),
+                )
             elif runner_effective == "headless":
                 headless_runner.SUPERVISOR.start_actor(
                     group_id=group.group_id,
@@ -321,6 +329,7 @@ def handle_group_stop(
         pty_runner.SUPERVISOR.stop_group(group_id=group.group_id)
         headless_runner.SUPERVISOR.stop_group(group_id=group.group_id)
         codex_app_supervisor.stop_group(group_id=group.group_id)
+        claude_app_supervisor.stop_group(group_id=group.group_id)
 
         try:
             pdir = pty_state_dir_for_group(group.group_id)
