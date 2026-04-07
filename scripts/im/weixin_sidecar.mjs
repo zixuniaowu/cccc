@@ -114,7 +114,7 @@ async function main() {
     });
     emit("error", {
       message:
-        "failed to import weixin-agent-sdk; install it first, e.g. npm install weixin-agent-sdk",
+        "failed to import weixin-agent-sdk; install scripts/im dependencies first, e.g. cd scripts/im && npm install",
     });
     process.exit(1);
   }
