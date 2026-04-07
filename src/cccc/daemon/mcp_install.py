@@ -119,6 +119,15 @@ def _runtime_expected_cccc_command(runtime: str) -> list[str]:
     return cmd
 
 
+def _kimi_share_dir(env: Dict[str, str] | None) -> Path:
+    raw = ""
+    if isinstance(env, dict):
+        raw = str(env.get("KIMI_SHARE_DIR") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".kimi"
+
+
 def build_mcp_add_command(runtime: str) -> list[str] | None:
     cccc_cmd = _runtime_expected_cccc_command(runtime)
     if runtime == "claude":
@@ -261,7 +270,7 @@ def _runtime_mcp_state(runtime: str, *, env: Dict[str, str] | None = None) -> st
         return _json_mcp_state((Path.home() / ".gemini" / "settings.json",), expected_cmd)
 
     if runtime == "kimi":
-        return _json_mcp_state((Path.home() / ".kimi" / "mcp.json",), expected_cmd)
+        return _json_mcp_state((_kimi_share_dir(env) / "mcp.json",), expected_cmd)
 
     return "missing"
 

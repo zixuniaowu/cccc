@@ -32,6 +32,18 @@ class TestCodexAppFlow(unittest.TestCase):
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
+    def _ledger_events(self, group) -> list[dict]:
+        events: list[dict] = []
+        with group.ledger_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    events.append(obj)
+        return events
+
     def test_actor_list_uses_codex_supervisor_state_for_headless_working(self) -> None:
         from cccc.daemon.actors.actor_ops import handle_actor_list
 
@@ -137,6 +149,84 @@ class TestCodexAppFlow(unittest.TestCase):
             submit_user_message.assert_called_once()
             queue_chat_message.assert_not_called()
             request_flush_pending_messages.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_send_headless_codex_auto_mark_clears_unread_and_skips_notify(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_send
+        from cccc.kernel.group import load_group
+        from cccc.kernel.inbox import get_cursor, unread_count
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-send-auto-mark", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["delivery"] = {"auto_mark_on_delivery": True}
+            group.save()
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+            ):
+                resp = handle_send(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "hello codex",
+                        "to": ["peer1"],
+                        "client_id": "c1",
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: [],
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_called_once()
+            queue_chat_message.assert_not_called()
+            request_flush_pending_messages.assert_not_called()
+
+            event = (resp.result or {}).get("event") if isinstance(resp.result, dict) else {}
+            self.assertIsInstance(event, dict)
+            assert isinstance(event, dict)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            cursor_event_id, cursor_ts = get_cursor(group, "peer1")
+            self.assertEqual(cursor_event_id, str(event.get("id") or ""))
+            self.assertEqual(cursor_ts, str(event.get("ts") or ""))
+            self.assertEqual(unread_count(group, actor_id="peer1"), 0)
+
+            ledger_events = self._ledger_events(group)
+            self.assertFalse(any(str(item.get("kind") or "") == "system.notify" for item in ledger_events))
+            self.assertEqual(str(ledger_events[-1].get("kind") or ""), "chat.read")
         finally:
             cleanup()
 
@@ -378,6 +468,112 @@ class TestCodexAppFlow(unittest.TestCase):
             submit_user_message.assert_not_called()
             queue_chat_message.assert_called_once()
             request_flush_pending_messages.assert_called_once()
+        finally:
+            cleanup()
+
+    def test_reply_headless_codex_auto_mark_clears_unread_and_skips_notify(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_reply
+        from cccc.kernel.group import load_group
+        from cccc.kernel.inbox import get_cursor, latest_unread_event, set_cursor, unread_count
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-reply-auto-mark", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            send_resp, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "text": "hello codex",
+                    "to": ["peer1"],
+                },
+            )
+            self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
+            original_event = (send_resp.result or {}).get("event") if isinstance(send_resp.result, dict) else {}
+            self.assertIsInstance(original_event, dict)
+            assert isinstance(original_event, dict)
+            reply_to = str(original_event.get("id") or "").strip()
+            self.assertTrue(reply_to)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["delivery"] = {"auto_mark_on_delivery": True}
+            group.save()
+
+            stale_notify_count = sum(1 for item in self._ledger_events(group) if str(item.get("kind") or "") == "system.notify")
+            last_unread = latest_unread_event(group, actor_id="peer1")
+            self.assertIsNotNone(last_unread)
+            assert last_unread is not None
+            set_cursor(
+                group,
+                "peer1",
+                event_id=str(last_unread.get("id") or ""),
+                ts=str(last_unread.get("ts") or ""),
+            )
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+            ):
+                resp = handle_reply(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "reply codex",
+                        "reply_to": reply_to,
+                        "to": ["peer1"],
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: [],
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_called_once()
+            queue_chat_message.assert_not_called()
+            request_flush_pending_messages.assert_not_called()
+
+            event = (resp.result or {}).get("event") if isinstance(resp.result, dict) else {}
+            self.assertIsInstance(event, dict)
+            assert isinstance(event, dict)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            cursor_event_id, cursor_ts = get_cursor(group, "peer1")
+            self.assertEqual(cursor_event_id, str(event.get("id") or ""))
+            self.assertEqual(cursor_ts, str(event.get("ts") or ""))
+            self.assertEqual(unread_count(group, actor_id="peer1"), 0)
+
+            ledger_events = self._ledger_events(group)
+            notify_count = sum(1 for item in ledger_events if str(item.get("kind") or "") == "system.notify")
+            self.assertEqual(notify_count, stale_notify_count)
+            self.assertEqual(str(ledger_events[-1].get("kind") or ""), "chat.read")
         finally:
             cleanup()
 

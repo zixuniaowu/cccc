@@ -111,9 +111,8 @@ function removeStreamBindings(
     const session = nextReplySessionsByPendingEventId[pendingEventId];
     if (!session) continue;
 
-    const remainingStreamIds = (Array.isArray(session.streamIds) ? session.streamIds : [])
-      .map((value) => String(value || "").trim())
-      .filter((value) => value && !removedSet.has(value));
+    const remainingStreamIds = Object.keys(nextPendingEventIdByStreamId)
+      .filter((candidateStreamId) => nextPendingEventIdByStreamId[candidateStreamId] === pendingEventId);
     if (remainingStreamIds.length <= 0) {
       delete nextReplySessionsByPendingEventId[pendingEventId];
       continue;
@@ -121,7 +120,6 @@ function removeStreamBindings(
 
     nextReplySessionsByPendingEventId[pendingEventId] = {
       ...session,
-      streamIds: remainingStreamIds,
       currentStreamId: remainingStreamIds.includes(String(session.currentStreamId || "").trim())
         ? session.currentStreamId
         : remainingStreamIds[remainingStreamIds.length - 1],
@@ -167,8 +165,6 @@ export function upsertStreamingEventPatch(
         pendingEventId,
         actorId,
         streamId,
-        text: String(data.text || ""),
-        activities: Array.isArray(data.activities) ? data.activities as StreamingActivity[] : [],
         phase: event._streaming ? "streaming" : "pending",
       },
     );
@@ -193,25 +189,6 @@ export function upsertStreamingTextPatch(
       [targetStreamId]: text,
     },
   };
-  const pendingEventId = String(bucket.pendingEventIdByStreamId[targetStreamId] || "").trim();
-  if (pendingEventId) {
-    const session = bucket.replySessionsByPendingEventId[pendingEventId];
-    if (session) {
-      const { replySessionsByPendingEventId, pendingEventIdByStreamId } = upsertReplySession(
-        bucket.replySessionsByPendingEventId,
-        bucket.pendingEventIdByStreamId,
-        {
-          pendingEventId,
-          actorId: session.actorId,
-          streamId: targetStreamId,
-          text,
-          phase: session.phase,
-        },
-      );
-      patch.replySessionsByPendingEventId = replySessionsByPendingEventId;
-      patch.pendingEventIdByStreamId = pendingEventIdByStreamId;
-    }
-  }
   return patch;
 }
 
@@ -302,7 +279,6 @@ export function upsertStreamingActivityPatch(
       pendingEventId,
       actorId: targetActorId,
       streamId: targetStreamId,
-      activities: [nextActivity],
       phase: streamId ? "streaming" : "pending",
       updatedAt: normalizeReplySessionTimestamp(nextActivity.ts),
     }));
@@ -345,7 +321,6 @@ export function upsertStreamingActivityPatch(
       pendingEventId,
       actorId: targetActorId,
       streamId: targetStreamId,
-      activities: nextActivities,
       phase: streamId ? "streaming" : "pending",
       updatedAt: normalizeReplySessionTimestamp(nextActivity.ts),
     }));
@@ -367,25 +342,28 @@ export function removeStreamingEventPatch(
 ): StreamingChatBucketPatch | null {
   const targetStreamId = String(streamId || "").trim();
   if (!targetStreamId) return null;
+  const hadText = Object.prototype.hasOwnProperty.call(bucket.streamingTextByStreamId, targetStreamId);
+  const hadActivities = Object.prototype.hasOwnProperty.call(bucket.streamingActivitiesByStreamId, targetStreamId);
+  const hadPendingBinding = Object.prototype.hasOwnProperty.call(bucket.pendingEventIdByStreamId, targetStreamId);
   const nextStreamingEvents = bucket.streamingEvents.filter((item) => {
     const itemStreamId = String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim();
     return itemStreamId !== targetStreamId;
   });
-  const nextStreamingTextByStreamId = { ...bucket.streamingTextByStreamId };
-  const nextStreamingActivitiesByStreamId = { ...bucket.streamingActivitiesByStreamId };
-  const removedText = Object.prototype.hasOwnProperty.call(nextStreamingTextByStreamId, targetStreamId);
-  const removedActivities = Object.prototype.hasOwnProperty.call(nextStreamingActivitiesByStreamId, targetStreamId);
-  if (removedText) {
-    delete nextStreamingTextByStreamId[targetStreamId];
+  const {
+    streamingTextByStreamId: nextStreamingTextByStreamId,
+    streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+    replySessionsByPendingEventId: nextReplySessionsByPendingEventId,
+    pendingEventIdByStreamId: nextPendingEventIdByStreamId,
+  } = removeStreamBindings(bucket, [targetStreamId]);
+  if (nextStreamingEvents.length === bucket.streamingEvents.length && !hadText && !hadActivities && !hadPendingBinding) {
+    return null;
   }
-  if (removedActivities) {
-    delete nextStreamingActivitiesByStreamId[targetStreamId];
-  }
-  if (nextStreamingEvents.length === bucket.streamingEvents.length && !removedText && !removedActivities) return null;
   return {
     streamingEvents: nextStreamingEvents,
     streamingTextByStreamId: nextStreamingTextByStreamId,
     streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+    replySessionsByPendingEventId: nextReplySessionsByPendingEventId,
+    pendingEventIdByStreamId: nextPendingEventIdByStreamId,
   };
 }
 
@@ -404,19 +382,12 @@ export function removeStreamingEventsByPrefixPatch(
     const itemStreamId = String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim();
     return !removedSet.has(itemStreamId);
   });
-  const nextStreamingTextByStreamId = { ...bucket.streamingTextByStreamId };
-  const nextStreamingActivitiesByStreamId = { ...bucket.streamingActivitiesByStreamId };
-  const nextReplySessionsByPendingEventId = { ...bucket.replySessionsByPendingEventId };
-  const nextPendingEventIdByStreamId = { ...bucket.pendingEventIdByStreamId };
-  for (const streamId of removedStreamIds) {
-    delete nextStreamingTextByStreamId[streamId];
-    delete nextStreamingActivitiesByStreamId[streamId];
-    const pendingEventId = String(nextPendingEventIdByStreamId[streamId] || "").trim();
-    if (pendingEventId && nextReplySessionsByPendingEventId[pendingEventId]) {
-      delete nextReplySessionsByPendingEventId[pendingEventId];
-    }
-    delete nextPendingEventIdByStreamId[streamId];
-  }
+  const {
+    streamingTextByStreamId: nextStreamingTextByStreamId,
+    streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+    replySessionsByPendingEventId: nextReplySessionsByPendingEventId,
+    pendingEventIdByStreamId: nextPendingEventIdByStreamId,
+  } = removeStreamBindings(bucket, removedStreamIds);
   return {
     streamingEvents: nextStreamingEvents,
     streamingTextByStreamId: nextStreamingTextByStreamId,
@@ -436,6 +407,7 @@ export function promoteStreamingEventsByPrefixPatch(
   if (!targetPrefix || !targetPendingEventId) return null;
 
   let changed = false;
+  const renamedStreamIds = new Map<string, string>();
   const nextStreamingEvents = bucket.streamingEvents.map((item) => {
     const data = item.data && typeof item.data === "object"
       ? item.data as { stream_id?: unknown; pending_event_id?: unknown; pending_placeholder?: unknown }
@@ -445,6 +417,7 @@ export function promoteStreamingEventsByPrefixPatch(
     changed = true;
     const actorId = String(item.by || "").trim();
     const nextStreamId = `pending:${targetPendingEventId}:${actorId}`;
+    renamedStreamIds.set(streamId, nextStreamId);
     return {
       ...item,
       data: {
@@ -459,6 +432,7 @@ export function promoteStreamingEventsByPrefixPatch(
 
   const nextStreamingTextByStreamId = { ...bucket.streamingTextByStreamId };
   const nextStreamingActivitiesByStreamId = { ...bucket.streamingActivitiesByStreamId };
+  const nextPendingEventIdByStreamId = { ...bucket.pendingEventIdByStreamId };
   for (const streamId of Object.keys(bucket.streamingTextByStreamId || {})) {
     if (!streamId.startsWith(targetPrefix)) continue;
     const actorId = streamId.slice(targetPrefix.length).trim();
@@ -475,25 +449,38 @@ export function promoteStreamingEventsByPrefixPatch(
     nextStreamingActivitiesByStreamId[nextStreamId] = nextStreamingActivitiesByStreamId[streamId];
     delete nextStreamingActivitiesByStreamId[streamId];
   }
+  for (const [previousStreamId, nextStreamId] of renamedStreamIds.entries()) {
+    delete nextPendingEventIdByStreamId[previousStreamId];
+    nextPendingEventIdByStreamId[nextStreamId] = targetPendingEventId;
+  }
   const previousPendingEventId = targetPrefix.startsWith("local:") && targetPrefix.endsWith(":")
     ? targetPrefix.slice("local:".length, -1)
     : "";
   const {
-    replySessionsByPendingEventId,
-    pendingEventIdByStreamId,
+    replySessionsByPendingEventId: migratedReplySessionsByPendingEventId,
+    pendingEventIdByStreamId: migratedPendingEventIdByStreamId,
   } = migrateReplySession(
     bucket.replySessionsByPendingEventId,
-    bucket.pendingEventIdByStreamId,
+    nextPendingEventIdByStreamId,
     previousPendingEventId,
     targetPendingEventId,
   );
+  const replySessionsByPendingEventId = { ...migratedReplySessionsByPendingEventId };
+  const migratedSession = replySessionsByPendingEventId[targetPendingEventId];
+  const migratedCurrentStreamId = String(migratedSession?.currentStreamId || "").trim();
+  if (migratedSession && migratedCurrentStreamId && renamedStreamIds.has(migratedCurrentStreamId)) {
+    replySessionsByPendingEventId[targetPendingEventId] = {
+      ...migratedSession,
+      currentStreamId: renamedStreamIds.get(migratedCurrentStreamId),
+    };
+  }
 
   return {
     streamingEvents: nextStreamingEvents,
     streamingTextByStreamId: nextStreamingTextByStreamId,
     streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
     replySessionsByPendingEventId,
-    pendingEventIdByStreamId,
+    pendingEventIdByStreamId: migratedPendingEventIdByStreamId,
   };
 }
 
@@ -563,18 +550,21 @@ export function promoteStreamingEventToStreamPatch(
     nextStreamingActivitiesByStreamId[targetStreamId] = nextStreamingActivitiesByStreamId[previousStreamId];
     delete nextStreamingActivitiesByStreamId[previousStreamId];
   }
+  const nextPendingEventIdByStreamId = { ...bucket.pendingEventIdByStreamId };
+  if (previousStreamId && previousStreamId !== targetStreamId) {
+    delete nextPendingEventIdByStreamId[previousStreamId];
+  }
+  nextPendingEventIdByStreamId[targetStreamId] = targetPendingEventId;
   const {
     replySessionsByPendingEventId,
     pendingEventIdByStreamId,
   } = upsertReplySession(
     bucket.replySessionsByPendingEventId,
-    bucket.pendingEventIdByStreamId,
+    nextPendingEventIdByStreamId,
     {
       pendingEventId: targetPendingEventId,
       actorId: targetActorId,
       streamId: targetStreamId,
-      text: nextStreamingTextByStreamId[targetStreamId],
-      activities: nextStreamingActivitiesByStreamId[targetStreamId],
       phase: "streaming",
     },
   );
@@ -763,27 +753,36 @@ export function reconcileStreamingMessagePatch(
     delete nextStreamingTextByStreamId[removedStreamId];
     delete nextStreamingActivitiesByStreamId[removedStreamId];
   }
-  const replySessionActivities = effectiveActivities.length > 0 ? nextStreamingActivitiesByStreamId[targetStreamId] : [];
+  const nextPendingEventIdByStreamId = { ...bucket.pendingEventIdByStreamId };
+  if (previousStreamId && previousStreamId !== targetStreamId) {
+    delete nextPendingEventIdByStreamId[previousStreamId];
+  }
+  if (targetPendingEventId) {
+    nextPendingEventIdByStreamId[targetStreamId] = targetPendingEventId;
+  } else {
+    delete nextPendingEventIdByStreamId[targetStreamId];
+  }
+  for (const removedStreamId of removedPlaceholderStreamIds) {
+    delete nextPendingEventIdByStreamId[removedStreamId];
+  }
   const {
     replySessionsByPendingEventId,
     pendingEventIdByStreamId,
   } = targetPendingEventId
     ? upsertReplySession(
       bucket.replySessionsByPendingEventId,
-      bucket.pendingEventIdByStreamId,
+      nextPendingEventIdByStreamId,
       {
         pendingEventId: targetPendingEventId,
         actorId: targetActorId,
         streamId: targetStreamId,
-        text: args.fullText,
-        activities: replySessionActivities,
         phase: args.completed ? "completed" : (resolvedPlaceholderState ? "pending" : "streaming"),
         updatedAt: normalizeReplySessionTimestamp(args.ts),
       },
     )
     : {
       replySessionsByPendingEventId: bucket.replySessionsByPendingEventId,
-      pendingEventIdByStreamId: bucket.pendingEventIdByStreamId,
+      pendingEventIdByStreamId: nextPendingEventIdByStreamId,
     };
 
   return {
@@ -830,8 +829,6 @@ export function completeStreamingEventsForActorPatch(
         pendingEventId,
         actorId: targetActorId,
         streamId,
-        text,
-        activities,
         phase: "completed",
       }));
     }
@@ -989,6 +986,16 @@ export function clearStreamingPlaceholderPatch(
   const targetActorId = String(actorId || "").trim();
   const targetPendingEventId = String(pendingEventId || "").trim();
   if (!targetActorId || !targetPendingEventId) return null;
+  const removedStreamIds = bucket.streamingEvents
+    .filter((item) => {
+      if (String(item.by || "").trim() !== targetActorId) return false;
+      const data = item.data as { pending_event_id?: unknown; pending_placeholder?: unknown; stream_id?: unknown } | undefined;
+      const itemPendingEventId = String(data?.pending_event_id || "").trim();
+      const isPendingPlaceholder = Boolean(data?.pending_placeholder);
+      return isPendingPlaceholder && itemPendingEventId === targetPendingEventId;
+    })
+    .map((item) => String((item.data as { stream_id?: unknown } | undefined)?.stream_id || "").trim())
+    .filter(Boolean);
   const nextStreamingEvents = bucket.streamingEvents.filter((item) => {
     if (String(item.by || "").trim() !== targetActorId) return true;
     const data = item.data as { pending_event_id?: unknown; pending_placeholder?: unknown } | undefined;
@@ -997,17 +1004,22 @@ export function clearStreamingPlaceholderPatch(
     return !(isPendingPlaceholder && itemPendingEventId === targetPendingEventId);
   });
   if (nextStreamingEvents.length === bucket.streamingEvents.length) return null;
+  const {
+    streamingTextByStreamId: nextStreamingTextByStreamId,
+    streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
+    replySessionsByPendingEventId: nextReplySessionsByPendingEventId,
+    pendingEventIdByStreamId: nextPendingEventIdByStreamId,
+  } = removeStreamBindings(bucket, removedStreamIds);
   return {
     streamingEvents: nextStreamingEvents,
+    streamingTextByStreamId: nextStreamingTextByStreamId,
+    streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
     replySessionsByPendingEventId: {
-      ...bucket.replySessionsByPendingEventId,
+      ...nextReplySessionsByPendingEventId,
       [targetPendingEventId]: {
-        ...(bucket.replySessionsByPendingEventId[targetPendingEventId] || {
+        ...(nextReplySessionsByPendingEventId[targetPendingEventId] || {
           pendingEventId: targetPendingEventId,
           actorId: targetActorId,
-          streamIds: [],
-          text: "",
-          activities: [],
           phase: "pending" as const,
           updatedAt: Date.now(),
         }),
@@ -1015,5 +1027,6 @@ export function clearStreamingPlaceholderPatch(
         updatedAt: Date.now(),
       },
     },
+    pendingEventIdByStreamId: nextPendingEventIdByStreamId,
   };
 }

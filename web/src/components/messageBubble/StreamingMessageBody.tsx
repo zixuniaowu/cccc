@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LedgerEvent, StreamingActivity } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { selectStreamingReplySession, useGroupStore } from "../../stores";
+import { useGroupStore } from "../../stores";
 import {
   normalizeStreamingActivities as _normalizeStreamingActivities,
   getMessageBubbleMotionClass as _getMessageBubbleMotionClass,
@@ -186,11 +186,11 @@ const StreamingContent = memo(function StreamingContent({
   isQueuedOnlyFallbackPlaceholder: boolean;
   placeholderLabel: string;
 }) {
-  const replySession = useGroupStore(useCallback((state) => selectStreamingReplySession(state, groupId, {
-    pendingEventId,
-    streamId,
-    actorId,
-  }), [actorId, groupId, pendingEventId, streamId]));
+  const liveStreamingText = useGroupStore(useCallback((state) => {
+    if (!streamId) return "";
+    const bucket = state.chatByGroup[String(groupId || "").trim()];
+    return String(bucket?.streamingTextByStreamId?.[streamId] || "");
+  }, [groupId, streamId]));
   const streamingEvents = useGroupStore(useCallback((state) => {
     const bucket = state.chatByGroup[String(groupId || "").trim()];
     return Array.isArray(bucket?.streamingEvents) ? bucket.streamingEvents : EMPTY_STREAMING_EVENTS;
@@ -202,7 +202,6 @@ const StreamingContent = memo(function StreamingContent({
     return Array.isArray(activities) ? activities : EMPTY_STREAMING_ACTIVITIES;
   }, [groupId, streamId]));
   const liveStreamingActivities = useMemo(() => {
-    if (replySession?.activities?.length) return replySession.activities;
     return getEffectiveStreamingActivities({
       streamId,
       actorId,
@@ -215,9 +214,9 @@ const StreamingContent = memo(function StreamingContent({
       },
       fallbackActivities,
     });
-  }, [actorId, fallbackActivities, pendingEventId, replySession?.activities, streamId, streamedActivities, streamingEvents]);
+  }, [actorId, fallbackActivities, pendingEventId, streamId, streamedActivities, streamingEvents]);
 
-  const effectiveText = String(replySession?.text || "") || fallbackText;
+  const effectiveText = liveStreamingText || fallbackText;
   const effectiveStreamingActivities = normalizeStreamingActivities(
     liveStreamingActivities.length > 0 ? liveStreamingActivities : fallbackActivities,
   );

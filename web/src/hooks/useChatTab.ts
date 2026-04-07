@@ -98,9 +98,28 @@ function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent):
   };
 }
 
-function isPlaceholderLikeStreamingEvent(data: ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown }): boolean {
+function getNormalizedStreamPhase(data: { stream_phase?: unknown } | null | undefined): string {
+  return String(data?.stream_phase || "").trim().toLowerCase();
+}
+
+function isPlaceholderLikeStreamingEvent(data: ChatMessageData & {
+  pending_placeholder?: unknown;
+  stream_id?: unknown;
+  stream_phase?: unknown;
+  text?: unknown;
+  activities?: unknown;
+}): boolean {
   const streamId = String(data.stream_id || "").trim();
-  return Boolean(data.pending_placeholder) || streamId.startsWith("local:") || streamId.startsWith("pending:");
+  if (data.pending_placeholder) return true;
+
+  const streamPhase = getNormalizedStreamPhase(data);
+  if (streamPhase === "commentary" || streamPhase === "final_answer") return false;
+
+  const text = typeof data.text === "string" ? data.text.trim() : "";
+  if (text) return false;
+  if (!hasOnlyQueuedActivities(data.activities)) return false;
+
+  return streamId.startsWith("local:") || streamId.startsWith("pending:");
 }
 
 function hasOnlyQueuedActivities(value: unknown): boolean {
@@ -219,14 +238,11 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
         const slotKey = getReplySlotKey(event);
         if (!slotKey || !richReplySlots.has(slotKey)) continue;
         const data = event.data && typeof event.data === "object"
-          ? event.data as ChatMessageData & { pending_placeholder?: unknown; activities?: unknown[]; stream_id?: unknown }
+          ? event.data as ChatMessageData & { pending_placeholder?: unknown; activities?: unknown[]; stream_id?: unknown; stream_phase?: unknown }
           : {};
         const text = typeof data.text === "string" ? data.text.trim() : "";
         const onlyQueuedActivities = hasOnlyQueuedActivities(data.activities);
-        const isPlaceholderLike =
-          Boolean(data.pending_placeholder) ||
-          String(data.stream_id || "").trim().startsWith("local:") ||
-          String(data.stream_id || "").trim().startsWith("pending:");
+        const isPlaceholderLike = isPlaceholderLikeStreamingEvent(data);
         if (!text && (isPlaceholderLike || onlyQueuedActivities)) {
           shouldDrop.add(event);
         }
@@ -236,15 +252,14 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
 
     const placeholderOnlyEvents = actorEvents.filter((event) => {
       const data = event.data && typeof event.data === "object"
-        ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown }
+        ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown; stream_phase?: unknown }
         : {};
       const text = typeof data.text === "string" ? data.text.trim() : "";
       if (text) return false;
       const onlyQueuedActivities = hasOnlyQueuedActivities(data.activities);
-      const streamId = String(data.stream_id || "").trim();
       return (
         onlyQueuedActivities &&
-        (Boolean(data.pending_placeholder) || streamId.startsWith("local:") || streamId.startsWith("pending:"))
+        isPlaceholderLikeStreamingEvent(data)
       );
     });
     if (placeholderOnlyEvents.length <= 1) continue;
@@ -278,17 +293,13 @@ function dropOrphanQueuedPlaceholders(
     const slotKey = getReplySlotKey(event);
     if (!slotKey || !renderableCanonicalReplySlots.has(slotKey)) return true;
     const data = event.data && typeof event.data === "object"
-      ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown }
+      ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown; stream_phase?: unknown }
       : {};
     const text = typeof data.text === "string" ? data.text.trim() : "";
     if (text) return true;
     // Canonical reply exists and placeholder has no text — drop it even if activities
     // are non-queued (stale activities are irrelevant once canonical text arrived).
-    const streamId = String(data.stream_id || "").trim();
-    const isPlaceholderLike =
-      Boolean(data.pending_placeholder) ||
-      streamId.startsWith("local:") ||
-      streamId.startsWith("pending:");
+    const isPlaceholderLike = isPlaceholderLikeStreamingEvent(data);
     return !isPlaceholderLike;
   });
 }

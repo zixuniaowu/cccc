@@ -12,7 +12,7 @@ from ...kernel.actors import find_actor, list_actors, update_actor
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
-from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
+from ...kernel.runtime import runtime_start_preflight_error
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...runners.platform_support import pty_support_error_message
@@ -280,12 +280,7 @@ def handle_actor_update(
                 runner_kind = str(launch_spec["runner"])
                 runner_effective = str(launch_spec["effective_runner"])
                 runtime = str(launch_spec["runtime"])
-                effective_env = inject_runtime_home_env(
-                    launch_spec["merged_env"],
-                    runtime=runtime,
-                    group_id=group.group_id,
-                    actor_id=actor_id,
-                )
+                effective_env = dict(launch_spec["merged_env"])
                 if runner_effective != "headless":
                     if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
                         return _error("actor_update_failed", pty_support_error_message() or "PTY runner is not supported in this environment.")

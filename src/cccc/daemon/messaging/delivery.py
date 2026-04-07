@@ -895,27 +895,66 @@ def _finalize_delivery_success(
     THROTTLE.mark_delivered(gid, aid)
     if _get_auto_mark_on_delivery(group) and deliverable:
         last_msg = deliverable[-1]
-        try:
-            prev_event_id, prev_ts = get_cursor(group, aid)
-            cursor = set_cursor(group, aid, event_id=last_msg.event_id, ts=last_msg.ts)
-            if (
-                str(cursor.get("event_id") or "") == str(last_msg.event_id or "")
-                and str(cursor.get("ts") or "") == str(last_msg.ts or "")
-                and (str(prev_event_id or "") != str(last_msg.event_id or "") or str(prev_ts or "") != str(last_msg.ts or ""))
-            ):
-                append_event(
-                    group.ledger_path,
-                    kind="chat.read",
-                    group_id=group.group_id,
-                    scope_key="",
-                    by=aid,
-                    data={"actor_id": aid, "event_id": last_msg.event_id},
-                )
-            logger.debug(f"[flush] {gid}/{aid} auto-marked {len(deliverable)} messages as read")
-        except Exception as e:
-            logger.warning(f"[flush] {gid}/{aid} auto-mark failed: {e}")
+        maybe_auto_mark_delivered_event(
+            group,
+            actor_id=aid,
+            event_id=str(last_msg.event_id or ""),
+            ts=str(last_msg.ts or ""),
+        )
     if requeue:
         THROTTLE.requeue_front(gid, aid, requeue)
+
+
+def maybe_auto_mark_delivered_event(
+    group: Group,
+    *,
+    actor_id: str,
+    event_id: str,
+    ts: str,
+) -> bool:
+    """Advance the inbox cursor for a successfully delivered event when enabled.
+
+    Returns True when the resulting cursor covers the delivered event, which lets
+    callers suppress redundant follow-up notifications for the same delivery.
+    """
+    gid = str(group.group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    delivered_event_id = str(event_id or "").strip()
+    delivered_ts = str(ts or "").strip()
+    if not aid or not delivered_event_id or not delivered_ts:
+        return False
+    if not _get_auto_mark_on_delivery(group):
+        return False
+    try:
+        prev_event_id, prev_ts = get_cursor(group, aid)
+        cursor = set_cursor(group, aid, event_id=delivered_event_id, ts=delivered_ts)
+        cursor_event_id = str(cursor.get("event_id") or "")
+        cursor_ts = str(cursor.get("ts") or "")
+        delivered_dt = parse_utc_iso(delivered_ts)
+        cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
+        if delivered_dt is not None and cursor_dt is not None:
+            covers_event = cursor_dt >= delivered_dt
+        else:
+            covers_event = cursor_event_id == delivered_event_id and cursor_ts == delivered_ts
+        if (
+            cursor_event_id == delivered_event_id
+            and cursor_ts == delivered_ts
+            and (str(prev_event_id or "") != delivered_event_id or str(prev_ts or "") != delivered_ts)
+        ):
+            append_event(
+                group.ledger_path,
+                kind="chat.read",
+                group_id=group.group_id,
+                scope_key="",
+                by=aid,
+                data={"actor_id": aid, "event_id": delivered_event_id},
+            )
+        if covers_event:
+            logger.debug(f"[flush] {gid}/{aid} auto-marked delivered event as read event_id={delivered_event_id}")
+        return covers_event
+    except Exception as e:
+        logger.warning(f"[flush] {gid}/{aid} auto-mark failed: {e}")
+        return False
 
 
 def _finish_delivery_chain(group: Group, *, actor_id: str) -> None:

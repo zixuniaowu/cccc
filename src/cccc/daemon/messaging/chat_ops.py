@@ -28,6 +28,7 @@ from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .delivery import (
     flush_pending_messages,
     get_headless_targets_for_message,
+    maybe_auto_mark_delivered_event,
     queue_chat_message,
     request_flush_pending_messages,
 )
@@ -255,9 +256,11 @@ def _notify_headless_targets(
     priority: str,
     reply_required: bool,
     event: dict[str, Any],
+    skip_actor_ids: Optional[set[str]] = None,
 ) -> None:
     try:
         headless_targets = get_headless_targets_for_message(group, event=event, by=by)
+        skip_ids = {str(item).strip() for item in (skip_actor_ids or set()) if str(item).strip()}
         if reply_required:
             notify_title = "Need reply"
             notify_priority = "urgent" if priority == "attention" else "high"
@@ -265,6 +268,8 @@ def _notify_headless_targets(
             notify_title = "Needs acknowledgement" if priority == "attention" else "New message"
             notify_priority = "urgent" if priority == "attention" else "high"
         for actor_id in headless_targets:
+            if actor_id in skip_ids:
+                continue
             append_event(
                 group.ledger_path,
                 kind="system.notify",
@@ -463,6 +468,7 @@ def handle_send(
         src_event_id=src_event_id,
     )
     actors = list_actors(group)
+    skip_headless_notify_actor_ids: set[str] = set()
     logger.debug(f"[SEND] group={group_id} text={text[:30]!r} actors={[a.get('id') for a in actors]} effective_to={effective_to}")
     for actor in actors:
         if not isinstance(actor, dict):
@@ -484,25 +490,29 @@ def handle_send(
             and effective_runner_kind(runner_kind) == "headless"
             and codex_app_supervisor.actor_running(group.group_id, actor_id)
         ):
-            codex_app_supervisor.submit_user_message(
+            delivered = bool(codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 text=delivery_text,
                 event_id=event_id,
                 attachments=attachments,
-            )
+            ))
+            if delivered and maybe_auto_mark_delivered_event(group, actor_id=actor_id, event_id=event_id, ts=event_ts):
+                skip_headless_notify_actor_ids.add(actor_id)
         elif (
             runtime == "claude"
             and effective_runner_kind(runner_kind) == "headless"
             and claude_app_supervisor.actor_running(group.group_id, actor_id)
         ):
-            claude_app_supervisor.submit_user_message(
+            delivered = bool(claude_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 text=delivery_text,
                 event_id=event_id,
                 attachments=attachments,
-            )
+            ))
+            if delivered and maybe_auto_mark_delivered_event(group, actor_id=actor_id, event_id=event_id, ts=event_ts):
+                skip_headless_notify_actor_ids.add(actor_id)
         elif effective_runner_kind(runner_kind) == "pty":
             queue_chat_message(
                 group,
@@ -528,6 +538,7 @@ def handle_send(
         priority=priority,
         reply_required=reply_required,
         event=event_for_headless,
+        skip_actor_ids=skip_headless_notify_actor_ids,
     )
 
     try:
@@ -714,6 +725,7 @@ def handle_reply(
         refs=refs,
         attachments=attachments,
     )
+    skip_headless_notify_actor_ids: set[str] = set()
     for actor in list_actors(group):
         if not isinstance(actor, dict):
             continue
@@ -729,27 +741,31 @@ def handle_reply(
             and effective_runner_kind(runner_kind) == "headless"
             and codex_app_supervisor.actor_running(group.group_id, actor_id)
         ):
-            codex_app_supervisor.submit_user_message(
+            delivered = bool(codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 text=delivery_text,
                 event_id=event_id,
                 reply_to=target_event_id or reply_to,
                 attachments=attachments,
-            )
+            ))
+            if delivered and maybe_auto_mark_delivered_event(group, actor_id=actor_id, event_id=event_id, ts=event_ts):
+                skip_headless_notify_actor_ids.add(actor_id)
         elif (
             runtime == "claude"
             and effective_runner_kind(runner_kind) == "headless"
             and claude_app_supervisor.actor_running(group.group_id, actor_id)
         ):
-            claude_app_supervisor.submit_user_message(
+            delivered = bool(claude_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 text=delivery_text,
                 event_id=event_id,
                 reply_to=target_event_id or reply_to,
                 attachments=attachments,
-            )
+            ))
+            if delivered and maybe_auto_mark_delivered_event(group, actor_id=actor_id, event_id=event_id, ts=event_ts):
+                skip_headless_notify_actor_ids.add(actor_id)
         elif effective_runner_kind(runner_kind) == "pty":
             queue_chat_message(
                 group,
@@ -771,6 +787,7 @@ def handle_reply(
         priority=priority,
         reply_required=reply_required,
         event=event_with_effective_to,
+        skip_actor_ids=skip_headless_notify_actor_ids,
     )
 
     try:

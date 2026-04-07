@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, Optional
 from ...kernel.context import ContextStorage
 from ...kernel.actors import list_actors
 from ...kernel.group import load_group
-from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
+from ...kernel.runtime import runtime_start_preflight_error
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...util.conv import coerce_bool
@@ -128,12 +128,7 @@ def autostart_running_groups(
             effective_runner = str(launch_spec["effective_runner"])
             cwd = launch_spec["cwd"]
             runtime = str(launch_spec["runtime"])
-            effective_env = inject_runtime_home_env(
-                launch_spec["merged_env"],
-                runtime=runtime,
-                group_id=group.group_id,
-                actor_id=actor_id,
-            )
+            effective_env = dict(launch_spec["merged_env"])
 
             ok_mcp = True
             effective_cmd = list(launch_spec["effective_command"])

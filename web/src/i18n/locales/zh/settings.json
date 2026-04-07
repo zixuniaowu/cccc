@@ -569,7 +569,7 @@
     "weixinAccountIdHint": "可选；为空时使用 `weixin-agent-sdk` 的默认首个已登录账号。",
     "weixinCommand": "Sidecar 命令（可选）",
     "weixinCommandHint": "可选；覆盖默认的 `node scripts/im/weixin_sidecar.mjs` 启动命令。",
-    "weixinPackageHint": "宿主机需要 Node.js，并先在 `scripts/im` 下执行 `npm install` 安装已固定的 `weixin-agent-sdk@0.4.0` 依赖。首次使用前先完成微信登录。",
+    "weixinPackageHint": "宿主机需要 Node.js。首次微信登录前，请在包含 `weixin_sidecar.mjs` 的目录中执行 `npm install`。源码仓库场景下该目录是 `scripts/im`，固定依赖版本为 `weixin-agent-sdk@0.4.0`。",
     "weixinLoginTitle": "微信登录",
     "weixinLoginStatus": "登录状态",
     "weixinCurrentAccount": "当前账号",

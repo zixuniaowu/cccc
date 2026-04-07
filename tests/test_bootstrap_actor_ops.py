@@ -495,10 +495,8 @@ class TestBootstrapActorOps(unittest.TestCase):
             self.assertEqual(captured[0]["actor_id"], "peer1")
             env = captured[0]["env"]
             assert isinstance(env, dict)
-            self.assertEqual(
-                Path(str(env.get("CODEX_HOME") or "")).resolve(),
-                (home / "groups" / group_id / "runtime" / "codex" / "peer1").resolve(),
-            )
+            self.assertEqual(str(env.get("OPENAI_API_KEY") or ""), "sk-test")
+            self.assertNotIn("CODEX_HOME", env)
             self.assertEqual(resumed, [group_id])
         finally:
             cleanup()

@@ -12,7 +12,7 @@ from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
-from ...kernel.runtime import inject_runtime_home_env, runtime_start_preflight_error
+from ...kernel.runtime import runtime_start_preflight_error
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
@@ -186,12 +186,7 @@ def handle_group_start(
             runtime = str(launch_spec["runtime"])
             runner_effective = str(launch_spec["effective_runner"])
             update_actor(group, aid, {"enabled": True})
-            effective_env = inject_runtime_home_env(
-                launch_spec["merged_env"],
-                runtime=runtime,
-                group_id=group.group_id,
-                actor_id=aid,
-            )
+            effective_env = dict(launch_spec["merged_env"])
             if runner_effective != "headless":
                 try:
                     mcp_ready = bool(

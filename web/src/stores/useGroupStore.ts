@@ -259,8 +259,6 @@ export const useGroupStore = create<GroupState>((set, get) => ({
               pendingEventId,
               actorId,
               streamId: String(data.stream_id || "").trim() || undefined,
-              text: String(data.text || ""),
-              activities: Array.isArray(data.activities) ? data.activities as StreamingActivity[] : [],
               phase: "completed",
               canonicalEventId: String(event.id || "").trim() || undefined,
               updatedAt: normalizeReplySessionTimestamp(String(event.ts || "")),

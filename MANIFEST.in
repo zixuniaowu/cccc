@@ -5,6 +5,6 @@ include README.ja.md
 
 recursive-include src/cccc/ports/web/dist *
 recursive-include src/cccc/resources *.md *.yaml
-recursive-include src/cccc/resources/im *.mjs
+recursive-include src/cccc/resources/im *.mjs *.json
 
 global-exclude *.pyc __pycache__/* .DS_Store

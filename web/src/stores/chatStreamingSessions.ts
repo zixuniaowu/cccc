@@ -9,10 +9,7 @@ export type StreamingReplySession = {
   pendingEventId: string;
   actorId: string;
   currentStreamId?: string;
-  streamIds: string[];
   canonicalEventId?: string;
-  text: string;
-  activities: StreamingActivity[];
   phase: StreamingReplySessionPhase;
   updatedAt: number;
 };
@@ -78,7 +75,7 @@ export function pruneReplySessions(
   const nextPendingEventIdByStreamId = { ...pendingEventIdByStreamId };
   for (const session of removable.slice(0, overflow)) {
     delete nextSessions[session.pendingEventId];
-    for (const streamId of session.streamIds) {
+    for (const streamId of Object.keys(nextPendingEventIdByStreamId)) {
       if (nextPendingEventIdByStreamId[streamId] === session.pendingEventId) {
         delete nextPendingEventIdByStreamId[streamId];
       }
@@ -98,8 +95,6 @@ export function upsertReplySession(
     pendingEventId: string;
     actorId: string;
     streamId?: string;
-    text?: string;
-    activities?: StreamingActivity[];
     phase?: StreamingReplySessionPhase;
     canonicalEventId?: string;
     updatedAt?: number;
@@ -119,23 +114,12 @@ export function upsertReplySession(
   }
 
   const existing = replySessionsByPendingEventId[pendingEventId];
-  const existingStreamIds = Array.isArray(existing?.streamIds) ? existing.streamIds : [];
-  const nextStreamIds = streamId
-    ? Array.from(new Set(existingStreamIds.concat(streamId)))
-    : existingStreamIds;
-  const nextActivities = args.activities !== undefined
-    ? sliceStreamingActivities(args.activities)
-    : (existing?.activities || []);
-  const nextText = args.text !== undefined ? String(args.text || "") : (existing?.text || "");
   const nextPhase = args.phase || existing?.phase || "pending";
   const nextSession: StreamingReplySession = {
     pendingEventId,
     actorId,
     currentStreamId: streamId || existing?.currentStreamId,
-    streamIds: nextStreamIds,
     canonicalEventId: args.canonicalEventId || existing?.canonicalEventId,
-    text: nextText,
-    activities: nextActivities,
     phase: nextPhase,
     updatedAt: Number.isFinite(Number(args.updatedAt)) ? Number(args.updatedAt) : Date.now(),
   };
@@ -182,10 +166,7 @@ export function migrateReplySession(
     pendingEventId: toKey,
     actorId: target?.actorId || source.actorId,
     currentStreamId: target?.currentStreamId || source.currentStreamId,
-    streamIds: Array.from(new Set((target?.streamIds || []).concat(source.streamIds || []))),
     canonicalEventId: target?.canonicalEventId || source.canonicalEventId,
-    text: target?.text || source.text,
-    activities: sliceStreamingActivities((target?.activities || []).length > 0 ? target?.activities : source.activities),
     phase: target?.phase || source.phase,
     updatedAt: Math.max(target?.updatedAt || 0, source.updatedAt || 0, Date.now()),
   };
@@ -194,8 +175,10 @@ export function migrateReplySession(
   delete nextReplySessionsByPendingEventId[fromKey];
   nextReplySessionsByPendingEventId[toKey] = merged;
   const nextPendingEventIdByStreamId = { ...pendingEventIdByStreamId };
-  for (const streamId of merged.streamIds) {
-    nextPendingEventIdByStreamId[streamId] = toKey;
+  for (const streamId of Object.keys(nextPendingEventIdByStreamId)) {
+    if (nextPendingEventIdByStreamId[streamId] === fromKey) {
+      nextPendingEventIdByStreamId[streamId] = toKey;
+    }
   }
   return pruneReplySessions(nextReplySessionsByPendingEventId, nextPendingEventIdByStreamId);
 }

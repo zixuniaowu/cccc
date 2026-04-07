@@ -11,7 +11,6 @@ from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
-from ...kernel.runtime import inject_runtime_home_env
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
@@ -328,12 +327,7 @@ def handle_actor_restart(
         runner_kind = str(launch_spec["runner"])
         runner_effective = str(launch_spec["effective_runner"])
         runtime = str(launch_spec["runtime"])
-        effective_env = inject_runtime_home_env(
-            launch_spec["merged_env"],
-            runtime=runtime,
-            group_id=group.group_id,
-            actor_id=actor_id,
-        )
+        effective_env = dict(launch_spec["merged_env"])
         if runner_effective != "headless":
             try:
                 mcp_ready = bool(

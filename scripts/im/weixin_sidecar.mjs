@@ -6,6 +6,8 @@ import os from "node:os";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+const SIDECAR_DIR = path.dirname(fileURLToPath(import.meta.url));
+
 function emit(event, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type: "event", event, ...payload })}\n`);
 }
@@ -114,7 +116,7 @@ async function main() {
     });
     emit("error", {
       message:
-        "failed to import weixin-agent-sdk; install scripts/im dependencies first, e.g. cd scripts/im && npm install",
+        `failed to import weixin-agent-sdk; run npm install in the sidecar directory first, e.g. cd "${SIDECAR_DIR}" && npm install`,
     });
     process.exit(1);
   }

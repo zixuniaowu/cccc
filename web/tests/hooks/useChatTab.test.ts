@@ -1,4 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const { localStorageMock } = vi.hoisted(() => {
+  function makeStorage() {
+    const data = new Map<string, string>();
+    return {
+      getItem: vi.fn((key: string) => data.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        data.set(key, String(value));
+      }),
+      removeItem: vi.fn((key: string) => {
+        data.delete(key);
+      }),
+      clear: vi.fn(() => {
+        data.clear();
+      }),
+    };
+  }
+
+  const storage = makeStorage();
+  vi.stubGlobal("localStorage", storage);
+  vi.stubGlobal("window", { setTimeout, clearTimeout, localStorage: storage });
+  return { localStorageMock: storage };
+});
 
 import {
   CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS,
@@ -11,6 +34,8 @@ import {
   supportsChatStreamingPlaceholder,
 } from "../../src/hooks/useChatTab";
 import type { LedgerEvent } from "../../src/types";
+
+void localStorageMock;
 
 function makeStreamingEvent({
   id,
@@ -109,6 +134,38 @@ describe("dedupeStreamingEvents", () => {
     expect(events.map((event) => String(event.id || ""))).toEqual([
       "pending:evt-1:claude-1",
       "stream:final-1",
+    ]);
+  });
+
+  it("keeps explicit commentary streams separate even if their ids still look pending-like", () => {
+    const events = dedupeStreamingEvents([
+      makeStreamingEvent({
+        id: "pending:evt-2:claude-1",
+        streamId: "pending:evt-2:claude-1",
+        pendingEventId: "evt-2",
+        pendingPlaceholder: true,
+      }),
+      {
+        id: "stream:commentary-2",
+        kind: "chat.message",
+        by: "claude-1",
+        _streaming: true,
+        data: {
+          text: "先同步一下排查路径",
+          to: ["user"],
+          stream_id: "pending:evt-2:claude-1:commentary",
+          pending_event_id: "evt-2",
+          pending_placeholder: false,
+          stream_phase: "commentary",
+          activities: [],
+        },
+      },
+    ]);
+
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => String(event.id || ""))).toEqual([
+      "pending:evt-2:claude-1",
+      "stream:commentary-2",
     ]);
   });
 });

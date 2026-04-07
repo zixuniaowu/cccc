@@ -47,6 +47,28 @@ class TestMcpInstall(unittest.TestCase):
             ), patch("cccc.daemon.mcp_install.Path.home", return_value=home):
                 self.assertTrue(is_mcp_installed("kimi"))
 
+    def test_is_mcp_installed_kimi_prefers_explicit_share_dir_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            share_dir = Path(td) / "isolated-kimi"
+            config_path = share_dir / "mcp.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "cccc": {
+                                "command": "/abs/cccc",
+                                "args": ["mcp"],
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                self.assertTrue(is_mcp_installed("kimi", env={"KIMI_SHARE_DIR": str(share_dir)}))
+
     def test_is_mcp_installed_droid_windows_rejects_backslash_stripped_command(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
@@ -91,6 +113,27 @@ class TestMcpInstall(unittest.TestCase):
                         text=True,
                         cwd=str(cwd),
                         timeout=30,
+                    )
+
+    def test_ensure_mcp_installed_kimi_passes_explicit_share_dir_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            env = {"KIMI_SHARE_DIR": "/tmp/cccc-isolated-kimi-share"}
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=["missing", "ready"]), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ), patch("cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ok = ensure_mcp_installed("kimi", cwd, auto_mcp_runtimes=("kimi",), env=env)
+                    self.assertTrue(ok)
+                    mock_run.assert_called_once_with(
+                        ["kimi", "mcp", "add", "--transport", "stdio", "cccc", "--", "/abs/cccc", "mcp"],
+                        capture_output=True,
+                        text=True,
+                        cwd=str(cwd),
+                        timeout=30,
+                        env={**os.environ, **env},
                     )
 
     def test_ensure_mcp_installed_claude_uses_absolute_cccc_command(self) -> None:
@@ -259,7 +302,7 @@ class TestMcpInstall(unittest.TestCase):
                         timeout=30,
                     )
 
-    def test_ensure_mcp_installed_codex_passes_isolated_codex_home_env(self) -> None:
+    def test_ensure_mcp_installed_codex_passes_explicit_env(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             cwd = Path(td)
             env = {"CODEX_HOME": "/tmp/cccc-isolated-codex-home", "OPENAI_API_KEY": "sk-test"}

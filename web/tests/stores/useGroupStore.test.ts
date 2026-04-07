@@ -4,6 +4,7 @@ vi.mock("../../src/services/api", () => ({
   fetchActors: vi.fn(),
   fetchGroup: vi.fn(),
   fetchLedgerTail: vi.fn(),
+  fetchLedgerStatuses: vi.fn(),
   fetchOlderMessages: vi.fn(),
   fetchMessageWindow: vi.fn(),
   fetchContext: vi.fn(),
@@ -272,6 +273,10 @@ describe("useGroupStore actors fetch policy", () => {
       ok: true,
       result: { events: [], has_more: false },
     } as Awaited<ReturnType<typeof api.fetchLedgerTail>>);
+    vi.mocked(api.fetchLedgerStatuses).mockResolvedValue({
+      ok: true,
+      result: { statuses: {} },
+    } as Awaited<ReturnType<typeof api.fetchLedgerStatuses>>);
     vi.mocked(api.fetchOlderMessages).mockResolvedValue({
       ok: true,
       result: { events: [], has_more: false, count: 0 },
@@ -792,6 +797,8 @@ describe("useGroupStore actors fetch policy", () => {
       expect(bucket?.hasLoadedTail).toBe(true);
       expect(bucket?.hasMoreHistory).toBe(false);
     });
+
+    expect(api.fetchLedgerStatuses).toHaveBeenCalledWith("g-demo", ["msg-old", "msg-live"]);
   });
 
   it("restores inactive-group messages from cache after the bucket is rebuilt", async () => {
@@ -1145,7 +1152,7 @@ describe("useGroupStore streaming placeholder cleanup", () => {
       pendingEventId: "evt-2",
       actorId: "peer-1",
       currentStreamId: "f2",
-      streamIds: ["f2"],
+      phase: "streaming",
     });
   });
 
@@ -1312,11 +1319,7 @@ describe("useGroupStore streaming placeholder cleanup", () => {
       pendingEventId: "e4",
       actorId: "peer-1",
       currentStreamId: "stream-4",
-      text: "final answer",
       phase: "streaming",
-      activities: [
-        { id: "a4", kind: "thinking", status: "completed", summary: "thinking", ts: "2026-04-03T16:25:01Z" },
-      ],
     });
   });
 
@@ -1433,10 +1436,7 @@ describe("useGroupStore streaming placeholder cleanup", () => {
       pendingEventId: "evt-1",
       actorId: "peer-1",
       currentStreamId: "pending:evt-1:peer-1",
-      text: "我已经在真实 UI 里抓到现象了。",
-      activities: [
-        { id: "tool-1", kind: "tool", status: "started", summary: "chrome-devtools:wait_for", ts: "2026-04-04T14:39:01Z" },
-      ],
+      phase: "pending",
     });
   });
 
@@ -1466,7 +1466,9 @@ describe("useGroupStore streaming placeholder cleanup", () => {
     expect(bucket.replySessionsByPendingEventId["evt-3"]).toMatchObject({
       pendingEventId: "evt-3",
       actorId: "peer-1",
-      currentStreamId: "local:msg-3:peer-1",
+      currentStreamId: "pending:evt-3:peer-1",
     });
+    expect(bucket.pendingEventIdByStreamId["local:msg-3:peer-1"]).toBeUndefined();
+    expect(bucket.pendingEventIdByStreamId["pending:evt-3:peer-1"]).toBe("evt-3");
   });
 });

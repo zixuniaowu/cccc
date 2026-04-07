@@ -97,6 +97,24 @@ describe("getStableMessageKey", () => {
 
     expect(getStableMessageKey(placeholder, 0)).toBe("pending:coder:evt-user-1");
   });
+
+  it("uses stream identity when explicit phase marks a real stream even if the id looks placeholder-like", () => {
+    const commentary: LedgerEvent = {
+      id: "evt-commentary",
+      kind: "chat.message",
+      by: "coder",
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "pending:evt-user-2:coder:commentary",
+        pending_event_id: "evt-user-2",
+        pending_placeholder: false,
+        stream_phase: "commentary",
+      },
+    };
+
+    expect(getStableMessageKey(commentary, 0)).toBe("stream:pending:evt-user-2:coder:commentary");
+  });
 });
 
 describe("shouldUseVirtualizedMessageList", () => {

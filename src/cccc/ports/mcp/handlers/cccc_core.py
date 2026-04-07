@@ -645,7 +645,7 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
             [
                 "- Capsule skill is runtime capsule activation, not a full local skill-package install.",
                 "- Runtime success is mainly visible via `capability_state.active_capsule_skills`; `dynamic_tools` may stay unchanged.",
-                "- If you need full local skill scripts or assets, install a normal skill package into `$CODEX_HOME/skills`.",
+                "- If you need full local skill scripts or assets, install a normal skill package into Codex's skills directory (`$CODEX_HOME/skills` if `CODEX_HOME` is explicitly set).",
             ]
         )
         sections.append("\n".join(lines).rstrip())

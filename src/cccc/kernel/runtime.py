@@ -1,14 +1,12 @@
 """Runtime detection and configuration for agent CLIs."""
 from __future__ import annotations
 
-import re
 import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..paths import ensure_home
 from ..util.process import find_subprocess_executable
 
 
@@ -91,47 +89,6 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
 
 # First-class supported runtimes (CCCC manages startup defaults + MCP wiring)
 PRIMARY_RUNTIMES = ["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "kimi"]
-_CODEX_ISOLATION_TRIGGER_ENV_KEYS = ("OPENAI_API_KEY",)
-
-
-def _safe_runtime_path_part(value: str, *, fallback: str) -> str:
-    text = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip()).strip("._-")
-    return text[:64] or fallback
-
-
-def _has_explicit_codex_auth_env(env: Dict[str, Any]) -> bool:
-    for key in _CODEX_ISOLATION_TRIGGER_ENV_KEYS:
-        if str(env.get(key) or "").strip():
-            return True
-    return False
-
-
-def inject_runtime_home_env(
-    env: Dict[str, Any],
-    *,
-    runtime: str,
-    group_id: str,
-    actor_id: str,
-) -> Dict[str, Any]:
-    """Inject runtime-specific home directories without overriding explicit actor env."""
-
-    out: Dict[str, Any] = dict(env or {})
-    if str(runtime or "").strip() != "codex":
-        return out
-    if str(out.get("CODEX_HOME") or "").strip():
-        return out
-    if not _has_explicit_codex_auth_env(out):
-        return out
-
-    home = ensure_home()
-    group_part = _safe_runtime_path_part(group_id, fallback="group")
-    actor_part = _safe_runtime_path_part(actor_id, fallback="actor")
-    codex_home = home / "groups" / group_part / "runtime" / "codex" / actor_part
-    codex_home.mkdir(parents=True, exist_ok=True)
-    out["CODEX_HOME"] = str(codex_home)
-    return out
-
-
 def detect_runtime(name: str) -> RuntimeInfo:
     """Detect if a specific runtime is available on the system."""
     config = KNOWN_RUNTIMES.get(name)

@@ -54,9 +54,49 @@ describe("isQueuedOnlyStreamingPlaceholder", () => {
 });
 
 describe("getEffectiveStreamingActivities", () => {
-  it("prefers the latest activity batch from the same pending reply slot", () => {
+  it("keeps a stream-scoped activity timeline isolated from sibling streams", () => {
     const activities = getEffectiveStreamingActivities({
       streamId: "stream-commentary",
+      actorId: "coder",
+      pendingEventId: "evt-1",
+      bucket: {
+        streamingActivitiesByStreamId: {
+          "stream-commentary": [{ id: "a1", kind: "tool", status: "started", summary: "search docs" }],
+          "stream-final": [{ id: "a2", kind: "tool", status: "started", summary: "patch ui" }],
+        },
+        streamingEvents: [
+          {
+            id: "stream:commentary",
+            ts: "2026-04-04T16:00:00.000Z",
+            kind: "chat.message",
+            by: "coder",
+            data: {
+              stream_id: "stream-commentary",
+              pending_event_id: "evt-1",
+            },
+          },
+          {
+            id: "stream:final",
+            ts: "2026-04-04T16:00:02.000Z",
+            kind: "chat.message",
+            by: "coder",
+            data: {
+              stream_id: "stream-final",
+              pending_event_id: "evt-1",
+            },
+          },
+        ],
+      },
+      fallbackActivities: [],
+    });
+
+    expect(activities).toHaveLength(1);
+    expect(activities[0]?.summary).toBe("search docs");
+  });
+
+  it("falls back to the latest pending-slot activity batch only when there is no stream id", () => {
+    const activities = getEffectiveStreamingActivities({
+      streamId: "",
       actorId: "coder",
       pendingEventId: "evt-1",
       bucket: {

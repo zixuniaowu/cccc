@@ -76,6 +76,10 @@ export function getEffectiveStreamingActivities({
   const normalizedFallback = Array.isArray(fallbackActivities) ? fallbackActivities : EMPTY_STREAMING_ACTIVITIES;
   const activitiesByStreamId = bucket?.streamingActivitiesByStreamId || {};
   const direct = streamId ? normalizeStreamingActivities(activitiesByStreamId[streamId]) : EMPTY_STREAMING_ACTIVITIES;
+  if (direct.length > 0) return direct;
+  if (normalizedFallback.length > 0) return normalizeStreamingActivities(normalizedFallback);
+  if (streamId || !pendingEventId) return EMPTY_STREAMING_ACTIVITIES;
+
   const events = Array.isArray(bucket?.streamingEvents) ? (bucket?.streamingEvents || EMPTY_STREAMING_EVENTS) : EMPTY_STREAMING_EVENTS;
 
   const latestCandidate = events
@@ -111,8 +115,7 @@ export function getEffectiveStreamingActivities({
     })[0];
 
   if (latestCandidate?.activities?.length) return latestCandidate.activities;
-  if (direct.length > 0) return direct;
-  return normalizedFallback;
+  return EMPTY_STREAMING_ACTIVITIES;
 }
 
 export function isQueuedOnlyStreamingPlaceholder({
