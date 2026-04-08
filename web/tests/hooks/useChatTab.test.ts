@@ -25,6 +25,7 @@ const { localStorageMock } = vi.hoisted(() => {
 
 import {
   CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS,
+  buildReplyAnchorTsMap,
   buildReplySlotTsMap,
   collapseActorStreamingPlaceholders,
   dedupeStreamingEvents,
@@ -171,7 +172,7 @@ describe("dedupeStreamingEvents", () => {
 });
 
 describe("collapseActorStreamingPlaceholders", () => {
-  it("drops process-only pending bubbles when the same actor already has real streaming text", () => {
+  it("keeps process-only pending bubbles when the same actor already has real streaming text", () => {
     const events = collapseActorStreamingPlaceholders([
       makeStreamingEvent({
         id: "stream:commentary-1",
@@ -195,8 +196,11 @@ describe("collapseActorStreamingPlaceholders", () => {
       },
     ]);
 
-    expect(events).toHaveLength(1);
-    expect(String((events[0]?.data as { stream_id?: unknown } | undefined)?.stream_id || "")).toBe("commentary-1");
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => String(event.id || ""))).toEqual([
+      "stream:commentary-1",
+      "pending:evt-1:claude-1",
+    ]);
   });
 
   it("keeps a new local queued placeholder when the actor only has rich streaming from an older reply slot", () => {
@@ -307,6 +311,43 @@ describe("sortChatMessages", () => {
     const ordered = sortChatMessages(canonical, buildReplySlotTsMap(streaming));
 
     expect(ordered.map((event) => String(event.id || ""))).toEqual(["evt-a", "evt-b"]);
+  });
+
+  it("anchors assistant placeholders after the user message they are replying to", () => {
+    const pendingUserMessage: LedgerEvent = {
+      id: "local-user-1",
+      ts: "2026-04-08T06:04:10.000Z",
+      kind: "chat.message",
+      by: "user",
+      data: {
+        text: "为什么当前点击启动，但是前端ui没变？",
+        to: ["@foreman"],
+        client_id: "local-user-1",
+        _optimistic: true,
+      },
+    };
+    const assistantPlaceholder: LedgerEvent = {
+      id: "stream:queued-1",
+      ts: "2026-04-08T06:04:09.000Z",
+      kind: "chat.message",
+      by: "requirements-expert",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "local:local-user-1:requirements-expert",
+        pending_event_id: "local-user-1",
+        pending_placeholder: true,
+        activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
+      },
+    };
+
+    const ordered = sortChatMessages(
+      [assistantPlaceholder, pendingUserMessage],
+      buildReplyAnchorTsMap([pendingUserMessage], [assistantPlaceholder]),
+    );
+
+    expect(ordered.map((event) => String(event.id || ""))).toEqual(["local-user-1", "stream:queued-1"]);
   });
 });
 
@@ -869,6 +910,50 @@ describe("mergeVisibleChatMessages", () => {
     const ordered = sortChatMessages(merged, buildReplySlotTsMap(streaming));
 
     expect(ordered.map((event) => String(event.id || ""))).toEqual(["stream:old-slot", "evt-later"]);
+  });
+
+  it("keeps a non-queued activity bubble visible after the canonical reply for the same slot arrives", () => {
+    const merged = mergeVisibleChatMessages(
+      [
+        {
+          id: "evt-final",
+          ts: "2026-04-04T16:43:02.000Z",
+          kind: "chat.message",
+          by: "project-director",
+          data: {
+            text: "这是最终 canonical reply",
+            reply_to: "user-msg-1",
+            stream_id: "stream-reply-1",
+            to: ["user"],
+          },
+        },
+      ],
+      [
+        {
+          id: "pending:user-msg-1:project-director",
+          ts: "2026-04-04T16:43:01.500Z",
+          kind: "chat.message",
+          by: "project-director",
+          _streaming: true,
+          data: {
+            text: "",
+            pending_event_id: "user-msg-1",
+            stream_id: "pending:user-msg-1:project-director",
+            pending_placeholder: true,
+            to: ["user"],
+            activities: [{ id: "cmd-1", kind: "command", status: "started", summary: "rg -n activity" }],
+          },
+        },
+      ],
+      [],
+      { map: new Map(), next: 0 },
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged.map((event) => String(event.id || ""))).toEqual([
+      "pending:user-msg-1:project-director",
+      "evt-final",
+    ]);
   });
 });
 

@@ -390,430 +390,440 @@ export function ChatComposer({
   return (
     <footer
       className={classNames(
-        "flex-shrink-0 border-t px-3 sm:px-4 py-2 sm:py-3 safe-area-bottom-compact transition-colors",
+        "flex-shrink-0 border-t px-3 sm:px-4 pt-3 sm:pt-4 pb-2.5 sm:pb-3.5 safe-area-bottom-compact transition-colors",
         isDark ? "border-white/5 bg-slate-950/72 backdrop-blur-md" : "border-black/5 bg-white/78 backdrop-blur-md"
       )}
     >
-      {/* Reply indicator */}
-      {replyTarget && (
-        <div className={classNames(
-          "mb-2 flex items-center gap-2 text-xs rounded-xl px-3 py-1.5",
-          isDark ? "text-[var(--color-text-tertiary)] bg-white/[0.08] border border-white/[0.08]" : "text-gray-500 bg-black/5"
-        )}>
-          <ReplyIcon size={14} className="flex-shrink-0 opacity-60" />
-          <span className="font-medium truncate flex-1">
-            <span className="opacity-60 mr-1">{t('replyingTo')}</span>
-            <span className={isDark ? "text-slate-300" : "text-gray-700"}>{replyByDisplayName}</span>
-            <span className="mx-1 opacity-40">"</span>
-            <span className="italic opacity-80">{replyTarget.text}</span>
-            <span className="opacity-40">"</span>
-          </span>
-          <button
-            className={classNames(
-              "p-2.5 -m-1.5 rounded-full transition-colors",
-              isDark ? "hover:bg-white/10 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]" : "hover:bg-black/10 text-gray-400 hover:text-gray-600"
-            )}
-            onClick={onCancelReply}
-            title={t('cancelReply')}
-            aria-label={t('cancelReply')}
-          >
-            <CloseIcon size={14} />
-          </button>
-        </div>
-      )}
-
-      {quotedPresentationRef && (
-        <div
-          className={classNames(
-            "mb-2 flex items-center gap-2 text-xs rounded-xl px-3 py-1.5",
-            isDark ? "text-[var(--color-text-tertiary)] bg-cyan-500/12 border border-cyan-400/15" : "text-gray-600 bg-cyan-50",
-          )}
-        >
-          <span className={classNames("font-medium flex-shrink-0", isDark ? "text-cyan-100" : "text-cyan-700")}>
-            {t("presentationQuotedViewLabel", { defaultValue: "Quoted view" })}
-          </span>
-          <span className="min-w-0 flex-1 truncate" title={quotedPresentationRef.title || quotedPresentationRefLabel}>
-            {quotedPresentationRefLabel}
-          </span>
-          <button
-            className={classNames(
-              "p-2.5 -m-1.5 rounded-full transition-colors",
-              isDark ? "hover:bg-white/10 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]" : "hover:bg-black/10 text-gray-400 hover:text-gray-600",
-            )}
-            onClick={onClearQuotedPresentationRef}
-            title={t("presentationRemoveQuotedView", { defaultValue: "Remove quoted view" })}
-            aria-label={t("presentationRemoveQuotedView", { defaultValue: "Remove quoted view" })}
-          >
-            <CloseIcon size={14} />
-          </button>
-        </div>
-      )}
-
-      {/* Recipient Selector Row */}
-      <div className="mb-2.5 sm:mb-4 flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2">
-        <ScrollFade className="-mx-4 sm:mx-0" innerClassName="flex items-center gap-1.5 sm:gap-2 px-4 sm:px-0" fadeWidth={20}>
-          <div className={classNames("text-[10px] font-medium uppercase tracking-wide flex-shrink-0", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>{t('to', 'To')}</div>
-
-          {/* Group Selector - Styled to match buttons */}
-          <div className="relative flex-shrink-0">
-            <select
-              value={destGroupId || selectedGroupId || ""}
-              onChange={(e) => setDestGroupId(e.target.value)}
-              style={{ colorScheme: isDark ? "dark" : "light" }}
-              className={classNames(
-                "appearance-none pr-8 truncate min-w-[120px] max-w-[180px] sm:max-w-[240px]",
-                "h-7 sm:h-8 transition-colors cursor-pointer",
-                chipBaseClass,
-                groupSelectClass
-              )}
-              disabled={!canChooseDestGroup || groupOptions.length === 0}
-              aria-label={t('destinationGroup')}
-            >
-              {groupOptions.map((g) => (
-                <option key={g.gid} value={g.gid}>
-                  {g.label}
-                </option>
-              ))}
-            </select>
-            <div className={classNames("pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-60", groupCaretClass)}>
-              <ChevronDownIcon size={12} />
-            </div>
-          </div>
-
-          <div className="w-[1px] h-4 bg-current opacity-10 flex-shrink-0 mx-1 hidden sm:block" />
-
-          {/* Recipients List - Scrollable horizontally on mobile */}
+      <div
+        className={classNames(
+          "rounded-[1.5rem] border px-3 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)] sm:px-4 sm:py-4",
+          isDark
+            ? "border-white/8 bg-white/[0.04]"
+            : "border-black/5 bg-white/70"
+        )}
+      >
+        {/* Reply indicator */}
+        {replyTarget && (
           <div className={classNames(
-            "flex items-center gap-1 sm:gap-1.5 min-w-0 transition-opacity",
-            recipientActorsBusy ? "opacity-50 pointer-events-none" : ""
+            "mb-3 flex items-center gap-2 text-xs rounded-xl px-3 py-1.5",
+            isDark ? "text-[var(--color-text-tertiary)] bg-white/[0.08] border border-white/[0.08]" : "text-gray-500 bg-black/5"
           )}>
-            {/* Special tokens */}
-            {["@all", "@foreman", "@peers"].map((tok) => {
-              const active = toTokens.includes(tok);
-              return (
-                <button
-                  key={tok}
-                  className={classNames(
-                    "h-[26px] sm:h-8",
-                    chipBaseClass,
-                    active
-                      ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
-                      : isDark
-                        ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
-                        : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
-                  )}
-                  onClick={() => onToggleRecipient(tok)}
-                  disabled={!selectedGroupId || busy === "send"}
-                  aria-pressed={active}
-                >
-                  {tok}
-                </button>
-              );
-            })}
-            {/* Actor tokens */}
-            {recipientActors.map((actor) => {
-              const id = String(actor.id || "");
-              if (!id) return null;
-              const active = toTokens.includes(id);
-              return (
-                <button
-                  key={id}
-                  className={classNames(
-                    "h-[26px] sm:h-8",
-                    chipBaseClass,
-                    active
-                      ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
-                      : isDark
-                        ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
-                        : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
-                  )}
-                  onClick={() => onToggleRecipient(id)}
-                  disabled={!selectedGroupId || busy === "send" || !!recipientActorsBusy}
-                  aria-pressed={active}
-                >
-                  {actor.title || id}
-                </button>
-              );
-            })}
-
-            {toTokens.length > 0 && (
-              <button
-                className={classNames(
-                  "p-2 rounded-full transition-all flex-shrink-0 opacity-40 hover:opacity-100",
-                  isDark ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/10"
-                )}
-                onClick={onClearRecipients}
-                disabled={busy === "send"}
-                aria-label={t('clearRecipients')}
-                title={t('clearRecipients')}
-              >
-                <CloseIcon size={14} />
-              </button>
-            )}
-          </div>
-        </ScrollFade>
-      </div>
-
-      {/* File list */}
-      {composerFiles.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          {composerFiles.map((f, idx) => (
-            <div
-              key={`${f.name}:${idx}`}
+            <ReplyIcon size={14} className="flex-shrink-0 opacity-60" />
+            <span className="font-medium truncate flex-1">
+              <span className="opacity-60 mr-1">{t('replyingTo')}</span>
+              <span className={isDark ? "text-slate-300" : "text-gray-700"}>{replyByDisplayName}</span>
+              <span className="mx-1 opacity-40">"</span>
+              <span className="italic opacity-80">{replyTarget.text}</span>
+              <span className="opacity-40">"</span>
+            </span>
+            <button
               className={classNames(
-                "inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs max-w-full shadow-sm transition-all",
-                isDark ? "border-white/10 bg-slate-900/50 text-slate-300" : "border-black/5 bg-gray-50 text-gray-700"
+                "p-2.5 -m-1.5 rounded-full transition-colors",
+                isDark ? "hover:bg-white/10 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]" : "hover:bg-black/10 text-gray-400 hover:text-gray-600"
               )}
+              onClick={onCancelReply}
+              title={t('cancelReply')}
+              aria-label={t('cancelReply')}
             >
-              <AttachmentIcon size={12} className="opacity-60" />
-              <span className="truncate">{f.name}</span>
-              <button
-                className={classNames(
-                  "flex-shrink-0 p-1.5 -mr-1 rounded-full",
-                  isDark ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/10 text-gray-400 hover:text-gray-700"
-                )}
-                onClick={() => onRemoveComposerFile(idx)}
-                aria-label={t('removeAttachment', { name: f.name })}
-                title={t('removeAttachment', { name: f.name })}
-              >
-                <CloseIcon size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+              <CloseIcon size={14} />
+            </button>
+          </div>
+        )}
 
-      {modeNotice ? (
-        <div
-          className={classNames(
-            "mb-2 rounded-lg border px-3 py-1.5 text-[11px] leading-5",
-            messageMode === "task"
-              ? isDark
-                ? "border-violet-500/30 bg-violet-500/10 text-violet-200"
-                : "border-violet-200 bg-violet-50 text-violet-700"
-              : isDark
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-                : "border-amber-200 bg-amber-50 text-amber-700"
-          )}
-          role="status"
-          aria-live="polite"
-        >
-          {modeNotice}
-        </div>
-      ) : null}
-
-      {/* Main Input Area - Perfectly Centered for Better Alignment */}
-      <div className="flex gap-2 sm:gap-2.5 relative items-center">
-        <input
-          ref={fileInputRef as RefObject<HTMLInputElement>}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            const files = Array.from(e.target.files || []);
-            if (files.length > 0) appendComposerFiles(files);
-            e.target.value = "";
-          }}
-        />
-
-        {/* Attachment Button */}
-        <button
-          className={classNames(
-            composerToolButtonClass,
-            busy !== "send" && selectedGroupId && !isCrossGroup && "hover:text-[var(--color-text-primary)] active:scale-95"
-          )}
-          onClick={() => fileInputRef.current?.click()}
-          disabled={!selectedGroupId || busy === "send" || isCrossGroup}
-          aria-label={t('attachFile')}
-          title={fileDisabledReason}
-        >
-          <AttachmentIcon size={18} className="sm:w-5 sm:h-5 transition-transform" />
-        </button>
-
-        {/* Text Area Wrapper */}
-        <div className="flex-1 relative min-w-0">
-          <textarea
-            ref={composerRef as RefObject<HTMLTextAreaElement>}
+        {quotedPresentationRef && (
+          <div
             className={classNames(
-                "w-full rounded-xl sm:rounded-2xl border px-3.5 sm:px-5 pr-10 sm:pr-14 py-2.5 sm:py-3.5 text-[15px] sm:text-sm resize-none min-h-[40px] sm:min-h-[48px] max-h-[128px] overflow-y-auto scrollbar-hide transition-all duration-300 ease-out",
-                "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center shadow-sm",
-                isDark
-                ? "bg-white/[0.08] border-white/[0.1] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:ring-blue-500/35 focus:border-blue-400/45"
-                : "bg-black/5 border-transparent text-gray-900 placeholder-gray-400 focus:ring-blue-400/30 focus:border-blue-400/40"
+              "mb-3 flex items-center gap-2 text-xs rounded-xl px-3 py-1.5",
+              isDark ? "text-[var(--color-text-tertiary)] bg-cyan-500/12 border border-cyan-400/15" : "text-gray-600 bg-cyan-50",
             )}
-            placeholder={isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop')}
-            rows={1}
-            value={composerText}
-            onPaste={handlePaste}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
-            aria-label={t('messageInput')}
+          >
+            <span className={classNames("font-medium flex-shrink-0", isDark ? "text-cyan-100" : "text-cyan-700")}>
+              {t("presentationQuotedViewLabel", { defaultValue: "Quoted view" })}
+            </span>
+            <span className="min-w-0 flex-1 truncate" title={quotedPresentationRef.title || quotedPresentationRefLabel}>
+              {quotedPresentationRefLabel}
+            </span>
+            <button
+              className={classNames(
+                "p-2.5 -m-1.5 rounded-full transition-colors",
+                isDark ? "hover:bg-white/10 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]" : "hover:bg-black/10 text-gray-400 hover:text-gray-600",
+              )}
+              onClick={onClearQuotedPresentationRef}
+              title={t("presentationRemoveQuotedView", { defaultValue: "Remove quoted view" })}
+              aria-label={t("presentationRemoveQuotedView", { defaultValue: "Remove quoted view" })}
+            >
+              <CloseIcon size={14} />
+            </button>
+          </div>
+        )}
+
+        {/* Recipient Selector Row */}
+        <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2">
+          <ScrollFade className="-mx-1 sm:mx-0" innerClassName="flex items-center gap-1.5 sm:gap-2 px-1 sm:px-0" fadeWidth={20}>
+            <div className={classNames("text-[10px] font-medium uppercase tracking-wide flex-shrink-0", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>{t('to', 'To')}</div>
+
+            {/* Group Selector - Styled to match buttons */}
+            <div className="relative flex-shrink-0">
+              <select
+                value={destGroupId || selectedGroupId || ""}
+                onChange={(e) => setDestGroupId(e.target.value)}
+                style={{ colorScheme: isDark ? "dark" : "light" }}
+                className={classNames(
+                  "appearance-none pr-8 truncate min-w-[120px] max-w-[180px] sm:max-w-[240px]",
+                  "h-7 sm:h-8 transition-colors cursor-pointer",
+                  chipBaseClass,
+                  groupSelectClass
+                )}
+                disabled={!canChooseDestGroup || groupOptions.length === 0}
+                aria-label={t('destinationGroup')}
+              >
+                {groupOptions.map((g) => (
+                  <option key={g.gid} value={g.gid}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
+              <div className={classNames("pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-60", groupCaretClass)}>
+                <ChevronDownIcon size={12} />
+              </div>
+            </div>
+
+            <div className="w-[1px] h-4 bg-current opacity-10 flex-shrink-0 mx-1 hidden sm:block" />
+
+            {/* Recipients List - Scrollable horizontally on mobile */}
+            <div className={classNames(
+              "flex items-center gap-1 sm:gap-1.5 min-w-0 transition-opacity",
+              recipientActorsBusy ? "opacity-50 pointer-events-none" : ""
+            )}>
+              {/* Special tokens */}
+              {["@all", "@foreman", "@peers"].map((tok) => {
+                const active = toTokens.includes(tok);
+                return (
+                  <button
+                    key={tok}
+                    className={classNames(
+                      "h-[26px] sm:h-8",
+                      chipBaseClass,
+                      active
+                        ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
+                        : isDark
+                          ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
+                          : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
+                    )}
+                    onClick={() => onToggleRecipient(tok)}
+                    disabled={!selectedGroupId || busy === "send"}
+                    aria-pressed={active}
+                  >
+                    {tok}
+                  </button>
+                );
+              })}
+              {/* Actor tokens */}
+              {recipientActors.map((actor) => {
+                const id = String(actor.id || "");
+                if (!id) return null;
+                const active = toTokens.includes(id);
+                return (
+                  <button
+                    key={id}
+                    className={classNames(
+                      "h-[26px] sm:h-8",
+                      chipBaseClass,
+                      active
+                        ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
+                        : isDark
+                          ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
+                          : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
+                    )}
+                    onClick={() => onToggleRecipient(id)}
+                    disabled={!selectedGroupId || busy === "send" || !!recipientActorsBusy}
+                    aria-pressed={active}
+                  >
+                    {actor.title || id}
+                  </button>
+                );
+              })}
+
+              {toTokens.length > 0 && (
+                <button
+                  className={classNames(
+                    "p-2 rounded-full transition-all flex-shrink-0 opacity-40 hover:opacity-100",
+                    isDark ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/10"
+                  )}
+                  onClick={onClearRecipients}
+                  disabled={busy === "send"}
+                  aria-label={t('clearRecipients')}
+                  title={t('clearRecipients')}
+                >
+                  <CloseIcon size={14} />
+                </button>
+              )}
+            </div>
+          </ScrollFade>
+        </div>
+
+        {/* File list */}
+        {composerFiles.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            {composerFiles.map((f, idx) => (
+              <div
+                key={`${f.name}:${idx}`}
+                className={classNames(
+                  "inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs max-w-full shadow-sm transition-all",
+                  isDark ? "border-white/10 bg-slate-900/50 text-slate-300" : "border-black/5 bg-gray-50 text-gray-700"
+                )}
+              >
+                <AttachmentIcon size={12} className="opacity-60" />
+                <span className="truncate">{f.name}</span>
+                <button
+                  className={classNames(
+                    "flex-shrink-0 p-1.5 -mr-1 rounded-full",
+                    isDark ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/10 text-gray-400 hover:text-gray-700"
+                  )}
+                  onClick={() => onRemoveComposerFile(idx)}
+                  aria-label={t('removeAttachment', { name: f.name })}
+                  title={t('removeAttachment', { name: f.name })}
+                >
+                  <CloseIcon size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {modeNotice ? (
+          <div
+            className={classNames(
+              "mb-3 rounded-lg border px-3 py-1.5 text-[11px] leading-5",
+              messageMode === "task"
+                ? isDark
+                  ? "border-violet-500/30 bg-violet-500/10 text-violet-200"
+                  : "border-violet-200 bg-violet-50 text-violet-700"
+                : isDark
+                  ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                  : "border-amber-200 bg-amber-50 text-amber-700"
+            )}
+            role="status"
+            aria-live="polite"
+          >
+            {modeNotice}
+          </div>
+        ) : null}
+
+        {/* Main Input Area */}
+        <div className="flex gap-2 sm:gap-2.5 relative items-end">
+          <input
+            ref={fileInputRef as RefObject<HTMLInputElement>}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              if (files.length > 0) appendComposerFiles(files);
+              e.target.value = "";
+            }}
           />
 
-          {/* Message Type Selector */}
-          <div ref={modeMenuRef} className="absolute right-2 top-1/2 -translate-y-1/2 z-20">
-            <button
-              type="button"
-              className={classNames(
-                composerInlineToolButtonClass,
-                "h-8 w-8 sm:h-10 sm:w-10",
-                busy === "send" || !selectedGroupId
-                  ? "text-[var(--color-text-tertiary)]"
-                  : messageMode === "task"
-                    ? isDark
-                      ? "border-violet-400/20 bg-violet-500/20 text-violet-200 hover:bg-violet-500/28"
-                      : "border-violet-200 bg-violet-100 text-violet-700 hover:bg-violet-200"
-                    : messageMode === "attention"
-                      ? isDark
-                        ? "border-amber-400/20 bg-amber-500/20 text-amber-200 hover:bg-amber-500/28"
-                        : "border-amber-200 bg-amber-100 text-amber-700 hover:bg-amber-200"
-                      : isDark
-                        ? "text-slate-100 hover:bg-slate-700/70"
-                        : "text-gray-700 hover:bg-gray-50"
-              )}
-              disabled={busy === "send" || !selectedGroupId}
-              onClick={() => setShowModeMenu((v) => !v)}
-              aria-label={t('messageType')}
-              aria-haspopup="menu"
-              aria-expanded={showModeMenu}
-              title={t('messageMode', { mode: activeMode.label })}
-            >
-              {messageMode === "task" ? (
-                <ReplyIcon size={12} className="opacity-95" />
-              ) : messageMode === "attention" ? (
-                <AlertIcon size={12} className="opacity-95" />
-              ) : (
-                <span className="text-[11px] sm:text-xs font-black italic leading-none">N</span>
-              )}
-            </button>
+          {/* Attachment Button */}
+          <button
+            className={classNames(
+              composerToolButtonClass,
+              "self-end mb-0.5",
+              busy !== "send" && selectedGroupId && !isCrossGroup && "hover:text-[var(--color-text-primary)] active:scale-95"
+            )}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!selectedGroupId || busy === "send" || isCrossGroup}
+            aria-label={t('attachFile')}
+            title={fileDisabledReason}
+          >
+            <AttachmentIcon size={18} className="sm:w-5 sm:h-5 transition-transform" />
+          </button>
 
-            {showModeMenu && (
+          {/* Text Area Wrapper */}
+          <div className="flex-1 relative min-w-0">
+            <textarea
+              ref={composerRef as RefObject<HTMLTextAreaElement>}
+              className={classNames(
+                  "w-full rounded-xl sm:rounded-2xl border px-3.5 sm:px-5 pr-10 sm:pr-14 py-2.5 sm:py-3.5 text-[15px] sm:text-sm resize-none min-h-[40px] sm:min-h-[48px] max-h-[128px] overflow-y-auto scrollbar-hide transition-all duration-300 ease-out",
+                  "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center shadow-sm",
+                  isDark
+                  ? "bg-white/[0.08] border-white/[0.1] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:ring-blue-500/35 focus:border-blue-400/45"
+                  : "bg-black/5 border-transparent text-gray-900 placeholder-gray-400 focus:ring-blue-400/30 focus:border-blue-400/40"
+              )}
+              placeholder={isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop')}
+              rows={1}
+              value={composerText}
+              onPaste={handlePaste}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
+              aria-label={t('messageInput')}
+            />
+
+            {/* Message Type Selector */}
+            <div ref={modeMenuRef} className="absolute right-2 top-1/2 -translate-y-1/2 z-20">
+              <button
+                type="button"
+                className={classNames(
+                  composerInlineToolButtonClass,
+                  "h-8 w-8 sm:h-10 sm:w-10",
+                  busy === "send" || !selectedGroupId
+                    ? "text-[var(--color-text-tertiary)]"
+                    : messageMode === "task"
+                      ? isDark
+                        ? "border-violet-400/20 bg-violet-500/20 text-violet-200 hover:bg-violet-500/28"
+                        : "border-violet-200 bg-violet-100 text-violet-700 hover:bg-violet-200"
+                      : messageMode === "attention"
+                        ? isDark
+                          ? "border-amber-400/20 bg-amber-500/20 text-amber-200 hover:bg-amber-500/28"
+                          : "border-amber-200 bg-amber-100 text-amber-700 hover:bg-amber-200"
+                        : isDark
+                          ? "text-slate-100 hover:bg-slate-700/70"
+                          : "text-gray-700 hover:bg-gray-50"
+                )}
+                disabled={busy === "send" || !selectedGroupId}
+                onClick={() => setShowModeMenu((v) => !v)}
+                aria-label={t('messageType')}
+                aria-haspopup="menu"
+                aria-expanded={showModeMenu}
+                title={t('messageMode', { mode: activeMode.label })}
+              >
+                {messageMode === "task" ? (
+                  <ReplyIcon size={12} className="opacity-95" />
+                ) : messageMode === "attention" ? (
+                  <AlertIcon size={12} className="opacity-95" />
+                ) : (
+                  <span className="text-[11px] sm:text-xs font-black italic leading-none">N</span>
+                )}
+              </button>
+
+              {showModeMenu && (
+                <div
+                  className={classNames(
+                    "glass-panel absolute bottom-full right-0 mb-2 z-40 w-56 sm:w-64 rounded-2xl border p-1.5 shadow-2xl pointer-events-auto"
+                  )}
+                  role="menu"
+                  aria-label={t('messageTypeOptions')}
+                >
+                  {modeOptions.map((opt) => {
+                    const active = messageMode === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        className={classNames(
+                          "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors",
+                          active
+                            ? isDark
+                              ? "bg-white/10"
+                              : "bg-black/5"
+                            : isDark
+                              ? "hover:bg-white/5"
+                              : "hover:bg-black/5"
+                        )}
+                        role="menuitemradio"
+                        aria-checked={active}
+                        onClick={() => {
+                          setMessageMode(opt.key);
+                          setShowModeMenu(false);
+                        }}
+                      >
+                        <span
+                          className={classNames(
+                            "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
+                            opt.key === "task"
+                              ? isDark
+                                ? "bg-violet-500/25 text-violet-200"
+                                : "bg-violet-100 text-violet-700"
+                              : opt.key === "attention"
+                                ? isDark
+                                  ? "bg-amber-500/25 text-amber-200"
+                                  : "bg-amber-100 text-amber-700"
+                                : isDark
+                                  ? "bg-slate-700 text-slate-200"
+                                  : "bg-gray-100 text-gray-700"
+                          )}
+                        >
+                          {opt.key === "task" ? (
+                            <ReplyIcon size={13} />
+                          ) : opt.key === "attention" ? (
+                            <AlertIcon size={13} />
+                          ) : (
+                            <span className="text-[11px] font-black italic leading-none">N</span>
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className={classNames("block text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
+                            {opt.label}
+                          </span>
+                          <span className={classNames("block text-[11px]", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>
+                            {opt.description}
+                          </span>
+                        </span>
+                        {active && <span className={classNames("text-xs font-semibold", isDark ? "text-emerald-300" : "text-emerald-600")}>✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Mention menu */}
+            {showMentionMenu && mentionSuggestions.length > 0 && (
               <div
                 className={classNames(
-                  "glass-panel absolute bottom-full right-0 mb-2 z-40 w-56 sm:w-64 rounded-2xl border p-1.5 shadow-2xl pointer-events-auto"
+                  "glass-panel absolute bottom-full left-0 mb-3 w-64 max-h-60 overflow-auto scrollbar-subtle rounded-2xl border shadow-2xl z-30 animate-in fade-in zoom-in-95 duration-200"
                 )}
-                role="menu"
-                aria-label={t('messageTypeOptions')}
+                role="listbox"
               >
-                {modeOptions.map((opt) => {
-                  const active = messageMode === opt.key;
-                  return (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      className={classNames(
-                        "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors",
-                        active
-                          ? isDark
-                            ? "bg-white/10"
-                            : "bg-black/5"
-                          : isDark
-                            ? "hover:bg-white/5"
-                            : "hover:bg-black/5"
-                      )}
-                      role="menuitemradio"
-                      aria-checked={active}
-                      onClick={() => {
-                        setMessageMode(opt.key);
-                        setShowModeMenu(false);
-                      }}
-                    >
-                      <span
-                        className={classNames(
-                          "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
-                          opt.key === "task"
-                            ? isDark
-                              ? "bg-violet-500/25 text-violet-200"
-                              : "bg-violet-100 text-violet-700"
-                            : opt.key === "attention"
-                              ? isDark
-                                ? "bg-amber-500/25 text-amber-200"
-                                : "bg-amber-100 text-amber-700"
-                              : isDark
-                                ? "bg-slate-700 text-slate-200"
-                                : "bg-gray-100 text-gray-700"
-                        )}
-                      >
-                        {opt.key === "task" ? (
-                          <ReplyIcon size={13} />
-                        ) : opt.key === "attention" ? (
-                          <AlertIcon size={13} />
-                        ) : (
-                          <span className="text-[11px] font-black italic leading-none">N</span>
-                        )}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className={classNames("block text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
-                          {opt.label}
-                        </span>
-                        <span className={classNames("block text-[11px]", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>
-                          {opt.description}
-                        </span>
-                      </span>
-                      {active && <span className={classNames("text-xs font-semibold", isDark ? "text-emerald-300" : "text-emerald-600")}>✓</span>}
-                    </button>
-                  );
-                })}
+                {mentionSuggestions.slice(0, 8).map((s, idx) => (
+                  <button
+                    key={s}
+                    className={classNames(
+                      "w-full text-left px-4 py-3 text-sm transition-colors",
+                      isDark ? "text-slate-200 border-b border-white/5" : "text-gray-700 border-b border-black/5",
+                      idx === mentionSelectedIndex
+                        ? isDark ? "bg-blue-600/30 text-blue-300" : "bg-blue-50 text-blue-700 font-medium"
+                        : isDark ? "hover:bg-white/5" : "hover:bg-gray-50"
+                    )}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      selectMention(s);
+                      composerRef.current?.focus();
+                    }}
+                    onMouseEnter={() => setMentionSelectedIndex(idx)}
+                  >
+                    <span className="opacity-60 mr-1">@</span>{s}
+                  </button>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Mention menu */}
-          {showMentionMenu && mentionSuggestions.length > 0 && (
-            <div
-              className={classNames(
-                "glass-panel absolute bottom-full left-0 mb-3 w-64 max-h-60 overflow-auto scrollbar-subtle rounded-2xl border shadow-2xl z-30 animate-in fade-in zoom-in-95 duration-200"
-              )}
-              role="listbox"
-            >
-              {mentionSuggestions.slice(0, 8).map((s, idx) => (
-                <button
-                  key={s}
-                  className={classNames(
-                    "w-full text-left px-4 py-3 text-sm transition-colors",
-                    isDark ? "text-slate-200 border-b border-white/5" : "text-gray-700 border-b border-black/5",
-                    idx === mentionSelectedIndex
-                      ? isDark ? "bg-blue-600/30 text-blue-300" : "bg-blue-50 text-blue-700 font-medium"
-                      : isDark ? "hover:bg-white/5" : "hover:bg-gray-50"
-                  )}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    selectMention(s);
-                    composerRef.current?.focus();
-                  }}
-                  onMouseEnter={() => setMentionSelectedIndex(idx)}
-                >
-                  <span className="opacity-60 mr-1">@</span>{s}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Send button - Using icon for modern feel */}
+          <button
+            className={classNames(
+              "h-10 w-10 self-end mb-0.5 sm:min-w-[6.25rem] sm:h-11 sm:px-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all duration-300 ease-out flex-shrink-0",
+              "border",
+              busy === "send" || !canSend
+                ? isDark ? "border-white/[0.12] bg-white/[0.08] text-[var(--color-text-tertiary)] shadow-none disabled:opacity-100" : "border-gray-200 bg-gray-100 text-gray-400 shadow-none disabled:opacity-100"
+                : "border-blue-500 bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/30 active:scale-95 active:shadow-sm group"
+            )}
+            onClick={onSendMessage}
+            disabled={busy === "send" || !canSend}
+            aria-label={t('sendMessage')}
+            title={t('sendMessage')}
+          >
+            {busy === "send" ? (
+              <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <>
+                <SendIcon size={18} className="sm:hidden" />
+                <span className="hidden sm:inline font-bold">{t('send')}</span>
+              </>
+            )}
+          </button>
         </div>
-
-        {/* Send button - Using icon for modern feel */}
-        <button
-          className={classNames(
-            "h-10 w-10 sm:min-w-[6.25rem] sm:h-11 sm:px-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all duration-300 ease-out flex-shrink-0",
-            "border",
-            busy === "send" || !canSend
-              ? isDark ? "border-white/[0.12] bg-white/[0.08] text-[var(--color-text-tertiary)] shadow-none disabled:opacity-100" : "border-gray-200 bg-gray-100 text-gray-400 shadow-none disabled:opacity-100"
-              : "border-blue-500 bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/30 active:scale-95 active:shadow-sm group"
-          )}
-          onClick={onSendMessage}
-          disabled={busy === "send" || !canSend}
-          aria-label={t('sendMessage')}
-          title={t('sendMessage')}
-        >
-          {busy === "send" ? (
-            <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          ) : (
-            <>
-              <SendIcon size={18} className="sm:hidden" />
-              <span className="hidden sm:inline font-bold">{t('send')}</span>
-            </>
-          )}
-        </button>
       </div>
     </footer>
   );

@@ -896,9 +896,11 @@ export function clearEmptyStreamingEventsForActorPatch(
       if (!pendingEventId && streamId.startsWith("local:")) {
         return false;
       }
-      // When a canonical reply already arrived, remove the empty placeholder
-      // regardless of activity status (activities are stale once canonical text exists).
-      if (pendingEventId && hasCanonicalReplyForPendingEvent(bucket, targetActorId, pendingEventId)) return true;
+      // Once a canonical reply exists, only queued-only placeholders are stale.
+      // Real activity timelines still represent in-flight or just-finished work.
+      if (pendingEventId && hasCanonicalReplyForPendingEvent(bucket, targetActorId, pendingEventId)) {
+        return isQueuedOnlyActivityList(data.activities);
+      }
       if (!isQueuedOnlyActivityList(data.activities)) return false;
       // No canonical reply yet — keep waiting.
       if (pendingEventId) return false;

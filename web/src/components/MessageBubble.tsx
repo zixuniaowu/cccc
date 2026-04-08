@@ -856,7 +856,10 @@ export const MessageBubble = memo(function MessageBubble({
 
                 {/* Bubble wrapper (allows badge to overflow) */}
                 <div
-                    className="relative w-full max-w-full min-w-0 md:w-auto"
+                    className={classNames(
+                        "relative max-w-full min-w-0 md:w-auto",
+                        isUserMessage ? "w-auto self-end" : "w-full"
+                    )}
                     style={isAttention ? { minWidth: "min(8.5rem, 85vw)" } : undefined}
                 >
                     {isAttention && (

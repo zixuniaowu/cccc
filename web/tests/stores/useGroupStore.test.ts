@@ -1184,6 +1184,48 @@ describe("useGroupStore streaming placeholder cleanup", () => {
     ]);
   });
 
+  it("clearEmptyStreamingEventsForActor preserves non-queued process bubbles after canonical reply arrives", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().appendEvent({
+      id: "evt-process-final",
+      ts: "2026-04-03T16:20:01Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      data: {
+        text: "最终答复",
+        reply_to: "e-process",
+        stream_id: "stream-process-final",
+        to: ["user"],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "pending:e-process:peer-1",
+      ts: "2026-04-03T16:20:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: false,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "pending:e-process:peer-1",
+        pending_event_id: "e-process",
+        pending_placeholder: false,
+        activities: [{ id: "a-process", kind: "command", status: "completed", summary: "RUN sed -n '1,260p' src/foo.ts", ts: "2026-04-03T16:20:00Z" }],
+      },
+    }, "g-demo");
+
+    mod.useGroupStore.getState().clearEmptyStreamingEventsForActor("peer-1", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.data?.stream_id).toBe("pending:e-process:peer-1");
+    expect(bucket.streamingEvents[0]?.data?.activities).toEqual([
+      { id: "a-process", kind: "command", status: "completed", summary: "RUN sed -n '1,260p' src/foo.ts", ts: "2026-04-03T16:20:00Z" },
+    ]);
+  });
+
   it("completeStreamingEventsForActor turns process bubbles into stable non-streaming entries", async () => {
     const mod = await importFreshStore();
     mod.useGroupStore.getState().upsertStreamingEvent({

@@ -132,6 +132,16 @@ function hasOnlyQueuedActivities(value: unknown): boolean {
   });
 }
 
+function hasRichActivities(value: unknown): boolean {
+  const activities = Array.isArray(value) ? value : [];
+  return activities.some((item) => {
+    if (!item || typeof item !== "object") return false;
+    const kind = String((item as { kind?: unknown }).kind || "").trim();
+    const summary = String((item as { summary?: unknown }).summary || "").trim();
+    return kind !== "queued" || summary !== "queued";
+  });
+}
+
 function getStreamingEventDedupeKey(event: LedgerEvent): string {
   const data = event.data && typeof event.data === "object"
     ? event.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
@@ -243,7 +253,7 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
         const text = typeof data.text === "string" ? data.text.trim() : "";
         const onlyQueuedActivities = hasOnlyQueuedActivities(data.activities);
         const isPlaceholderLike = isPlaceholderLikeStreamingEvent(data);
-        if (!text && (isPlaceholderLike || onlyQueuedActivities)) {
+        if (!text && !hasRichActivities(data.activities) && (isPlaceholderLike || onlyQueuedActivities)) {
           shouldDrop.add(event);
         }
       }
@@ -297,10 +307,8 @@ function dropOrphanQueuedPlaceholders(
       : {};
     const text = typeof data.text === "string" ? data.text.trim() : "";
     if (text) return true;
-    // Canonical reply exists and placeholder has no text — drop it even if activities
-    // are non-queued (stale activities are irrelevant once canonical text arrived).
     const isPlaceholderLike = isPlaceholderLikeStreamingEvent(data);
-    return !isPlaceholderLike;
+    return !(isPlaceholderLike && !hasRichActivities(data.activities));
   });
 }
 
@@ -335,6 +343,20 @@ export function getReplySlotKey(event: LedgerEvent): string {
   return `${actorId}:${replyAnchor}`;
 }
 
+function getReplyAnchorId(event: LedgerEvent): string {
+  if (String(event.kind || "").trim() !== "chat.message") return "";
+  const data = event.data && typeof event.data === "object"
+    ? event.data as ChatMessageData & { pending_event_id?: unknown; reply_to?: unknown }
+    : undefined;
+  if (typeof data?.pending_event_id === "string" && data.pending_event_id.trim()) {
+    return data.pending_event_id.trim();
+  }
+  if (typeof data?.reply_to === "string" && data.reply_to.trim()) {
+    return data.reply_to.trim();
+  }
+  return "";
+}
+
 export function buildReplySlotTsMap(streamingEvents: LedgerEvent[]): Map<string, string> {
   const slotTsByKey = new Map<string, string>();
   for (const event of streamingEvents) {
@@ -350,6 +372,45 @@ export function buildReplySlotTsMap(streamingEvents: LedgerEvent[]): Map<string,
   return slotTsByKey;
 }
 
+export function buildReplyAnchorTsMap(
+  messages: LedgerEvent[],
+  streamingEvents: LedgerEvent[],
+): Map<string, string> {
+  const slotTsByKey = buildReplySlotTsMap(streamingEvents);
+  const anchorTsById = new Map<string, string>();
+
+  for (const event of messages) {
+    if (String(event.kind || "").trim() !== "chat.message") continue;
+    const ts = String(event.ts || "").trim();
+    if (!ts) continue;
+    const eventId = String(event.id || "").trim();
+    if (eventId) {
+      const prev = anchorTsById.get(eventId) || "";
+      if (!prev || ts < prev) anchorTsById.set(eventId, ts);
+    }
+    const data = event.data && typeof event.data === "object"
+      ? event.data as ChatMessageData & { client_id?: unknown }
+      : undefined;
+    const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
+    if (clientId) {
+      const prev = anchorTsById.get(clientId) || "";
+      if (!prev || ts < prev) anchorTsById.set(clientId, ts);
+    }
+  }
+
+  for (const event of [...messages, ...streamingEvents]) {
+    const slotKey = getReplySlotKey(event);
+    if (!slotKey) continue;
+    const anchorId = getReplyAnchorId(event);
+    if (!anchorId) continue;
+    const anchorTs = String(anchorTsById.get(anchorId) || "").trim();
+    if (!anchorTs) continue;
+    slotTsByKey.set(slotKey, anchorTs);
+  }
+
+  return slotTsByKey;
+}
+
 export function sortChatMessages(
   messages: LedgerEvent[],
   replySlotTsByKey: Map<string, string>,
@@ -362,6 +423,7 @@ export function sortChatMessages(
       return {
         event,
         index,
+        hasReplySlot: slotKey.length > 0,
         sortTs: slotTs || eventTs,
         eventTs,
       };
@@ -370,6 +432,9 @@ export function sortChatMessages(
       if (a.sortTs && b.sortTs && a.sortTs !== b.sortTs) return a.sortTs.localeCompare(b.sortTs);
       if (a.sortTs && !b.sortTs) return -1;
       if (!a.sortTs && b.sortTs) return 1;
+      if (a.sortTs && b.sortTs && a.sortTs === b.sortTs && a.hasReplySlot !== b.hasReplySlot) {
+        return a.hasReplySlot ? 1 : -1;
+      }
       if (a.eventTs && b.eventTs && a.eventTs !== b.eventTs) return a.eventTs.localeCompare(b.eventTs);
       return a.index - b.index;
     })
@@ -527,15 +592,17 @@ export function mergeVisibleChatMessages(
     const slotKey = getReplySlotKey(ev);
     const renderable = hasRenderableChatMessageContent(ev);
     if (streamId && canonicalStreamIds.has(streamId)) return false;
-    // Backup: drop empty streaming events whose reply slot is covered by a canonical event
+    const hasRichActivityTimeline = hasRichActivities(data?.activities);
+    // Backup: drop empty streaming events whose reply slot is covered by a canonical event,
+    // but keep non-queued activity bubbles until the activity itself completes.
     if (!renderable) {
-      if (slotKey && canonicalReplySlots.has(slotKey)) return false;
+      if (slotKey && canonicalReplySlots.has(slotKey)) return hasRichActivityTimeline;
       if (slotKey && renderableStreamingReplySlots.has(slotKey)) {
         const placeholderLike = isPlaceholderLikeStreamingEvent(((data || {}) as ChatMessageData & {
           pending_placeholder?: unknown;
           stream_id?: unknown;
         }));
-        if (placeholderLike || hasOnlyQueuedActivities(data?.activities)) return false;
+        if (!hasRichActivityTimeline && (placeholderLike || hasOnlyQueuedActivities(data?.activities))) return false;
       }
     }
     return true;
@@ -778,7 +845,6 @@ export function useChatTab({
   // Filtered live chat messages (canonical + optimistic pending merged)
   const liveChatMessages = useMemo(() => {
     const all = events.filter((ev: LedgerEvent) => ev.kind === "chat.message");
-    const replySlotTsByKey = buildReplySlotTsMap(processedStreamingMessages);
     const renderableCanonicalClientIds = new Set(
       all
         .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
@@ -791,6 +857,10 @@ export function useChatTab({
     const pendingEvents = outboxEntries
       .filter((entry) => !renderableCanonicalClientIds.has(entry.localId))
       .map((entry) => entry.event);
+    const replySlotTsByKey = buildReplyAnchorTsMap(
+      [...all, ...pendingEvents],
+      processedStreamingMessages,
+    );
     const ordered = sortChatMessages(
       mergeVisibleChatMessages(all, processedStreamingMessages, pendingEvents, logicalMessageOrderStateRef.current),
       replySlotTsByKey,
