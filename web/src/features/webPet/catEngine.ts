@@ -477,11 +477,6 @@ export function createCatEngine(options: CatEngineOptions): CatEngine {
         if (sheet?.img) {
           sheet.img.onload = null;
           sheet.img.onerror = null;
-          try {
-            sheet.img.src = "";
-          } catch {
-            // Ignore best-effort cleanup failures.
-          }
         }
         spriteSheets[state] = null;
       }

@@ -104,9 +104,6 @@ export function AgentTab({
   const [activated, setActivated] = useState(false);
   // Bumped to trigger a fresh WebSocket connection from the reconnect button
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
-  // Last terminal output captured when agent stops — shows crash/error info
-  const [stoppedTerminalTail, setStoppedTerminalTail] = useState("");
-  const [stoppedTerminalTailLoading, setStoppedTerminalTailLoading] = useState(false);
   const terminalSignalBufferRef = useRef("");
 
   const pasteStateRef = useRef<{ inFlight: boolean; lastAt: number }>({ inFlight: false, lastAt: 0 });
@@ -139,33 +136,6 @@ export function AgentTab({
     terminalSignalBufferRef.current = "";
     clearTerminalSignal(groupId, actor.id);
   }, [actor.id, clearTerminalSignal, groupId, isHeadless, isRunning]);
-
-  // When agent stops, fetch the last terminal output so crash errors are visible
-  useEffect(() => {
-    if (isRunning || isHeadless) {
-      setStoppedTerminalTail("");
-      setStoppedTerminalTailLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setStoppedTerminalTail("");
-    setStoppedTerminalTailLoading(true);
-    void fetchTerminalTail(groupId, actor.id, 4000, true, true)
-      .then((resp) => {
-        if (cancelled) return;
-        if (resp.ok && resp.result.text?.trim()) {
-          setStoppedTerminalTail(resp.result.text.trim());
-        }
-      })
-      .catch(() => {
-        if (cancelled) return;
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setStoppedTerminalTailLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [isRunning, isHeadless, groupId, actor.id]);
 
   // Activate the terminal only after the user has visited this actor tab at least once.
   // Once activated, keep the PTY session connected even when the tab is hidden to avoid backlog replay and scroll jumps.
@@ -975,27 +945,9 @@ export function AgentTab({
                 </button>
               ) : null}
             </div>
-            {stoppedTerminalTailLoading ? (
-              <div className="mt-6 w-full max-w-xl flex-shrink-0 rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
-                {t('loadingLastTerminalOutput')}
-              </div>
-            ) : stoppedTerminalTail ? (
-              <div className="mt-6 w-full max-w-xl flex-shrink-0">
-                <div className="text-xs font-medium mb-2 text-[var(--color-text-secondary)]">
-                  {t('lastTerminalOutput')}
-                </div>
-                <pre className={classNames(
-                  "text-xs leading-relaxed whitespace-pre-wrap break-words p-3 rounded-lg max-h-64 overflow-y-auto",
-                  "bg-[var(--color-bg-primary)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]"
-                )}>
-                  {stoppedTerminalTail}
-                </pre>
-              </div>
-            ) : (
-              <div className="mt-6 w-full max-w-xl flex-shrink-0 rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
-                {t('noRecentTerminalOutput')}
-              </div>
-            )}
+            <div className="mt-6 w-full max-w-xl flex-shrink-0 rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
+              {t('noRecentTerminalOutput')}
+            </div>
           </div>
         )}
       </div>
