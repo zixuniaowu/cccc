@@ -1156,6 +1156,51 @@ describe("useGroupStore streaming placeholder cleanup", () => {
     });
   });
 
+  it("headless preview indexes stay session-scoped instead of falling back to canonical chat messages", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().appendEvent({
+      id: "evt-visible",
+      ts: "2026-04-03T16:15:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      data: {
+        text: "visible reply",
+        to: ["user"],
+        stream_id: "stream-visible",
+      },
+    }, "g-demo");
+
+    let bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.latestActorTextByActorId["peer-1"]).toBeUndefined();
+    expect(bucket.latestActorActivitiesByActorId["peer-1"]).toBeUndefined();
+
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "stream:s3",
+      ts: "2026-04-03T16:15:01Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: false,
+      data: {
+        text: "session reply",
+        to: ["user"],
+        stream_id: "s3",
+        activities: [],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingText("s3", "session reply", "g-demo");
+
+    bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.latestActorTextByActorId["peer-1"]).toBe("session reply");
+
+    mod.useGroupStore.getState().clearStreamingEventsForActor("peer-1", "g-demo");
+
+    bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.latestActorTextByActorId["peer-1"]).toBeUndefined();
+    expect(bucket.latestActorActivitiesByActorId["peer-1"]).toBeUndefined();
+  });
+
   it("clearEmptyStreamingEventsForActor preserves non-queued process bubbles", async () => {
     const mod = await importFreshStore();
     mod.useGroupStore.getState().upsertStreamingEvent({
@@ -1435,6 +1480,62 @@ describe("useGroupStore streaming placeholder cleanup", () => {
     expect(bucket.streamingEvents[0]?.data?.text).toBe("hello world");
     expect(bucket.streamingTextByStreamId["stream-6"]).toBe("hello world");
     expect(bucket.streamingTextByStreamId["local:msg-2:peer-1"]).toBeUndefined();
+  });
+
+  it("preserves commentary transcript blocks after final answer starts and transient commentary is cleared", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().upsertStreamingEvent({
+      id: "stream:commentary-7",
+      ts: "2026-04-09T10:00:00Z",
+      kind: "chat.message",
+      group_id: "g-demo",
+      by: "peer-1",
+      _streaming: true,
+      data: {
+        text: "",
+        to: ["user"],
+        stream_id: "stream-commentary-7",
+        pending_event_id: "evt-7",
+        pending_placeholder: false,
+        stream_phase: "commentary",
+        transient_stream: true,
+        activities: [],
+      },
+    }, "g-demo");
+    mod.useGroupStore.getState().upsertStreamingText("stream-commentary-7", "Investigating the race condition", "g-demo");
+
+    mod.useGroupStore.getState().reconcileStreamingMessage({
+      actorId: "peer-1",
+      pendingEventId: "evt-7",
+      streamId: "stream-final-7",
+      ts: "2026-04-09T10:00:02Z",
+      fullText: "Final answer body",
+      eventText: "Final answer body",
+      activities: [],
+      completed: false,
+      transientStream: false,
+      phase: "final_answer",
+      groupId: "g-demo",
+    });
+
+    mod.useGroupStore.getState().completeStreamingEventsForActor("peer-1", "g-demo");
+    mod.useGroupStore.getState().clearTransientStreamingEventsForActor("peer-1", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.latestActorPreviewByActorId["peer-1"]).toMatchObject({
+      actorId: "peer-1",
+      pendingEventId: "evt-7",
+      currentStreamId: "stream-final-7",
+      latestText: "Final answer body",
+    });
+    expect(bucket.latestActorPreviewByActorId["peer-1"]?.transcriptBlocks.map((block) => block.streamPhase)).toEqual([
+      "commentary",
+      "final_answer",
+    ]);
+    expect(bucket.latestActorPreviewByActorId["peer-1"]?.transcriptBlocks.map((block) => block.text)).toEqual([
+      "Investigating the race condition",
+      "Final answer body",
+    ]);
   });
 
   it("upsertStreamingActivity keeps streamless process activity off commentary text streams", async () => {

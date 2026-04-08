@@ -47,7 +47,7 @@ export function useAppTabState({
   const actorsRef = useRef<Actor[]>([]);
   const [mountedActorIds, setMountedActorIds] = useState<string[]>([]);
 
-  const allTabs = useMemo(() => ["chat", ...runtimeActors.map((actor) => actor.id)], [runtimeActors]);
+  const allTabs = useMemo(() => ["chat"], []);
 
   const handleTabChange = React.useCallback(
     (newTab: string) => {

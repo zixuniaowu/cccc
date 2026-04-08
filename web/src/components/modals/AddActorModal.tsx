@@ -15,6 +15,7 @@ import { RolePresetPicker } from "../RolePresetPicker";
 import { ActorAvatarField } from "../ActorAvatarField";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
 import { actorProfileIdentityKey } from "../../utils/actorProfiles";
+import { supportsStandardWebHeadlessRuntime } from "../../utils/headlessRuntimeSupport";
 
 export interface AddActorModalProps {
   isOpen: boolean;
@@ -155,7 +156,7 @@ export function AddActorModal({
   const showCommandEditor = !newActorUseProfile && (newActorRuntime === "custom" || !newActorUseDefaultCommand);
   const previewRuntime = newActorUseProfile ? selectedProfileRuntime || null : newActorRuntime;
   const previewTitle = String(newActorId || "").trim() || suggestedActorId;
-  const customRunnerLockedToPty = !newActorUseProfile && !["codex", "claude"].includes(newActorRuntime);
+  const customRunnerLockedToPty = !newActorUseProfile && !supportsStandardWebHeadlessRuntime(newActorRuntime);
 
   const sectionCardClass = "rounded-2xl p-4 sm:p-5 glass-panel";
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
@@ -373,7 +374,7 @@ export function AddActorModal({
                         onChange={(e) => {
                           const next = e.target.value as SupportedRuntime;
                           setNewActorRuntime(next);
-                          if (!["codex", "claude"].includes(next)) setNewActorRunner("pty");
+                          if (!supportsStandardWebHeadlessRuntime(next)) setNewActorRunner("pty");
                           setNewActorCommand("");
                           setNewActorUseDefaultCommand(next !== "custom");
                         }}
@@ -413,7 +414,7 @@ export function AddActorModal({
                       </label>
                     ) : null}
 
-                    {["codex", "claude"].includes(newActorRuntime) ? (
+                    {supportsStandardWebHeadlessRuntime(newActorRuntime) ? (
                       <div>
                         <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
                           {t("runnerMode", { defaultValue: "运行模式" })}

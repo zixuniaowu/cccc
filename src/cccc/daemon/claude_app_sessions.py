@@ -21,12 +21,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..contracts.v1.message import ChatMessageData
+from ..kernel.actors import find_actor
 from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.headless_events import append_headless_event
 from ..kernel.group import load_group
-from ..kernel.ledger import append_event
-from ..kernel.message_sender_snapshot import build_sender_snapshot
+from ..kernel.system_prompt import render_system_prompt
+from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from ..util.fs import atomic_write_json
 from ..util.process import pid_is_alive
@@ -58,7 +58,9 @@ def _safe_logger_call(method: str, message: str, *args: Any, **kwargs: Any) -> N
 class _PendingTurn:
     text: str
     event_id: str
+    ts: str = ""
     reply_to: Optional[str] = None
+    control_kind: str = ""
     attachments: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -119,6 +121,7 @@ class ClaudeAppSession:
 
         # Activity tracking
         self._active_tool_activities: Dict[str, str] = {}  # tool_use_id → activity_id
+        self._active_control_kind = ""
 
     # ── state persistence ───────────────────────────────────────────────
 
@@ -266,6 +269,7 @@ class ClaudeAppSession:
             self._session_state.status = "idle"
             self._session_state.updated_at = utc_now_iso()
         self._persist_state()
+        self._queue_bootstrap_control_turn()
         self._turn_thread.start()
         logger.info("claude headless started: group=%s actor=%s pid=%s", self.group_id, self.actor_id, self._proc.pid if self._proc else "?")
 
@@ -278,6 +282,7 @@ class ClaudeAppSession:
             self._session_state.status = "stopped"
             self._session_state.current_task_id = None
             self._session_state.updated_at = utc_now_iso()
+            self._active_control_kind = ""
         if was_running:
             exit_code = proc.poll() if proc else None
             logger.info("claude headless stopping: group=%s actor=%s exit_code=%s", self.group_id, self.actor_id, exit_code)
@@ -315,6 +320,52 @@ class ClaudeAppSession:
         with self._lock:
             return self._session_state.to_headless_state(group_id=self.group_id, actor_id=self.actor_id)
 
+    def _control_turn_kind(self) -> str:
+        with self._lock:
+            return str(self._active_control_kind or "").strip().lower()
+
+    def _build_bootstrap_control_text(self) -> str:
+        group = load_group(self.group_id)
+        if group is None:
+            return ""
+        actor = find_actor(group, self.actor_id)
+        if not isinstance(actor, dict):
+            return ""
+        prompt = render_system_prompt(group=group, actor=actor)
+        if not prompt.strip():
+            return ""
+        return render_headless_control_text(control_kind="bootstrap", body=prompt)
+
+    def _queue_control_turn(self, *, text: str, control_kind: str, event_id: str = "", ts: str = "") -> bool:
+        if not self.is_running():
+            return False
+        payload = _PendingTurn(
+            text=str(text or ""),
+            event_id=str(event_id or "").strip(),
+            ts=str(ts or "").strip(),
+            control_kind=str(control_kind or "").strip().lower(),
+        )
+        if not payload.text.strip() or not payload.control_kind:
+            return False
+        try:
+            self._turn_queue.put_nowait(payload)
+            self._emit(
+                "headless.control.queued",
+                {
+                    "control_kind": payload.control_kind,
+                    "event_id": payload.event_id,
+                },
+            )
+            return True
+        except Exception:
+            return False
+
+    def _queue_bootstrap_control_turn(self) -> bool:
+        return self._queue_control_turn(
+            text=self._build_bootstrap_control_text(),
+            control_kind="bootstrap",
+        )
+
     # ── user message submission ─────────────────────────────────────────
 
     def submit_user_message(
@@ -322,6 +373,7 @@ class ClaudeAppSession:
         *,
         text: str,
         event_id: str,
+        ts: str = "",
         reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
     ) -> bool:
@@ -330,6 +382,7 @@ class ClaudeAppSession:
         payload = _PendingTurn(
             text=str(text or ""),
             event_id=str(event_id or "").strip(),
+            ts=str(ts or "").strip(),
             reply_to=reply_to,
             attachments=[item for item in (attachments or []) if isinstance(item, dict)],
         )
@@ -345,6 +398,21 @@ class ClaudeAppSession:
             return True
         except Exception:
             return False
+
+    def submit_control_message(
+        self,
+        *,
+        text: str,
+        control_kind: str,
+        event_id: str = "",
+        ts: str = "",
+    ) -> bool:
+        return self._queue_control_turn(
+            text=text,
+            control_kind=control_kind,
+            event_id=event_id,
+            ts=ts,
+        )
 
     # ── stdin writer ────────────────────────────────────────────────────
 
@@ -441,6 +509,8 @@ class ClaudeAppSession:
                 return
             self._turn_done.clear()
             turn_id = uuid.uuid4().hex[:12]
+            with self._lock:
+                self._active_control_kind = str(payload.control_kind or "").strip().lower()
 
             # Reset streaming state for new turn
             self._last_text_snapshot = ""
@@ -458,15 +528,6 @@ class ClaudeAppSession:
                 self._session_state.updated_at = utc_now_iso()
             self._persist_state()
 
-            self._emit(
-                "headless.turn.started",
-                {
-                    "turn_id": turn_id,
-                    "event_id": payload.event_id,
-                    "reply_to": payload.reply_to,
-                },
-            )
-
             # Send user message to claude via stdin
             user_content = self._compose_user_content(payload)
             ok = self._write_stdin({
@@ -481,18 +542,45 @@ class ClaudeAppSession:
                 with self._lock:
                     self._session_state.status = "idle"
                     self._active_event_id = ""
+                    self._active_control_kind = ""
                     self._session_state.current_task_id = None
                     self._session_state.updated_at = utc_now_iso()
                 self._persist_state()
                 self._emit(
-                    "headless.turn.failed",
+                    "headless.control.failed" if payload.control_kind else "headless.turn.failed",
                     {
                         "turn_id": turn_id,
                         "event_id": payload.event_id,
+                        "control_kind": payload.control_kind or None,
                         "error": "failed to write to claude stdin",
                     },
                 )
                 continue
+
+            if payload.control_kind:
+                self._emit(
+                    "headless.control.started",
+                    {
+                        "turn_id": turn_id,
+                        "event_id": payload.event_id,
+                        "control_kind": payload.control_kind,
+                    },
+                )
+            else:
+                auto_mark_headless_delivery_started(
+                    group_id=self.group_id,
+                    actor_id=self.actor_id,
+                    event_id=payload.event_id,
+                    ts=payload.ts,
+                )
+                self._emit(
+                    "headless.turn.started",
+                    {
+                        "turn_id": turn_id,
+                        "event_id": payload.event_id,
+                        "reply_to": payload.reply_to,
+                    },
+                )
 
             # Wait for turn completion (signaled from _handle_event)
             self._turn_done.wait()
@@ -541,6 +629,19 @@ class ClaudeAppSession:
         with self._lock:
             active_event_id = str(self._active_event_id or "").strip()
             turn_id = str(self._active_turn_id or "").strip()
+            control_kind = str(self._active_control_kind or "").strip().lower()
+
+        if control_kind:
+            if inner_type == "message_delta":
+                delta_obj = inner.get("delta") if isinstance(inner.get("delta"), dict) else {}
+                if str(delta_obj.get("stop_reason") or "").strip() == "end_turn":
+                    self._stream_end_turn_pending = True
+                return
+            if inner_type == "message_stop":
+                if self._stream_end_turn_pending:
+                    self._complete_turn_from_stream()
+                return
+            return
 
         if inner_type == "message_start":
             # Extract message id for stream tracking
@@ -622,11 +723,13 @@ class ClaudeAppSession:
         with self._lock:
             turn_id = str(self._active_turn_id or "").strip()
             active_event_id = str(self._active_event_id or "").strip()
+            control_kind = str(self._active_control_kind or "").strip().lower()
             # Guard: if turn already completed by _handle_result_event, no-op.
             if not turn_id:
                 return
             self._active_turn_id = ""
             self._active_event_id = ""
+            self._active_control_kind = ""
             self._session_state.status = "idle"
             self._session_state.current_task_id = None
             self._session_state.updated_at = now
@@ -646,8 +749,8 @@ class ClaudeAppSession:
             )
         self._active_tool_activities.clear()
 
-        # Emit message completed + append to ledger if we have text
-        if text and stream_id:
+        # Emit message completed if we have text.
+        if text and stream_id and not control_kind:
             self._emit(
                 "headless.message.completed",
                 {
@@ -657,7 +760,6 @@ class ClaudeAppSession:
                     "text": text,
                 },
             )
-            self._append_actor_message(stream_id=stream_id, text=text, pending_event_id=active_event_id)
 
         # Reset streaming state so _handle_assistant_event won't re-emit for same turn.
         self._message_started = False
@@ -666,10 +768,11 @@ class ClaudeAppSession:
         self._current_message_id = ""
 
         self._emit(
-            "headless.turn.completed",
+            "headless.control.completed" if control_kind else "headless.turn.completed",
             {
                 "turn_id": turn_id,
                 "event_id": active_event_id,
+                "control_kind": control_kind or None,
                 "status": "completed",
             },
         )
@@ -685,6 +788,10 @@ class ClaudeAppSession:
         with self._lock:
             active_event_id = str(self._active_event_id or "").strip()
             turn_id = str(self._active_turn_id or "").strip()
+            control_kind = str(self._active_control_kind or "").strip().lower()
+
+        if control_kind:
+            return
 
         # Track new message — use message_id if present, else generate a fallback per turn.
         # Don't reset streaming state if we already have an active stream (from stream_events).
@@ -769,12 +876,6 @@ class ClaudeAppSession:
                     "text": accumulated_text,
                 },
             )
-            # Append to ledger as chat.message
-            self._append_actor_message(
-                stream_id=stream_id,
-                text=accumulated_text,
-                pending_event_id=active_event_id,
-            )
             # Reset for potential next message in same turn
             self._last_text_snapshot = ""
             self._current_stream_id = ""
@@ -785,6 +886,10 @@ class ClaudeAppSession:
         tool_use_id = str(event.get("tool_use_id") or "").strip()
         with self._lock:
             turn_id = str(self._active_turn_id or "").strip()
+            control_kind = str(self._active_control_kind or "").strip().lower()
+        if control_kind:
+            self._active_tool_activities.pop(tool_use_id, "")
+            return
         activity_id = self._active_tool_activities.pop(tool_use_id, "")
         if activity_id:
             # Summary from tool result
@@ -812,11 +917,13 @@ class ClaudeAppSession:
         with self._lock:
             active_event_id = str(self._active_event_id or "").strip()
             turn_id = str(self._active_turn_id or "").strip()
+            control_kind = str(self._active_control_kind or "").strip().lower()
             # Guard: if turn already completed by _complete_turn_from_stream, no-op.
             if not turn_id:
                 return
             self._active_turn_id = ""
             self._active_event_id = ""
+            self._active_control_kind = ""
             self._session_state.status = "idle"
             self._session_state.current_task_id = None
             self._session_state.updated_at = now
@@ -833,7 +940,29 @@ class ClaudeAppSession:
             )
         self._active_tool_activities.clear()
 
-        if subtype in ("success", ""):
+        if control_kind and subtype in ("success", ""):
+            self._emit(
+                "headless.control.completed",
+                {
+                    "turn_id": turn_id,
+                    "event_id": active_event_id,
+                    "control_kind": control_kind,
+                    "status": "completed",
+                },
+            )
+        elif control_kind:
+            error_text = str(event.get("error") or event.get("result") or "unknown error")
+            self._emit(
+                "headless.control.failed",
+                {
+                    "turn_id": turn_id,
+                    "event_id": active_event_id,
+                    "control_kind": control_kind,
+                    "status": subtype or "completed",
+                    "error": {"message": error_text},
+                },
+            )
+        elif subtype in ("success", ""):
             self._emit(
                 "headless.turn.completed",
                 {
@@ -886,30 +1015,6 @@ class ClaudeAppSession:
         return "tool", name, ""
 
     # ── ledger message ──────────────────────────────────────────────────
-
-    def _append_actor_message(self, *, stream_id: str, text: str, pending_event_id: str = "") -> None:
-        group = load_group(self.group_id)
-        if group is None:
-            return
-        try:
-            append_event(
-                group.ledger_path,
-                kind="chat.message",
-                group_id=group.group_id,
-                scope_key=str(group.doc.get("active_scope_key") or "").strip(),
-                by=self.actor_id,
-                data=ChatMessageData(
-                    text=str(text or ""),
-                    format="plain",
-                    to=["user"],
-                    stream_id=str(stream_id or "").strip() or None,
-                    pending_event_id=str(pending_event_id or "").strip() or None,
-                    **build_sender_snapshot(group, by=self.actor_id),
-                ).model_dump(),
-            )
-        except Exception:
-            logger.exception("failed to append claude actor message: %s/%s", self.group_id, self.actor_id)
-
 
 # ── session manager ────────────────────────────────────────────────────
 
@@ -999,6 +1104,7 @@ class ClaudeAppSessionManager:
         actor_id: str,
         text: str,
         event_id: str,
+        ts: str = "",
         reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
     ) -> bool:
@@ -1007,7 +1113,29 @@ class ClaudeAppSessionManager:
             session = self._sessions.get(key)
         if session is None:
             return False
-        return session.submit_user_message(text=text, event_id=event_id, reply_to=reply_to, attachments=attachments)
+        return session.submit_user_message(text=text, event_id=event_id, ts=ts, reply_to=reply_to, attachments=attachments)
+
+    def submit_control_message(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        text: str,
+        control_kind: str,
+        event_id: str = "",
+        ts: str = "",
+    ) -> bool:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            session = self._sessions.get(key)
+        if session is None:
+            return False
+        return session.submit_control_message(
+            text=text,
+            control_kind=control_kind,
+            event_id=event_id,
+            ts=ts,
+        )
 
 
 SUPERVISOR = ClaudeAppSessionManager()

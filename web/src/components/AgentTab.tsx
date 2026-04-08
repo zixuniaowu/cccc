@@ -15,6 +15,7 @@ import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, Rocket
 import { ScrollFade } from "./ScrollFade";
 import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
+import { supportsStandardWebHeadlessRuntime } from "../utils/headlessRuntimeSupport";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
@@ -842,8 +843,8 @@ export function AgentTab({
             <div className="mb-4"><RocketIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">{t('headlessAgent')}</div>
             <div className="text-sm text-center max-w-md">
-              {["codex", "claude"].includes(String(actor.runtime || "").trim())
-                ? t('headlessStreamDescription', { defaultValue: '该智能体以无终端模式运行，回复会直接在 Chat 中流式输出。' })
+              {supportsStandardWebHeadlessRuntime(String(actor.runtime || "").trim())
+                ? t('headlessStreamDescription', { defaultValue: '该智能体以无终端模式运行。过程输出会显示在 Chat 里，正式回复需要通过消息工具发送。' })
                 : t('headlessDescription')}
             </div>
             {isRunning && (

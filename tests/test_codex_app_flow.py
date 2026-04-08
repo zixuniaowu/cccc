@@ -152,6 +152,107 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_headless_codex_auto_mark_waits_for_runtime_acceptance(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_send
+        from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
+        from cccc.daemon.messaging.delivery import auto_mark_headless_delivery_started
+        from cccc.kernel.group import load_group
+        from cccc.kernel.inbox import get_cursor, unread_count
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-send-auto-mark", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["delivery"] = {"auto_mark_on_delivery": True}
+            group.save()
+            before_cursor_event_id, before_cursor_ts = get_cursor(group, "peer1")
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+            ):
+                resp = handle_send(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "hello codex",
+                        "to": ["peer1"],
+                        "client_id": "c1",
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: [],
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_called_once()
+            self.assertIn(MCP_REMINDER_LINE, str(submit_user_message.call_args.kwargs.get("text") or ""))
+            queue_chat_message.assert_not_called()
+            request_flush_pending_messages.assert_not_called()
+
+            event = (resp.result or {}).get("event") if isinstance(resp.result, dict) else {}
+            self.assertIsInstance(event, dict)
+            assert isinstance(event, dict)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            cursor_event_id, cursor_ts = get_cursor(group, "peer1")
+            self.assertEqual(cursor_event_id, before_cursor_event_id)
+            self.assertEqual(cursor_ts, before_cursor_ts)
+            self.assertEqual(unread_count(group, actor_id="peer1"), 1)
+
+            ledger_events = self._ledger_events(group)
+            self.assertFalse(any(str(item.get("kind") or "") == "system.notify" for item in ledger_events))
+            self.assertNotEqual(str(ledger_events[-1].get("kind") or ""), "chat.read")
+
+            marked = auto_mark_headless_delivery_started(
+                group_id=group_id,
+                actor_id="peer1",
+                event_id=str(event.get("id") or ""),
+                ts=str(event.get("ts") or ""),
+            )
+            self.assertTrue(marked)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            cursor_event_id, cursor_ts = get_cursor(group, "peer1")
+            self.assertEqual(cursor_event_id, str(event.get("id") or ""))
+            self.assertEqual(cursor_ts, str(event.get("ts") or ""))
+            self.assertEqual(unread_count(group, actor_id="peer1"), 0)
+
+            ledger_events = self._ledger_events(group)
+            self.assertEqual(str(ledger_events[-1].get("kind") or ""), "chat.read")
+        finally:
+            cleanup()
+
     def test_send_routes_headless_codex_image_attachments_to_app_supervisor(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_send
 
@@ -265,8 +366,80 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_headless_codex_auto_mark_clears_unread_and_skips_notify(self) -> None:
+    def test_reply_routes_running_pty_codex_actor_to_pty_delivery(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_reply
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-reply-pty", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            send_resp, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "text": "hello codex",
+                    "to": ["peer1"],
+                },
+            )
+            self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
+            original_event = (send_resp.result or {}).get("event") if isinstance(send_resp.result, dict) else {}
+            self.assertIsInstance(original_event, dict)
+            reply_to = str((original_event or {}).get("id") or "").strip()
+            self.assertTrue(reply_to)
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=[]),
+            ):
+                resp = handle_reply(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "reply codex",
+                        "reply_to": reply_to,
+                        "to": ["peer1"],
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: [],
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_not_called()
+            queue_chat_message.assert_called_once()
+            request_flush_pending_messages.assert_called_once()
+        finally:
+            cleanup()
+
+    def test_reply_headless_codex_auto_mark_waits_for_runtime_acceptance(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_reply
+        from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
+        from cccc.daemon.messaging.delivery import auto_mark_headless_delivery_started
         from cccc.kernel.group import load_group
         from cccc.kernel.inbox import get_cursor, latest_unread_event, set_cursor, unread_count
 
@@ -349,6 +522,7 @@ class TestCodexAppFlow(unittest.TestCase):
 
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             submit_user_message.assert_called_once()
+            self.assertIn(MCP_REMINDER_LINE, str(submit_user_message.call_args.kwargs.get("text") or ""))
             queue_chat_message.assert_not_called()
             request_flush_pending_messages.assert_not_called()
 
@@ -360,18 +534,287 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
             cursor_event_id, cursor_ts = get_cursor(group, "peer1")
+            self.assertEqual(cursor_event_id, str(last_unread.get("id") or ""))
+            self.assertEqual(cursor_ts, str(last_unread.get("ts") or ""))
+            self.assertEqual(unread_count(group, actor_id="peer1"), 1)
+
+            ledger_events = self._ledger_events(group)
+            notify_count = sum(1 for item in ledger_events if str(item.get("kind") or "") == "system.notify")
+            self.assertEqual(notify_count, stale_notify_count)
+
+            marked = auto_mark_headless_delivery_started(
+                group_id=group_id,
+                actor_id="peer1",
+                event_id=str(event.get("id") or ""),
+                ts=str(event.get("ts") or ""),
+            )
+            self.assertTrue(marked)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            cursor_event_id, cursor_ts = get_cursor(group, "peer1")
             self.assertEqual(cursor_event_id, str(event.get("id") or ""))
             self.assertEqual(cursor_ts, str(event.get("ts") or ""))
             self.assertEqual(unread_count(group, actor_id="peer1"), 0)
 
             ledger_events = self._ledger_events(group)
-            notify_count = sum(1 for item in ledger_events if str(item.get("kind") or "") == "system.notify")
-            self.assertEqual(notify_count, stale_notify_count)
             self.assertEqual(str(ledger_events[-1].get("kind") or ""), "chat.read")
         finally:
             cleanup()
 
-    def test_codex_notifications_write_stream_events_and_single_final_message(self) -> None:
+    def test_codex_turn_loop_auto_marks_only_after_runtime_accepts_turn(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._session_state.thread_id = "thread-1"
+            session._turn_queue.put_nowait(_PendingTurn(text="hello", event_id="evt-1", ts="2026-04-08T00:00:00Z"))
+            session._turn_queue.put_nowait(None)
+
+            with (
+                patch.object(session, "is_running", side_effect=[True, True]),
+                patch.object(session, "_request", return_value={"turn": {"id": "turn-1"}}),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit"),
+                patch.object(session._turn_done, "wait", return_value=True),
+                patch("cccc.daemon.codex_app_sessions.auto_mark_headless_delivery_started", return_value=True) as auto_mark,
+            ):
+                session._turn_loop()
+
+            auto_mark.assert_called_once_with(
+                group_id="g_test",
+                actor_id="peer1",
+                event_id="evt-1",
+                ts="2026-04-08T00:00:00Z",
+            )
+        finally:
+            cleanup()
+
+    def test_claude_turn_loop_auto_marks_only_after_runtime_accepts_turn(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._turn_queue.put_nowait(_PendingTurn(text="hello", event_id="evt-1", ts="2026-04-08T00:00:00Z"))
+            session._turn_queue.put_nowait(None)
+
+            with (
+                patch.object(session, "is_running", side_effect=[True, True]),
+                patch.object(session, "_write_stdin", return_value=True),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit"),
+                patch.object(session._turn_done, "wait", return_value=True),
+                patch("cccc.daemon.claude_app_sessions.auto_mark_headless_delivery_started", return_value=True) as auto_mark,
+            ):
+                session._turn_loop()
+
+            auto_mark.assert_called_once_with(
+                group_id="g_test",
+                actor_id="peer1",
+                event_id="evt-1",
+                ts="2026-04-08T00:00:00Z",
+            )
+        finally:
+            cleanup()
+
+    def test_codex_control_turn_uses_control_events_and_skips_auto_mark(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._session_state.thread_id = "thread-1"
+            session._turn_queue.put_nowait(_PendingTurn(text="bootstrap", event_id="", control_kind="bootstrap"))
+            session._turn_queue.put_nowait(None)
+
+            with (
+                patch.object(session, "is_running", side_effect=[True, True]),
+                patch.object(session, "_request", return_value={"turn": {"id": "turn-bootstrap"}}),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "wait", return_value=True),
+                patch("cccc.daemon.codex_app_sessions.auto_mark_headless_delivery_started") as auto_mark,
+            ):
+                session._turn_loop()
+
+            auto_mark.assert_not_called()
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertEqual(event_types.count("headless.control.started"), 1)
+            self.assertNotIn("headless.turn.started", event_types)
+        finally:
+            cleanup()
+
+    def test_codex_control_turn_completion_ignores_visible_stream_output(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-bootstrap"
+            session._active_control_kind = "bootstrap"
+
+            with (
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_notification(
+                    "item/started",
+                    {"turnId": "turn-bootstrap", "item": {"type": "agentMessage", "id": "msg-bootstrap", "phase": "final_answer"}},
+                )
+                session._handle_notification(
+                    "item/agentMessage/delta",
+                    {"turnId": "turn-bootstrap", "itemId": "msg-bootstrap", "delta": "Hello"},
+                )
+                session._handle_notification(
+                    "item/completed",
+                    {"turnId": "turn-bootstrap", "item": {"type": "agentMessage", "id": "msg-bootstrap", "phase": "final_answer", "text": "Hello"}},
+                )
+                session._handle_notification(
+                    "turn/completed",
+                    {"turn": {"id": "turn-bootstrap", "status": "completed"}},
+                )
+
+            done_set.assert_called_once()
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.completed", event_types)
+            self.assertNotIn("headless.message.started", event_types)
+            self.assertNotIn("headless.message.completed", event_types)
+        finally:
+            cleanup()
+
+    def test_emit_system_notify_routes_running_headless_codex_actor_to_control_turn(self) -> None:
+        from cccc.contracts.v1 import SystemNotifyData
+        from cccc.daemon.messaging.delivery import emit_system_notify
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-notify-control", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            with (
+                patch("cccc.daemon.codex_app_sessions.SUPERVISOR.actor_running", return_value=True),
+                patch("cccc.daemon.codex_app_sessions.SUPERVISOR.submit_control_message", return_value=True) as submit_control_message,
+            ):
+                event = emit_system_notify(
+                    group,
+                    by="system",
+                    notify=SystemNotifyData(
+                        kind="info",
+                        priority="high",
+                        title="Need review",
+                        message="Please refresh your inbox.",
+                        target_actor_id="peer1",
+                        requires_ack=False,
+                    ),
+                )
+
+            submit_control_message.assert_called_once()
+            kwargs = submit_control_message.call_args.kwargs
+            self.assertEqual(kwargs.get("group_id"), group_id)
+            self.assertEqual(kwargs.get("actor_id"), "peer1")
+            self.assertEqual(kwargs.get("control_kind"), "system_notify")
+            self.assertEqual(kwargs.get("event_id"), str(event.get("id") or ""))
+            self.assertIn("Need review", str(kwargs.get("text") or ""))
+        finally:
+            cleanup()
+
+    def test_emit_system_notify_routes_running_headless_claude_actor_to_control_turn(self) -> None:
+        from cccc.contracts.v1 import SystemNotifyData
+        from cccc.daemon.messaging.delivery import emit_system_notify
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "claude-notify-control", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "claude",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            with (
+                patch("cccc.daemon.claude_app_sessions.SUPERVISOR.actor_running", return_value=True),
+                patch("cccc.daemon.claude_app_sessions.SUPERVISOR.submit_control_message", return_value=True) as submit_control_message,
+            ):
+                event = emit_system_notify(
+                    group,
+                    by="system",
+                    notify=SystemNotifyData(
+                        kind="info",
+                        priority="high",
+                        title="Need review",
+                        message="Please refresh your inbox.",
+                        target_actor_id="peer1",
+                        requires_ack=False,
+                    ),
+                )
+
+            submit_control_message.assert_called_once()
+            kwargs = submit_control_message.call_args.kwargs
+            self.assertEqual(kwargs.get("group_id"), group_id)
+            self.assertEqual(kwargs.get("actor_id"), "peer1")
+            self.assertEqual(kwargs.get("control_kind"), "system_notify")
+            self.assertEqual(kwargs.get("event_id"), str(event.get("id") or ""))
+            self.assertIn("Need review", str(kwargs.get("text") or ""))
+        finally:
+            cleanup()
+
+    def test_codex_notifications_write_stream_events_without_auto_materializing_chat_message(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
         from cccc.kernel.headless_events import headless_events_path
         from cccc.kernel.group import create_group, load_group
@@ -500,14 +943,7 @@ class TestCodexAppFlow(unittest.TestCase):
                 if line.strip()
             ]
             chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
-            self.assertEqual(len(chat_messages), 1)
-            message = chat_messages[0]
-            self.assertEqual(str(message.get("by") or ""), "peer1")
-            data = message.get("data") if isinstance(message.get("data"), dict) else {}
-            self.assertEqual(str(data.get("text") or ""), "Hello")
-            self.assertEqual(str(data.get("stream_id") or ""), "msg-1")
-            self.assertEqual(str(data.get("pending_event_id") or ""), "evt-1")
-            self.assertEqual(data.get("to"), ["user"])
+            self.assertEqual(chat_messages, [])
         finally:
             cleanup()
 
@@ -666,12 +1102,58 @@ class TestCodexAppFlow(unittest.TestCase):
                 if line.strip()
             ]
             chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
-            self.assertEqual(len(chat_messages), 1)
-            message = chat_messages[0]
-            data = message.get("data") if isinstance(message.get("data"), dict) else {}
-            self.assertEqual(str(data.get("text") or ""), "Hello")
-            self.assertEqual(str(data.get("stream_id") or ""), "msg-fallback")
-            self.assertEqual(str(data.get("pending_event_id") or ""), "evt-fallback")
+            self.assertEqual(chat_messages, [])
+        finally:
+            cleanup()
+
+    def test_claude_stream_completion_does_not_auto_materialize_chat_message(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+        from cccc.kernel.headless_events import headless_events_path
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="claude-stream-complete", topic="")
+            loaded_group = load_group(group.group_id)
+            self.assertIsNotNone(loaded_group)
+            assert loaded_group is not None
+
+            session = ClaudeAppSession(
+                group_id=group.group_id,
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-claude"
+            session._active_event_id = "evt-claude"
+
+            session._handle_stream_event({"event": {"type": "message_start", "message": {"id": "msg-claude"}}})
+            session._handle_stream_event(
+                {"event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello"}}}
+            )
+            session._handle_stream_event({"event": {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}})
+            session._handle_stream_event({"event": {"type": "message_stop"}})
+
+            events_path = headless_events_path(loaded_group.path)
+            self.assertTrue(events_path.exists())
+            headless_events = [
+                json.loads(line)
+                for line in events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            event_types = [str(item.get("type") or "") for item in headless_events]
+            self.assertIn("headless.message.completed", event_types)
+            self.assertIn("headless.turn.completed", event_types)
+
+            ledger_events = [
+                json.loads(line)
+                for line in loaded_group.ledger_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
+            self.assertEqual(chat_messages, [])
         finally:
             cleanup()
 

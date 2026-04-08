@@ -11,12 +11,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ..contracts.v1.message import ChatMessageData
+from ..kernel.actors import find_actor
 from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.headless_events import append_headless_event
 from ..kernel.group import load_group
-from ..kernel.ledger import append_event
-from ..kernel.message_sender_snapshot import build_sender_snapshot
+from ..kernel.system_prompt import render_system_prompt
+from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from ..util.fs import atomic_write_json
 from ..util.process import pid_is_alive
@@ -52,7 +52,9 @@ def _jsonrpc_request(request_id: int, method: str, params: Dict[str, Any]) -> Di
 class _PendingTurn:
     text: str
     event_id: str
+    ts: str = ""
     reply_to: Optional[str] = None
+    control_kind: str = ""
     attachments: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -96,6 +98,7 @@ class CodexAppSession:
         self._completed_stream_ids: set[str] = set()
         self._plan_activity_id = ""
         self._agent_message_phase_by_stream_id: Dict[str, str] = {}
+        self._active_control_kind = ""
 
     def _agent_message_phase(self, item_id: str, item: Optional[Dict[str, Any]] = None) -> str:
         stream_id = str(item_id or "").strip()
@@ -366,6 +369,7 @@ class CodexAppSession:
                 self._session_state.updated_at = utc_now_iso()
             self._persist_state()
             self._emit("headless.thread.started", {"thread_id": thread_id})
+            self._queue_bootstrap_control_turn()
             self._turn_thread.start()
         except Exception:
             self.stop()
@@ -379,6 +383,7 @@ class CodexAppSession:
             self._session_state.status = "stopped"
             self._session_state.current_task_id = None
             self._session_state.updated_at = utc_now_iso()
+            self._active_control_kind = ""
         self._persist_state()
         self._turn_done.set()
         try:
@@ -408,6 +413,52 @@ class CodexAppSession:
         with self._lock:
             return self._session_state.to_headless_state(group_id=self.group_id, actor_id=self.actor_id)
 
+    def _control_turn_kind(self) -> str:
+        with self._lock:
+            return str(self._active_control_kind or "").strip().lower()
+
+    def _build_bootstrap_control_text(self) -> str:
+        group = load_group(self.group_id)
+        if group is None:
+            return ""
+        actor = find_actor(group, self.actor_id)
+        if not isinstance(actor, dict):
+            return ""
+        prompt = render_system_prompt(group=group, actor=actor)
+        if not prompt.strip():
+            return ""
+        return render_headless_control_text(control_kind="bootstrap", body=prompt)
+
+    def _queue_control_turn(self, *, text: str, control_kind: str, event_id: str = "", ts: str = "") -> bool:
+        if not self.is_running():
+            return False
+        payload = _PendingTurn(
+            text=str(text or ""),
+            event_id=str(event_id or "").strip(),
+            ts=str(ts or "").strip(),
+            control_kind=str(control_kind or "").strip().lower(),
+        )
+        if not payload.text.strip() or not payload.control_kind:
+            return False
+        try:
+            self._turn_queue.put_nowait(payload)
+            self._emit(
+                "headless.control.queued",
+                {
+                    "control_kind": payload.control_kind,
+                    "event_id": payload.event_id,
+                },
+            )
+            return True
+        except Exception:
+            return False
+
+    def _queue_bootstrap_control_turn(self) -> bool:
+        return self._queue_control_turn(
+            text=self._build_bootstrap_control_text(),
+            control_kind="bootstrap",
+        )
+
     def _thread_id(self) -> str:
         with self._lock:
             return str(self._session_state.thread_id or "").strip()
@@ -417,6 +468,7 @@ class CodexAppSession:
         *,
         text: str,
         event_id: str,
+        ts: str = "",
         reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
     ) -> bool:
@@ -425,6 +477,7 @@ class CodexAppSession:
         payload = _PendingTurn(
             text=str(text or ""),
             event_id=str(event_id or "").strip(),
+            ts=str(ts or "").strip(),
             reply_to=reply_to,
             attachments=[item for item in (attachments or []) if isinstance(item, dict)],
         )
@@ -440,6 +493,21 @@ class CodexAppSession:
             return True
         except Exception:
             return False
+
+    def submit_control_message(
+        self,
+        *,
+        text: str,
+        control_kind: str,
+        event_id: str = "",
+        ts: str = "",
+    ) -> bool:
+        return self._queue_control_turn(
+            text=text,
+            control_kind=control_kind,
+            event_id=event_id,
+            ts=ts,
+        )
 
     def _request(self, method: str, params: Dict[str, Any], *, timeout: float) -> Dict[str, Any]:
         with self._lock:
@@ -507,9 +575,9 @@ class CodexAppSession:
                 return
             _safe_logger_call("exception", "codex stderr loop failed: %s/%s", self.group_id, self.actor_id)
 
-    def _build_turn_input_items(self, payload: _PendingTurn) -> list[dict[str, Any]]:
+    def _build_turn_input_items(self, payload: _PendingTurn, *, text_override: Optional[str] = None) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
-        text = str(payload.text or "")
+        text = str(payload.text if text_override is None else text_override or "")
         if text.strip():
             items.append({"type": "text", "text": text})
 
@@ -546,8 +614,11 @@ class CodexAppSession:
                 continue
             self._turn_done.clear()
             turn_id = ""
+            with self._lock:
+                self._active_control_kind = str(payload.control_kind or "").strip().lower()
+            turn_text = str(payload.text or "")
             try:
-                input_items = self._build_turn_input_items(payload)
+                input_items = self._build_turn_input_items(payload, text_override=turn_text)
                 response = self._request(
                     "turn/start",
                     {
@@ -564,7 +635,7 @@ class CodexAppSession:
                             "turn/start",
                             {
                                 "threadId": thread_id,
-                                "input": [{"type": "text", "text": payload.text}],
+                                "input": [{"type": "text", "text": turn_text}],
                             },
                             timeout=30.0,
                         )
@@ -573,14 +644,16 @@ class CodexAppSession:
                         with self._lock:
                             self._session_state.status = "idle"
                             self._active_event_id = ""
+                            self._active_control_kind = ""
                             self._session_state.current_task_id = None
                             self._session_state.updated_at = utc_now_iso()
                         self._persist_state()
                         self._emit(
-                            "headless.turn.failed",
+                            "headless.control.failed" if payload.control_kind else "headless.turn.failed",
                             {
                                 "turn_id": turn_id,
                                 "event_id": payload.event_id,
+                                "control_kind": payload.control_kind or None,
                                 "error": str(retry_exc),
                             },
                         )
@@ -590,14 +663,16 @@ class CodexAppSession:
                     with self._lock:
                         self._session_state.status = "idle"
                         self._active_event_id = ""
+                        self._active_control_kind = ""
                         self._session_state.current_task_id = None
                         self._session_state.updated_at = utc_now_iso()
                     self._persist_state()
                     self._emit(
-                        "headless.turn.failed",
+                        "headless.control.failed" if payload.control_kind else "headless.turn.failed",
                         {
                             "turn_id": turn_id,
                             "event_id": payload.event_id,
+                            "control_kind": payload.control_kind or None,
                             "error": str(exc),
                         },
                     )
@@ -612,27 +687,45 @@ class CodexAppSession:
                     self._session_state.current_task_id = turn_id or payload.event_id or None
                     self._session_state.updated_at = utc_now_iso()
                 self._persist_state()
-                self._emit(
-                    "headless.turn.started",
-                    {
-                        "turn_id": turn_id,
-                        "event_id": payload.event_id,
-                        "reply_to": payload.reply_to,
-                    },
-                )
+                if payload.control_kind:
+                    self._emit(
+                        "headless.control.started",
+                        {
+                            "turn_id": turn_id,
+                            "event_id": payload.event_id,
+                            "control_kind": payload.control_kind,
+                        },
+                    )
+                else:
+                    auto_mark_headless_delivery_started(
+                        group_id=self.group_id,
+                        actor_id=self.actor_id,
+                        event_id=payload.event_id,
+                        ts=payload.ts,
+                    )
+                    self._emit(
+                        "headless.turn.started",
+                        {
+                            "turn_id": turn_id,
+                            "event_id": payload.event_id,
+                            "reply_to": payload.reply_to,
+                        },
+                    )
             except Exception as exc:
                 logger.warning("codex turn start failed: group=%s actor=%s err=%s", self.group_id, self.actor_id, exc)
                 with self._lock:
                     self._session_state.status = "idle"
                     self._active_event_id = ""
+                    self._active_control_kind = ""
                     self._session_state.current_task_id = None
                     self._session_state.updated_at = utc_now_iso()
                 self._persist_state()
                 self._emit(
-                    "headless.turn.failed",
+                    "headless.control.failed" if payload.control_kind else "headless.turn.failed",
                     {
                         "turn_id": turn_id,
                         "event_id": payload.event_id,
+                        "control_kind": payload.control_kind or None,
                         "error": str(exc),
                     },
                 )
@@ -643,6 +736,7 @@ class CodexAppSession:
         now = utc_now_iso()
         with self._lock:
             active_event_id = str(self._active_event_id or "").strip()
+            control_kind = str(self._active_control_kind or "").strip().lower()
         if method == "turn/started":
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
             turn_id = str(turn.get("id") or "").strip()
@@ -652,6 +746,8 @@ class CodexAppSession:
                 self._session_state.current_task_id = turn_id or None
                 self._session_state.updated_at = now
             self._persist_state()
+            if control_kind:
+                return
             self._emit("headless.turn.progress", {"turn_id": turn_id, "event_id": active_event_id, "status": "working"})
             self._emit_activity(
                 status="started",
@@ -660,6 +756,38 @@ class CodexAppSession:
                 summary="thinking",
                 turn_id=turn_id,
             )
+            return
+
+        if method == "turn/completed" and control_kind:
+            turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
+            turn_id = str(turn.get("id") or "").strip()
+            status = str(turn.get("status") or "completed").strip() or "completed"
+            error = turn.get("error") if isinstance(turn.get("error"), dict) else None
+            with self._lock:
+                self._active_turn_id = ""
+                self._active_event_id = ""
+                self._active_control_kind = ""
+                self._session_state.status = "idle"
+                self._session_state.current_task_id = None
+                self._session_state.updated_at = now
+            self._persist_state()
+            self._completed_stream_ids.clear()
+            self._agent_message_phase_by_stream_id.clear()
+            self._plan_activity_id = ""
+            self._emit(
+                "headless.control.completed",
+                {
+                    "turn_id": turn_id,
+                    "event_id": active_event_id,
+                    "control_kind": control_kind,
+                    "status": status,
+                    "error": error,
+                },
+            )
+            self._turn_done.set()
+            return
+
+        if control_kind:
             return
 
         if method == "turn/plan/updated":
@@ -799,13 +927,8 @@ class CodexAppSession:
                 phase = self._agent_message_phase(item_id, item)
                 self._agent_message_phase_by_stream_id.pop(item_id, None)
                 text = str(item.get("text") or "")
-                if phase != "commentary" and item_id not in self._completed_stream_ids:
+                if phase != "commentary":
                     self._completed_stream_ids.add(item_id)
-                    self._append_actor_message(
-                        stream_id=item_id,
-                        text=text,
-                        pending_event_id=active_event_id,
-                    )
                 payload = {
                     "turn_id": str(params.get("turnId") or ""),
                     "event_id": active_event_id,
@@ -855,29 +978,6 @@ class CodexAppSession:
             )
             self._turn_done.set()
             return
-
-    def _append_actor_message(self, *, stream_id: str, text: str, pending_event_id: str = "") -> None:
-        group = load_group(self.group_id)
-        if group is None:
-            return
-        try:
-            append_event(
-                group.ledger_path,
-                kind="chat.message",
-                group_id=group.group_id,
-                scope_key=str(group.doc.get("active_scope_key") or "").strip(),
-                by=self.actor_id,
-                data=ChatMessageData(
-                    text=str(text or ""),
-                    format="plain",
-                    to=["user"],
-                    stream_id=str(stream_id or "").strip() or None,
-                    pending_event_id=str(pending_event_id or "").strip() or None,
-                    **build_sender_snapshot(group, by=self.actor_id),
-                ).model_dump(),
-            )
-        except Exception:
-            logger.exception("failed to append codex actor message: %s/%s", self.group_id, self.actor_id)
 
     def _emit(self, event_type: str, data: Dict[str, Any]) -> None:
         group = load_group(self.group_id)
@@ -970,6 +1070,7 @@ class CodexAppSessionManager:
         actor_id: str,
         text: str,
         event_id: str,
+        ts: str = "",
         reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
     ) -> bool:
@@ -978,7 +1079,29 @@ class CodexAppSessionManager:
             session = self._sessions.get(key)
         if session is None:
             return False
-        return session.submit_user_message(text=text, event_id=event_id, reply_to=reply_to, attachments=attachments)
+        return session.submit_user_message(text=text, event_id=event_id, ts=ts, reply_to=reply_to, attachments=attachments)
+
+    def submit_control_message(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        text: str,
+        control_kind: str,
+        event_id: str = "",
+        ts: str = "",
+    ) -> bool:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            session = self._sessions.get(key)
+        if session is None:
+            return False
+        return session.submit_control_message(
+            text=text,
+            control_kind=control_kind,
+            event_id=event_id,
+            ts=ts,
+        )
 
 
 SUPERVISOR = CodexAppSessionManager()

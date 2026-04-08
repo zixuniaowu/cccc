@@ -56,6 +56,7 @@ _READONLY_ACTOR_HANDOFF_ONCE: set[str] = set()
 _READONLY_ACTOR_GENERATION: Dict[str, int] = {}
 _READONLY_ACTOR_CACHE_LOCK = threading.Lock()
 _READONLY_ACTOR_TTL_S = 0.8
+_STANDARD_WEB_HEADLESS_RUNTIMES = frozenset({"codex", "claude"})
 
 
 def _pid_matches_actor_context(pid: int, *, group_id: str, actor_id: str) -> bool:
@@ -319,6 +320,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         except Exception:
             return False
 
+    def _normalize_runtime_id(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    def _supports_standard_web_headless_runtime(value: Any) -> bool:
+        return _normalize_runtime_id(value) in _STANDARD_WEB_HEADLESS_RUNTIMES
+
     def _runner_is_headless(value: Any) -> bool:
         return str(value or "").strip().lower() == "headless"
 
@@ -327,10 +334,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             status_code=400,
             detail={
                 "code": "headless_internal_only",
-                "message": "Headless runner is internal-only. Standard Web uses PTY actors only.",
+                "message": "This headless runtime is internal-only. Standard Web headless mode currently supports codex and claude only.",
                 "details": {
                     "source": source,
-                    "hint": "Use PTY actors/profiles in standard Web mode. Headless is reserved for internal/developer workflows.",
+                    "hint": "Use PTY for unsupported runtimes in standard Web mode. Other headless runtimes remain reserved for internal/developer workflows.",
                 },
             },
         )
@@ -392,9 +399,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     def _is_internal_headless_runtime(meta: Optional[Dict[str, str]]) -> bool:
         if not isinstance(meta, dict):
             return False
-        runtime = str(meta.get("runtime") or "").strip().lower()
+        runtime = _normalize_runtime_id(meta.get("runtime"))
         runner = str(meta.get("runner") or "").strip().lower()
-        return runner == "headless" and runtime != "codex"
+        return runner == "headless" and not _supports_standard_web_headless_runtime(runtime)
 
     async def _ensure_standard_web_runner(
         request: Request,
@@ -410,20 +417,19 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     ) -> None:
         if await _developer_mode_enabled():
             return
-        runtime_kind = str(runtime or "").strip().lower()
+        runtime_kind = _normalize_runtime_id(runtime)
         profile_meta = await _profile_runtime_meta(profile_id, scope=profile_scope, owner_id=profile_owner)
         if _is_internal_headless_runtime(profile_meta):
             raise _headless_error(source=f"{source}:profile")
-        if _runner_is_headless(runner) and runtime_kind != "codex":
+        if _runner_is_headless(runner) and runtime_kind and not _supports_standard_web_headless_runtime(runtime_kind):
             raise _headless_error(source=source)
         if not runtime_kind and group_id and actor_id:
             actor_meta = await _actor_runtime_meta(group_id, actor_id)
-            if not _is_internal_headless_runtime(actor_meta):
-                runtime_kind = str((actor_meta or {}).get("runtime") or "").strip().lower()
             if _is_internal_headless_runtime(actor_meta):
                 raise _headless_error(source=f"{source}:actor")
-        if runtime_kind == "codex":
-            return
+            runtime_kind = _normalize_runtime_id((actor_meta or {}).get("runtime"))
+        if _runner_is_headless(runner) and runtime_kind and not _supports_standard_web_headless_runtime(runtime_kind):
+            raise _headless_error(source=source)
 
     def _profile_auth_args(request: Request) -> Dict[str, Any]:
         if not websocket_tokens_active():
@@ -509,7 +515,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 }
             ):
                 raise _headless_error(source="actor_profile_upsert")
-            if str(profile_payload.get("runtime") or "").strip().lower() != "codex":
+            if not _supports_standard_web_headless_runtime(profile_payload.get("runtime")):
                 profile_payload["runner"] = "pty"
         args: Dict[str, Any] = {
             "profile": profile_payload,

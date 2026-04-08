@@ -29,13 +29,13 @@ export function TextScaleSwitcher({
       type="button"
       onClick={() => onTextScaleChange(nextScale)}
       className={classNames(
-        "flex items-center justify-center w-10 h-10 min-w-[40px] min-h-[40px] rounded-xl shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] transition-all hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+        "flex items-center justify-center h-9 w-9 min-w-[36px] min-h-[36px] rounded-[14px] shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] transition-all hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
         className,
       )}
       title={t("switchTextSize", { percent: nextScaleLabel })}
       aria-label={`${t("currentTextSize", { percent: currentScaleLabel })}. ${t("switchTextSize", { percent: nextScaleLabel })}`}
     >
-      <TextSizeIcon size={19} />
+      <TextSizeIcon size={17} />
     </button>
   );
 

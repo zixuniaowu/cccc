@@ -129,13 +129,6 @@ def render_role_system_prompt(
     
     # Keep this stable and short. Long-lived playbook details belong in cccc_help.
     visible_reply_line = "- Visible replies must go through MCP: cccc_message_send / cccc_message_reply."
-    runtime_lower = str(runtime_name or "").strip().lower()
-    runner_lower = runner.lower()
-    if runtime_lower == "codex" and runner_lower == "headless":
-        visible_reply_line = (
-            "- Do not call cccc_message_send / cccc_message_reply from codex headless; "
-            "your final answer streams to Chat automatically."
-        )
 
     core_lines = [
         "Working Style:",

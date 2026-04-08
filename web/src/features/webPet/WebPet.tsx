@@ -142,6 +142,7 @@ export function WebPet({
   const reviewSessionRef = useRef(0);
   const petContextRefreshGroupIdRef = useRef("");
   const latestPetContextRefreshMarkerRef = useRef("");
+  const desktopPetVisibilityFallbackRef = useRef(false);
 
   const isSelectedGroup = String(selectedGroupId || "").trim() === String(groupId || "").trim();
   const groupDoc = isSelectedGroup ? selectedGroupDoc : remoteState.groupDoc;
@@ -294,7 +295,9 @@ export function WebPet({
   useEffect(() => {
     const gid = String(groupId || "").trim();
     if (!gid || !groupSettings) return;
-    lastKnownDesktopPetEnabledByGroup[gid] = Boolean(groupSettings.desktop_pet_enabled);
+    const enabled = Boolean(groupSettings.desktop_pet_enabled);
+    lastKnownDesktopPetEnabledByGroup[gid] = enabled;
+    desktopPetVisibilityFallbackRef.current = enabled;
   }, [groupId, groupSettings]);
 
   useEffect(() => {
@@ -505,7 +508,10 @@ export function WebPet({
     if (groupSettings) {
       return Boolean(groupSettings.desktop_pet_enabled);
     }
-    return Boolean(lastKnownDesktopPetEnabledByGroup[gid]);
+    if (Object.prototype.hasOwnProperty.call(lastKnownDesktopPetEnabledByGroup, gid)) {
+      return Boolean(lastKnownDesktopPetEnabledByGroup[gid]);
+    }
+    return desktopPetVisibilityFallbackRef.current;
   })();
 
   if (!groupId || !desktopPetEnabled) {

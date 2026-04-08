@@ -104,6 +104,28 @@ export type StreamingActivity = {
   query?: string;
 };
 
+export type HeadlessPreviewBlock = {
+  id: string;
+  streamId: string;
+  streamPhase: string;
+  text: string;
+  updatedAt: string;
+  completed: boolean;
+  transient: boolean;
+};
+
+export type HeadlessPreviewSession = {
+  actorId: string;
+  pendingEventId: string;
+  currentStreamId: string;
+  phase: string;
+  streamPhase: string;
+  updatedAt: string;
+  latestText: string;
+  transcriptBlocks: HeadlessPreviewBlock[];
+  activities: StreamingActivity[];
+};
+
 // Chat message payload
 export type ChatMessageData = {
   text?: string;

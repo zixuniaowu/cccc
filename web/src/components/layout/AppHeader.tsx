@@ -69,11 +69,11 @@ export function AppHeader({
 }: AppHeaderProps) {
   const { t } = useTranslation('layout');
   const headerIconButtonBaseClass =
-    "flex items-center justify-center w-11 h-11 rounded-xl transition-all shrink-0";
+    "flex items-center justify-center h-10 w-10 rounded-[14px] transition-all shrink-0";
   const headerRailClass =
-    "flex items-center gap-1 rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1 shadow-sm backdrop-blur-xl";
+    "flex items-center gap-1 rounded-[18px] border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-[3px] shadow-sm backdrop-blur-xl";
   const headerRailButtonClass =
-    "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]";
+    "flex items-center justify-center h-9 w-9 rounded-[14px] transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]";
   const selectedStatus = selectedGroupId ? getGroupStatusFromSource({
     running: selectedGroupRunning,
     state: (selectedGroupRuntimeStatus?.lifecycle_state as GroupDoc["state"] | undefined) || groupDoc?.state,
@@ -118,7 +118,7 @@ export function AppHeader({
   };
   return (
     <header
-      className="flex-shrink-0 z-20 px-4 h-12 flex items-center justify-between gap-3 glass-header"
+      className="z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 glass-header md:px-5"
     >
       <div className="flex items-center gap-3 min-w-0">
         <button
@@ -136,7 +136,7 @@ export function AppHeader({
 
         <div className="min-w-0 flex flex-col">
           <div className="flex items-center gap-2">
-            <h1 className="text-sm font-semibold truncate text-[var(--color-text-primary)]">
+            <h1 className="truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]">
               {groupDoc?.title || (selectedGroupId ? selectedGroupId : t('selectGroup'))}
             </h1>
             {selectedGroupId && sseStatus !== "connected" && (
@@ -163,7 +163,7 @@ export function AppHeader({
         {selectedGroupId && !webReadOnly && onOpenGroupEdit && (
           <button
             className={classNames(
-              "hidden md:inline-flex items-center justify-center gap-1 text-xs px-2.5 py-1.5 rounded-xl transition-all glass-btn",
+              "hidden md:inline-flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-all glass-btn",
               "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
             )}
             onClick={onOpenGroupEdit}
@@ -176,11 +176,11 @@ export function AppHeader({
       </div>
 
       {/* Right Actions */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1.5">
         {!webReadOnly && (
           <>
             {/* Desktop Actions */}
-            <div className="hidden md:flex items-center gap-1.5 mr-2">
+            <div className="mr-1 hidden items-center gap-1.5 md:flex">
               <div className={headerRailClass}>
                 <button
                   onClick={onOpenSearch}
@@ -189,7 +189,7 @@ export function AppHeader({
                   title={t('searchMessages')}
                 >
                   <span className="sr-only">{t('searchMessages')}</span>
-                  <SearchIcon size={18} />
+                  <SearchIcon size={17} />
                 </button>
 
                 <button
@@ -199,7 +199,7 @@ export function AppHeader({
                   title={t('context')}
                 >
                   <span className="sr-only">{t('context')}</span>
-                  <ClipboardIcon size={18} />
+                  <ClipboardIcon size={17} />
                 </button>
               </div>
 
@@ -216,7 +216,7 @@ export function AppHeader({
                   aria-pressed={launchControl.active}
                 >
                   <span className="sr-only">{launchMode === "activate" ? t('resumeDelivery') : t('launchAllAgents')}</span>
-                  <RocketIcon size={18} />
+                  <RocketIcon size={17} />
                 </button>
 
                 <button
@@ -231,7 +231,7 @@ export function AppHeader({
                   aria-pressed={pauseControl.active}
                 >
                   <span className="sr-only">{t('pauseDelivery')}</span>
-                  <PauseIcon size={18} />
+                  <PauseIcon size={17} />
                 </button>
 
                 <button
@@ -246,7 +246,7 @@ export function AppHeader({
                   aria-pressed={stopControl.active}
                 >
                   <span className="sr-only">{t('stopAllAgents')}</span>
-                  <StopIcon size={18} />
+                  <StopIcon size={17} />
                 </button>
               </div>
 
@@ -261,7 +261,7 @@ export function AppHeader({
                   title={t('settings')}
                 >
                   <span className="sr-only">{t('settings')}</span>
-                  <SettingsIcon size={18} />
+                  <SettingsIcon size={17} />
                 </button>
               </div>
             </div>

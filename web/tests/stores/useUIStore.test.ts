@@ -92,4 +92,19 @@ describe("useUIStore sidebar width", () => {
       updatedAt: 200,
     });
   });
+
+  it("ignores obsolete runtime dock payloads on reload", async () => {
+    localStorageMock.setItem("cccc-chat-sessions", JSON.stringify({
+      "g-demo": {
+        runtimeDockExpanded: 1,
+        runtimeDockFocusedActorId: { actor: "coder" },
+      },
+    }));
+
+    const mod = await import("../../src/stores/useUIStore");
+    expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions)).toMatchObject({
+      presentationDockOpen: false,
+      presentationDisplayMode: "modal",
+    });
+  });
 });

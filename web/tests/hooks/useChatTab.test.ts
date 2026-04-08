@@ -249,6 +249,36 @@ describe("collapseActorStreamingPlaceholders", () => {
     expect(events).toHaveLength(1);
     expect(String(events[0]?.id || "")).toBe("stream:commentary-1");
   });
+
+  it("keeps explicit phase streams even when their first frame is queued-only", () => {
+    const events = collapseActorStreamingPlaceholders([
+      {
+        id: "stream:commentary-queued",
+        kind: "chat.message",
+        by: "claude-1",
+        _streaming: true,
+        data: {
+          text: "",
+          to: ["user"],
+          stream_id: "pending:evt-2:claude-1:commentary",
+          pending_event_id: "evt-2",
+          pending_placeholder: false,
+          stream_phase: "commentary",
+          activities: [{ id: "queued:1", kind: "queued", status: "started", summary: "queued" }],
+        },
+      },
+      makeStreamingEvent({
+        id: "stream:final-2",
+        streamId: "final-2",
+        pendingEventId: "evt-2",
+        text: "给出最终结论",
+      }),
+    ]);
+
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => String(event.id || ""))).toContain("stream:commentary-queued");
+    expect(events.map((event) => String(event.id || ""))).toContain("stream:final-2");
+  });
 });
 
 describe("sortChatMessages", () => {

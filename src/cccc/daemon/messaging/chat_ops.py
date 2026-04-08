@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from ...contracts.v1 import ChatMessageData, ChatStreamData, DaemonError, DaemonResponse
+from ...contracts.v1 import ChatMessageData, ChatStreamData, DaemonError, DaemonResponse, SystemNotifyData
 from ...kernel.actors import find_actor, list_actors, resolve_recipient_tokens
 from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.inbox import find_event_with_chat_ack, is_message_for_actor
@@ -26,9 +26,11 @@ from ...util.time import utc_now_iso
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .delivery import (
+    append_mcp_reply_reminder,
+    emit_system_notify,
+    should_auto_mark_on_delivery,
     flush_pending_messages,
     get_headless_targets_for_message,
-    maybe_auto_mark_delivered_event,
     queue_chat_message,
     request_flush_pending_messages,
 )
@@ -270,21 +272,18 @@ def _notify_headless_targets(
         for actor_id in headless_targets:
             if actor_id in skip_ids:
                 continue
-            append_event(
-                group.ledger_path,
-                kind="system.notify",
-                group_id=group.group_id,
-                scope_key="",
+            emit_system_notify(
+                group,
                 by="system",
-                data={
-                    "kind": "info",
-                    "priority": notify_priority,
-                    "title": notify_title,
-                    "message": f"New message from {by}. Check your inbox.",
-                    "target_actor_id": actor_id,
-                    "requires_ack": False,
-                    "context": {"event_id": event_id, "from": by},
-                },
+                notify=SystemNotifyData(
+                    kind="info",
+                    priority=notify_priority,
+                    title=notify_title,
+                    message=f"New message from {by}. Check your inbox.",
+                    target_actor_id=actor_id,
+                    requires_ack=False,
+                    context={"event_id": event_id, "from": by},
+                ),
             )
     except Exception:
         pass
@@ -467,7 +466,9 @@ def handle_send(
         src_group_id=src_group_id,
         src_event_id=src_event_id,
     )
+    headless_delivery_text = append_mcp_reply_reminder(delivery_text)
     actors = list_actors(group)
+    auto_mark_on_delivery = should_auto_mark_on_delivery(group)
     skip_headless_notify_actor_ids: set[str] = set()
     logger.debug(f"[SEND] group={group_id} text={text[:30]!r} actors={[a.get('id') for a in actors]} effective_to={effective_to}")
     for actor in actors:
@@ -493,11 +494,12 @@ def handle_send(
             delivered = bool(codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
-                text=delivery_text,
+                text=headless_delivery_text,
                 event_id=event_id,
+                ts=event_ts,
                 attachments=attachments,
             ))
-            if delivered and maybe_auto_mark_delivered_event(group, actor_id=actor_id, event_id=event_id, ts=event_ts):
+            if delivered and auto_mark_on_delivery:
                 skip_headless_notify_actor_ids.add(actor_id)
         elif (
             runtime == "claude"
@@ -507,11 +509,12 @@ def handle_send(
             delivered = bool(claude_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
-                text=delivery_text,
+                text=headless_delivery_text,
                 event_id=event_id,
+                ts=event_ts,
                 attachments=attachments,
             ))
-            if delivered and maybe_auto_mark_delivered_event(group, actor_id=actor_id, event_id=event_id, ts=event_ts):
+            if delivered and auto_mark_on_delivery:
                 skip_headless_notify_actor_ids.add(actor_id)
         elif effective_runner_kind(runner_kind) == "pty":
             queue_chat_message(
@@ -725,6 +728,8 @@ def handle_reply(
         refs=refs,
         attachments=attachments,
     )
+    headless_delivery_text = append_mcp_reply_reminder(delivery_text)
+    auto_mark_on_delivery = should_auto_mark_on_delivery(group)
     skip_headless_notify_actor_ids: set[str] = set()
     for actor in list_actors(group):
         if not isinstance(actor, dict):
@@ -744,12 +749,13 @@ def handle_reply(
             delivered = bool(codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
-                text=delivery_text,
+                text=headless_delivery_text,
                 event_id=event_id,
+                ts=event_ts,
                 reply_to=target_event_id or reply_to,
                 attachments=attachments,
             ))
-            if delivered and maybe_auto_mark_delivered_event(group, actor_id=actor_id, event_id=event_id, ts=event_ts):
+            if delivered and auto_mark_on_delivery:
                 skip_headless_notify_actor_ids.add(actor_id)
         elif (
             runtime == "claude"
@@ -759,12 +765,13 @@ def handle_reply(
             delivered = bool(claude_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
-                text=delivery_text,
+                text=headless_delivery_text,
                 event_id=event_id,
+                ts=event_ts,
                 reply_to=target_event_id or reply_to,
                 attachments=attachments,
             ))
-            if delivered and maybe_auto_mark_delivered_event(group, actor_id=actor_id, event_id=event_id, ts=event_ts):
+            if delivered and auto_mark_on_delivery:
                 skip_headless_notify_actor_ids.add(actor_id)
         elif effective_runner_kind(runner_kind) == "pty":
             queue_chat_message(

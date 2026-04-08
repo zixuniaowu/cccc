@@ -102,6 +102,11 @@ function getNormalizedStreamPhase(data: { stream_phase?: unknown } | null | unde
   return String(data?.stream_phase || "").trim().toLowerCase();
 }
 
+function hasExplicitStreamingPhase(data: { stream_phase?: unknown } | null | undefined): boolean {
+  const streamPhase = getNormalizedStreamPhase(data);
+  return streamPhase === "commentary" || streamPhase === "final_answer";
+}
+
 function isPlaceholderLikeStreamingEvent(data: ChatMessageData & {
   pending_placeholder?: unknown;
   stream_id?: unknown;
@@ -112,8 +117,7 @@ function isPlaceholderLikeStreamingEvent(data: ChatMessageData & {
   const streamId = String(data.stream_id || "").trim();
   if (data.pending_placeholder) return true;
 
-  const streamPhase = getNormalizedStreamPhase(data);
-  if (streamPhase === "commentary" || streamPhase === "final_answer") return false;
+  if (hasExplicitStreamingPhase(data)) return false;
 
   const text = typeof data.text === "string" ? data.text.trim() : "";
   if (text) return false;
@@ -253,7 +257,7 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
         const text = typeof data.text === "string" ? data.text.trim() : "";
         const onlyQueuedActivities = hasOnlyQueuedActivities(data.activities);
         const isPlaceholderLike = isPlaceholderLikeStreamingEvent(data);
-        if (!text && !hasRichActivities(data.activities) && (isPlaceholderLike || onlyQueuedActivities)) {
+        if (!text && !hasRichActivities(data.activities) && (isPlaceholderLike || (onlyQueuedActivities && !hasExplicitStreamingPhase(data)))) {
           shouldDrop.add(event);
         }
       }
@@ -716,7 +720,11 @@ export function useChatTab({
     const resolved = new Map<string, Actor>();
     const policy = groupSettings?.default_send_to || "foreman";
     const effectiveTokens = normalized.length > 0 ? normalized : (policy === "foreman" ? ["@foreman"] : ["@all"]);
-    const allActors = actors.filter((actor) => String(actor.id || "").trim() && String(actor.id || "").trim() !== "user");
+    const allActors = actors.filter((actor) => {
+      const actorId = String(actor.id || "").trim();
+      const internalKind = String(actor.internal_kind || "").trim();
+      return actorId && actorId !== "user" && !internalKind;
+    });
     const peers = allActors.filter((actor) => String(actor.role || "").trim() !== "foreman");
     const foremen = allActors.filter((actor) => String(actor.role || "").trim() === "foreman");
 
@@ -832,7 +840,7 @@ export function useChatTab({
     };
   }
 
-  const processedStreamingMessages = useMemo(() => {
+  const liveWorkEvents = useMemo(() => {
     const all = events.filter((ev: LedgerEvent) => ev.kind === "chat.message");
     return dropOrphanQueuedPlaceholders(
       all,
@@ -857,13 +865,9 @@ export function useChatTab({
     const pendingEvents = outboxEntries
       .filter((entry) => !renderableCanonicalClientIds.has(entry.localId))
       .map((entry) => entry.event);
-    const replySlotTsByKey = buildReplyAnchorTsMap(
-      [...all, ...pendingEvents],
-      processedStreamingMessages,
-    );
     const ordered = sortChatMessages(
-      mergeVisibleChatMessages(all, processedStreamingMessages, pendingEvents, logicalMessageOrderStateRef.current),
-      replySlotTsByKey,
+      mergeVisibleChatMessages(all, [], pendingEvents, logicalMessageOrderStateRef.current),
+      new Map(),
     );
 
     if (chatFilter === "attention") {
@@ -889,7 +893,7 @@ export function useChatTab({
       });
     }
     return ordered;
-  }, [events, processedStreamingMessages, chatFilter, outboxEntries]);
+  }, [events, chatFilter, outboxEntries]);
 
   // Chat messages (window or live)
   const chatMessages = useMemo(() => {
@@ -898,8 +902,8 @@ export function useChatTab({
   }, [chatWindow, inChatWindow, liveChatMessages]);
 
   const hasAnyChatMessages = useMemo(
-    () => events.some((ev: LedgerEvent) => ev.kind === "chat.message") || streamingEvents.length > 0 || outboxEntries.length > 0,
-    [events, streamingEvents, outboxEntries]
+    () => events.some((ev: LedgerEvent) => ev.kind === "chat.message") || outboxEntries.length > 0,
+    [events, outboxEntries]
   );
 
   const chatInitialScrollAnchorId = useMemo(() => {
@@ -1473,6 +1477,7 @@ export function useChatTab({
   return {
     // Chat state
     chatMessages,
+    liveWorkEvents,
     hasAnyChatMessages,
     chatFilter,
     setChatFilter: updateChatFilter,

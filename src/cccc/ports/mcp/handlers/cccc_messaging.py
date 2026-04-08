@@ -12,24 +12,6 @@ from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
 from ....util.conv import coerce_bool
 from ..common import MCPError, _call_daemon_or_raise
-
-
-def _assert_visible_messaging_allowed(*, group_id: str, actor_id: str) -> None:
-    group = load_group(str(group_id or "").strip())
-    if group is None:
-        return
-    actor = find_actor(group, str(actor_id or "").strip())
-    if not isinstance(actor, dict):
-        return
-    runtime = str(actor.get("runtime") or "").strip().lower()
-    runner = str(actor.get("runner_effective") or actor.get("runner") or "pty").strip().lower()
-    if runtime == "codex" and runner == "headless":
-        raise MCPError(
-            code="tool_disabled_for_runtime",
-            message="codex headless actors must not call visible messaging tools; final answers stream to Chat automatically",
-        )
-
-
 def _normalize_runtime_escaped_text(*, group_id: str, actor_id: str, text: str) -> str:
     """Normalize double-escaped control characters only for codex actor runtimes."""
     raw = str(text or "")
@@ -62,7 +44,6 @@ def message_send(
     refs: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Send a message to the group (or cross-group)."""
-    _assert_visible_messaging_allowed(group_id=group_id, actor_id=actor_id)
     text = _normalize_runtime_escaped_text(group_id=group_id, actor_id=actor_id, text=text)
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):
@@ -118,7 +99,6 @@ def message_reply(
     """Reply to a message."""
     if not str(reply_to or "").strip():
         raise MCPError(code="missing_event_id", message="missing event_id (reply target)")
-    _assert_visible_messaging_allowed(group_id=group_id, actor_id=actor_id)
     text = _normalize_runtime_escaped_text(group_id=group_id, actor_id=actor_id, text=text)
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):
@@ -171,7 +151,6 @@ def file_send(
 
     Security: only files under the group's active scope root are allowed.
     """
-    _assert_visible_messaging_allowed(group_id=group_id, actor_id=actor_id)
     gid = str(group_id or "").strip()
     group = load_group(gid)
     if group is None:

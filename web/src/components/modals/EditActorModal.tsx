@@ -10,6 +10,7 @@ import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/act
 import { CapabilityPicker } from "../CapabilityPicker";
 import { RolePresetPicker } from "../RolePresetPicker";
 import { ActorAvatarField } from "../ActorAvatarField";
+import { supportsStandardWebHeadlessRuntime } from "../../utils/headlessRuntimeSupport";
 
 type EditMode = "custom" | "profile";
 
@@ -186,6 +187,7 @@ export function EditActorModal({
     [actorProfiles, attachProfileId]
   );
   const selectedProfileName = String(selectedProfile?.name || "").trim();
+  const selectedProfileRunner = String(selectedProfile?.runner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty";
 
   const secretsPlaceholder = SECRETS_PLACEHOLDER[runtime] ?? DEFAULT_SECRETS_PLACEHOLDER;
 
@@ -533,7 +535,7 @@ export function EditActorModal({
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
   const showRuntimeSetup = !effectiveLinked && editMode === "custom" && runtime === "custom";
-  const customRunnerLockedToPty = !["codex", "claude"].includes(runtime);
+  const customRunnerLockedToPty = !supportsStandardWebHeadlessRuntime(runtime);
 
   return (
     <div
@@ -666,8 +668,24 @@ export function EditActorModal({
                       <div className="rounded-xl border px-3 py-2 text-xs border-[var(--glass-border-subtle)] bg-[var(--glass-bg)] text-[var(--color-text-secondary)]">
                         <div className="font-medium">{selectedProfile.name || selectedProfile.id}</div>
                         <div className="mt-1">{profileScopeLabel(selectedProfile, t)}</div>
-                        <div className="mt-1">
-                          {RUNTIME_INFO[String(selectedProfile.runtime) as SupportedRuntime]?.label || selectedProfile.runtime}
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <span>{RUNTIME_INFO[String(selectedProfile.runtime) as SupportedRuntime]?.label || selectedProfile.runtime}</span>
+                          <span className="rounded-full border border-[var(--glass-border-subtle)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                            {selectedProfileRunner === "headless" ? t("headless") : t("pty", { defaultValue: "PTY" })}
+                          </span>
+                        </div>
+                        <div className="mt-3">
+                          <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                            {t("runnerMode", { defaultValue: "运行模式" })}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button type="button" className={modeButtonClass(selectedProfileRunner === "pty")} disabled>
+                              {t("pty", { defaultValue: "PTY" })}
+                            </button>
+                            <button type="button" className={modeButtonClass(selectedProfileRunner === "headless")} disabled>
+                              {t("headless")}
+                            </button>
+                          </div>
                         </div>
                         {commandPreview(selectedProfile.command) ? <div className="mt-1 font-mono break-all">{commandPreview(selectedProfile.command)}</div> : null}
                       </div>
@@ -698,7 +716,7 @@ export function EditActorModal({
                         onChange={(e) => {
                           const next = e.target.value as SupportedRuntime;
                           onChangeRuntime(next);
-                          if (!["codex", "claude"].includes(next)) onChangeRunner("pty");
+                          if (!supportsStandardWebHeadlessRuntime(next)) onChangeRunner("pty");
                           const nextInfo = runtimes.find((r) => r.name === next);
                           const nextDefault = String(nextInfo?.recommended_command || "").trim();
                           onChangeCommand(nextDefault);
@@ -719,7 +737,7 @@ export function EditActorModal({
                       </select>
                     </div>
 
-                    {["codex", "claude"].includes(runtime) ? (
+                    {supportsStandardWebHeadlessRuntime(runtime) ? (
                       <div>
                         <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
                           {t("runnerMode", { defaultValue: "运行模式" })}
