@@ -565,6 +565,9 @@ class TestBootstrapActorOps(unittest.TestCase):
             with patch("cccc.daemon.group.bootstrap_actor_ops.pty_runner.SUPERVISOR.start_actor", side_effect=_fake_pty_start_actor), patch(
                 "cccc.daemon.group.bootstrap_actor_ops.codex_app_supervisor.start_actor",
                 side_effect=AssertionError("codex supervisor should not start for PTY runner"),
+            ), patch(
+                "cccc.daemon.group.bootstrap_actor_ops.runtime_start_preflight_error",
+                return_value="",
             ):
                 autostart_running_groups(
                     home,

@@ -103,6 +103,26 @@ export function ChatComposer({
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation('chat');
 
+  const readRootFontScale = () => {
+    if (typeof document === "undefined") return 1;
+    const rootFontSize = parseFloat(window.getComputedStyle(document.documentElement).fontSize);
+    if (!Number.isFinite(rootFontSize) || rootFontSize <= 0) return 1;
+    return rootFontSize / 16;
+  };
+
+  const [rootFontScale, setRootFontScale] = useState(readRootFontScale);
+  const baseComposerHeight = (isSmallScreen ? 44 : 48) * rootFontScale;
+  const maxComposerHeight = 128 * rootFontScale;
+  const composerFontSize = (isSmallScreen ? 15 : 14) * rootFontScale;
+  const composerLineHeight = (isSmallScreen ? 24 : 20) * rootFontScale;
+
+  const resizeComposer = (node: HTMLTextAreaElement) => {
+    node.style.height = "auto";
+    const nextHeight = Math.min(Math.max(node.scrollHeight, baseComposerHeight), maxComposerHeight);
+    node.style.height = `${nextHeight}px`;
+    composerHeightRef.current = nextHeight;
+  };
+
   // Auto-adjust textarea height when composerText changes programmatically
   // (e.g. mention selection). Skips when handleChange already handled resize.
   useEffect(() => {
@@ -115,15 +135,32 @@ export function ChatComposer({
 
     const rafId = requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        el.style.height = "auto";
-        const nextHeight = Math.min(el.scrollHeight, 140);
-        el.style.height = `${nextHeight}px`;
-        composerHeightRef.current = nextHeight;
+        resizeComposer(el);
       });
     });
 
     return () => cancelAnimationFrame(rafId);
-  }, [composerText, composerRef]);
+  }, [baseComposerHeight, composerText, composerRef, maxComposerHeight]);
+
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+
+    let rafId = 0;
+    const observer = new MutationObserver(() => {
+      setRootFontScale(readRootFontScale());
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        resizeComposer(el);
+      });
+    });
+
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+    return () => {
+      cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
+  }, [composerRef]);
 
   useEffect(() => {
     if (!showModeMenu) return;
@@ -148,7 +185,7 @@ export function ChatComposer({
   const chipBaseClass =
     "flex-shrink-0 whitespace-nowrap text-[10px] sm:text-[11px] px-2.5 sm:px-3 rounded-full border transition-all flex items-center justify-center font-medium";
   const composerToolButtonClass =
-    "glass-btn flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl sm:rounded-2xl border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] transition-[background-color,border-color,color,transform,box-shadow] duration-200 disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-70";
+    "glass-btn flex flex-shrink-0 items-center justify-center rounded-xl sm:rounded-2xl border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] transition-[background-color,border-color,color,transform,box-shadow] duration-200 disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-70";
   const composerInlineToolButtonClass =
     "glass-btn flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] transition-[background-color,border-color,color,transform,box-shadow] duration-200 sm:h-10 sm:w-10";
 
@@ -214,10 +251,7 @@ export function ChatComposer({
     const target = e.target;
     // Use requestAnimationFrame to avoid forced reflow during layout.
     requestAnimationFrame(() => {
-      target.style.height = "auto";
-      const nextHeight = Math.min(target.scrollHeight, 140);
-      target.style.height = `${nextHeight}px`;
-      composerHeightRef.current = nextHeight;
+      resizeComposer(target);
     });
 
     // Detect @ mentions for the recipient helper menu.
@@ -390,18 +424,10 @@ export function ChatComposer({
   return (
     <footer
       className={classNames(
-        "flex-shrink-0 border-t px-3 sm:px-4 pt-3 sm:pt-4 pb-2.5 sm:pb-3.5 safe-area-bottom-compact transition-colors",
+        "flex-shrink-0 border-t px-3 sm:px-4 py-2.5 sm:py-3 safe-area-bottom-compact transition-colors",
         isDark ? "border-white/5 bg-slate-950/72 backdrop-blur-md" : "border-black/5 bg-white/78 backdrop-blur-md"
       )}
     >
-      <div
-        className={classNames(
-          "rounded-[1.5rem] border px-3 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)] sm:px-4 sm:py-4",
-          isDark
-            ? "border-white/8 bg-white/[0.04]"
-            : "border-black/5 bg-white/70"
-        )}
-      >
         {/* Reply indicator */}
         {replyTarget && (
           <div className={classNames(
@@ -634,9 +660,10 @@ export function ChatComposer({
           <button
             className={classNames(
               composerToolButtonClass,
-              "self-end mb-0.5",
+              "self-end",
               busy !== "send" && selectedGroupId && !isCrossGroup && "hover:text-[var(--color-text-primary)] active:scale-95"
             )}
+            style={{ width: `${baseComposerHeight}px`, height: `${baseComposerHeight}px` }}
             onClick={() => fileInputRef.current?.click()}
             disabled={!selectedGroupId || busy === "send" || isCrossGroup}
             aria-label={t('attachFile')}
@@ -650,12 +677,18 @@ export function ChatComposer({
             <textarea
               ref={composerRef as RefObject<HTMLTextAreaElement>}
               className={classNames(
-                  "w-full rounded-xl sm:rounded-2xl border px-3.5 sm:px-5 pr-10 sm:pr-14 py-2.5 sm:py-3.5 text-[15px] sm:text-sm resize-none min-h-[40px] sm:min-h-[48px] max-h-[128px] overflow-y-auto scrollbar-hide transition-all duration-300 ease-out",
+                  "w-full rounded-xl sm:rounded-2xl border px-3.5 sm:px-5 pr-10 sm:pr-14 py-2.5 sm:py-3.5 resize-none overflow-y-auto scrollbar-hide transition-all duration-300 ease-out",
                   "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center shadow-sm",
                   isDark
                   ? "bg-white/[0.08] border-white/[0.1] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:ring-blue-500/35 focus:border-blue-400/45"
                   : "bg-black/5 border-transparent text-gray-900 placeholder-gray-400 focus:ring-blue-400/30 focus:border-blue-400/40"
               )}
+              style={{
+                minHeight: `${baseComposerHeight}px`,
+                maxHeight: `${maxComposerHeight}px`,
+                fontSize: `${composerFontSize}px`,
+                lineHeight: `${composerLineHeight}px`,
+              }}
               placeholder={isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop')}
               rows={1}
               value={composerText}
@@ -809,12 +842,16 @@ export function ChatComposer({
           {/* Send button - Using icon for modern feel */}
           <button
             className={classNames(
-              "h-10 w-10 self-end mb-0.5 sm:min-w-[6.25rem] sm:h-11 sm:px-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all duration-300 ease-out flex-shrink-0",
-              "border",
+              composerToolButtonClass,
+              "self-end sm:min-w-[6.25rem] sm:px-3",
               busy === "send" || !canSend
                 ? isDark ? "border-white/[0.12] bg-white/[0.08] text-[var(--color-text-tertiary)] shadow-none disabled:opacity-100" : "border-gray-200 bg-gray-100 text-gray-400 shadow-none disabled:opacity-100"
                 : "border-blue-500 bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/30 active:scale-95 active:shadow-sm group"
             )}
+            style={{
+              height: `${baseComposerHeight}px`,
+              width: isSmallScreen ? `${baseComposerHeight}px` : undefined,
+            }}
             onClick={onSendMessage}
             disabled={busy === "send" || !canSend}
             aria-label={t('sendMessage')}
@@ -830,7 +867,6 @@ export function ChatComposer({
             )}
           </button>
         </div>
-      </div>
     </footer>
   );
 }

@@ -345,8 +345,8 @@ class PtySession:
             if chunk is None:
                 self._running = False
                 break
+            self._append_backlog(chunk)
             with self._lock:
-                self._append_backlog(chunk)
                 clients = list(self._clients.items())
             for fileno, client in clients:
                 if self._max_client_buffer_bytes and (len(client.outbuf) + len(chunk) > self._max_client_buffer_bytes):
