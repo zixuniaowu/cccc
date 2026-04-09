@@ -26,7 +26,7 @@ import {
     normalizeStreamingActivities,
     StreamingMessageBody,
 } from "./messageBubble/StreamingMessageBody";
-import { formatEventLine } from "./messageBubble/helpers";
+import { formatEventLine, mayContainMarkdown } from "./messageBubble/helpers";
 
 const LazyMarkdownRenderer = lazy(() =>
     import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
@@ -73,15 +73,6 @@ function PlainMessageText({
             {text}
         </div>
     );
-}
-
-function mayContainMarkdown(text: string): boolean {
-    const value = String(text || "");
-    if (!value.trim()) return false;
-    // Internal delivery manifests should stay compact plain text instead of
-    // picking up prose list spacing from Markdown rendering.
-    if (/^\[cccc\]\s+(Attachments|References):/m.test(value)) return false;
-    return /(```|`[^`\n]+`|\[[^\]]+\]\([^)]+\)|^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\s*>\s)/m.test(value);
 }
 
 async function copyText(value: string): Promise<boolean> {

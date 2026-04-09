@@ -40,6 +40,10 @@ export function sliceStreamingActivities(activities: StreamingActivity[] | undef
   return dedupeStreamingActivities(activities).slice(-STREAMING_ACTIVITY_LOG_LIMIT);
 }
 
+export function normalizeStreamingActivityLog(activities: StreamingActivity[] | undefined): StreamingActivity[] {
+  return dedupeStreamingActivities(activities);
+}
+
 export function normalizeReplySessionTimestamp(ts?: string): number {
   const ms = Date.parse(String(ts || ""));
   return Number.isFinite(ms) ? ms : Date.now();

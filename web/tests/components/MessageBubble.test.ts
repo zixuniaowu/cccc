@@ -7,6 +7,7 @@ import {
   getStreamingPendingDelayMs,
   getStreamingPlaceholderText,
   isQueuedOnlyStreamingPlaceholder,
+  mayContainMarkdown,
   shouldReserveStreamingStatusSpace,
   shouldRenderStreamingStatusPanel,
 } from "../../src/components/messageBubble/helpers";
@@ -180,6 +181,23 @@ describe("getMessageBubbleMotionClass", () => {
       isOptimistic: false,
       streamPhase: "final_answer",
     })).toBe("");
+  });
+});
+
+describe("mayContainMarkdown", () => {
+  it("detects GitHub-style tables so completed chat bubbles render markdown tables", () => {
+    expect(mayContainMarkdown([
+      "本周天气如下：",
+      "",
+      "| 日期 | 天气 | 温度 |",
+      "| --- | --- | --- |",
+      "| 周一 | 晴 | 24°C |",
+      "| 周二 | 多云 | 22°C |",
+    ].join("\n"))).toBe(true);
+  });
+
+  it("keeps internal attachment manifests as plain text", () => {
+    expect(mayContainMarkdown("[cccc] Attachments:\n- file.txt")).toBe(false);
   });
 });
 

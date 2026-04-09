@@ -10,7 +10,7 @@ import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/act
 import { CapabilityPicker } from "../CapabilityPicker";
 import { RolePresetPicker } from "../RolePresetPicker";
 import { ActorAvatarField } from "../ActorAvatarField";
-import { supportsStandardWebHeadlessRuntime } from "../../utils/headlessRuntimeSupport";
+import { normalizeActorRunner, supportsStandardWebHeadlessRuntime } from "../../utils/headlessRuntimeSupport";
 
 type EditMode = "custom" | "profile";
 
@@ -187,7 +187,7 @@ export function EditActorModal({
     [actorProfiles, attachProfileId]
   );
   const selectedProfileName = String(selectedProfile?.name || "").trim();
-  const selectedProfileRunner = String(selectedProfile?.runner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty";
+  const selectedProfileRunner = normalizeActorRunner(selectedProfile?.runner);
 
   const secretsPlaceholder = SECRETS_PLACEHOLDER[runtime] ?? DEFAULT_SECRETS_PLACEHOLDER;
 
@@ -453,7 +453,7 @@ export function EditActorModal({
       try {
         await callback({
           mode: "profile",
-          runner: String(selectedProfile?.runner || runner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty",
+          runner: normalizeActorRunner(selectedProfile?.runner || runner),
           setVars: {},
           unsetKeys: [],
           clear: false,

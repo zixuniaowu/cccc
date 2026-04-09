@@ -15,7 +15,7 @@ import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, Rocket
 import { ScrollFade } from "./ScrollFade";
 import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
-import { supportsStandardWebHeadlessRuntime } from "../utils/headlessRuntimeSupport";
+import { getEffectiveActorRunner, supportsStandardWebHeadlessRuntime } from "../utils/headlessRuntimeSupport";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
@@ -69,7 +69,7 @@ export function AgentTab({
   const { t } = useTranslation('actors');
   // Derived state (must be defined before refs that use them)
   const { isRunning, workingState } = useActorDisplayState({ groupId, actor });
-  const effectiveRunner = String(actor.runner_effective || actor.runner || "pty").trim() || "pty";
+  const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
   const canControl = !readOnly;
   const latestHeadlessText = useGroupStore((state) => {

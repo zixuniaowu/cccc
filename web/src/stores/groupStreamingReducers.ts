@@ -2,8 +2,8 @@ import type { LedgerEvent, StreamingActivity } from "../types";
 import {
   type StreamingReplySession,
   dedupeStreamingActivities,
+  normalizeStreamingActivityLog,
   normalizeReplySessionTimestamp,
-  sliceStreamingActivities,
   upsertReplySession,
   migrateReplySession,
 } from "./chatStreamingSessions";
@@ -199,7 +199,7 @@ export function upsertStreamingActivitiesPatch(
 ): StreamingChatBucketPatch | null {
   const targetStreamId = String(streamId || "").trim();
   if (!targetStreamId) return null;
-  const nextActivities = sliceStreamingActivities(activities);
+  const nextActivities = normalizeStreamingActivityLog(activities);
   const previousActivities = bucket.streamingActivitiesByStreamId[targetStreamId] || [];
   if (JSON.stringify(previousActivities) === JSON.stringify(nextActivities)) return null;
   return {
@@ -299,7 +299,7 @@ export function upsertStreamingActivityPatch(
     : {};
   targetStreamId = streamId || String(data.stream_id || "").trim() || `pending:${pendingEventId}:${targetActorId}`;
   const previousActivities = Array.isArray(data.activities) ? data.activities : [];
-  const nextActivities = sliceStreamingActivities(
+  const nextActivities = normalizeStreamingActivityLog(
     dedupeStreamingActivities(previousActivities.concat(nextActivity))
       .sort((left, right) => String(left.ts || "").localeCompare(String(right.ts || ""))),
   );
@@ -614,7 +614,7 @@ export function reconcileStreamingMessagePatch(
     : findLatestBindableLocalPlaceholderIndex(nextStreamingEvents, targetActorId);
 
   let previousStreamId = "";
-  const normalizedActivities = sliceStreamingActivities(args.activities);
+  const normalizedActivities = normalizeStreamingActivityLog(args.activities);
   let carriedActivities: StreamingActivity[] = [];
   if (targetIndex >= 0) {
     const target = nextStreamingEvents[targetIndex];
@@ -630,7 +630,7 @@ export function reconcileStreamingMessagePatch(
       }
       : {};
     previousStreamId = String(data.stream_id || "").trim();
-    carriedActivities = Array.isArray(data.activities) ? sliceStreamingActivities(data.activities) : [];
+    carriedActivities = Array.isArray(data.activities) ? normalizeStreamingActivityLog(data.activities) : [];
     nextStreamingEvents[targetIndex] = {
       ...target,
       ts: args.ts || target.ts,
@@ -671,7 +671,7 @@ export function reconcileStreamingMessagePatch(
   }
 
   if (carriedActivities.length <= 0 && previousStreamId) {
-    carriedActivities = sliceStreamingActivities(bucket.streamingActivitiesByStreamId[previousStreamId] || []);
+    carriedActivities = normalizeStreamingActivityLog(bucket.streamingActivitiesByStreamId[previousStreamId] || []);
   }
 
   const effectiveActivities = normalizedActivities.length > 0 ? normalizedActivities : carriedActivities;

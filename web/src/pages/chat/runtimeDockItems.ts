@@ -1,4 +1,5 @@
 import type { Actor } from "../../types";
+import { getEffectiveActorRunner } from "../../utils/headlessRuntimeSupport";
 import type { LiveWorkCard } from "./liveWorkCards";
 
 export type RuntimeDockRunner = "pty" | "headless";
@@ -14,8 +15,7 @@ export type RuntimeDockItem = {
 };
 
 function getRuntimeDockRunner(actor: Actor): RuntimeDockRunner {
-  const runner = String(actor.runner_effective || actor.runner || "pty").trim().toLowerCase();
-  return runner === "headless" ? "headless" : "pty";
+  return getEffectiveActorRunner(actor);
 }
 
 export function buildRuntimeDockItems(args: {

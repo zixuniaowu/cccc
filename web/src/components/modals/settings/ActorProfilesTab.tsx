@@ -5,7 +5,7 @@ import { ActorProfile, ActorProfileUsage, RUNTIME_INFO, SUPPORTED_RUNTIMES } fro
 import * as api from "../../../services/api";
 import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../../utils/privateEnvInput";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../../utils/capabilityAutoload";
-import { supportsStandardWebHeadlessRuntime } from "../../../utils/headlessRuntimeSupport";
+import { normalizeActorRunner, supportsStandardWebHeadlessRuntime } from "../../../utils/headlessRuntimeSupport";
 import { useGroupStore } from "../../../stores";
 import {
   cardClass,
@@ -76,10 +76,7 @@ function modeButtonClass(selected: boolean): string {
 
 function buildEditor(profile?: ActorProfile | null): EditorState {
   const runtime = String(profile?.runtime || "codex");
-  const runner = supportsStandardWebHeadlessRuntime(runtime)
-    && String(profile?.runner || "pty").trim().toLowerCase() === "headless"
-      ? "headless"
-      : "pty";
+  const runner = supportsStandardWebHeadlessRuntime(runtime) ? normalizeActorRunner(profile?.runner) : "pty";
   const command = formatCommand(profile?.command);
   const defaultCommand = defaultCommandForRuntime(runtime);
   const useDefaultCommand =

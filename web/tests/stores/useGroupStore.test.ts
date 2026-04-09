@@ -1201,6 +1201,75 @@ describe("useGroupStore streaming placeholder cleanup", () => {
     expect(bucket.latestActorActivitiesByActorId["peer-1"]).toBeUndefined();
   });
 
+  it("keeps recent headless preview sessions per actor instead of only the latest one", async () => {
+    const mod = await importFreshStore();
+
+    mod.useGroupStore.getState().reconcileStreamingMessage({
+      actorId: "peer-1",
+      pendingEventId: "evt-older",
+      streamId: "stream-older",
+      ts: "2026-04-09T10:00:00Z",
+      fullText: "Older answer",
+      eventText: "Older answer",
+      activities: [{ id: "activity-older", kind: "thinking", status: "completed", summary: "Reviewed prior output", ts: "2026-04-09T09:59:59Z" }],
+      completed: true,
+      transientStream: false,
+      phase: "final_answer",
+      groupId: "g-demo",
+    });
+
+    mod.useGroupStore.getState().reconcileStreamingMessage({
+      actorId: "peer-1",
+      pendingEventId: "evt-newer",
+      streamId: "stream-newer",
+      ts: "2026-04-09T10:05:00Z",
+      fullText: "Newer answer",
+      eventText: "Newer answer",
+      activities: [{ id: "activity-newer", kind: "tool", status: "started", summary: "Opened reducer file", ts: "2026-04-09T10:04:58Z" }],
+      completed: false,
+      transientStream: false,
+      phase: "final_answer",
+      groupId: "g-demo",
+    });
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.previewSessionsByActorId["peer-1"]?.map((session) => session.pendingEventId)).toEqual([
+      "evt-older",
+      "evt-newer",
+    ]);
+    expect(bucket.latestActorPreviewByActorId["peer-1"]?.pendingEventId).toBe("evt-newer");
+    expect(bucket.latestActorTextByActorId["peer-1"]).toBe("Newer answer");
+  });
+
+  it("preserves activity history in state beyond the old twelve-item limit", async () => {
+    const mod = await importFreshStore();
+    const activities = Array.from({ length: 14 }, (_, index) => ({
+      id: `activity-${index + 1}`,
+      kind: "tool",
+      status: "completed",
+      summary: `step ${index + 1}`,
+      ts: `2026-04-09T10:${String(index).padStart(2, "0")}:00Z`,
+    }));
+
+    mod.useGroupStore.getState().reconcileStreamingMessage({
+      actorId: "peer-1",
+      pendingEventId: "evt-many-activities",
+      streamId: "stream-many-activities",
+      ts: "2026-04-09T10:14:30Z",
+      fullText: "Final answer with full trace",
+      eventText: "Final answer with full trace",
+      activities,
+      completed: false,
+      transientStream: false,
+      phase: "final_answer",
+      groupId: "g-demo",
+    });
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingActivitiesByStreamId["stream-many-activities"]).toHaveLength(14);
+    expect(bucket.previewSessionsByActorId["peer-1"]?.[0]?.activities).toHaveLength(14);
+  });
+
   it("clearEmptyStreamingEventsForActor preserves non-queued process bubbles", async () => {
     const mod = await importFreshStore();
     mod.useGroupStore.getState().upsertStreamingEvent({

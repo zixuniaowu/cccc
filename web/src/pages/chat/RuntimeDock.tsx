@@ -7,6 +7,7 @@ import { useActorDisplayState } from "../../hooks/useActorDisplayState";
 import type { StreamingActivity, Actor } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { formatTime } from "../../utils/time";
+import { buildHeadlessPreviewTimelineEntries } from "./headlessPreviewTimeline";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 
@@ -35,12 +36,13 @@ type RuntimeRingPresentation = {
 type PreviewAlignment = "start" | "center" | "end";
 
 type HeadlessPreviewData = {
-  transcriptBlocks: LiveWorkCard["transcriptBlocks"];
-  activities: StreamingActivity[];
+  previewSessions: NonNullable<LiveWorkCard["previewSessions"]>;
+  fallbackActivities: StreamingActivity[];
   latestText: string;
 };
 
 const EMPTY_ACTIVITIES: StreamingActivity[] = [];
+const EMPTY_PREVIEW_SESSIONS: NonNullable<LiveWorkCard["previewSessions"]> = [];
 const AUTO_PREVIEW_CLOSE_DELAY_MS = 1800;
 const LazyMarkdownRenderer = lazy(() =>
   import("../../components/MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
@@ -92,6 +94,28 @@ function getRunnerLabel(runner: RuntimeDockItem["runner"], t: (key: string, opti
     return t("runtimeDockRunnerHeadless", { defaultValue: "Headless" });
   }
   return t("runtimeDockRunnerPty", { defaultValue: "PTY" });
+}
+
+function formatPreviewActivityKind(kind: string): string {
+  const normalizedKind = String(kind || "").trim().toLowerCase();
+  switch (normalizedKind) {
+    case "thinking":
+      return "Thinking";
+    case "tool":
+      return "Tool";
+    case "search":
+      return "Search";
+    case "command":
+      return "Command";
+    case "patch":
+      return "Patch";
+    case "plan":
+      return "Plan";
+    case "reply":
+      return "Reply";
+    default:
+      return normalizedKind ? normalizedKind.replace(/_/g, " ") : "Activity";
+  }
 }
 
 function getPreviewAlignment(index: number, count: number): PreviewAlignment {
@@ -232,24 +256,18 @@ function getHeadlessPreviewData(item: RuntimeDockItem, args: {
 }): HeadlessPreviewData {
   const fallbackText = String(item.liveWorkCard?.text || args.fallbackText || "").trim();
   const fallbackActivities = Array.isArray(item.liveWorkCard?.activities) ? item.liveWorkCard?.activities || EMPTY_ACTIVITIES : EMPTY_ACTIVITIES;
-  const transcriptBlocks = Array.isArray(item.liveWorkCard?.transcriptBlocks) && item.liveWorkCard.transcriptBlocks.length > 0
-    ? item.liveWorkCard.transcriptBlocks
-    : (fallbackText
-      ? [{
-          id: `fallback:${item.actorId}:${String(item.liveWorkCard?.pendingEventId || item.liveWorkCard?.streamId || "preview")}`,
-          streamId: String(item.liveWorkCard?.streamId || "").trim(),
-          streamPhase: String(item.liveWorkCard?.streamPhase || "").trim().toLowerCase(),
-          text: fallbackText,
-          updatedAt: String(item.liveWorkCard?.updatedAt || "").trim(),
-          completed: item.liveWorkCard?.phase === "completed",
-          transient: item.liveWorkCard?.streamPhase === "commentary",
-        }]
-      : []);
+  const previewSessions = Array.isArray(item.liveWorkCard?.previewSessions) && item.liveWorkCard.previewSessions.length > 0
+    ? item.liveWorkCard.previewSessions
+    : EMPTY_PREVIEW_SESSIONS;
   return {
-    transcriptBlocks,
-    activities: fallbackActivities,
+    previewSessions,
+    fallbackActivities,
     latestText: fallbackText,
   };
+}
+
+function shouldRenderPreviewMarkdown(streamPhase: string | null | undefined): boolean {
+  return String(streamPhase || "").trim().toLowerCase() === "final_answer";
 }
 
 function getPreviewPositionClasses(alignment: PreviewAlignment): { container: string; origin: string } {
@@ -269,11 +287,23 @@ function isHeadlessCardPreviewActive(card: LiveWorkCard | null | undefined): boo
 
 function hasTranscriptContent(card: LiveWorkCard | null | undefined): boolean {
   if (!card) return false;
+  if (Array.isArray(card.previewSessions) && card.previewSessions.some((session) => {
+    const hasSessionTranscript = Array.isArray(session.transcriptBlocks)
+      && session.transcriptBlocks.some((block) => String(block.text || "").trim());
+    return hasSessionTranscript || Boolean(String(session.latestText || "").trim());
+  })) return true;
   return card.transcriptBlocks.some((block) => String(block.text || "").trim()) || Boolean(String(card.text || "").trim());
 }
 
 function hasSubstantiveActivity(card: LiveWorkCard | null | undefined): boolean {
   if (!card) return false;
+  if (Array.isArray(card.previewSessions) && card.previewSessions.some((session) =>
+    session.activities.some((activity) => {
+      const summary = String(activity.summary || "").trim();
+      const kind = String(activity.kind || "").trim().toLowerCase();
+      return summary && !(kind === "queued" && summary.toLowerCase() === "queued");
+    })
+  )) return true;
   return card.activities.some((activity) => {
     const summary = String(activity.summary || "").trim();
     const kind = String(activity.kind || "").trim().toLowerCase();
@@ -313,14 +343,26 @@ function HeadlessPreviewSurface({
   const { t } = useTranslation(["chat", "actors"]);
   const outputRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
-  const transcriptBlocks = data.transcriptBlocks.filter((block) => String(block.text || "").trim());
   const updatedAt = String(item.liveWorkCard?.updatedAt || "").trim();
   const updatedLabel = updatedAt
     ? t("chat:updated", { time: formatTime(updatedAt), defaultValue: `Updated ${formatTime(updatedAt)}` })
     : "";
-  const activityFeed = data.activities.slice(-8).filter((activity) => String(activity.summary || "").trim());
-  const hasTranscriptBlocks = transcriptBlocks.length > 0;
-  const fallbackText = String(data.latestText || "").trim();
+  const timelineEntries = useMemo(
+    () => buildHeadlessPreviewTimelineEntries({
+      previewSessions: data.previewSessions,
+      fallbackText: data.latestText,
+      fallbackActivities: data.fallbackActivities,
+      fallbackUpdatedAt: String(item.liveWorkCard?.updatedAt || "").trim(),
+      fallbackPendingEventId: String(item.liveWorkCard?.pendingEventId || item.liveWorkCard?.streamId || `preview:${item.actorId}`).trim(),
+      fallbackStreamId: String(item.liveWorkCard?.streamId || "").trim(),
+      fallbackStreamPhase: String(item.liveWorkCard?.streamPhase || "").trim().toLowerCase(),
+    }),
+    [data.fallbackActivities, data.latestText, data.previewSessions, item.actorId, item.liveWorkCard?.pendingEventId, item.liveWorkCard?.streamId, item.liveWorkCard?.streamPhase, item.liveWorkCard?.updatedAt]
+  );
+  const sessionCount = data.previewSessions.length > 0 ? data.previewSessions.length : (timelineEntries.length > 0 ? 1 : 0);
+  const hasTimelineEntries = timelineEntries.length > 0;
+  const latestTimelineEntry = timelineEntries[timelineEntries.length - 1];
+  const latestTimelineSignal = latestTimelineEntry ? `${latestTimelineEntry.id}:${latestTimelineEntry.ts}:${latestTimelineEntry.live ? "live" : "static"}` : "";
 
   useEffect(() => {
     shouldStickToBottomRef.current = true;
@@ -333,7 +375,7 @@ function HeadlessPreviewSurface({
     const node = outputRef.current;
     if (!node || !shouldStickToBottomRef.current) return;
     node.scrollTop = node.scrollHeight;
-  }, [activityFeed.length, item.liveWorkCard?.updatedAt, transcriptBlocks.length, transcriptBlocks[transcriptBlocks.length - 1]?.updatedAt]);
+  }, [latestTimelineSignal, timelineEntries.length]);
 
   return (
     <section
@@ -392,111 +434,112 @@ function HeadlessPreviewSurface({
         </div>
       </div>
 
+      <div className={classNames("mt-4 text-[11px] font-semibold uppercase tracking-[0.16em]", isDark ? "text-cyan-200" : "text-cyan-700")}>
+        {t("chat:runtimeDockPreviewLiveOutput", { defaultValue: "Live output" })}
+      </div>
+
       <div
+        ref={outputRef}
+        onScroll={() => {
+          const node = outputRef.current;
+          if (!node) return;
+          shouldStickToBottomRef.current = node.scrollTop + node.clientHeight >= node.scrollHeight - 24;
+        }}
         className={classNames(
-          "mt-4 rounded-[22px] border px-4 py-4",
-          isDark ? "border-white/8 bg-black/55" : "border-black/8 bg-slate-950 text-slate-100"
+          "mt-2 min-h-[320px] max-h-[min(68vh,560px)] overflow-y-auto pr-2",
+          isDark ? "text-slate-100" : "text-gray-900"
         )}
       >
-        <div className={classNames("text-[11px] font-semibold uppercase tracking-[0.16em]", isDark ? "text-cyan-200" : "text-cyan-300")}>
-          {t("chat:runtimeDockPreviewLiveOutput", { defaultValue: "Live output" })}
-        </div>
-
-        <div
-          ref={outputRef}
-          onScroll={() => {
-            const node = outputRef.current;
-            if (!node) return;
-            shouldStickToBottomRef.current = node.scrollTop + node.clientHeight >= node.scrollHeight - 24;
-          }}
-          className="mt-3 min-h-[320px] max-h-[min(68vh,560px)] overflow-y-auto pr-2 text-slate-100"
-        >
-          {hasTranscriptBlocks ? (
-            <div className="space-y-3 pb-3">
-              {transcriptBlocks.map((block, index) => {
-                const blockPhase = String(block.streamPhase || "").trim().toLowerCase();
-                const phaseLabel = blockPhase === "final_answer"
-                  ? t("chat:liveWorkPhaseFinalAnswer", { defaultValue: "Final answer" })
-                  : blockPhase === "commentary"
-                    ? t("chat:liveWorkPhaseCommentary", { defaultValue: "Commentary" })
-                    : t("chat:runtimeDockPreviewLiveOutput", { defaultValue: "Live output" });
-                const isRenderableMarkdown = blockPhase === "final_answer" && block.completed;
+          {hasTimelineEntries ? (
+            <div className="space-y-2.5 pb-3">
+              {timelineEntries.map((entry, index) => {
+                const previousEntry = index > 0 ? timelineEntries[index - 1] : null;
+                const showSessionDivider = sessionCount > 1 && previousEntry?.pendingEventId !== entry.pendingEventId;
                 return (
-                  <article
-                    key={block.id || `${block.streamId}:${index}`}
-                    className="rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3"
-                  >
-                    <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                      <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[9px] text-slate-300">
-                        {phaseLabel}
-                      </span>
-                      {!block.completed ? (
-                        <span className="inline-flex items-center gap-1 text-cyan-200">
-                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
-                          {t("chat:liveWorkPhaseWorking", { defaultValue: "Live" })}
+                  <div key={entry.id} className="space-y-2.5">
+                    {showSessionDivider ? (
+                      <div className="flex items-center gap-3 py-1">
+                        <span className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")} />
+                        <span className={classNames("shrink-0 text-[10px] font-medium uppercase tracking-[0.14em]", isDark ? "text-slate-500" : "text-slate-500")}>
+                          {entry.ts ? formatTime(entry.ts) : t("chat:liveWorkPhaseCompleted", { defaultValue: "Recent" })}
                         </span>
-                      ) : null}
-                    </div>
+                        <span className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")} />
+                      </div>
+                    ) : null}
 
-                    <div className="mt-2">
-                      {isRenderableMarkdown ? (
-                        <Suspense fallback={<div className="whitespace-pre-wrap break-words text-[13px] leading-6 text-slate-100">{block.text}</div>}>
-                          <LazyMarkdownRenderer
-                            content={block.text}
-                            invertText
-                            className="text-[13px] leading-6 [&_p]:mb-3 [&_pre]:border [&_pre]:border-white/10 [&_pre]:bg-white/[0.03] [&_pre]:p-3 [&_.code-block-header]:rounded-t-2xl [&_.code-block-header]:border [&_.code-block-header]:border-white/10 [&_.code-block-header]:bg-white/[0.04] [&_.code-block-header]:px-3 [&_.code-block-header]:py-2 [&_.code-block-header]:text-slate-300"
+                    {entry.kind === "message" ? (
+                      <div className="grid grid-cols-[10px_minmax(0,1fr)] gap-3">
+                        <div className="pt-2">
+                          <span
+                            className={classNames(
+                              "block h-2.5 w-2.5 rounded-full",
+                              entry.streamPhase === "final_answer"
+                                ? (entry.live ? (isDark ? "bg-sky-300" : "bg-sky-500") : (isDark ? "bg-sky-300/50" : "bg-sky-500/45"))
+                                : (entry.live ? (isDark ? "bg-cyan-300" : "bg-cyan-500") : (isDark ? "bg-white/30" : "bg-slate-400"))
+                            )}
                           />
-                        </Suspense>
-                      ) : (
-                        <div className="whitespace-pre-wrap break-words text-[13px] leading-6 text-slate-100">
-                          {block.text}
                         </div>
-                      )}
-                    </div>
-                  </article>
+                        <div className={classNames("min-w-0 border-l pl-3", entry.streamPhase === "final_answer"
+                          ? (isDark ? "border-sky-300/30" : "border-sky-500/26")
+                          : (isDark ? "border-white/10" : "border-slate-200"))}>
+                          {shouldRenderPreviewMarkdown(entry.streamPhase) ? (
+                            <Suspense
+                              fallback={
+                                <div className={classNames("whitespace-pre-wrap break-words text-[13px] leading-6", isDark ? "text-slate-100" : "text-gray-900")}>
+                                  {entry.text}
+                                </div>
+                              }
+                            >
+                              <LazyMarkdownRenderer
+                                content={entry.text}
+                                isDark={isDark}
+                                invertText={isDark}
+                                className={classNames(
+                                  "text-[13px] leading-6 [&_p]:mb-3 [&_pre]:border [&_pre]:p-3 [&_.code-block-header]:rounded-t-2xl [&_.code-block-header]:border [&_.code-block-header]:px-3 [&_.code-block-header]:py-2",
+                                  isDark
+                                    ? "[&_pre]:border-white/10 [&_pre]:bg-white/[0.03] [&_.code-block-header]:border-white/10 [&_.code-block-header]:bg-white/[0.04] [&_.code-block-header]:text-slate-300"
+                                    : "[&_pre]:border-slate-200 [&_pre]:bg-white [&_.code-block-header]:border-slate-200 [&_.code-block-header]:bg-slate-100 [&_.code-block-header]:text-slate-600"
+                                )}
+                              />
+                            </Suspense>
+                          ) : (
+                            <div className={classNames("whitespace-pre-wrap break-words text-[13px] leading-6", isDark ? "text-slate-100" : "text-gray-900")}>
+                              {entry.text}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-[10px_minmax(0,1fr)] gap-3">
+                        <div className="pt-[0.4rem]">
+                          <span className={classNames("block h-2.5 w-2.5 rounded-full", entry.live ? (isDark ? "bg-cyan-300" : "bg-cyan-500") : (isDark ? "bg-white/20" : "bg-slate-400"))} />
+                        </div>
+                        <div className={classNames("min-w-0 rounded-xl px-3 py-2", isDark ? "bg-white/[0.03]" : "bg-slate-50")}>
+                          <div className="flex flex-wrap items-baseline gap-2">
+                            <span className={classNames("shrink-0 font-mono text-[10px] uppercase tracking-[0.14em]", isDark ? "text-slate-400" : "text-slate-500")}>
+                              {formatPreviewActivityKind(entry.activity.kind)}
+                            </span>
+                            <span className={classNames("min-w-0 flex-1 break-words text-[12px] leading-5", isDark ? "text-slate-100" : "text-gray-900")}>
+                              {entry.activity.summary}
+                            </span>
+                          </div>
+                          {entry.activity.detail ? (
+                            <div className={classNames("mt-0.5 break-words pl-[4.1rem] text-[11px] leading-4", isDark ? "text-slate-400" : "text-slate-500")}>
+                              {entry.activity.detail}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
-          ) : fallbackText ? (
-            <div className="whitespace-pre-wrap break-words text-[13px] leading-6 text-slate-100">
-              {fallbackText}
-            </div>
-          ) : null}
-
-          {activityFeed.length > 0 ? (
-            <div className={classNames("space-y-1.5", hasTranscriptBlocks || fallbackText ? "border-t border-white/8 pt-3" : "") }>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                {t("chat:runtimeDockPreviewTrace", { defaultValue: "Trace" })}
-              </div>
-              {activityFeed.map((activity) => (
-                <div key={activity.id} className="flex items-start gap-2 rounded-xl border border-white/6 bg-white/[0.02] px-2.5 py-2">
-                  <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-300/90" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                        {String(activity.kind || "trace").trim() || "trace"}
-                      </span>
-                      <span className="min-w-0 flex-1 break-words text-[12px] leading-5 text-slate-100">
-                        {activity.summary}
-                      </span>
-                    </div>
-                    {activity.detail ? (
-                      <div className="mt-0.5 break-words text-[11px] leading-4 text-slate-400">
-                        {activity.detail}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          {!hasTranscriptBlocks && !fallbackText && activityFeed.length <= 0 ? (
+          ) : (
             <div className={classNames("text-sm", isDark ? "text-slate-500" : "text-slate-400")}>
               {t("actors:noStreamingOutputYet", { defaultValue: "There is no streaming output to show yet." })}
             </div>
-          ) : null}
-        </div>
+          )}
       </div>
     </section>
   );
@@ -769,6 +812,7 @@ export function RuntimeDock({
   const { t } = useTranslation("chat");
   const [preview, setPreview] = useState<PreviewState>(null);
   const previewCloseTimerRef = useRef<number | null>(null);
+  const previewSyncTimerRef = useRef<number | null>(null);
   const lastAutoPreviewSignalRef = useRef("");
 
   const items = useMemo(() => buildRuntimeDockItems({ actors: runtimeActors, liveWorkCards }), [runtimeActors, liveWorkCards]);
@@ -790,19 +834,65 @@ export function RuntimeDock({
     window.clearTimeout(previewCloseTimerRef.current);
     previewCloseTimerRef.current = null;
   }, []);
+  const clearPreviewSyncTimer = useCallback(() => {
+    if (previewSyncTimerRef.current === null) return;
+    window.clearTimeout(previewSyncTimerRef.current);
+    previewSyncTimerRef.current = null;
+  }, []);
+  const openPreview = useCallback((actorId: string, source: PreviewSource) => {
+    clearPreviewCloseTimer();
+    clearPreviewSyncTimer();
+    setPreview({ actorId, source, groupId });
+  }, [clearPreviewCloseTimer, clearPreviewSyncTimer, groupId]);
+
+  const closePreviewNow = useCallback((actorId: string, source: PreviewSource) => {
+    clearPreviewCloseTimer();
+    clearPreviewSyncTimer();
+    setPreview((current) => {
+      if (!current) return current;
+      if (current.actorId !== actorId) return current;
+      if (current.groupId !== groupId) return current;
+      if (current.source !== source) return current;
+      return null;
+    });
+  }, [clearPreviewCloseTimer, clearPreviewSyncTimer, groupId]);
+
+  const schedulePreviewClose = useCallback((actorId: string, source: PreviewSource) => {
+    clearPreviewCloseTimer();
+    clearPreviewSyncTimer();
+    previewCloseTimerRef.current = window.setTimeout(() => {
+      previewCloseTimerRef.current = null;
+      setPreview((current) => {
+        if (!current) return current;
+        if (current.actorId !== actorId) return current;
+        if (current.groupId !== groupId) return current;
+        if (current.source !== source) return current;
+        return null;
+      });
+    }, source === "hover" ? 220 : (source === "auto" ? AUTO_PREVIEW_CLOSE_DELAY_MS : 0));
+  }, [clearPreviewCloseTimer, clearPreviewSyncTimer, groupId]);
   const visiblePreview = useMemo(() => {
     if (!preview || preview.groupId !== groupId) return null;
     return items.some((item) => item.actorId === preview.actorId) ? preview : null;
   }, [groupId, items, preview]);
 
-  useEffect(() => () => clearPreviewCloseTimer(), [clearPreviewCloseTimer]);
+  useEffect(() => () => {
+    clearPreviewCloseTimer();
+    clearPreviewSyncTimer();
+  }, [clearPreviewCloseTimer, clearPreviewSyncTimer]);
 
   useEffect(() => {
     if (activeRuntimeActorId && preview?.source === "auto") {
       clearPreviewCloseTimer();
-      setPreview(null);
+      clearPreviewSyncTimer();
+      const actorId = preview.actorId;
+      previewSyncTimerRef.current = window.setTimeout(() => {
+        previewSyncTimerRef.current = null;
+        closePreviewNow(actorId, "auto");
+      }, 0);
+      return clearPreviewSyncTimer;
     }
-  }, [activeRuntimeActorId, clearPreviewCloseTimer, preview?.source]);
+  }, [activeRuntimeActorId, clearPreviewCloseTimer, clearPreviewSyncTimer, closePreviewNow, preview?.actorId, preview?.source]);
 
   useEffect(() => {
     if (activeRuntimeActorId) return;
@@ -822,38 +912,14 @@ export function RuntimeDock({
     if (lastAutoPreviewSignalRef.current === autoPreviewCandidate.signal) return;
     lastAutoPreviewSignalRef.current = autoPreviewCandidate.signal;
     clearPreviewCloseTimer();
-    setPreview({ actorId: autoPreviewCandidate.actorId, source: "auto", groupId });
-  }, [activeRuntimeActorId, autoPreviewCandidate, clearPreviewCloseTimer, groupId, preview]);
-
-  const openPreview = useCallback((actorId: string, source: PreviewSource) => {
-    clearPreviewCloseTimer();
-    setPreview({ actorId, source, groupId });
-  }, [clearPreviewCloseTimer, groupId]);
-
-  const closePreviewNow = useCallback((actorId: string, source: PreviewSource) => {
-    clearPreviewCloseTimer();
-    setPreview((current) => {
-      if (!current) return current;
-      if (current.actorId !== actorId) return current;
-      if (current.groupId !== groupId) return current;
-      if (current.source !== source) return current;
-      return null;
-    });
-  }, [clearPreviewCloseTimer, groupId]);
-
-  const schedulePreviewClose = useCallback((actorId: string, source: PreviewSource) => {
-    clearPreviewCloseTimer();
-    previewCloseTimerRef.current = window.setTimeout(() => {
-      previewCloseTimerRef.current = null;
-      setPreview((current) => {
-        if (!current) return current;
-        if (current.actorId !== actorId) return current;
-        if (current.groupId !== groupId) return current;
-        if (current.source !== source) return current;
-        return null;
-      });
-    }, source === "hover" ? 220 : (source === "auto" ? AUTO_PREVIEW_CLOSE_DELAY_MS : 0));
-  }, [clearPreviewCloseTimer, groupId]);
+    clearPreviewSyncTimer();
+    const actorId = autoPreviewCandidate.actorId;
+    previewSyncTimerRef.current = window.setTimeout(() => {
+      previewSyncTimerRef.current = null;
+      openPreview(actorId, "auto");
+    }, 0);
+    return clearPreviewSyncTimer;
+  }, [activeRuntimeActorId, autoPreviewCandidate, clearPreviewCloseTimer, clearPreviewSyncTimer, openPreview, preview]);
 
   if (items.length <= 0) return null;
 

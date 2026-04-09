@@ -1,4 +1,5 @@
 import type { TerminalSignal } from "../stores/useTerminalSignalsStore";
+import { getEffectiveActorRunner } from "./headlessRuntimeSupport";
 
 const MAX_TERMINAL_BUFFER_CHARS = 4000;
 const CODEX_TERMINAL_SIGNAL_WINDOW_CHARS = 1600;
@@ -129,7 +130,7 @@ export function getActorDisplayWorkingState(
   now: number = Date.now(),
 ): string {
   const backendState = String(actor.effective_working_state || "").trim().toLowerCase() || "idle";
-  const effectiveRunner = String(actor.runner_effective || actor.runner || "pty").trim().toLowerCase() || "pty";
+  const effectiveRunner = getEffectiveActorRunner(actor);
   const isRunning = actor.running ?? actor.enabled ?? false;
 
   if (!isRunning || effectiveRunner === "headless") {

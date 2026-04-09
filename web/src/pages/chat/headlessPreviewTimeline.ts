@@ -1,0 +1,146 @@
+import { dedupeStreamingActivities } from "../../stores/chatStreamingSessions";
+import type { HeadlessPreviewSession, StreamingActivity } from "../../types";
+
+export type HeadlessPreviewTimelineEntry = {
+  id: string;
+  pendingEventId: string;
+  ts: string;
+  live: boolean;
+} & (
+  {
+    kind: "message";
+    streamPhase: string;
+    text: string;
+    completed: boolean;
+    transient: boolean;
+  }
+  | {
+    kind: "activity";
+    activity: StreamingActivity;
+  }
+);
+
+type BuildHeadlessPreviewTimelineArgs = {
+  previewSessions?: HeadlessPreviewSession[];
+  fallbackText?: string;
+  fallbackActivities?: StreamingActivity[];
+  fallbackUpdatedAt?: string;
+  fallbackPendingEventId?: string;
+  fallbackStreamId?: string;
+  fallbackStreamPhase?: string;
+};
+
+type SortableTimelineEntry = HeadlessPreviewTimelineEntry & {
+  order: number;
+};
+
+function normalizeTimelineSessions(args: BuildHeadlessPreviewTimelineArgs): HeadlessPreviewSession[] {
+  const previewSessions = Array.isArray(args.previewSessions)
+    ? args.previewSessions.filter((session) => {
+      if (!session) return false;
+      const hasTranscriptBlocks = Array.isArray(session.transcriptBlocks)
+        && session.transcriptBlocks.some((block) => String(block?.text || "").trim());
+      const hasActivities = Array.isArray(session.activities)
+        && session.activities.some((activity) => String(activity?.summary || "").trim());
+      return hasTranscriptBlocks || hasActivities || Boolean(String(session.latestText || "").trim());
+    })
+    : [];
+
+  if (previewSessions.length > 0) return previewSessions;
+
+  const fallbackText = String(args.fallbackText || "").trim();
+  const fallbackActivities = dedupeStreamingActivities(args.fallbackActivities || []).filter((activity) => String(activity.summary || "").trim());
+  if (!fallbackText && fallbackActivities.length <= 0) return [];
+
+  const updatedAt = String(args.fallbackUpdatedAt || "").trim();
+  return [{
+    actorId: "",
+    pendingEventId: String(args.fallbackPendingEventId || "fallback-preview").trim() || "fallback-preview",
+    currentStreamId: String(args.fallbackStreamId || "fallback-stream").trim() || "fallback-stream",
+    phase: fallbackText ? "streaming" : "pending",
+    streamPhase: String(args.fallbackStreamPhase || "").trim().toLowerCase(),
+    updatedAt,
+    latestText: fallbackText,
+    transcriptBlocks: fallbackText
+      ? [{
+          id: `fallback:${String(args.fallbackPendingEventId || "preview").trim() || "preview"}`,
+          streamId: String(args.fallbackStreamId || "fallback-stream").trim() || "fallback-stream",
+          streamPhase: String(args.fallbackStreamPhase || "").trim().toLowerCase(),
+          text: fallbackText,
+          updatedAt,
+          completed: false,
+          transient: String(args.fallbackStreamPhase || "").trim().toLowerCase() === "commentary",
+        }]
+      : [],
+    activities: fallbackActivities,
+  }];
+}
+
+function compareTimelineEntries(left: SortableTimelineEntry, right: SortableTimelineEntry): number {
+  const leftTs = String(left.ts || "").trim();
+  const rightTs = String(right.ts || "").trim();
+  if (leftTs && rightTs && leftTs !== rightTs) return leftTs.localeCompare(rightTs);
+  if (leftTs && !rightTs) return 1;
+  if (!leftTs && rightTs) return -1;
+  if (left.pendingEventId && right.pendingEventId && left.pendingEventId !== right.pendingEventId) {
+    return left.pendingEventId.localeCompare(right.pendingEventId);
+  }
+  if (left.kind !== right.kind) {
+    return left.kind === "activity" ? -1 : 1;
+  }
+  return left.order - right.order;
+}
+
+export function buildHeadlessPreviewTimelineEntries(args: BuildHeadlessPreviewTimelineArgs): HeadlessPreviewTimelineEntry[] {
+  const previewSessions = normalizeTimelineSessions(args);
+  if (previewSessions.length <= 0) return [];
+
+  const latestPendingEventId = String(previewSessions[previewSessions.length - 1]?.pendingEventId || "").trim();
+  let order = 0;
+  const entries: SortableTimelineEntry[] = [];
+
+  for (const session of previewSessions) {
+    const pendingEventId = String(session.pendingEventId || "").trim();
+    const liveSession = latestPendingEventId === pendingEventId
+      && !["completed", "failed"].includes(String(session.phase || "").trim().toLowerCase());
+
+    for (const block of Array.isArray(session.transcriptBlocks) ? session.transcriptBlocks : []) {
+      const text = String(block?.text || "").trim();
+      if (!text) continue;
+      entries.push({
+        id: `message:${pendingEventId}:${String(block.id || "").trim() || order}`,
+        kind: "message",
+        pendingEventId,
+        ts: String(block.updatedAt || session.updatedAt || "").trim(),
+        live: liveSession && !block.completed,
+        streamPhase: String(block.streamPhase || "").trim().toLowerCase(),
+        text,
+        completed: Boolean(block.completed),
+        transient: Boolean(block.transient),
+        order: order += 1,
+      });
+    }
+
+    for (const activity of dedupeStreamingActivities(session.activities || [])) {
+      const summary = String(activity?.summary || "").trim();
+      if (!summary) continue;
+      entries.push({
+        id: `activity:${pendingEventId}:${String(activity.id || "").trim() || order}`,
+        kind: "activity",
+        pendingEventId,
+        ts: String(activity.ts || session.updatedAt || "").trim(),
+        live: liveSession && String(activity.status || "").trim().toLowerCase() !== "completed",
+        activity: {
+          ...activity,
+          id: String(activity.id || "").trim() || `activity-${order}`,
+          summary,
+        },
+        order: order += 1,
+      });
+    }
+  }
+
+  return entries
+    .sort(compareTimelineEntries)
+    .map(({ order: _order, ...entry }) => entry);
+}

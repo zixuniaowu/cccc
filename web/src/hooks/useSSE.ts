@@ -35,17 +35,13 @@ import {
 import { getPresentationMessageRefs, getPresentationRefStatus } from "../utils/presentationRefs";
 import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
+import { isHeadlessActorRunner } from "../utils/headlessRuntimeSupport";
 
 // Re-export for backward compatibility
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
 
 const MAX_RECONCILED_EVENTS = 800;
 const RECONNECT_LEDGER_TAIL_LIMIT = 60;
-
-function isHeadlessActorRuntime(actor: Partial<Actor> | null | undefined): boolean {
-  if (!actor) return false;
-  return String(actor.runner_effective || actor.runner || "pty").trim().toLowerCase() === "headless";
-}
 
 function mergeCanonicalAttachmentsWithOptimisticPreview(
   ev: Record<string, unknown>,
@@ -414,7 +410,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     const bucket = useGroupStore.getState().chatByGroup[targetGroupId];
     const liveActorIds = new Set<string>();
     for (const actor of actorsRef.current) {
-      if (!isHeadlessActorRuntime(actor)) continue;
+      if (!isHeadlessActorRunner(actor)) continue;
       const actorId = String(actor.id || "").trim();
       if (!actorId) continue;
       const hasLiveText = Boolean(String(bucket?.latestActorTextByActorId?.[actorId] || "").trim());

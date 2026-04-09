@@ -307,4 +307,85 @@ describe("buildLiveWorkCards", () => {
     expect(cards[0]?.transcriptBlocks.map((block) => block.streamPhase)).toEqual(["commentary", "final_answer"]);
     expect(cards[0]?.text).toBe("Final answer body");
   });
+
+  it("carries recent preview sessions through while using the newest session as the active preview", () => {
+    const actors: Actor[] = [
+      { id: "coder", title: "Coder", runtime: "codex", runner: "headless" },
+    ];
+
+    const previewSessions = [
+      {
+        actorId: "coder",
+        pendingEventId: "evt-1",
+        currentStreamId: "stream-1",
+        phase: "completed",
+        streamPhase: "final_answer",
+        updatedAt: "2025-01-04T00:00:01Z",
+        latestText: "Older answer",
+        transcriptBlocks: [{
+          id: "stream-1::final_answer",
+          streamId: "stream-1",
+          streamPhase: "final_answer",
+          text: "Older answer",
+          updatedAt: "2025-01-04T00:00:01Z",
+          completed: true,
+          transient: false,
+        }],
+        activities: [],
+      },
+      {
+        actorId: "coder",
+        pendingEventId: "evt-2",
+        currentStreamId: "stream-2",
+        phase: "streaming",
+        streamPhase: "commentary",
+        updatedAt: "2025-01-04T00:00:03Z",
+        latestText: "Current work",
+        transcriptBlocks: [{
+          id: "stream-2::commentary",
+          streamId: "stream-2",
+          streamPhase: "commentary",
+          text: "Current work",
+          updatedAt: "2025-01-04T00:00:03Z",
+          completed: false,
+          transient: true,
+        }],
+        activities: [{ id: "activity-2", kind: "tool", status: "started", summary: "search docs", ts: "2025-01-04T00:00:02Z" }],
+      },
+    ];
+
+    const cards = buildLiveWorkCards({
+      actors,
+      events: [{
+        id: "stream-2",
+        kind: "chat.message",
+        ts: "2025-01-04T00:00:03Z",
+        by: "coder",
+        _streaming: true,
+        data: {
+          stream_id: "stream-2",
+          pending_event_id: "evt-2",
+          stream_phase: "commentary",
+        },
+      }],
+      latestActorPreviewByActorId: { coder: previewSessions[1] },
+      previewSessionsByActorId: { coder: previewSessions },
+      latestActorTextByActorId: { coder: "Current work" },
+      latestActorActivitiesByActorId: { coder: [{ id: "activity-2", kind: "tool", status: "started", summary: "search docs", ts: "2025-01-04T00:00:02Z" }] },
+      replySessionsByPendingEventId: {
+        "evt-2": {
+          pendingEventId: "evt-2",
+          actorId: "coder",
+          currentStreamId: "stream-2",
+          phase: "streaming",
+          updatedAt: Date.parse("2025-01-04T00:00:03Z"),
+        },
+      },
+    });
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.text).toBe("Current work");
+    expect(cards[0]?.pendingEventId).toBe("evt-2");
+    expect(cards[0]?.previewSessions?.map((session) => session.pendingEventId)).toEqual(["evt-1", "evt-2"]);
+  });
 });

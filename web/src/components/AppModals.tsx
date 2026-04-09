@@ -29,6 +29,7 @@ import { actorProfileIdentityKey, actorProfileMatchesRef } from "../utils/actorP
 import { findPresentationSlot } from "../utils/presentation";
 import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
+import { getEffectiveActorRunner, normalizeActorRunner } from "../utils/headlessRuntimeSupport";
 import {
   useGroupStore,
   useUIStore,
@@ -611,7 +612,7 @@ export function AppModals({
     const willChangeSecrets = canEditSecrets && (clear || setKeys.length > 0 || unsetKeys.length > 0);
 
     const currentRuntime = String(editingActor.runtime || "codex").trim();
-    const currentRunner = String(editingActor.runner || "pty").trim().toLowerCase() || "pty";
+    const currentRunner = getEffectiveActorRunner(editingActor);
     const currentCommand = Array.isArray(editingActor.command)
       ? editingActor.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
       : "";
@@ -622,7 +623,7 @@ export function AppModals({
     const currentRoleNotes = String(editActorRoleNotesBaselineRef.current || "").trim();
     const nextRoleNotes = String(editActorRoleNotes || "").trim();
     const nextRuntime = String(editActorRuntime || "codex").trim();
-    const nextRunner = String(editActorRunner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty";
+    const nextRunner = normalizeActorRunner(editActorRunner);
     const nextCommand = String(editActorCommand || "").trim();
     const nextTitle = String(editActorTitle || "").trim();
     const nextCapabilityAutoload = Array.isArray(payload.capabilityAutoload)
@@ -715,7 +716,7 @@ export function AppModals({
         const snapshotCommand = Array.isArray(actorSnapshot.command)
           ? actorSnapshot.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
           : currentCommand;
-        const snapshotRunner = String(actorSnapshot.runner || currentRunner || "pty").trim().toLowerCase() || "pty";
+        const snapshotRunner = getEffectiveActorRunner(actorSnapshot as { runner?: unknown; runner_effective?: unknown });
         const snapshotTitle = String(actorSnapshot.title || "").trim();
         const needCustomPatch =
           nextRuntime !== snapshotRuntime ||
@@ -801,7 +802,7 @@ export function AppModals({
   const applyEditingActor = useCallback((actor: Record<string, unknown>) => {
     const runtime = String(actor.runtime || "").trim();
     setEditActorRuntime((runtime || "codex") as SupportedRuntime);
-    setEditActorRunner(String(actor.runner_effective || actor.runner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty");
+    setEditActorRunner(getEffectiveActorRunner(actor));
     setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
     setEditActorTitle(String(actor.title || ""));
     setEditActorRoleNotes("");
@@ -1025,7 +1026,7 @@ export function AppModals({
         newActorRole,
         newActorUseProfile ? String(selectedProfile?.runtime || "codex") : newActorRuntime,
         newActorUseProfile
-          ? (String(selectedProfile?.runner || "pty").trim().toLowerCase() === "headless" ? "headless" : "pty")
+          ? normalizeActorRunner(selectedProfile?.runner)
           : newActorRunner,
         commandToUse,
         newActorUseProfile ? undefined : (Object.keys(secretsSetVars).length ? secretsSetVars : undefined),

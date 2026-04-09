@@ -1,5 +1,6 @@
 import type { StreamingReplySession } from "../../stores/chatStreamingSessions";
 import type { Actor, ChatMessageData, HeadlessPreviewBlock, HeadlessPreviewSession, LedgerEvent, StreamingActivity } from "../../types";
+import { isHeadlessActorRunner } from "../../utils/headlessRuntimeSupport";
 
 export type LiveWorkPhase = "pending" | "streaming" | "completed" | "failed";
 
@@ -12,13 +13,14 @@ export type LiveWorkCard = {
   text: string;
   transcriptBlocks: HeadlessPreviewBlock[];
   activities: StreamingActivity[];
+  previewSessions?: HeadlessPreviewSession[];
   updatedAt: string;
   streamId: string;
   pendingEventId: string;
 };
 
 function isHeadlessActor(actor: Actor): boolean {
-  return String(actor.runner_effective || actor.runner || "pty").trim().toLowerCase() === "headless";
+  return isHeadlessActorRunner(actor);
 }
 
 function normalizeActivities(value: unknown): StreamingActivity[] {
@@ -72,6 +74,7 @@ export function buildLiveWorkCards(args: {
   actors: Actor[];
   events: LedgerEvent[];
   latestActorPreviewByActorId: Record<string, HeadlessPreviewSession>;
+  previewSessionsByActorId?: Record<string, HeadlessPreviewSession[]>;
   latestActorTextByActorId: Record<string, string>;
   latestActorActivitiesByActorId: Record<string, StreamingActivity[]>;
   replySessionsByPendingEventId: Record<string, StreamingReplySession>;
@@ -103,7 +106,12 @@ export function buildLiveWorkCards(args: {
     const event = latestEventByActorId.get(actorId);
     const session = latestSessionByActorId.get(actorId);
     if (!event && !session) continue;
-    const preview = args.latestActorPreviewByActorId?.[actorId];
+    const previewSessions = Array.isArray(args.previewSessionsByActorId?.[actorId])
+      ? (args.previewSessionsByActorId?.[actorId] || []).filter(Boolean)
+      : [];
+    const preview = previewSessions.length > 0
+      ? previewSessions[previewSessions.length - 1]
+      : args.latestActorPreviewByActorId?.[actorId];
 
     const data = event?.data && typeof event.data === "object"
       ? event.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown }
@@ -137,6 +145,7 @@ export function buildLiveWorkCards(args: {
       text,
       transcriptBlocks,
       activities,
+      previewSessions,
       updatedAt: String(preview?.updatedAt || event?.ts || "").trim() || normalizeSessionTime(session?.updatedAt),
       streamId: String(preview?.currentStreamId || data?.stream_id || session?.currentStreamId || "").trim(),
       pendingEventId: String(preview?.pendingEventId || session?.pendingEventId || data?.pending_event_id || "").trim(),

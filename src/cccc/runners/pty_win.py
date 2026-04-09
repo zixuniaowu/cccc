@@ -389,7 +389,6 @@ class PtySession:
             ("terminate", (True,)),
             ("terminate", ()),
             ("kill", ()),
-            ("close", ()),
         ):
             fn = getattr(self._proc, name, None)
             if not callable(fn):
@@ -397,11 +396,20 @@ class PtySession:
             try:
                 fn(*args)
                 if not self._proc_alive():
-                    return
+                    break
             except TypeError:
                 continue
             except Exception:
                 continue
+
+        close = getattr(self._proc, "close", None)
+        if callable(close):
+            try:
+                close()
+            except TypeError:
+                pass
+            except Exception:
+                pass
 
     def stop(self) -> None:
         self._running = False

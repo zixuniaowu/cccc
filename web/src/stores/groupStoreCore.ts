@@ -30,6 +30,7 @@ export type GroupChatBucket = {
   streamingActivitiesByStreamId: Record<string, StreamingActivity[]>;
   replySessionsByPendingEventId: Record<string, StreamingReplySession>;
   pendingEventIdByStreamId: Record<string, string>;
+  previewSessionsByActorId: Record<string, HeadlessPreviewSession[]>;
   latestActorPreviewByActorId: Record<string, HeadlessPreviewSession>;
   latestActorTextByActorId: Record<string, string>;
   latestActorActivitiesByActorId: Record<string, StreamingActivity[]>;
@@ -69,6 +70,7 @@ export const EMPTY_CHAT_BUCKET: GroupChatBucket = {
   streamingActivitiesByStreamId: {},
   replySessionsByPendingEventId: {},
   pendingEventIdByStreamId: {},
+  previewSessionsByActorId: {},
   latestActorPreviewByActorId: {},
   latestActorTextByActorId: {},
   latestActorActivitiesByActorId: {},
@@ -400,6 +402,9 @@ export function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>,
       streamingActivitiesByStreamId: stored.streamingActivitiesByStreamId || {},
       replySessionsByPendingEventId: stored.replySessionsByPendingEventId || {},
       pendingEventIdByStreamId: stored.pendingEventIdByStreamId || {},
+      previewSessionsByActorId: stored.previewSessionsByActorId || Object.fromEntries(
+        Object.entries(stored.latestActorPreviewByActorId || {}).map(([actorId, preview]) => [actorId, [preview]])
+      ),
       latestActorPreviewByActorId: stored.latestActorPreviewByActorId || {},
       latestActorTextByActorId: stored.latestActorTextByActorId || {},
       latestActorActivitiesByActorId: stored.latestActorActivitiesByActorId || {},
@@ -413,6 +418,7 @@ export function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>,
     streamingActivitiesByStreamId: {},
     replySessionsByPendingEventId: {},
     pendingEventIdByStreamId: {},
+    previewSessionsByActorId: {},
     latestActorPreviewByActorId: {},
     latestActorTextByActorId: {},
     latestActorActivitiesByActorId: {},
@@ -459,20 +465,29 @@ export function selectStreamingReplySession(
   return session;
 }
 
+const HEADLESS_PREVIEW_SESSION_LIMIT = 6;
+
 function deriveHeadlessPreviewIndex(
-  prevPreviewByActorId: Record<string, HeadlessPreviewSession>,
+  prevPreviewSessionsByActorId: Record<string, HeadlessPreviewSession[]>,
   streamingEvents: LedgerEvent[],
   streamingTextByStreamId: Record<string, string>,
   streamingActivitiesByStreamId: Record<string, StreamingActivity[]>,
   replySessionsByPendingEventId: Record<string, StreamingReplySession>,
 ): {
+  previewSessionsByActorId: Record<string, HeadlessPreviewSession[]>;
   latestActorPreviewByActorId: Record<string, HeadlessPreviewSession>;
   latestActorTextByActorId: Record<string, string>;
   latestActorActivitiesByActorId: Record<string, StreamingActivity[]>;
 } {
+  const previewSessionsByActorId: Record<string, HeadlessPreviewSession[]> = {};
   const latestActorPreviewByActorId: Record<string, HeadlessPreviewSession> = {};
   const latestActorTextByActorId: Record<string, string> = {};
   const latestActorActivitiesByActorId: Record<string, StreamingActivity[]> = {};
+  const fallbackLatestByActorId = new Map<string, {
+    updatedAt: string;
+    text: string;
+    activities: StreamingActivity[];
+  }>();
 
   const sessionEntriesByPendingEventId = new Map<string, Array<{
     actorId: string;
@@ -484,8 +499,21 @@ function deriveHeadlessPreviewIndex(
     completed: boolean;
     transient: boolean;
   }>>();
-  const latestSessionUpdatedAtByActorId = new Map<string, string>();
-  const latestPendingEventIdByActorId = new Map<string, string>();
+  const pendingEventIdsByActorId = new Map<string, Set<string>>();
+
+  const noteActorSession = (actorId: string, pendingEventId: string) => {
+    const existing = pendingEventIdsByActorId.get(actorId);
+    if (existing) {
+      existing.add(pendingEventId);
+      return;
+    }
+    pendingEventIdsByActorId.set(actorId, new Set([pendingEventId]));
+  };
+
+  const findPreviousPreview = (actorId: string, pendingEventId: string): HeadlessPreviewSession | undefined => {
+    const previousSessions = prevPreviewSessionsByActorId[actorId] || [];
+    return previousSessions.find((session) => String(session.pendingEventId || "").trim() === pendingEventId);
+  };
 
   const normalizePreviewBlockId = (streamId: string, streamPhase: string): string => {
     return `${String(streamId || "").trim()}::${String(streamPhase || "default").trim() || "default"}`;
@@ -547,14 +575,19 @@ function deriveHeadlessPreviewIndex(
     const fallbackActivities = Array.isArray(data?.activities) ? data.activities.filter(Boolean) as StreamingActivity[] : [];
     const activities = liveActivities.length > 0 ? liveActivities : fallbackActivities;
     if (!pendingEventId) {
-      if (text) {
-        latestActorTextByActorId[actorId] = text;
-      }
-      if (activities.length > 0) {
-        latestActorActivitiesByActorId[actorId] = activities;
+      const candidateUpdatedAt = String(event.ts || "").trim();
+      const previousFallback = fallbackLatestByActorId.get(actorId);
+      if (!previousFallback || candidateUpdatedAt >= previousFallback.updatedAt) {
+        fallbackLatestByActorId.set(actorId, {
+          updatedAt: candidateUpdatedAt,
+          text,
+          activities,
+        });
       }
       continue;
     }
+
+    noteActorSession(actorId, pendingEventId);
 
     const sessionEntries = sessionEntriesByPendingEventId.get(pendingEventId);
     const nextEntry = {
@@ -564,7 +597,7 @@ function deriveHeadlessPreviewIndex(
       updatedAt: String(event.ts || "").trim(),
       text,
       activities,
-      completed: !Boolean(event._streaming),
+      completed: !event._streaming,
       transient: Boolean(data?.transient_stream),
     };
     if (sessionEntries) {
@@ -573,90 +606,114 @@ function deriveHeadlessPreviewIndex(
       sessionEntriesByPendingEventId.set(pendingEventId, [nextEntry]);
     }
 
-    const candidateUpdatedAt = nextEntry.updatedAt || new Date(0).toISOString();
-    const previousUpdatedAt = String(latestSessionUpdatedAtByActorId.get(actorId) || "").trim();
-    if (!previousUpdatedAt || candidateUpdatedAt >= previousUpdatedAt) {
-      latestSessionUpdatedAtByActorId.set(actorId, candidateUpdatedAt);
-      latestPendingEventIdByActorId.set(actorId, pendingEventId);
-    }
   }
 
   for (const session of Object.values(replySessionsByPendingEventId || {})) {
     const actorId = String(session?.actorId || "").trim();
     const pendingEventId = String(session?.pendingEventId || "").trim();
     if (!actorId || !pendingEventId) continue;
-    const candidateUpdatedAt = Number.isFinite(Number(session.updatedAt))
-      ? new Date(Number(session.updatedAt)).toISOString()
-      : "";
-    const previousUpdatedAt = String(latestSessionUpdatedAtByActorId.get(actorId) || "").trim();
-    if (!previousUpdatedAt || (candidateUpdatedAt && candidateUpdatedAt >= previousUpdatedAt)) {
-      latestSessionUpdatedAtByActorId.set(actorId, candidateUpdatedAt);
-      latestPendingEventIdByActorId.set(actorId, pendingEventId);
+    noteActorSession(actorId, pendingEventId);
+  }
+
+  for (const [actorId, pendingEventIds] of pendingEventIdsByActorId.entries()) {
+    const actorSessions = Array.from(pendingEventIds)
+      .map((pendingEventId) => {
+        const session = replySessionsByPendingEventId[pendingEventId];
+        const entries = sessionEntriesByPendingEventId.get(pendingEventId) || [];
+        const previousPreview = findPreviousPreview(actorId, pendingEventId);
+        const previousBlocks = previousPreview?.transcriptBlocks || [];
+        const previousActivities = previousPreview?.activities || [];
+        const nextBlocks = entries
+          .filter((entry) => String(entry.text || "").trim())
+          .map((entry) => ({
+            id: normalizePreviewBlockId(entry.streamId || pendingEventId, entry.streamPhase),
+            streamId: entry.streamId,
+            streamPhase: entry.streamPhase,
+            text: entry.text,
+            updatedAt: entry.updatedAt,
+            completed: entry.completed,
+            transient: entry.transient,
+          } satisfies HeadlessPreviewBlock));
+        const transcriptBlocks = mergePreviewBlocks(previousBlocks, nextBlocks);
+        const activities = mergePreviewActivities(previousActivities, entries.flatMap((entry) => entry.activities || []));
+        const currentStreamId = String(session?.currentStreamId || "").trim() || String(entries[entries.length - 1]?.streamId || "").trim();
+        const streamPhase = String(
+          entries.find((entry) => String(entry.streamId || "").trim() === currentStreamId)?.streamPhase
+          || entries[entries.length - 1]?.streamPhase
+          || previousPreview?.streamPhase
+          || ""
+        ).trim().toLowerCase();
+        const updatedAt = String(
+          entries[entries.length - 1]?.updatedAt
+          || (Number.isFinite(Number(session?.updatedAt)) ? new Date(Number(session?.updatedAt)).toISOString() : "")
+          || previousPreview?.updatedAt
+          || ""
+        ).trim();
+        const latestText = String(
+          transcriptBlocks[transcriptBlocks.length - 1]?.text
+          || previousPreview?.latestText
+          || ""
+        ).trim();
+        const phase = String(
+          session?.phase
+          || (entries.some((entry) => !entry.completed) ? "streaming" : "completed")
+          || previousPreview?.phase
+          || ""
+        ).trim().toLowerCase();
+        if (!updatedAt && transcriptBlocks.length <= 0 && activities.length <= 0 && !latestText) {
+          return null;
+        }
+        return {
+          actorId,
+          pendingEventId,
+          currentStreamId,
+          phase,
+          streamPhase,
+          updatedAt,
+          latestText,
+          transcriptBlocks,
+          activities,
+        } satisfies HeadlessPreviewSession;
+      })
+      .filter((session): session is HeadlessPreviewSession => !!session)
+      .sort((left, right) => {
+        const leftTs = String(left.updatedAt || "").trim();
+        const rightTs = String(right.updatedAt || "").trim();
+        if (leftTs && rightTs && leftTs !== rightTs) return leftTs.localeCompare(rightTs);
+        if (leftTs && !rightTs) return 1;
+        if (!leftTs && rightTs) return -1;
+        return String(left.pendingEventId || "").localeCompare(String(right.pendingEventId || ""));
+      })
+      .slice(-HEADLESS_PREVIEW_SESSION_LIMIT);
+
+    if (actorSessions.length <= 0) continue;
+
+    previewSessionsByActorId[actorId] = actorSessions;
+    const latestPreview = actorSessions[actorSessions.length - 1];
+    latestActorPreviewByActorId[actorId] = latestPreview;
+    if (latestPreview.latestText) {
+      latestActorTextByActorId[actorId] = latestPreview.latestText;
+    }
+    if (latestPreview.activities.length > 0) {
+      latestActorActivitiesByActorId[actorId] = latestPreview.activities;
     }
   }
 
-  for (const [actorId, pendingEventId] of latestPendingEventIdByActorId.entries()) {
-    const session = replySessionsByPendingEventId[pendingEventId];
-    const entries = sessionEntriesByPendingEventId.get(pendingEventId) || [];
-    const previousPreview = prevPreviewByActorId[actorId];
-    const previousBlocks = previousPreview?.pendingEventId === pendingEventId
-      ? previousPreview.transcriptBlocks || []
-      : [];
-    const previousActivities = previousPreview?.pendingEventId === pendingEventId
-      ? previousPreview.activities || []
-      : [];
-    const nextBlocks = entries
-      .filter((entry) => String(entry.text || "").trim())
-      .map((entry) => ({
-        id: normalizePreviewBlockId(entry.streamId || pendingEventId, entry.streamPhase),
-        streamId: entry.streamId,
-        streamPhase: entry.streamPhase,
-        text: entry.text,
-        updatedAt: entry.updatedAt,
-        completed: entry.completed,
-        transient: entry.transient,
-      } satisfies HeadlessPreviewBlock));
-    const transcriptBlocks = mergePreviewBlocks(previousBlocks, nextBlocks);
-    const activities = mergePreviewActivities(previousActivities, entries.flatMap((entry) => entry.activities || []));
-    const currentStreamId = String(session?.currentStreamId || "").trim() || String(entries[entries.length - 1]?.streamId || "").trim();
-    const streamPhase = String(
-      entries.find((entry) => String(entry.streamId || "").trim() === currentStreamId)?.streamPhase
-      || entries[entries.length - 1]?.streamPhase
-      || previousPreview?.streamPhase
-      || ""
-    ).trim().toLowerCase();
-    const updatedAt = String(
-      entries[entries.length - 1]?.updatedAt
-      || (Number.isFinite(Number(session?.updatedAt)) ? new Date(Number(session?.updatedAt)).toISOString() : "")
-      || previousPreview?.updatedAt
-      || ""
-    ).trim();
-    const latestText = String(
-      transcriptBlocks[transcriptBlocks.length - 1]?.text
-      || previousPreview?.latestText
-      || ""
-    ).trim();
-
-    latestActorPreviewByActorId[actorId] = {
-      actorId,
-      pendingEventId,
-      currentStreamId,
-      phase: String(session?.phase || previousPreview?.phase || "").trim().toLowerCase(),
-      streamPhase,
-      updatedAt,
-      latestText,
-      transcriptBlocks,
-      activities,
-    };
-    if (latestText) {
-      latestActorTextByActorId[actorId] = latestText;
-    }
-    if (activities.length > 0) {
-      latestActorActivitiesByActorId[actorId] = activities;
+  for (const [actorId, fallback] of fallbackLatestByActorId.entries()) {
+    const latestPreview = latestActorPreviewByActorId[actorId];
+    const latestUpdatedAt = String(latestPreview?.updatedAt || "").trim();
+    if (!latestUpdatedAt || fallback.updatedAt >= latestUpdatedAt) {
+      if (fallback.text) {
+        latestActorTextByActorId[actorId] = fallback.text;
+      }
+      if (fallback.activities.length > 0) {
+        latestActorActivitiesByActorId[actorId] = fallback.activities;
+      }
     }
   }
 
   return {
+    previewSessionsByActorId,
     latestActorPreviewByActorId,
     latestActorTextByActorId,
     latestActorActivitiesByActorId,
@@ -678,7 +735,9 @@ export function buildChatBucketPatch(
   const prevStreamingActivitiesByStreamId = prev.streamingActivitiesByStreamId || {};
   const prevReplySessionsByPendingEventId = prev.replySessionsByPendingEventId || {};
   const prevPendingEventIdByStreamId = prev.pendingEventIdByStreamId || {};
-  const prevLatestActorPreviewByActorId = prev.latestActorPreviewByActorId || {};
+  const prevPreviewSessionsByActorId = prev.previewSessionsByActorId || Object.fromEntries(
+    Object.entries(prev.latestActorPreviewByActorId || {}).map(([actorId, preview]) => [actorId, [preview]])
+  );
   const nextStreamingTextByStreamId = patch.streamingTextByStreamId !== undefined
     ? patch.streamingTextByStreamId
     : prevStreamingTextByStreamId;
@@ -692,7 +751,7 @@ export function buildChatBucketPatch(
     ? patch.pendingEventIdByStreamId
     : prevPendingEventIdByStreamId;
   const previewIndex = deriveHeadlessPreviewIndex(
-    prevLatestActorPreviewByActorId,
+    prevPreviewSessionsByActorId,
     nextStreamingEvents,
     nextStreamingTextByStreamId,
     nextStreamingActivitiesByStreamId,
@@ -715,6 +774,7 @@ export function buildChatBucketPatch(
         streamingActivitiesByStreamId: nextStreamingActivitiesByStreamId,
         replySessionsByPendingEventId: nextReplySessionsByPendingEventId,
         pendingEventIdByStreamId: nextPendingEventIdByStreamId,
+        previewSessionsByActorId: previewIndex.previewSessionsByActorId,
         latestActorPreviewByActorId: previewIndex.latestActorPreviewByActorId,
         latestActorTextByActorId: previewIndex.latestActorTextByActorId,
         latestActorActivitiesByActorId: previewIndex.latestActorActivitiesByActorId,
