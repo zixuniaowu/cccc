@@ -140,24 +140,24 @@ describe("upsertStreamingActivityPatch", () => {
     });
 
     expect(patch).not.toBeNull();
-    expect((patch?.streamingActivitiesByStreamId || {})["s-1"]).toEqual([
-      {
-        id: "reasoning:1",
-        kind: "thinking",
-        status: "completed",
-        summary: "final",
-        ts: "2026-04-06T08:00:01.000Z",
-      },
-    ]);
-    expect((((patch?.streamingEvents || [])[0]?.data as { activities?: StreamingActivity[] } | undefined)?.activities || [])).toEqual([
-      {
-        id: "reasoning:1",
-        kind: "thinking",
-        status: "completed",
-        summary: "final",
-        ts: "2026-04-06T08:00:01.000Z",
-      },
-    ]);
+    const nextActivities = (patch?.streamingActivitiesByStreamId || {})["s-1"] || [];
+    expect(nextActivities).toHaveLength(1);
+    expect(nextActivities[0]).toMatchObject({
+      id: "reasoning:1",
+      kind: "thinking",
+      status: "completed",
+      summary: "final",
+      ts: "2026-04-06T08:00:00.000Z",
+    });
+    const nextEventActivities = (((patch?.streamingEvents || [])[0]?.data as { activities?: StreamingActivity[] } | undefined)?.activities || []);
+    expect(nextEventActivities).toHaveLength(1);
+    expect(nextEventActivities[0]).toMatchObject({
+      id: "reasoning:1",
+      kind: "thinking",
+      status: "completed",
+      summary: "final",
+      ts: "2026-04-06T08:00:00.000Z",
+    });
     expect((patch?.replySessionsByPendingEventId || {})["evt-1"]).toMatchObject({
       currentStreamId: "s-1",
       phase: "streaming",

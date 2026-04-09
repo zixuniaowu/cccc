@@ -46,6 +46,7 @@ type BuildHeadlessPreviewTimelineArgs = {
   fallbackPendingEventId?: string;
   fallbackStreamId?: string;
   fallbackStreamPhase?: string;
+  fallbackPhase?: string;
 };
 
 type SortableTimelineEntry = HeadlessPreviewTimelineEntry & {
@@ -71,11 +72,12 @@ function normalizeTimelineSessions(args: BuildHeadlessPreviewTimelineArgs): Head
   if (!fallbackText && fallbackActivities.length <= 0) return [];
 
   const updatedAt = String(args.fallbackUpdatedAt || "").trim();
+  const fallbackPhase = String(args.fallbackPhase || "").trim().toLowerCase();
   return [{
     actorId: "",
     pendingEventId: String(args.fallbackPendingEventId || "fallback-preview").trim() || "fallback-preview",
     currentStreamId: String(args.fallbackStreamId || "fallback-stream").trim() || "fallback-stream",
-    phase: fallbackText ? "streaming" : "pending",
+    phase: fallbackPhase || (fallbackText ? "streaming" : "pending"),
     streamPhase: String(args.fallbackStreamPhase || "").trim().toLowerCase(),
     updatedAt,
     latestText: fallbackText,

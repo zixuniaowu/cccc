@@ -107,6 +107,7 @@ class CodexAppSession:
         self._completed_stream_ids: set[str] = set()
         self._plan_activity_id = ""
         self._agent_message_phase_by_stream_id: Dict[str, str] = {}
+        self._item_snapshots_by_id: Dict[str, Dict[str, Any]] = {}
         self._active_control_kind = ""
 
     def _agent_message_phase(self, item_id: str, item: Optional[Dict[str, Any]] = None) -> str:
@@ -195,6 +196,35 @@ class CodexAppSession:
             return text
         return text[: max(0, limit - 1)].rstrip() + "…"
 
+    def _remember_item_snapshot(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        item_id = str(item.get("id") or "").strip()
+        if not item_id:
+            return item
+        snapshot = dict(self._item_snapshots_by_id.get(item_id) or {})
+        merged = {**snapshot, **item}
+        for key in ("type", "phase", "command", "cwd", "server", "tool", "query", "text", "aggregatedOutput"):
+            if key in snapshot and not str(merged.get(key) or "").strip():
+                merged[key] = snapshot[key]
+        if not isinstance(merged.get("changes"), list) and isinstance(snapshot.get("changes"), list):
+            merged["changes"] = snapshot["changes"]
+        self._item_snapshots_by_id[item_id] = merged
+        return merged
+
+    def _item_snapshot(self, item_id: str) -> Dict[str, Any]:
+        snapshot = self._item_snapshots_by_id.get(str(item_id or "").strip())
+        return snapshot if isinstance(snapshot, dict) else {}
+
+    def _snapshot_file_paths(self, item: Dict[str, Any]) -> list[str]:
+        changes = item.get("changes") if isinstance(item.get("changes"), list) else []
+        targets: list[str] = []
+        for change in changes[:3]:
+            if not isinstance(change, dict):
+                continue
+            path = self._trim_single_line(change.get("path") or change.get("filePath") or "", limit=80)
+            if path:
+                targets.append(path)
+        return targets
+
     def _emit_item_activity(self, *, status: str, turn_id: str, item: Dict[str, Any]) -> None:
         item_type = str(item.get("type") or "").strip()
         item_id = str(item.get("id") or "").strip()
@@ -247,14 +277,7 @@ class CodexAppSession:
             return
 
         if item_type == "fileChange":
-            changes = item.get("changes") if isinstance(item.get("changes"), list) else []
-            targets = []
-            for change in changes[:3]:
-                if not isinstance(change, dict):
-                    continue
-                path = self._trim_single_line(change.get("path") or change.get("filePath") or "", limit=80)
-                if path:
-                    targets.append(path)
+            targets = self._snapshot_file_paths(item)
             summary = f"patch {', '.join(targets)}" if targets else "patch files"
             self._emit_activity(
                 status=status,
@@ -755,6 +778,8 @@ class CodexAppSession:
                 self._session_state.current_task_id = turn_id or None
                 self._session_state.updated_at = now
             self._persist_state()
+            self._item_snapshots_by_id.clear()
+            self._plan_activity_id = ""
             if control_kind:
                 return
             self._emit("headless.turn.progress", {"turn_id": turn_id, "event_id": active_event_id, "status": "working"})
@@ -782,6 +807,7 @@ class CodexAppSession:
             self._persist_state()
             self._completed_stream_ids.clear()
             self._agent_message_phase_by_stream_id.clear()
+            self._item_snapshots_by_id.clear()
             self._plan_activity_id = ""
             self._emit(
                 "headless.control.completed",
@@ -830,6 +856,7 @@ class CodexAppSession:
 
         if method == "item/started":
             item = params.get("item") if isinstance(params.get("item"), dict) else {}
+            item = self._remember_item_snapshot(item)
             item_type = str(item.get("type") or "").strip()
             item_id = str(item.get("id") or "").strip()
             if item_type == "agentMessage" and item_id:
@@ -880,10 +907,31 @@ class CodexAppSession:
                 )
             return
 
+        if method == "item/plan/delta":
+            item_id = str(params.get("itemId") or "").strip()
+            turn_id = str(params.get("turnId") or "").strip()
+            delta = self._trim_single_line(params.get("delta") or "", limit=120)
+            if item_id and delta:
+                activity_id = self._plan_activity_id or f"plan:{item_id}"
+                self._plan_activity_id = activity_id
+                self._emit_activity(
+                    status="updated",
+                    activity_id=activity_id,
+                    kind="plan",
+                    summary=delta,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                    raw_item_type="plan",
+                )
+            return
+
         if method == "item/commandExecution/outputDelta":
             item_id = str(params.get("itemId") or "").strip()
             turn_id = str(params.get("turnId") or "").strip()
             delta = self._trim_single_line(params.get("delta") or "", limit=120)
+            snapshot = self._item_snapshot(item_id)
+            command = self._trim_single_line(snapshot.get("command") or "", limit=120)
+            cwd = self._trim_single_line(snapshot.get("cwd") or "", limit=120)
             if item_id and delta:
                 self._emit_activity(
                     status="updated",
@@ -893,6 +941,29 @@ class CodexAppSession:
                     turn_id=turn_id,
                     item_id=item_id,
                     raw_item_type="commandExecution",
+                    command=command,
+                    cwd=cwd,
+                )
+            return
+
+        if method == "item/commandExecution/terminalInteraction":
+            item_id = str(params.get("itemId") or "").strip()
+            turn_id = str(params.get("turnId") or "").strip()
+            snapshot = self._item_snapshot(item_id)
+            command = self._trim_single_line(snapshot.get("command") or "", limit=120)
+            cwd = self._trim_single_line(snapshot.get("cwd") or "", limit=120)
+            if item_id:
+                self._emit_activity(
+                    status="updated",
+                    activity_id=f"command:{item_id}",
+                    kind="command",
+                    summary="terminal input",
+                    detail="Sent terminal input to running command",
+                    turn_id=turn_id,
+                    item_id=item_id,
+                    raw_item_type="commandExecution",
+                    command=command,
+                    cwd=cwd,
                 )
             return
 
@@ -900,6 +971,8 @@ class CodexAppSession:
             item_id = str(params.get("itemId") or "").strip()
             turn_id = str(params.get("turnId") or "").strip()
             delta = self._trim_single_line(params.get("delta") or "", limit=120)
+            snapshot = self._item_snapshot(item_id)
+            targets = self._snapshot_file_paths(snapshot)
             if item_id and delta:
                 self._emit_activity(
                     status="updated",
@@ -909,6 +982,7 @@ class CodexAppSession:
                     turn_id=turn_id,
                     item_id=item_id,
                     raw_item_type="fileChange",
+                    file_paths=targets,
                 )
             return
 
@@ -916,6 +990,9 @@ class CodexAppSession:
             item_id = str(params.get("itemId") or "").strip()
             turn_id = str(params.get("turnId") or "").strip()
             message = self._trim_single_line(params.get("message") or "", limit=120)
+            snapshot = self._item_snapshot(item_id)
+            server = self._trim_single_line(snapshot.get("server") or "", limit=40)
+            tool = self._trim_single_line(snapshot.get("tool") or "", limit=60)
             if item_id and message:
                 self._emit_activity(
                     status="updated",
@@ -925,11 +1002,30 @@ class CodexAppSession:
                     turn_id=turn_id,
                     item_id=item_id,
                     raw_item_type="mcpToolCall",
+                    tool_name=tool,
+                    server_name=server,
+                )
+            return
+
+        if method == "item/reasoning/textDelta":
+            item_id = str(params.get("itemId") or "").strip()
+            turn_id = str(params.get("turnId") or "").strip()
+            delta = self._trim_single_line(params.get("delta") or "", limit=120)
+            if item_id and delta:
+                self._emit_activity(
+                    status="updated",
+                    activity_id=f"reasoning:{item_id}",
+                    kind="thinking",
+                    summary=delta,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                    raw_item_type="reasoning",
                 )
             return
 
         if method == "item/completed":
             item = params.get("item") if isinstance(params.get("item"), dict) else {}
+            item = self._remember_item_snapshot(item)
             item_type = str(item.get("type") or "").strip()
             item_id = str(item.get("id") or "").strip()
             if item_type == "agentMessage" and item_id:
@@ -967,6 +1063,7 @@ class CodexAppSession:
             self._persist_state()
             self._completed_stream_ids.clear()
             self._agent_message_phase_by_stream_id.clear()
+            self._item_snapshots_by_id.clear()
             if self._plan_activity_id:
                 self._emit_activity(
                     status="completed",

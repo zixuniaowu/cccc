@@ -14,26 +14,82 @@ export type StreamingReplySession = {
   updatedAt: number;
 };
 
+function normalizeActivityText(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function normalizeActivityStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const text = normalizeActivityText(item);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    normalized.push(text);
+  }
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+export function mergeStreamingActivity(
+  previous: StreamingActivity | undefined,
+  next: StreamingActivity | undefined,
+): StreamingActivity | null {
+  const previousId = normalizeActivityText(previous?.id);
+  const nextId = normalizeActivityText(next?.id);
+  const activityId = nextId || previousId;
+  const previousSummary = normalizeActivityText(previous?.summary);
+  const nextSummary = normalizeActivityText(next?.summary);
+  const summary = nextSummary || previousSummary;
+  if (!activityId || !summary) return null;
+
+  const previousFilePaths = normalizeActivityStringList(previous?.file_paths);
+  const nextFilePaths = normalizeActivityStringList(next?.file_paths);
+  const mergedFilePaths = previousFilePaths || nextFilePaths
+    ? normalizeActivityStringList([...(previousFilePaths || []), ...(nextFilePaths || [])])
+    : undefined;
+
+  return {
+    id: activityId,
+    kind: normalizeActivityText(next?.kind) || normalizeActivityText(previous?.kind) || "thinking",
+    status: normalizeActivityText(next?.status) || normalizeActivityText(previous?.status) || "updated",
+    summary,
+    detail: normalizeActivityText(next?.detail) || normalizeActivityText(previous?.detail) || undefined,
+    ts: normalizeActivityText(previous?.ts) || normalizeActivityText(next?.ts) || undefined,
+    raw_item_type: normalizeActivityText(next?.raw_item_type) || normalizeActivityText(previous?.raw_item_type) || undefined,
+    tool_name: normalizeActivityText(next?.tool_name) || normalizeActivityText(previous?.tool_name) || undefined,
+    server_name: normalizeActivityText(next?.server_name) || normalizeActivityText(previous?.server_name) || undefined,
+    command: normalizeActivityText(next?.command) || normalizeActivityText(previous?.command) || undefined,
+    cwd: normalizeActivityText(next?.cwd) || normalizeActivityText(previous?.cwd) || undefined,
+    file_paths: mergedFilePaths,
+    query: normalizeActivityText(next?.query) || normalizeActivityText(previous?.query) || undefined,
+  };
+}
+
 export function dedupeStreamingActivities(activities: StreamingActivity[] | undefined): StreamingActivity[] {
   if (!Array.isArray(activities) || activities.length <= 0) return [];
 
-  const dedupedFromLatest: StreamingActivity[] = [];
-  const seenIds = new Set<string>();
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index];
+  const activityOrder: string[] = [];
+  const mergedById = new Map<string, StreamingActivity>();
+  for (const activity of activities) {
     if (!activity || typeof activity !== "object") continue;
-    const activityId = String(activity.id || "").trim();
-    const summary = String(activity.summary || "").trim();
-    if (!activityId || !summary || seenIds.has(activityId)) continue;
-    seenIds.add(activityId);
-    dedupedFromLatest.push({
-      ...activity,
-      id: activityId,
-      summary,
-    });
+    const normalized = mergeStreamingActivity(undefined, activity);
+    if (!normalized) continue;
+    const existing = mergedById.get(normalized.id);
+    if (!existing) {
+      activityOrder.push(normalized.id);
+      mergedById.set(normalized.id, normalized);
+      continue;
+    }
+    const merged = mergeStreamingActivity(existing, normalized);
+    if (merged) {
+      mergedById.set(normalized.id, merged);
+    }
   }
 
-  return dedupedFromLatest.reverse();
+  return activityOrder
+    .map((activityId) => mergedById.get(activityId))
+    .filter((activity): activity is StreamingActivity => Boolean(activity));
 }
 
 export function sliceStreamingActivities(activities: StreamingActivity[] | undefined): StreamingActivity[] {

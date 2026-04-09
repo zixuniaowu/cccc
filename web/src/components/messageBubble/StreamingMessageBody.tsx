@@ -4,6 +4,8 @@ import { classNames } from "../../utils/classNames";
 import { useGroupStore } from "../../stores";
 import {
   normalizeStreamingActivities,
+  formatStreamingActivityKind,
+  getStructuredStreamingActivityLabel,
   getEffectiveStreamingActivities,
   deriveStreamingRenderPhase,
   getStreamingPendingDelayMs,
@@ -13,46 +15,6 @@ const STREAMING_STATUS_EXIT_MS = 140;
 const STREAMING_ACTIVITY_DISPLAY_LIMIT = 5;
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_STREAMING_EVENTS: LedgerEvent[] = [];
-
-function formatActivityKind(kind: string): string {
-  const normalized = String(kind || "").trim();
-  switch (normalized) {
-    case "queued":
-      return "queue";
-    case "thinking":
-      return "think";
-    case "plan":
-      return "plan";
-    case "search":
-      return "search";
-    case "command":
-      return "run";
-    case "patch":
-      return "patch";
-    case "tool":
-      return "tool";
-    case "reply":
-      return "reply";
-    default:
-      return normalized || "step";
-  }
-}
-
-function getStructuredActivityLabel(activity: StreamingActivity): string {
-  const command = String(activity.command || "").trim();
-  if (command) return command;
-  const filePaths = Array.isArray(activity.file_paths)
-    ? activity.file_paths.map((item) => String(item || "").trim()).filter((item) => item)
-    : [];
-  if (filePaths.length > 0) return filePaths.join(", ");
-  const toolName = String(activity.tool_name || "").trim();
-  const serverName = String(activity.server_name || "").trim();
-  if (toolName && serverName) return `${serverName}:${toolName}`;
-  if (toolName) return toolName;
-  const query = String(activity.query || "").trim();
-  if (query) return query;
-  return String(activity.summary || "").trim();
-}
 
 function PlainMessageText({
   text,
@@ -139,11 +101,11 @@ const StreamingActivityList = memo(function StreamingActivityList({
               <span className="absolute left-[3px] top-[0.85rem] bottom-[-10px] w-px bg-[var(--glass-border-subtle)]/90" />
             ) : null}
             <span className="min-w-[2.75rem] font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
-              {formatActivityKind(activity.kind)}
+              {formatStreamingActivityKind(activity.kind)}
             </span>
             <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
-              {getStructuredActivityLabel(activity)}
-              {activity.summary && getStructuredActivityLabel(activity) !== String(activity.summary).trim() ? (
+              {getStructuredStreamingActivityLabel(activity)}
+              {activity.summary && getStructuredStreamingActivityLabel(activity) !== String(activity.summary).trim() ? (
                 <span className="block text-[10px] text-[var(--color-text-tertiary)]">
                   {activity.summary}
                 </span>

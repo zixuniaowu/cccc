@@ -44,7 +44,7 @@ class TestHeadlessBootstrapControlTurns(unittest.TestCase):
         ]
 
         with (
-            patch("cccc.daemon.claude_app_sessions.subprocess.Popen", return_value=proc),
+            patch("cccc.daemon.claude_app_sessions.subprocess.Popen", return_value=proc) as popen,
             patch("cccc.daemon.claude_app_sessions.threading.Thread", side_effect=threads),
             patch("cccc.daemon.claude_app_sessions.time.sleep", return_value=None),
             patch.object(session, "_persist_state"),
@@ -53,6 +53,7 @@ class TestHeadlessBootstrapControlTurns(unittest.TestCase):
             session.start()
 
         self.assertEqual(order, ["stdout", "stderr", "bootstrap", "turn"])
+        self.assertIn("--include-hook-events", popen.call_args.args[0])
 
     def test_codex_start_queues_bootstrap_before_turn_thread(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession

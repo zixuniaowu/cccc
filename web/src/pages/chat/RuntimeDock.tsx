@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import {
   FloatingPortal,
@@ -10,12 +10,12 @@ import {
 } from "@floating-ui/react";
 
 import { ActorAvatar } from "../../components/ActorAvatar";
+import { HeadlessLiveTrace } from "../../components/headless/HeadlessLiveTrace";
 import { PlusIcon } from "../../components/Icons";
 import { useActorDisplayState } from "../../hooks/useActorDisplayState";
 import type { StreamingActivity, Actor } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { formatTime } from "../../utils/time";
-import { buildHeadlessPreviewRenderGroups, buildHeadlessPreviewTimelineEntries } from "./headlessPreviewTimeline";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 
@@ -50,9 +50,6 @@ type HeadlessPreviewData = {
 const EMPTY_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_PREVIEW_SESSIONS: NonNullable<LiveWorkCard["previewSessions"]> = [];
 const AUTO_PREVIEW_CLOSE_DELAY_MS = 1800;
-const LazyMarkdownRenderer = lazy(() =>
-  import("../../components/MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
-);
 
 const RING_MASK_STYLE: CSSProperties = {
   WebkitMask: "radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px))",
@@ -100,28 +97,6 @@ function getRunnerLabel(runner: RuntimeDockItem["runner"], t: (key: string, opti
     return t("runtimeDockRunnerHeadless", { defaultValue: "Headless" });
   }
   return t("runtimeDockRunnerPty", { defaultValue: "PTY" });
-}
-
-function formatPreviewActivityKind(kind: string): string {
-  const normalizedKind = String(kind || "").trim().toLowerCase();
-  switch (normalizedKind) {
-    case "thinking":
-      return "Thinking";
-    case "tool":
-      return "Tool";
-    case "search":
-      return "Search";
-    case "command":
-      return "Command";
-    case "patch":
-      return "Patch";
-    case "plan":
-      return "Plan";
-    case "reply":
-      return "Reply";
-    default:
-      return normalizedKind ? normalizedKind.replace(/_/g, " ") : "Activity";
-  }
 }
 
 function getRuntimeRingTone(item: RuntimeDockItem, isRunning: boolean, workingState: string): RuntimeRingTone {
@@ -266,10 +241,6 @@ function getHeadlessPreviewData(item: RuntimeDockItem, args: {
   };
 }
 
-function shouldRenderPreviewMarkdown(streamPhase: string | null | undefined): boolean {
-  return String(streamPhase || "").trim().toLowerCase() === "final_answer";
-}
-
 function isHeadlessCardPreviewActive(card: LiveWorkCard | null | undefined): boolean {
   if (!card) return false;
   return card.phase === "pending" || card.phase === "streaming";
@@ -331,42 +302,10 @@ function HeadlessPreviewSurface({
   statusPillClassName: string;
 }) {
   const { t } = useTranslation(["chat", "actors"]);
-  const outputRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickToBottomRef = useRef(true);
   const updatedAt = String(item.liveWorkCard?.updatedAt || "").trim();
   const updatedLabel = updatedAt
     ? t("chat:updated", { time: formatTime(updatedAt), defaultValue: `Updated ${formatTime(updatedAt)}` })
     : "";
-  const timelineEntries = useMemo(
-    () => buildHeadlessPreviewTimelineEntries({
-      previewSessions: data.previewSessions,
-      fallbackText: data.latestText,
-      fallbackActivities: data.fallbackActivities,
-      fallbackUpdatedAt: String(item.liveWorkCard?.updatedAt || "").trim(),
-      fallbackPendingEventId: String(item.liveWorkCard?.pendingEventId || item.liveWorkCard?.streamId || `preview:${item.actorId}`).trim(),
-      fallbackStreamId: String(item.liveWorkCard?.streamId || "").trim(),
-      fallbackStreamPhase: String(item.liveWorkCard?.streamPhase || "").trim().toLowerCase(),
-    }),
-    [data.fallbackActivities, data.latestText, data.previewSessions, item.actorId, item.liveWorkCard?.pendingEventId, item.liveWorkCard?.streamId, item.liveWorkCard?.streamPhase, item.liveWorkCard?.updatedAt]
-  );
-  const timelineGroups = useMemo(() => buildHeadlessPreviewRenderGroups(timelineEntries), [timelineEntries]);
-  const sessionCount = data.previewSessions.length > 0 ? data.previewSessions.length : (timelineEntries.length > 0 ? 1 : 0);
-  const hasTimelineEntries = timelineGroups.length > 0;
-  const latestTimelineGroup = timelineGroups[timelineGroups.length - 1];
-  const latestTimelineSignal = latestTimelineGroup ? `${latestTimelineGroup.id}:${latestTimelineGroup.ts}:${latestTimelineGroup.live ? "live" : "static"}` : "";
-
-  useEffect(() => {
-    shouldStickToBottomRef.current = true;
-    const node = outputRef.current;
-    if (!node) return;
-    node.scrollTop = node.scrollHeight;
-  }, [item.actorId, item.liveWorkCard?.pendingEventId]);
-
-  useEffect(() => {
-    const node = outputRef.current;
-    if (!node || !shouldStickToBottomRef.current) return;
-    node.scrollTop = node.scrollHeight;
-  }, [latestTimelineSignal, timelineEntries.length]);
 
   return (
     <section
@@ -425,121 +364,24 @@ function HeadlessPreviewSurface({
         </div>
       </div>
 
-      <div className={classNames("mt-4 text-[11px] font-semibold uppercase tracking-[0.16em]", isDark ? "text-cyan-200" : "text-cyan-700")}>
-        {t("chat:runtimeDockPreviewLiveOutput", { defaultValue: "Live output" })}
-      </div>
-
-      <div
-        ref={outputRef}
-        onScroll={() => {
-          const node = outputRef.current;
-          if (!node) return;
-          shouldStickToBottomRef.current = node.scrollTop + node.clientHeight >= node.scrollHeight - 24;
-        }}
+      <HeadlessLiveTrace
+        previewSessions={data.previewSessions}
+        fallbackText={data.latestText}
+        fallbackActivities={data.fallbackActivities}
+        fallbackUpdatedAt={String(item.liveWorkCard?.updatedAt || "").trim()}
+        fallbackPendingEventId={String(item.liveWorkCard?.pendingEventId || item.liveWorkCard?.streamId || `preview:${item.actorId}`).trim()}
+        fallbackStreamId={String(item.liveWorkCard?.streamId || "").trim()}
+        fallbackStreamPhase={String(item.liveWorkCard?.streamPhase || "").trim().toLowerCase()}
+        fallbackPhase={String(item.liveWorkCard?.phase || "").trim().toLowerCase()}
+        emptyLabel={t("actors:noStreamingOutputYet", { defaultValue: "There is no streaming output to show yet." })}
+        recentLabel={t("chat:liveWorkPhaseCompleted", { defaultValue: "Recent" })}
+        isDark={isDark}
+        density="compact"
         className={classNames(
-          "mt-2 min-h-[320px] max-h-[min(68vh,560px)] overflow-y-auto pr-2",
+          "mt-4 min-h-[320px] max-h-[min(68vh,560px)] overflow-y-auto pr-1",
           isDark ? "text-slate-100" : "text-gray-900"
         )}
-      >
-          {hasTimelineEntries ? (
-            <div className="space-y-2.5 pb-3">
-              {timelineGroups.map((group, index) => {
-                const previousGroup = index > 0 ? timelineGroups[index - 1] : null;
-                const showSessionDivider = sessionCount > 1 && previousGroup?.pendingEventId !== group.pendingEventId;
-                return (
-                  <div key={group.id} className="space-y-2.5">
-                    {showSessionDivider ? (
-                      <div className="flex items-center gap-3 py-1">
-                        <span className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")} />
-                        <span className={classNames("shrink-0 text-[10px] font-medium uppercase tracking-[0.14em]", isDark ? "text-slate-500" : "text-slate-500")}>
-                          {group.ts ? formatTime(group.ts) : t("chat:liveWorkPhaseCompleted", { defaultValue: "Recent" })}
-                        </span>
-                        <span className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")} />
-                      </div>
-                    ) : null}
-
-                    {group.kind === "message" ? (
-                      <div className="grid grid-cols-[10px_minmax(0,1fr)] gap-3">
-                        <div className="pt-2">
-                          <span
-                            className={classNames(
-                              "block h-2.5 w-2.5 rounded-full",
-                              group.entry.streamPhase === "final_answer"
-                                ? (group.entry.live ? (isDark ? "bg-sky-300" : "bg-sky-500") : (isDark ? "bg-sky-300/50" : "bg-sky-500/45"))
-                                : (group.entry.live ? (isDark ? "bg-cyan-300" : "bg-cyan-500") : (isDark ? "bg-white/30" : "bg-slate-400"))
-                            )}
-                          />
-                        </div>
-                        <div className={classNames("min-w-0 border-l pl-3", group.entry.streamPhase === "final_answer"
-                          ? (isDark ? "border-sky-300/30" : "border-sky-500/26")
-                          : (isDark ? "border-white/10" : "border-slate-200"))}>
-                          {shouldRenderPreviewMarkdown(group.entry.streamPhase) ? (
-                            <Suspense
-                              fallback={
-                                <div className={classNames("whitespace-pre-wrap break-words text-[13px] leading-6", isDark ? "text-slate-100" : "text-gray-900")}>
-                                  {group.entry.text}
-                                </div>
-                              }
-                            >
-                              <LazyMarkdownRenderer
-                                content={group.entry.text}
-                                isDark={isDark}
-                                invertText={isDark}
-                                className={classNames(
-                                  "text-[13px] leading-6 [&_p]:mb-3 [&_pre]:border [&_pre]:p-3 [&_.code-block-header]:rounded-t-2xl [&_.code-block-header]:border [&_.code-block-header]:px-3 [&_.code-block-header]:py-2",
-                                  isDark
-                                    ? "[&_pre]:border-white/10 [&_pre]:bg-white/[0.03] [&_.code-block-header]:border-white/10 [&_.code-block-header]:bg-white/[0.04] [&_.code-block-header]:text-slate-300"
-                                    : "[&_pre]:border-slate-200 [&_pre]:bg-white [&_.code-block-header]:border-slate-200 [&_.code-block-header]:bg-slate-100 [&_.code-block-header]:text-slate-600"
-                                )}
-                              />
-                            </Suspense>
-                          ) : (
-                            <div className={classNames("whitespace-pre-wrap break-words text-[13px] leading-6", isDark ? "text-slate-100" : "text-gray-900")}>
-                              {group.entry.text}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-[10px_minmax(0,1fr)] gap-3">
-                        <div className="pt-[0.4rem]">
-                          <span className={classNames("block h-2.5 w-2.5 rounded-full", group.live ? (isDark ? "bg-cyan-300" : "bg-cyan-500") : (isDark ? "bg-white/20" : "bg-slate-400"))} />
-                        </div>
-                        <div className={classNames("min-w-0 rounded-2xl px-3 py-2.5", isDark ? "bg-white/[0.03]" : "bg-slate-50")}>
-                          <div className="flex flex-wrap gap-2">
-                            {group.entries.map((entry) => (
-                              <div
-                                key={entry.id}
-                                title={entry.activity.detail ? `${entry.activity.summary} — ${entry.activity.detail}` : entry.activity.summary}
-                                className={classNames(
-                                  "inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-[11px] leading-4 shadow-sm",
-                                  entry.live
-                                    ? (isDark ? "border-cyan-300/20 bg-cyan-300/10 text-cyan-100" : "border-cyan-500/18 bg-cyan-500/10 text-cyan-700")
-                                    : (isDark ? "border-white/10 bg-white/[0.04] text-slate-200" : "border-slate-200 bg-white text-slate-700")
-                                )}
-                              >
-                                <span className={classNames("shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.14em]", entry.live ? (isDark ? "text-cyan-100" : "text-cyan-700") : (isDark ? "text-slate-400" : "text-slate-500"))}>
-                                  {formatPreviewActivityKind(entry.activity.kind)}
-                                </span>
-                                <span className="max-w-[min(48vw,280px)] truncate">
-                                  {entry.activity.summary}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className={classNames("text-sm", isDark ? "text-slate-500" : "text-slate-400")}>
-              {t("actors:noStreamingOutputYet", { defaultValue: "There is no streaming output to show yet." })}
-            </div>
-          )}
-      </div>
+      />
     </section>
   );
 }

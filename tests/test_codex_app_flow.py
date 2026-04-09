@@ -99,6 +99,7 @@ class TestCodexAppFlow(unittest.TestCase):
 
     def test_send_routes_running_headless_codex_actor_to_app_supervisor(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_send
+        from cccc.kernel.group import load_group
 
         _, cleanup = self._with_home()
         try:
@@ -126,7 +127,6 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
                 patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
-                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=[]),
             ):
                 resp = handle_send(
                     {
@@ -149,6 +149,10 @@ class TestCodexAppFlow(unittest.TestCase):
             submit_user_message.assert_called_once()
             queue_chat_message.assert_not_called()
             request_flush_pending_messages.assert_not_called()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            self.assertFalse(any(str(item.get("kind") or "") == "system.notify" for item in self._ledger_events(group)))
         finally:
             cleanup()
 
@@ -563,6 +567,90 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_reply_routes_running_headless_codex_actor_without_extra_info_notify(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_reply
+        from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-reply-headless-direct", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            send_resp, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "text": "hello codex",
+                    "to": ["peer1"],
+                },
+            )
+            self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
+            original_event = (send_resp.result or {}).get("event") if isinstance(send_resp.result, dict) else {}
+            self.assertIsInstance(original_event, dict)
+            assert isinstance(original_event, dict)
+            reply_to = str(original_event.get("id") or "").strip()
+            self.assertTrue(reply_to)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            stale_notify_count = sum(1 for item in self._ledger_events(group) if str(item.get("kind") or "") == "system.notify")
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+            ):
+                resp = handle_reply(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "reply codex",
+                        "reply_to": reply_to,
+                        "to": ["peer1"],
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: [],
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_called_once()
+            self.assertIn(MCP_REMINDER_LINE, str(submit_user_message.call_args.kwargs.get("text") or ""))
+            queue_chat_message.assert_not_called()
+            request_flush_pending_messages.assert_not_called()
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            notify_count = sum(1 for item in self._ledger_events(group) if str(item.get("kind") or "") == "system.notify")
+            self.assertEqual(notify_count, stale_notify_count)
+        finally:
+            cleanup()
+
     def test_codex_turn_loop_auto_marks_only_after_runtime_accepts_turn(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
 
@@ -847,13 +935,16 @@ class TestCodexAppFlow(unittest.TestCase):
                 {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "commentary-1", "phase": "commentary", "text": "Inspecting"}},
             )
             session._handle_notification("turn/plan/updated", {"turnId": "turn-1", "plan": [{"step": "Inspect src/app.ts", "status": "in_progress"}]})
+            session._handle_notification("item/plan/delta", {"turnId": "turn-1", "itemId": "plan-1", "delta": "Refine reducer merge"})
             session._handle_notification("item/started", {"turnId": "turn-1", "item": {"type": "reasoning", "id": "rs-1"}})
             session._handle_notification("item/reasoning/summaryTextDelta", {"turnId": "turn-1", "itemId": "rs-1", "delta": "Inspecting state flow"})
+            session._handle_notification("item/reasoning/textDelta", {"turnId": "turn-1", "itemId": "rs-1", "delta": "Need to keep command metadata"})
             session._handle_notification(
                 "item/started",
                 {"turnId": "turn-1", "item": {"type": "commandExecution", "id": "cmd-1", "command": "npm run typecheck", "commandActions": [], "cwd": "/tmp", "status": "in_progress"}},
             )
             session._handle_notification("item/commandExecution/outputDelta", {"turnId": "turn-1", "itemId": "cmd-1", "delta": "typecheck started"})
+            session._handle_notification("item/commandExecution/terminalInteraction", {"turnId": "turn-1", "itemId": "cmd-1", "stdin": "y\n"})
             session._handle_notification(
                 "item/started",
                 {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "msg-1", "phase": "final_answer"}},
@@ -916,8 +1007,11 @@ class TestCodexAppFlow(unittest.TestCase):
                 if str(item.get("type") or "").startswith("headless.activity.")
             ]
             self.assertIn("Inspect src/app.ts", activity_summaries)
+            self.assertIn("Refine reducer merge", activity_summaries)
             self.assertIn("Inspecting state flow", activity_summaries)
+            self.assertIn("Need to keep command metadata", activity_summaries)
             self.assertIn("npm run typecheck", activity_summaries)
+            self.assertIn("terminal input", activity_summaries)
             self.assertIn("reply ready", activity_summaries)
             command_started = next(
                 item for item in headless_events
@@ -929,13 +1023,16 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(str(command_data.get("command") or ""), "npm run typecheck")
             self.assertEqual(str(command_data.get("cwd") or ""), "/tmp")
 
-            command_updated = next(
-                item for item in headless_events
+            command_updates = [
+                item.get("data") if isinstance(item.get("data"), dict) else {}
+                for item in headless_events
                 if str(item.get("type") or "") == "headless.activity.updated"
                 and str(((item.get("data") or {}).get("activity_id") or "")).startswith("command:")
-            )
-            command_updated_data = command_updated.get("data") if isinstance(command_updated.get("data"), dict) else {}
-            self.assertEqual(str(command_updated_data.get("raw_item_type") or ""), "commandExecution")
+            ]
+            self.assertTrue(any(str(data.get("summary") or "") == "typecheck started" for data in command_updates))
+            self.assertTrue(any(str(data.get("summary") or "") == "terminal input" for data in command_updates))
+            self.assertTrue(all(str(data.get("command") or "") == "npm run typecheck" for data in command_updates))
+            self.assertTrue(all(str(data.get("cwd") or "") == "/tmp" for data in command_updates))
 
             ledger_events = [
                 json.loads(line)
@@ -1154,6 +1251,232 @@ class TestCodexAppFlow(unittest.TestCase):
             ]
             chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
             self.assertEqual(chat_messages, [])
+        finally:
+            cleanup()
+
+    def test_claude_session_emits_rich_tool_hook_task_and_summary_activity(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+        from cccc.kernel.headless_events import headless_events_path
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="claude-rich-activity", topic="")
+            loaded_group = load_group(group.group_id)
+            self.assertIsNotNone(loaded_group)
+            assert loaded_group is not None
+
+            session = ClaudeAppSession(
+                group_id=group.group_id,
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-claude"
+            session._active_event_id = "evt-claude"
+
+            session._handle_assistant_event(
+                {
+                    "type": "assistant",
+                    "partial": True,
+                    "message": {
+                        "id": "msg-tool",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool-1",
+                                "name": "Bash",
+                                "input": {
+                                    "command": "npm run typecheck",
+                                    "cwd": "/tmp",
+                                },
+                            }
+                        ],
+                    },
+                }
+            )
+            session._handle_event(
+                {
+                    "type": "tool_progress",
+                    "tool_use_id": "tool-1",
+                    "tool_name": "Bash",
+                    "elapsed_time_seconds": 4,
+                    "uuid": "tool-progress-1",
+                    "session_id": "sess-1",
+                }
+            )
+            session._handle_event(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool-1",
+                    "tool_name": "Bash",
+                    "content": "typecheck clean",
+                }
+            )
+            session._handle_assistant_event(
+                {
+                    "type": "assistant",
+                    "partial": True,
+                    "message": {
+                        "id": "msg-search",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool-2",
+                                "name": "Grep",
+                                "input": {
+                                    "pattern": "headless.activity",
+                                    "path": "/tmp/src",
+                                    "glob": "**/*.py",
+                                },
+                            }
+                        ],
+                    },
+                }
+            )
+            session._handle_system_event(
+                {
+                    "type": "system",
+                    "subtype": "hook_started",
+                    "hook_id": "hook-1",
+                    "hook_name": "PostToolUse",
+                    "hook_event": "post_tool_use",
+                    "uuid": "hook-start-1",
+                    "session_id": "sess-1",
+                }
+            )
+            session._handle_system_event(
+                {
+                    "type": "system",
+                    "subtype": "hook_progress",
+                    "hook_id": "hook-1",
+                    "hook_name": "PostToolUse",
+                    "hook_event": "post_tool_use",
+                    "output": "collecting trace",
+                    "stdout": "",
+                    "stderr": "",
+                    "uuid": "hook-progress-1",
+                    "session_id": "sess-1",
+                }
+            )
+            session._handle_system_event(
+                {
+                    "type": "system",
+                    "subtype": "hook_response",
+                    "hook_id": "hook-1",
+                    "hook_name": "PostToolUse",
+                    "hook_event": "post_tool_use",
+                    "output": "hook complete",
+                    "stdout": "",
+                    "stderr": "",
+                    "outcome": "success",
+                    "uuid": "hook-response-1",
+                    "session_id": "sess-1",
+                }
+            )
+            session._handle_system_event(
+                {
+                    "type": "system",
+                    "subtype": "task_started",
+                    "task_id": "task-1",
+                    "description": "Audit reducers",
+                    "prompt": "Inspect group reducers",
+                    "uuid": "task-start-1",
+                    "session_id": "sess-1",
+                }
+            )
+            session._handle_system_event(
+                {
+                    "type": "system",
+                    "subtype": "task_progress",
+                    "task_id": "task-1",
+                    "description": "Audit reducers",
+                    "summary": "Mapped activity merge path",
+                    "uuid": "task-progress-1",
+                    "session_id": "sess-1",
+                }
+            )
+            session._handle_system_event(
+                {
+                    "type": "system",
+                    "subtype": "task_notification",
+                    "task_id": "task-1",
+                    "status": "completed",
+                    "summary": "Reducer audit finished",
+                    "output_file": "/tmp/task-1.txt",
+                    "uuid": "task-done-1",
+                    "session_id": "sess-1",
+                }
+            )
+            session._handle_event(
+                {
+                    "type": "tool_use_summary",
+                    "summary": "Read 2 files, wrote 1 file",
+                    "preceding_tool_use_ids": ["tool-1"],
+                    "uuid": "tool-summary-1",
+                    "session_id": "sess-1",
+                }
+            )
+
+            events_path = headless_events_path(loaded_group.path)
+            self.assertTrue(events_path.exists())
+            headless_events = [
+                json.loads(line)
+                for line in events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+            command_started = next(
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.activity.started"
+                and str(((item.get("data") or {}).get("activity_id") or "")) == "tool:tool-1"
+            )
+            command_started_data = command_started.get("data") if isinstance(command_started.get("data"), dict) else {}
+            self.assertEqual(str(command_started_data.get("summary") or ""), "npm run typecheck")
+            self.assertEqual(str(command_started_data.get("kind") or ""), "command")
+            self.assertEqual(str(command_started_data.get("command") or ""), "npm run typecheck")
+            self.assertEqual(str(command_started_data.get("cwd") or ""), "/tmp")
+
+            command_progress = next(
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.activity.updated"
+                and str(((item.get("data") or {}).get("activity_id") or "")) == "tool:tool-1"
+            )
+            command_progress_data = command_progress.get("data") if isinstance(command_progress.get("data"), dict) else {}
+            self.assertEqual(str(command_progress_data.get("detail") or ""), "running for 4s")
+
+            command_completed = next(
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.activity.completed"
+                and str(((item.get("data") or {}).get("activity_id") or "")) == "tool:tool-1"
+            )
+            command_completed_data = command_completed.get("data") if isinstance(command_completed.get("data"), dict) else {}
+            self.assertEqual(str(command_completed_data.get("summary") or ""), "npm run typecheck")
+            self.assertEqual(str(command_completed_data.get("detail") or ""), "typecheck clean")
+
+            search_started = next(
+                item for item in headless_events
+                if str(item.get("type") or "") == "headless.activity.started"
+                and str(((item.get("data") or {}).get("activity_id") or "")) == "tool:tool-2"
+            )
+            search_started_data = search_started.get("data") if isinstance(search_started.get("data"), dict) else {}
+            self.assertEqual(str(search_started_data.get("summary") or ""), "headless.activity")
+            self.assertEqual(str(search_started_data.get("kind") or ""), "search")
+            self.assertEqual(str(search_started_data.get("query") or ""), "headless.activity")
+            self.assertEqual(str(search_started_data.get("detail") or ""), "in /tmp/src, glob **/*.py")
+            self.assertFalse(search_started_data.get("file_paths"))
+
+            activity_summaries = [
+                str((item.get("data") or {}).get("summary") or "")
+                for item in headless_events
+                if str(item.get("type") or "").startswith("headless.activity.")
+            ]
+            self.assertIn("PostToolUse", activity_summaries)
+            self.assertIn("Audit reducers", activity_summaries)
+            self.assertIn("Reducer audit finished", activity_summaries)
+            self.assertIn("Read 2 files, wrote 1 file", activity_summaries)
         finally:
             cleanup()
 

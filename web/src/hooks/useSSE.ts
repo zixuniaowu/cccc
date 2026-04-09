@@ -7,6 +7,7 @@ import {
   transferOutboxPreviewUrls,
   useChatOutboxStore,
 } from "../stores/chatOutboxStore";
+import { mergeStreamingActivity } from "../stores/chatStreamingSessions";
 import { beginContextRequest, isLatestContextRequest } from "../stores/groupStoreCore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
@@ -549,7 +550,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         const existingActivityBatch = pendingHeadlessActivitiesRef.current.get(activityKey);
         if (existingActivityBatch) {
           existingActivityBatch.match = { pendingEventId, streamId };
-          existingActivityBatch.activities.set(activityId, activity);
+          const existingActivity = existingActivityBatch.activities.get(activityId);
+          existingActivityBatch.activities.set(activityId, mergeStreamingActivity(existingActivity, activity) || activity);
         } else {
           pendingHeadlessActivitiesRef.current.set(activityKey, {
             actorId,

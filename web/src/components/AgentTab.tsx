@@ -4,13 +4,14 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useTranslation } from "react-i18next";
-import { Actor, AgentState, StreamingActivity, getRuntimeColor, RUNTIME_INFO } from "../types";
+import { Actor, AgentState, HeadlessPreviewSession, StreamingActivity, getRuntimeColor, RUNTIME_INFO } from "../types";
 import { useActorDisplayState } from "../hooks/useActorDisplayState";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
 import { formatFullTime, formatTime } from "../utils/time";
 import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { withAuthToken, fetchTerminalTail } from "../services/api";
+import { HeadlessLiveTrace } from "./headless/HeadlessLiveTrace";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
 import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
@@ -19,6 +20,7 @@ import { getEffectiveActorRunner, supportsStandardWebHeadlessRuntime } from "../
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
+const EMPTY_HEADLESS_PREVIEW_SESSIONS: HeadlessPreviewSession[] = [];
 
 // Delay before showing terminal after connection (allows backlog replay to complete without visible scrolling)
 const TERMINAL_SHOW_DELAY_MS = 150;
@@ -78,6 +80,14 @@ export function AgentTab({
     const actorId = String(actor.id || "").trim();
     if (!actorId) return "";
     return String(bucket.latestActorTextByActorId?.[actorId] || "");
+  });
+  const headlessPreviewSessions = useGroupStore((state) => {
+    const bucket = state.chatByGroup[String(groupId || "").trim()];
+    if (!bucket) return EMPTY_HEADLESS_PREVIEW_SESSIONS;
+    const actorId = String(actor.id || "").trim();
+    if (!actorId) return EMPTY_HEADLESS_PREVIEW_SESSIONS;
+    const sessions = bucket.previewSessionsByActorId?.[actorId];
+    return Array.isArray(sessions) ? sessions : EMPTY_HEADLESS_PREVIEW_SESSIONS;
   });
   const latestHeadlessActivities = useGroupStore((state) => {
     const bucket = state.chatByGroup[String(groupId || "").trim()];
@@ -211,28 +221,9 @@ export function AgentTab({
     if (workingState === "working") return t("working");
     return t("running");
   })();
-  const formatStreamingActivityKind = (kind: string): string => {
-    switch (String(kind || "").trim()) {
-      case "thinking":
-        return "think";
-      case "plan":
-        return "plan";
-      case "search":
-        return "search";
-      case "command":
-        return "cmd";
-      case "patch":
-        return "patch";
-      case "tool":
-        return "tool";
-      case "reply":
-        return "reply";
-      case "queued":
-        return "queue";
-      default:
-        return String(kind || "stream").trim() || "stream";
-    }
-  };
+  const latestHeadlessPreview = headlessPreviewSessions.length > 0
+    ? headlessPreviewSessions[headlessPreviewSessions.length - 1]
+    : null;
 
   // Send interrupt (Ctrl+C)
   const sendInterrupt = () => {
@@ -839,7 +830,7 @@ export function AgentTab({
       {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}
       <div className={classNames("flex-1 min-h-0 relative", "bg-[var(--color-bg-secondary)]")} style={{ contain: 'layout', overflow: 'hidden' }}>
         {isHeadless ? (
-          <div className={classNames("flex flex-col items-center justify-center h-full p-8", "text-[var(--color-text-tertiary)]")}>
+          <div className={classNames("flex h-full min-h-0 flex-col items-center p-8", "text-[var(--color-text-tertiary)]")}>
             <div className="mb-4"><RocketIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">{t('headlessAgent')}</div>
             <div className="text-sm text-center max-w-md">
@@ -852,36 +843,25 @@ export function AgentTab({
                 {t("statusWithValue", { value: runtimeStatusText })}
               </div>
             )}
-            <div className="mt-6 w-full max-w-2xl">
-              {latestHeadlessActivities.length > 0 ? (
-                <div className="mb-3 flex flex-col gap-1 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]/70 px-3 py-2">
-                  {latestHeadlessActivities.map((activity: StreamingActivity) => (
-                    <div key={activity.id} className="flex items-start gap-2 text-[11px] leading-4 text-[var(--color-text-secondary)]">
-                      <span className="min-w-[3.25rem] font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
-                        {formatStreamingActivityKind(activity.kind)}
-                      </span>
-                      <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-                        {activity.summary}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <div className="text-xs font-medium mb-2 text-[var(--color-text-secondary)]">
-                {t('streamingOutput', { defaultValue: '流式输出' })}
-              </div>
-              {latestHeadlessText ? (
-                <pre className={classNames(
-                  "text-xs leading-relaxed whitespace-pre-wrap break-words p-3 rounded-lg max-h-72 overflow-y-auto",
-                  "bg-[var(--color-bg-primary)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)] text-left"
-                )}>
-                  {latestHeadlessText}
-                </pre>
-              ) : (
-                <div className="rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-4 py-3 text-sm text-[var(--color-text-secondary)] text-center">
-                  {t('noStreamingOutputYet', { defaultValue: '当前还没有可显示的流式输出。' })}
-                </div>
-              )}
+            <div className="mt-6 flex w-full max-w-3xl min-h-0 flex-1 flex-col">
+              <HeadlessLiveTrace
+                previewSessions={headlessPreviewSessions}
+                fallbackText={latestHeadlessText}
+                fallbackActivities={latestHeadlessActivities}
+                fallbackUpdatedAt={String(latestHeadlessPreview?.updatedAt || "").trim()}
+                fallbackPendingEventId={String(latestHeadlessPreview?.pendingEventId || `preview:${actor.id}`).trim()}
+                fallbackStreamId={String(latestHeadlessPreview?.currentStreamId || "").trim()}
+                fallbackStreamPhase={String(latestHeadlessPreview?.streamPhase || "").trim().toLowerCase()}
+                fallbackPhase={String(latestHeadlessPreview?.phase || "").trim().toLowerCase()}
+                emptyLabel={t('noStreamingOutputYet', { defaultValue: '当前还没有可显示的流式输出。' })}
+                recentLabel="Recent"
+                isDark={isDark}
+                density="expanded"
+                className={classNames(
+                  "min-h-[220px] flex-1 overflow-y-auto rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-3.5 py-3 text-left",
+                  "text-[var(--color-text-secondary)]"
+                )}
+              />
             </div>
           </div>
         ) : isRunning ? (

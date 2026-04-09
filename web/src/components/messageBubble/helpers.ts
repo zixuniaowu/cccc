@@ -37,6 +37,46 @@ export function mayContainMarkdown(text: string): boolean {
   return /(```|`[^`\n]+`|\[[^\]]+\]\([^)]+\)|^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\s*>\s)/m.test(value);
 }
 
+export function formatStreamingActivityKind(kind: string): string {
+  const normalized = String(kind || "").trim();
+  switch (normalized) {
+    case "queued":
+      return "queue";
+    case "thinking":
+      return "think";
+    case "plan":
+      return "plan";
+    case "search":
+      return "search";
+    case "command":
+      return "run";
+    case "patch":
+      return "patch";
+    case "tool":
+      return "tool";
+    case "reply":
+      return "reply";
+    default:
+      return normalized || "step";
+  }
+}
+
+export function getStructuredStreamingActivityLabel(activity: StreamingActivity): string {
+  const command = String(activity.command || "").trim();
+  if (command) return command;
+  const filePaths = Array.isArray(activity.file_paths)
+    ? activity.file_paths.map((item) => String(item || "").trim()).filter((item) => item)
+    : [];
+  if (filePaths.length > 0) return filePaths.join(", ");
+  const toolName = String(activity.tool_name || "").trim();
+  const serverName = String(activity.server_name || "").trim();
+  if (toolName && serverName) return `${serverName}:${toolName}`;
+  if (toolName) return toolName;
+  const query = String(activity.query || "").trim();
+  if (query) return query;
+  return String(activity.summary || "").trim();
+}
+
 export function normalizeStreamingActivities(value: unknown): StreamingActivity[] {
   if (!Array.isArray(value)) return EMPTY_STREAMING_ACTIVITIES;
   const normalized = dedupeStreamingActivities(value

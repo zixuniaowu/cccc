@@ -85,6 +85,21 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
     expect(entries[1]).toMatchObject({ kind: "message", pendingEventId: "fallback-1", streamPhase: "final_answer" });
   });
 
+  it("keeps fallback entries non-live when the provided fallback phase is completed", () => {
+    const entries = buildHeadlessPreviewTimelineEntries({
+      fallbackText: "Reply complete",
+      fallbackActivities: [{ id: "activity-1", kind: "tool", status: "completed", summary: "search docs", ts: "2025-01-01T00:00:00Z" }],
+      fallbackUpdatedAt: "2025-01-01T00:00:01Z",
+      fallbackPendingEventId: "fallback-1",
+      fallbackStreamId: "stream-fallback",
+      fallbackStreamPhase: "final_answer",
+      fallbackPhase: "completed",
+    });
+
+    expect(entries).toHaveLength(2);
+    expect(entries.every((entry) => entry.live === false)).toBe(true);
+  });
+
   it("groups contiguous activity rows into compact activity bands", () => {
     const entries = buildHeadlessPreviewTimelineEntries({
       previewSessions: [
