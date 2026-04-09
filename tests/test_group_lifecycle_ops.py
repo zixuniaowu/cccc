@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,6 +27,25 @@ class TestGroupLifecycleOps(unittest.TestCase):
         from cccc.daemon.server import handle_request
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
+
+    @contextmanager
+    def _fake_codex_headless_start(self):
+        def _fake_start_actor(*, group_id: str, actor_id: str, cwd: Path, env: dict[str, str], model: str = "gpt-5.4"):
+            class _Session:
+                def __init__(self) -> None:
+                    self.group_id = group_id
+                    self.actor_id = actor_id
+                    self.cwd = cwd
+                    self.env = dict(env)
+                    self.model = model
+
+            return _Session()
+
+        with patch(
+            "cccc.daemon.group.group_lifecycle_ops.codex_app_supervisor.start_actor",
+            side_effect=_fake_start_actor,
+        ):
+            yield
 
     def _add_actor(self, group_id: str, *, actor_id: str = "peer1", enabled: bool | None = None):
         add, _ = self._call(
@@ -82,7 +102,8 @@ class TestGroupLifecycleOps(unittest.TestCase):
             set_state, _ = self._call("group_set_state", {"group_id": group_id, "state": "paused", "by": "user"})
             self.assertTrue(set_state.ok, getattr(set_state, "error", None))
 
-            start, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
+            with self._fake_codex_headless_start():
+                start, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
             self.assertTrue(start.ok, getattr(start, "error", None))
 
             show, _ = self._call("group_show", {"group_id": group_id})
@@ -124,7 +145,8 @@ class TestGroupLifecycleOps(unittest.TestCase):
             self.assertEqual(str(stopped_doc.get("state") or ""), "stopped")
             self.assertFalse(bool(stopped_doc.get("running")))
 
-            start, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
+            with self._fake_codex_headless_start():
+                start, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
             self.assertTrue(start.ok, getattr(start, "error", None))
 
             show, _ = self._call("group_show", {"group_id": group_id})
@@ -170,7 +192,8 @@ class TestGroupLifecycleOps(unittest.TestCase):
             )
             group.save()
 
-            start, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
+            with self._fake_codex_headless_start():
+                start, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
             self.assertTrue(start.ok, getattr(start, "error", None))
 
             reloaded = load_group(group_id)

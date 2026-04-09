@@ -200,7 +200,7 @@ export function MessageFooter({
             type="button"
             className={classNames(
               "touch-target-sm flex min-w-0 items-center gap-2 rounded-lg px-2 py-1",
-              "hover:bg-[var(--glass-tab-bg-hover)]",
+              "hover:bg-black/8 dark:hover:bg-white/12",
             )}
             onClick={onShowRecipients}
             aria-label={t("showObligationStatus")}
@@ -236,7 +236,7 @@ export function MessageFooter({
             type="button"
             className={classNames(
               "touch-target-sm flex min-w-0 items-center gap-2 rounded-lg px-2 py-1",
-              "hover:bg-[var(--glass-tab-bg-hover)]",
+              "hover:bg-black/8 dark:hover:bg-white/12",
             )}
             onClick={onShowRecipients}
             aria-label={t("showAckStatus")}
@@ -263,7 +263,7 @@ export function MessageFooter({
             type="button"
             className={classNames(
               "touch-target-sm flex min-w-0 items-center gap-2 rounded-lg px-2 py-1",
-              "hover:bg-[var(--glass-tab-bg-hover)]",
+              "hover:bg-black/8 dark:hover:bg-white/12",
             )}
             onClick={onShowRecipients}
             aria-label={t("showRecipientStatus")}
@@ -286,7 +286,7 @@ export function MessageFooter({
               type="button"
               className={classNames(
                 "touch-target-sm rounded-lg px-2 py-1 text-[11px] font-medium transition-colors",
-                "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+                "text-[var(--color-text-secondary)] hover:bg-black/8 hover:text-[var(--color-text-primary)] dark:hover:bg-white/12",
               )}
               onClick={() => void onCopyMessageText()}
               title={copiedMessageText ? t("common:copied") : t("copyText")}
@@ -299,7 +299,7 @@ export function MessageFooter({
               type="button"
               className={classNames(
                 "touch-target-sm rounded-lg px-2 py-1 text-[11px] font-medium transition-colors",
-                "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+                "text-[var(--color-text-secondary)] hover:bg-black/8 hover:text-[var(--color-text-primary)] dark:hover:bg-white/12",
               )}
               onClick={() => onCopyLink(eventId)}
               title={t("copyLink")}
@@ -312,7 +312,7 @@ export function MessageFooter({
               type="button"
               className={classNames(
                 "touch-target-sm rounded-lg px-2 py-1 text-[11px] font-medium transition-colors",
-                "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+                "text-[var(--color-text-secondary)] hover:bg-black/8 hover:text-[var(--color-text-primary)] dark:hover:bg-white/12",
               )}
               onClick={() => onRelay(event)}
               title={t("relayToGroup")}
@@ -325,7 +325,7 @@ export function MessageFooter({
               type="button"
               className={classNames(
                 "touch-target-sm rounded-lg px-2 py-1 text-[11px] font-medium transition-colors",
-                "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+                "text-[var(--color-text-secondary)] hover:bg-black/8 hover:text-[var(--color-text-primary)] dark:hover:bg-white/12",
               )}
               onClick={onReply}
             >

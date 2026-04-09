@@ -2,6 +2,7 @@ import {
   DndContext,
   closestCenter,
   KeyboardSensor,
+  MouseSensor,
   PointerSensor,
   TouchSensor,
   useSensor,
@@ -50,6 +51,9 @@ export function GroupSidebarSortableList({
 }: GroupSidebarSortableListProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(MouseSensor, {
       activationConstraint: { distance: 8 },
     }),
     useSensor(TouchSensor, {

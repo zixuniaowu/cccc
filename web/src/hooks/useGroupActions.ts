@@ -57,15 +57,24 @@ export function useGroupActions() {
         const resp = await api.setGroupState(selectedGroupId, s);
         if (!resp.ok) {
           showError(`${resp.error.code}: ${resp.error.message}`);
-        } else {
-          setGroupDoc(groupDoc ? { ...groupDoc, state: s } : null);
-          await refreshGroups();
+          return;
         }
+        setGroupDoc(groupDoc ? { ...groupDoc, state: s } : null);
+        // When resuming to active and no actors are running, also start
+        // the group so processes get relaunched (not just the state flag).
+        if (s === "active" && groupDoc && !groupDoc.running) {
+          const startResp = await api.startGroup(selectedGroupId);
+          if (!startResp.ok) {
+            showError(`${startResp.error.code}: ${startResp.error.message}`);
+          }
+          await refreshActors();
+        }
+        await refreshGroups();
       } finally {
         setBusy("");
       }
     },
-    [selectedGroupId, groupDoc, setBusy, showError, setGroupDoc, refreshGroups]
+    [selectedGroupId, groupDoc, setBusy, showError, setGroupDoc, refreshGroups, refreshActors]
   );
 
   return {

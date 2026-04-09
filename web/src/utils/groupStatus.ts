@@ -22,47 +22,43 @@ function buildStatus(key: GroupStatusKey, label: string, dotClass: string): Grou
 }
 
 export function getGroupStatus(running: boolean, state?: string): GroupStatus {
+  if (state === "paused") {
+    return buildStatus("paused", "PAUSED", getGroupPresenceDotClass("paused"));
+  }
   if (!running) {
     return buildStatus("stop", "STOP", getGroupPresenceDotClass("stop"));
   }
-  switch (state) {
-    case "paused":
-      return buildStatus("paused", "PAUSED", getGroupPresenceDotClass("paused"));
-    case "idle":
-      return buildStatus("idle", "IDLE", getGroupPresenceDotClass("idle"));
-    default:
-      break;
+  if (state === "idle") {
+    return buildStatus("idle", "IDLE", getGroupPresenceDotClass("idle"));
   }
   return buildStatus("run", "RUN", getGroupPresenceDotClass("run"));
 }
 
 export function getGroupStatusLight(running: boolean, state?: string): GroupStatus {
+  if (state === "paused") {
+    return buildStatus("paused", "PAUSED", getGroupPresenceDotClass("paused"));
+  }
   if (!running) {
     return buildStatus("stop", "STOP", getGroupPresenceDotClass("stop"));
   }
-  switch (state) {
-    case "paused":
-      return buildStatus("paused", "PAUSED", getGroupPresenceDotClass("paused"));
-    case "idle":
-      return buildStatus("idle", "IDLE", getGroupPresenceDotClass("idle"));
-    default:
-      break;
+  if (state === "idle") {
+    return buildStatus("idle", "IDLE", getGroupPresenceDotClass("idle"));
   }
   return buildStatus("run", "RUN", getGroupPresenceDotClass("run"));
 }
 
 /** Unified group status using dark: prefix - no isDark dependency needed */
 export function getGroupStatusUnified(running: boolean, state?: string): GroupStatus {
+  // Paused is a lifecycle state independent of whether processes are alive.
+  // Show it truthfully so the launch button takes the correct resume path.
+  if (state === "paused") {
+    return buildStatus("paused", "PAUSED", getGroupPresenceDotClass("paused"));
+  }
   if (!running) {
     return buildStatus("stop", "STOP", getGroupPresenceDotClass("stop"));
   }
-  switch (state) {
-    case "paused":
-      return buildStatus("paused", "PAUSED", getGroupPresenceDotClass("paused"));
-    case "idle":
-      return buildStatus("idle", "IDLE", getGroupPresenceDotClass("idle"));
-    default:
-      break;
+  if (state === "idle") {
+    return buildStatus("idle", "IDLE", getGroupPresenceDotClass("idle"));
   }
   return buildStatus("run", "RUN", getGroupPresenceDotClass("run"));
 }

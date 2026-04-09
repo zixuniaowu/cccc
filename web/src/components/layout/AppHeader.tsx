@@ -118,7 +118,7 @@ export function AppHeader({
   };
   return (
     <header
-      className="z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 glass-header md:px-5"
+      className="z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 pt-1 glass-header md:px-5"
     >
       <div className="flex items-center gap-3 min-w-0">
         <button
@@ -261,7 +261,7 @@ export function AppHeader({
                   title={t('settings')}
                 >
                   <span className="sr-only">{t('settings')}</span>
-                  <SettingsIcon size={17} />
+                  <SettingsIcon size={18} />
                 </button>
               </div>
             </div>

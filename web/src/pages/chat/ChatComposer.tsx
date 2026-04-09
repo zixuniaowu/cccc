@@ -459,105 +459,111 @@ export function ChatComposer({
 
         {/* Recipient Selector Row */}
         <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2">
-          <ScrollFade className="-mx-1 sm:mx-0" innerClassName="flex items-center gap-1.5 sm:gap-2 px-1 sm:px-0" fadeWidth={20}>
-            <div className={classNames("text-[10px] font-medium uppercase tracking-wide flex-shrink-0", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>{t('to', 'To')}</div>
+          <ScrollFade
+            className="-mx-1 min-w-0 sm:mx-0 sm:flex-1"
+            innerClassName="w-full max-w-full px-1 sm:px-0"
+            fadeWidth={20}
+          >
+            <div className="flex min-w-max items-center gap-1.5 sm:gap-2">
+              <div className={classNames("text-[10px] font-medium uppercase tracking-wide flex-shrink-0", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>{t('to', 'To')}</div>
 
-            {/* Group Selector - Styled to match buttons */}
-            <div className="relative flex-shrink-0">
-              <select
-                value={destGroupId || selectedGroupId || ""}
-                onChange={(e) => setDestGroupId(e.target.value)}
-                style={{ colorScheme: isDark ? "dark" : "light" }}
-                className={classNames(
-                  "appearance-none pr-8 truncate min-w-[120px] max-w-[180px] sm:max-w-[240px]",
-                  "h-7 sm:h-8 transition-colors cursor-pointer",
-                  chipBaseClass,
-                  groupSelectClass
-                )}
-                disabled={!canChooseDestGroup || groupOptions.length === 0}
-                aria-label={t('destinationGroup')}
-              >
-                {groupOptions.map((g) => (
-                  <option key={g.gid} value={g.gid}>
-                    {g.label}
-                  </option>
-                ))}
-              </select>
-              <div className={classNames("pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-60", groupCaretClass)}>
-                <ChevronDownIcon size={12} />
-              </div>
-            </div>
-
-            <div className="w-[1px] h-4 bg-current opacity-10 flex-shrink-0 mx-1 hidden sm:block" />
-
-            {/* Recipients List - Scrollable horizontally on mobile */}
-            <div className={classNames(
-              "flex items-center gap-1 sm:gap-1.5 min-w-0 transition-opacity",
-              recipientActorsBusy ? "opacity-50 pointer-events-none" : ""
-            )}>
-              {/* Special tokens */}
-              {["@all", "@foreman", "@peers"].map((tok) => {
-                const active = toTokens.includes(tok);
-                return (
-                  <button
-                    key={tok}
-                    className={classNames(
-                      "h-[26px] sm:h-8",
-                      chipBaseClass,
-                      active
-                        ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
-                        : isDark
-                          ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
-                          : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
-                    )}
-                    onClick={() => onToggleRecipient(tok)}
-                    disabled={!selectedGroupId || busy === "send"}
-                    aria-pressed={active}
-                  >
-                    {tok}
-                  </button>
-                );
-              })}
-              {/* Actor tokens */}
-              {recipientActors.map((actor) => {
-                const id = String(actor.id || "");
-                if (!id) return null;
-                const active = toTokens.includes(id);
-                return (
-                  <button
-                    key={id}
-                    className={classNames(
-                      "h-[26px] sm:h-8",
-                      chipBaseClass,
-                      active
-                        ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
-                        : isDark
-                          ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
-                          : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
-                    )}
-                    onClick={() => onToggleRecipient(id)}
-                    disabled={!selectedGroupId || busy === "send" || !!recipientActorsBusy}
-                    aria-pressed={active}
-                  >
-                    {actor.title || id}
-                  </button>
-                );
-              })}
-
-              {toTokens.length > 0 && (
-                <button
+              {/* Group Selector - Styled to match buttons */}
+              <div className="relative flex-shrink-0">
+                <select
+                  value={destGroupId || selectedGroupId || ""}
+                  onChange={(e) => setDestGroupId(e.target.value)}
+                  style={{ colorScheme: isDark ? "dark" : "light" }}
                   className={classNames(
-                    "p-2 rounded-full transition-all flex-shrink-0 opacity-40 hover:opacity-100",
-                    isDark ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/10"
+                    "appearance-none pr-8 truncate min-w-[120px] max-w-[180px] sm:max-w-[240px]",
+                    "h-7 sm:h-8 transition-colors cursor-pointer",
+                    chipBaseClass,
+                    groupSelectClass
                   )}
-                  onClick={onClearRecipients}
-                  disabled={busy === "send"}
-                  aria-label={t('clearRecipients')}
-                  title={t('clearRecipients')}
+                  disabled={!canChooseDestGroup || groupOptions.length === 0}
+                  aria-label={t('destinationGroup')}
                 >
-                  <CloseIcon size={14} />
-                </button>
-              )}
+                  {groupOptions.map((g) => (
+                    <option key={g.gid} value={g.gid}>
+                      {g.label}
+                    </option>
+                  ))}
+                </select>
+                <div className={classNames("pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-60", groupCaretClass)}>
+                  <ChevronDownIcon size={12} />
+                </div>
+              </div>
+
+              <div className="w-[1px] h-4 bg-current opacity-10 flex-shrink-0 mx-1 hidden sm:block" />
+
+              {/* Recipients List - Scrollable horizontally */}
+              <div className={classNames(
+                "flex items-center gap-1 sm:gap-1.5 transition-opacity",
+                recipientActorsBusy ? "opacity-50 pointer-events-none" : ""
+              )}>
+                {/* Special tokens */}
+                {["@all", "@foreman", "@peers"].map((tok) => {
+                  const active = toTokens.includes(tok);
+                  return (
+                    <button
+                      key={tok}
+                      className={classNames(
+                        "h-[26px] sm:h-8",
+                        chipBaseClass,
+                        active
+                          ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
+                          : isDark
+                            ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
+                            : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
+                      )}
+                      onClick={() => onToggleRecipient(tok)}
+                      disabled={!selectedGroupId || busy === "send"}
+                      aria-pressed={active}
+                    >
+                      {tok}
+                    </button>
+                  );
+                })}
+                {/* Actor tokens */}
+                {recipientActors.map((actor) => {
+                  const id = String(actor.id || "");
+                  if (!id) return null;
+                  const active = toTokens.includes(id);
+                  return (
+                    <button
+                      key={id}
+                      className={classNames(
+                        "h-[26px] sm:h-8",
+                        chipBaseClass,
+                        active
+                          ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
+                          : isDark
+                            ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
+                            : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
+                      )}
+                      onClick={() => onToggleRecipient(id)}
+                      disabled={!selectedGroupId || busy === "send" || !!recipientActorsBusy}
+                      aria-pressed={active}
+                    >
+                      {actor.title || id}
+                    </button>
+                  );
+                })}
+
+                {toTokens.length > 0 && (
+                  <button
+                    className={classNames(
+                      "p-2 rounded-full transition-all flex-shrink-0 opacity-40 hover:opacity-100",
+                      isDark ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/10"
+                    )}
+                    onClick={onClearRecipients}
+                    disabled={busy === "send"}
+                    aria-label={t('clearRecipients')}
+                    title={t('clearRecipients')}
+                  >
+                    <CloseIcon size={14} />
+                  </button>
+                )}
+              </div>
             </div>
           </ScrollFade>
         </div>

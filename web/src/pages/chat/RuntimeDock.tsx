@@ -1,5 +1,13 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  FloatingPortal,
+  autoUpdate,
+  flip,
+  offset,
+  shift,
+  useFloating,
+} from "@floating-ui/react";
 
 import { ActorAvatar } from "../../components/ActorAvatar";
 import { PlusIcon } from "../../components/Icons";
@@ -32,8 +40,6 @@ type RuntimeRingPresentation = {
   statusPillClassName: string;
   unreadBadgeClassName: string;
 };
-
-type PreviewAlignment = "start" | "center" | "end";
 
 type HeadlessPreviewData = {
   previewSessions: NonNullable<LiveWorkCard["previewSessions"]>;
@@ -116,12 +122,6 @@ function formatPreviewActivityKind(kind: string): string {
     default:
       return normalizedKind ? normalizedKind.replace(/_/g, " ") : "Activity";
   }
-}
-
-function getPreviewAlignment(index: number, count: number): PreviewAlignment {
-  if (index <= 0) return "start";
-  if (index >= count - 1) return "end";
-  return "center";
 }
 
 function getRuntimeRingTone(item: RuntimeDockItem, isRunning: boolean, workingState: string): RuntimeRingTone {
@@ -270,16 +270,6 @@ function shouldRenderPreviewMarkdown(streamPhase: string | null | undefined): bo
   return String(streamPhase || "").trim().toLowerCase() === "final_answer";
 }
 
-function getPreviewPositionClasses(alignment: PreviewAlignment): { container: string; origin: string } {
-  if (alignment === "start") {
-    return { container: "left-0", origin: "origin-bottom-left" };
-  }
-  if (alignment === "end") {
-    return { container: "right-0", origin: "origin-bottom-right" };
-  }
-  return { container: "left-1/2 -translate-x-1/2", origin: "origin-bottom" };
-}
-
 function isHeadlessCardPreviewActive(card: LiveWorkCard | null | undefined): boolean {
   if (!card) return false;
   return card.phase === "pending" || card.phase === "streaming";
@@ -382,7 +372,7 @@ function HeadlessPreviewSurface({
     <section
       className={classNames(
         "w-[min(96vw,780px)] rounded-[28px] border px-5 py-5 shadow-[0_38px_120px_-52px_rgba(15,23,42,0.82)]",
-        isDark ? "bg-slate-950/98" : "bg-white",
+        isDark ? "bg-slate-950 backdrop-blur-xl" : "bg-white backdrop-blur-xl",
         borderClassName,
       )}
       aria-label={t("chat:runtimeDockPreviewLabel", {
@@ -579,7 +569,7 @@ function PtyPreviewSurface({
     <section
       className={classNames(
         "w-[min(94vw,420px)] rounded-[24px] border px-4 py-3.5 shadow-[0_30px_84px_-48px_rgba(15,23,42,0.82)]",
-        isDark ? "bg-slate-950/98" : "bg-white",
+        isDark ? "bg-slate-950 backdrop-blur-xl" : "bg-white backdrop-blur-xl",
         borderClassName,
       )}
     >
@@ -671,8 +661,16 @@ function RuntimeDockActorButton({
     ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
     : getRuntimeStatusLabel(isRunning, workingState, (key, options) => t(`actors:${key}`, options));
   const headlessPreviewData = getHeadlessPreviewData(item, {});
-  const previewPosition = getPreviewPositionClasses(getPreviewAlignment(index, total));
   const hasLiveIndicator = shouldAutoPreviewCard(item.liveWorkCard);
+
+  const { refs, floatingStyles } = useFloating({
+    open: isPreviewVisible,
+    placement: "top",
+    middleware: [offset(16), flip({ padding: 12 }), shift({ padding: 12 })],
+    whileElementsMounted: autoUpdate,
+    strategy: "fixed",
+  });
+
   const handleOpenInspector = () => {
     onClosePreview(item.actorId, "auto");
     onClosePreview(item.actorId, "focus");
@@ -690,13 +688,16 @@ function RuntimeDockActorButton({
       onMouseLeave={() => onSchedulePreviewClose(item.actorId, "hover")}
     >
       {isPreviewVisible ? (
-        <div
-          className={classNames("pointer-events-auto absolute bottom-full z-40 mb-4", previewPosition.container)}
-          onMouseEnter={() => onOpenPreview(item.actorId, "hover")}
-          onMouseLeave={() => onSchedulePreviewClose(item.actorId, "hover")}
-        >
-          <div className={classNames("animate-scale-in", previewPosition.origin)}>
-            {item.runner === "headless" ? (
+        <FloatingPortal>
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="pointer-events-auto z-40"
+            onMouseEnter={() => onOpenPreview(item.actorId, "hover")}
+            onMouseLeave={() => onSchedulePreviewClose(item.actorId, "hover")}
+          >
+            <div className="animate-scale-in origin-bottom">
+              {item.runner === "headless" ? (
               <HeadlessPreviewSurface
                 item={item}
                 data={headlessPreviewData}
@@ -717,10 +718,12 @@ function RuntimeDockActorButton({
               />
             )}
           </div>
-        </div>
+          </div>
+        </FloatingPortal>
       ) : null}
 
       <button
+        ref={refs.setReference}
         type="button"
         onClick={handleOpenInspector}
         onFocus={() => onOpenPreview(item.actorId, "focus")}

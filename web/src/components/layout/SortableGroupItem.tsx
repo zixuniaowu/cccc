@@ -52,6 +52,7 @@ export function SortableGroupItem({
     attributes,
     listeners,
     setNodeRef,
+    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
@@ -67,7 +68,7 @@ export function SortableGroupItem({
     open: menuOpen,
     onOpenChange: setMenuOpen,
     placement: "bottom-end",
-    middleware: [offset(8), flip(), shift({ padding: 8 })],
+    middleware: [offset(8), flip({ padding: 12 }), shift({ padding: 12 })],
     whileElementsMounted: autoUpdate,
     strategy: "fixed",
   });
@@ -152,6 +153,8 @@ export function SortableGroupItem({
         {!dragDisabled && (
           <div
             {...dragListeners}
+            {...attributes}
+            ref={setActivatorNodeRef}
             className={classNames(
               "flex-shrink-0 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded transition-opacity touch-none",
               "hidden md:block md:opacity-0 md:group-hover/item:opacity-100",
