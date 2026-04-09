@@ -1252,6 +1252,45 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_codex_session_manager_falls_back_when_cli_is_missing(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSessionManager
+        from cccc.daemon.runner_state_ops import headless_state_path
+
+        home, cleanup = self._with_home()
+        try:
+            manager = CodexAppSessionManager()
+
+            with patch(
+                "cccc.daemon.codex_app_sessions.CodexAppSession.start",
+                side_effect=FileNotFoundError(2, "No such file or directory", "codex"),
+            ):
+                session = manager.start_actor(
+                    group_id="g_test",
+                    actor_id="peer1",
+                    cwd=Path(home),
+                    env={},
+                )
+
+            self.assertTrue(session.is_running())
+            self.assertTrue(manager.actor_running("g_test", "peer1"))
+
+            state = manager.get_state(group_id="g_test", actor_id="peer1")
+            self.assertIsInstance(state, dict)
+            assert isinstance(state, dict)
+            self.assertEqual(str(state.get("status") or ""), "idle")
+
+            state_path = headless_state_path("g_test", "peer1")
+            self.assertTrue(state_path.exists())
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(str(payload.get("runtime") or ""), "codex")
+            self.assertEqual(int(payload.get("pid") or 0), os.getpid())
+            self.assertTrue(bool(payload.get("fallback")))
+
+            manager.stop_actor(group_id="g_test", actor_id="peer1")
+            self.assertFalse(state_path.exists())
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

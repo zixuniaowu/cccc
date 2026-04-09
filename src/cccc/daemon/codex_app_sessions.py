@@ -25,6 +25,15 @@ from ..util.time import utc_now_iso
 logger = logging.getLogger(__name__)
 
 
+def _is_missing_codex_cli_error(exc: BaseException) -> bool:
+    if isinstance(exc, FileNotFoundError):
+        filename = str(getattr(exc, "filename", "") or "").strip().lower()
+        if not filename or Path(filename).name == "codex":
+            return True
+    message = str(exc or "").strip().lower()
+    return "no such file or directory" in message and "codex" in message
+
+
 def _is_closed_stream_logging_error(exc: BaseException) -> bool:
     if not isinstance(exc, ValueError):
         return False
@@ -995,6 +1004,120 @@ class CodexAppSession:
             logger.exception("failed to append headless event: %s/%s %s", self.group_id, self.actor_id, event_type)
 
 
+class _FallbackCodexAppSession:
+    def __init__(self, *, group_id: str, actor_id: str, cwd: Path, env: Dict[str, str], model: str = "gpt-5.4", reason: str = "") -> None:
+        self.group_id = str(group_id or "").strip()
+        self.actor_id = str(actor_id or "").strip()
+        self.cwd = cwd
+        self.env = dict(env or {})
+        self.model = str(model or "gpt-5.4").strip() or "gpt-5.4"
+        self._reason = str(reason or "").strip() or "codex CLI is unavailable"
+        self._running = False
+        self._session_state = CodexSessionState(status="idle")
+
+    def _persist_state(self) -> None:
+        if not self._running:
+            remove_headless_state(self.group_id, self.actor_id)
+            return
+        atomic_write_json(
+            headless_state_path(self.group_id, self.actor_id),
+            {
+                "v": 1,
+                "kind": "headless",
+                "runtime": "codex",
+                "pid": os.getpid(),
+                "fallback": True,
+                "reason": self._reason,
+                **self._session_state.to_headless_state(group_id=self.group_id, actor_id=self.actor_id),
+            },
+        )
+
+    def _emit(self, event_type: str, data: Dict[str, Any]) -> None:
+        group = load_group(self.group_id)
+        if group is None:
+            return
+        try:
+            append_headless_event(
+                group.path,
+                group_id=self.group_id,
+                actor_id=self.actor_id,
+                event_type=event_type,
+                data=data,
+            )
+        except Exception:
+            logger.exception("failed to append fallback headless event: %s/%s %s", self.group_id, self.actor_id, event_type)
+
+    def start(self) -> None:
+        self._running = True
+        self._session_state.status = "idle"
+        self._session_state.current_task_id = None
+        self._session_state.updated_at = utc_now_iso()
+        self._persist_state()
+        _safe_logger_call(
+            "warning",
+            "codex CLI unavailable; using fallback headless session for %s/%s: %s",
+            self.group_id,
+            self.actor_id,
+            self._reason,
+        )
+
+    def stop(self) -> None:
+        self._running = False
+        self._session_state.status = "stopped"
+        self._session_state.current_task_id = None
+        self._session_state.updated_at = utc_now_iso()
+        self._persist_state()
+
+    def is_running(self) -> bool:
+        return bool(self._running)
+
+    def state(self) -> Dict[str, Any]:
+        return self._session_state.to_headless_state(group_id=self.group_id, actor_id=self.actor_id)
+
+    def submit_user_message(
+        self,
+        *,
+        text: str,
+        event_id: str,
+        ts: str = "",
+        reply_to: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
+    ) -> bool:
+        if not self._running:
+            return False
+        self._emit(
+            "headless.turn.queued",
+            {
+                "event_id": str(event_id or "").strip(),
+                "reply_to": reply_to,
+                "runtime_unavailable": True,
+                "reason": self._reason,
+            },
+        )
+        return True
+
+    def submit_control_message(
+        self,
+        *,
+        text: str,
+        control_kind: str,
+        event_id: str = "",
+        ts: str = "",
+    ) -> bool:
+        if not self._running:
+            return False
+        self._emit(
+            "headless.control.queued",
+            {
+                "control_kind": str(control_kind or "").strip().lower(),
+                "event_id": str(event_id or "").strip(),
+                "runtime_unavailable": True,
+                "reason": self._reason,
+            },
+        )
+        return True
+
+
 class CodexAppSessionManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -1012,7 +1135,20 @@ class CodexAppSessionManager:
             self._sessions[key] = session
         try:
             session.start()
-        except Exception:
+        except Exception as exc:
+            if _is_missing_codex_cli_error(exc):
+                fallback = _FallbackCodexAppSession(
+                    group_id=key[0],
+                    actor_id=key[1],
+                    cwd=cwd,
+                    env=env,
+                    model=model,
+                    reason=str(exc),
+                )
+                fallback.start()
+                with self._lock:
+                    self._sessions[key] = fallback
+                return fallback
             with self._lock:
                 if self._sessions.get(key) is session:
                     self._sessions.pop(key, None)

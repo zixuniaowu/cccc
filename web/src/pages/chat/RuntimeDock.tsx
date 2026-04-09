@@ -7,7 +7,7 @@ import { useActorDisplayState } from "../../hooks/useActorDisplayState";
 import type { StreamingActivity, Actor } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { formatTime } from "../../utils/time";
-import { buildHeadlessPreviewTimelineEntries } from "./headlessPreviewTimeline";
+import { buildHeadlessPreviewRenderGroups, buildHeadlessPreviewTimelineEntries } from "./headlessPreviewTimeline";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 
@@ -359,10 +359,11 @@ function HeadlessPreviewSurface({
     }),
     [data.fallbackActivities, data.latestText, data.previewSessions, item.actorId, item.liveWorkCard?.pendingEventId, item.liveWorkCard?.streamId, item.liveWorkCard?.streamPhase, item.liveWorkCard?.updatedAt]
   );
+  const timelineGroups = useMemo(() => buildHeadlessPreviewRenderGroups(timelineEntries), [timelineEntries]);
   const sessionCount = data.previewSessions.length > 0 ? data.previewSessions.length : (timelineEntries.length > 0 ? 1 : 0);
-  const hasTimelineEntries = timelineEntries.length > 0;
-  const latestTimelineEntry = timelineEntries[timelineEntries.length - 1];
-  const latestTimelineSignal = latestTimelineEntry ? `${latestTimelineEntry.id}:${latestTimelineEntry.ts}:${latestTimelineEntry.live ? "live" : "static"}` : "";
+  const hasTimelineEntries = timelineGroups.length > 0;
+  const latestTimelineGroup = timelineGroups[timelineGroups.length - 1];
+  const latestTimelineSignal = latestTimelineGroup ? `${latestTimelineGroup.id}:${latestTimelineGroup.ts}:${latestTimelineGroup.live ? "live" : "static"}` : "";
 
   useEffect(() => {
     shouldStickToBottomRef.current = true;
@@ -452,46 +453,46 @@ function HeadlessPreviewSurface({
       >
           {hasTimelineEntries ? (
             <div className="space-y-2.5 pb-3">
-              {timelineEntries.map((entry, index) => {
-                const previousEntry = index > 0 ? timelineEntries[index - 1] : null;
-                const showSessionDivider = sessionCount > 1 && previousEntry?.pendingEventId !== entry.pendingEventId;
+              {timelineGroups.map((group, index) => {
+                const previousGroup = index > 0 ? timelineGroups[index - 1] : null;
+                const showSessionDivider = sessionCount > 1 && previousGroup?.pendingEventId !== group.pendingEventId;
                 return (
-                  <div key={entry.id} className="space-y-2.5">
+                  <div key={group.id} className="space-y-2.5">
                     {showSessionDivider ? (
                       <div className="flex items-center gap-3 py-1">
                         <span className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")} />
                         <span className={classNames("shrink-0 text-[10px] font-medium uppercase tracking-[0.14em]", isDark ? "text-slate-500" : "text-slate-500")}>
-                          {entry.ts ? formatTime(entry.ts) : t("chat:liveWorkPhaseCompleted", { defaultValue: "Recent" })}
+                          {group.ts ? formatTime(group.ts) : t("chat:liveWorkPhaseCompleted", { defaultValue: "Recent" })}
                         </span>
                         <span className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")} />
                       </div>
                     ) : null}
 
-                    {entry.kind === "message" ? (
+                    {group.kind === "message" ? (
                       <div className="grid grid-cols-[10px_minmax(0,1fr)] gap-3">
                         <div className="pt-2">
                           <span
                             className={classNames(
                               "block h-2.5 w-2.5 rounded-full",
-                              entry.streamPhase === "final_answer"
-                                ? (entry.live ? (isDark ? "bg-sky-300" : "bg-sky-500") : (isDark ? "bg-sky-300/50" : "bg-sky-500/45"))
-                                : (entry.live ? (isDark ? "bg-cyan-300" : "bg-cyan-500") : (isDark ? "bg-white/30" : "bg-slate-400"))
+                              group.entry.streamPhase === "final_answer"
+                                ? (group.entry.live ? (isDark ? "bg-sky-300" : "bg-sky-500") : (isDark ? "bg-sky-300/50" : "bg-sky-500/45"))
+                                : (group.entry.live ? (isDark ? "bg-cyan-300" : "bg-cyan-500") : (isDark ? "bg-white/30" : "bg-slate-400"))
                             )}
                           />
                         </div>
-                        <div className={classNames("min-w-0 border-l pl-3", entry.streamPhase === "final_answer"
+                        <div className={classNames("min-w-0 border-l pl-3", group.entry.streamPhase === "final_answer"
                           ? (isDark ? "border-sky-300/30" : "border-sky-500/26")
                           : (isDark ? "border-white/10" : "border-slate-200"))}>
-                          {shouldRenderPreviewMarkdown(entry.streamPhase) ? (
+                          {shouldRenderPreviewMarkdown(group.entry.streamPhase) ? (
                             <Suspense
                               fallback={
                                 <div className={classNames("whitespace-pre-wrap break-words text-[13px] leading-6", isDark ? "text-slate-100" : "text-gray-900")}>
-                                  {entry.text}
+                                  {group.entry.text}
                                 </div>
                               }
                             >
                               <LazyMarkdownRenderer
-                                content={entry.text}
+                                content={group.entry.text}
                                 isDark={isDark}
                                 invertText={isDark}
                                 className={classNames(
@@ -504,7 +505,7 @@ function HeadlessPreviewSurface({
                             </Suspense>
                           ) : (
                             <div className={classNames("whitespace-pre-wrap break-words text-[13px] leading-6", isDark ? "text-slate-100" : "text-gray-900")}>
-                              {entry.text}
+                              {group.entry.text}
                             </div>
                           )}
                         </div>
@@ -512,22 +513,30 @@ function HeadlessPreviewSurface({
                     ) : (
                       <div className="grid grid-cols-[10px_minmax(0,1fr)] gap-3">
                         <div className="pt-[0.4rem]">
-                          <span className={classNames("block h-2.5 w-2.5 rounded-full", entry.live ? (isDark ? "bg-cyan-300" : "bg-cyan-500") : (isDark ? "bg-white/20" : "bg-slate-400"))} />
+                          <span className={classNames("block h-2.5 w-2.5 rounded-full", group.live ? (isDark ? "bg-cyan-300" : "bg-cyan-500") : (isDark ? "bg-white/20" : "bg-slate-400"))} />
                         </div>
-                        <div className={classNames("min-w-0 rounded-xl px-3 py-2", isDark ? "bg-white/[0.03]" : "bg-slate-50")}>
-                          <div className="flex flex-wrap items-baseline gap-2">
-                            <span className={classNames("shrink-0 font-mono text-[10px] uppercase tracking-[0.14em]", isDark ? "text-slate-400" : "text-slate-500")}>
-                              {formatPreviewActivityKind(entry.activity.kind)}
-                            </span>
-                            <span className={classNames("min-w-0 flex-1 break-words text-[12px] leading-5", isDark ? "text-slate-100" : "text-gray-900")}>
-                              {entry.activity.summary}
-                            </span>
+                        <div className={classNames("min-w-0 rounded-2xl px-3 py-2.5", isDark ? "bg-white/[0.03]" : "bg-slate-50")}>
+                          <div className="flex flex-wrap gap-2">
+                            {group.entries.map((entry) => (
+                              <div
+                                key={entry.id}
+                                title={entry.activity.detail ? `${entry.activity.summary} — ${entry.activity.detail}` : entry.activity.summary}
+                                className={classNames(
+                                  "inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-[11px] leading-4 shadow-sm",
+                                  entry.live
+                                    ? (isDark ? "border-cyan-300/20 bg-cyan-300/10 text-cyan-100" : "border-cyan-500/18 bg-cyan-500/10 text-cyan-700")
+                                    : (isDark ? "border-white/10 bg-white/[0.04] text-slate-200" : "border-slate-200 bg-white text-slate-700")
+                                )}
+                              >
+                                <span className={classNames("shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.14em]", entry.live ? (isDark ? "text-cyan-100" : "text-cyan-700") : (isDark ? "text-slate-400" : "text-slate-500"))}>
+                                  {formatPreviewActivityKind(entry.activity.kind)}
+                                </span>
+                                <span className="max-w-[min(48vw,280px)] truncate">
+                                  {entry.activity.summary}
+                                </span>
+                              </div>
+                            ))}
                           </div>
-                          {entry.activity.detail ? (
-                            <div className={classNames("mt-0.5 break-words pl-[4.1rem] text-[11px] leading-4", isDark ? "text-slate-400" : "text-slate-500")}>
-                              {entry.activity.detail}
-                            </div>
-                          ) : null}
                         </div>
                       </div>
                     )}

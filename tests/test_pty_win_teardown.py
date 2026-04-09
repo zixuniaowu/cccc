@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 from cccc.runners.pty_win import PtySession
 
 
@@ -42,3 +45,28 @@ def test_windows_pty_teardown_closes_handle_even_if_process_is_already_dead() ->
     PtySession._terminate_process(session)
 
     assert ("close", ()) in proc.calls
+
+
+class _BlockingCloseProc(_FakeProc):
+    def __init__(self, *, alive: bool = True) -> None:
+        super().__init__(alive=alive)
+        self.close_started = threading.Event()
+        self.release_close = threading.Event()
+
+    def close(self) -> None:
+        self.calls.append(("close", ()))
+        self.close_started.set()
+        self.release_close.wait(timeout=2.0)
+
+
+def test_windows_pty_teardown_does_not_block_on_close() -> None:
+    proc = _BlockingCloseProc(alive=True)
+    session = _make_session(proc)
+
+    started = time.monotonic()
+    PtySession._terminate_process(session)
+    elapsed = time.monotonic() - started
+
+    assert proc.close_started.wait(timeout=0.2)
+    assert elapsed < 0.5
+    proc.release_close.set()

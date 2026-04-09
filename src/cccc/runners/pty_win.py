@@ -404,10 +404,22 @@ class PtySession:
 
         close = getattr(self._proc, "close", None)
         if callable(close):
+            def _close_proc() -> None:
+                try:
+                    close()
+                except TypeError:
+                    pass
+                except Exception:
+                    pass
+
             try:
-                close()
-            except TypeError:
-                pass
+                close_thread = threading.Thread(
+                    target=_close_proc,
+                    name=f"cccc-conpty-close:{getattr(self, 'group_id', '?')}:{getattr(self, 'actor_id', '?')}",
+                    daemon=True,
+                )
+                close_thread.start()
+                close_thread.join(timeout=0.2)
             except Exception:
                 pass
 

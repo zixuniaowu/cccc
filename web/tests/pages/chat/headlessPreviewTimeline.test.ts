@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildHeadlessPreviewTimelineEntries } from "../../../src/pages/chat/headlessPreviewTimeline";
+import { buildHeadlessPreviewRenderGroups, buildHeadlessPreviewTimelineEntries } from "../../../src/pages/chat/headlessPreviewTimeline";
 
 describe("buildHeadlessPreviewTimelineEntries", () => {
   it("merges message and activity rows into one chronological stream across recent sessions", () => {
@@ -83,5 +83,73 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
     expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({ kind: "activity", pendingEventId: "fallback-1" });
     expect(entries[1]).toMatchObject({ kind: "message", pendingEventId: "fallback-1", streamPhase: "final_answer" });
+  });
+
+  it("groups contiguous activity rows into compact activity bands", () => {
+    const entries = buildHeadlessPreviewTimelineEntries({
+      previewSessions: [
+        {
+          actorId: "coder",
+          pendingEventId: "evt-1",
+          currentStreamId: "commentary-1",
+          phase: "streaming",
+          streamPhase: "commentary",
+          updatedAt: "2025-01-01T00:00:04Z",
+          latestText: "Applying fix",
+          transcriptBlocks: [
+            {
+              id: "commentary-1::commentary",
+              streamId: "commentary-1",
+              streamPhase: "commentary",
+              text: "Applying fix",
+              updatedAt: "2025-01-01T00:00:04Z",
+              completed: false,
+              transient: true,
+            },
+          ],
+          activities: [
+            { id: "tool-1", kind: "tool", status: "completed", summary: "rg -n reducer", ts: "2025-01-01T00:00:01Z" },
+            { id: "patch-1", kind: "patch", status: "completed", summary: "edit reducer.ts", ts: "2025-01-01T00:00:02Z" },
+            { id: "plan-1", kind: "plan", status: "updated", summary: "verify fix", ts: "2025-01-01T00:00:03Z" },
+          ],
+        },
+      ],
+    });
+
+    const groups = buildHeadlessPreviewRenderGroups(entries);
+
+    expect(groups.map((group) => group.kind)).toEqual(["activity-band", "message"]);
+    expect(groups[0]).toMatchObject({ kind: "activity-band", pendingEventId: "evt-1" });
+    expect(groups[0]?.kind === "activity-band" ? groups[0].entries.map((entry) => entry.activity.id) : []).toEqual([
+      "tool-1",
+      "patch-1",
+      "plan-1",
+    ]);
+  });
+
+  it("starts a new activity band when the session changes", () => {
+    const groups = buildHeadlessPreviewRenderGroups([
+      {
+        id: "activity:evt-1:tool-1",
+        kind: "activity",
+        pendingEventId: "evt-1",
+        ts: "2025-01-01T00:00:01Z",
+        live: false,
+        activity: { id: "tool-1", kind: "tool", status: "completed", summary: "scan files" },
+      },
+      {
+        id: "activity:evt-2:tool-2",
+        kind: "activity",
+        pendingEventId: "evt-2",
+        ts: "2025-01-01T00:00:02Z",
+        live: true,
+        activity: { id: "tool-2", kind: "tool", status: "started", summary: "open patch" },
+      },
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.kind)).toEqual(["activity-band", "activity-band"]);
+    expect(groups[0]?.pendingEventId).toBe("evt-1");
+    expect(groups[1]?.pendingEventId).toBe("evt-2");
   });
 });

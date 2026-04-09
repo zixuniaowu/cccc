@@ -249,6 +249,7 @@ def handle_actor_restart(
             return _error("permission_denied", msg)
         return _error("actor_restart_failed", msg)
 
+    runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
     if coerce_bool(group.doc.get("running"), default=False):
         try:
             launch_spec = resolve_actor_launch_spec(

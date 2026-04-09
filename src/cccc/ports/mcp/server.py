@@ -337,6 +337,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             priority=str(arguments.get("priority") or "normal"),
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
             refs=refs_val,
+            enforce_runtime_guard=False,
         )
 
     if name == "cccc_message_reply":
@@ -356,6 +357,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             priority=str(arguments.get("priority") or "normal"),
             reply_required=coerce_bool(arguments.get("reply_required"), default=False),
             refs=refs_val_reply,
+            enforce_runtime_guard=False,
         )
 
     if name == "cccc_pet_decisions":

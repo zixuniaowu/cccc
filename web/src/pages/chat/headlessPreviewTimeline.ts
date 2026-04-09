@@ -20,6 +20,24 @@ export type HeadlessPreviewTimelineEntry = {
   }
 );
 
+export type HeadlessPreviewRenderGroup =
+  | {
+    id: string;
+    kind: "message";
+    pendingEventId: string;
+    ts: string;
+    live: boolean;
+    entry: Extract<HeadlessPreviewTimelineEntry, { kind: "message" }>;
+  }
+  | {
+    id: string;
+    kind: "activity-band";
+    pendingEventId: string;
+    ts: string;
+    live: boolean;
+    entries: Array<Extract<HeadlessPreviewTimelineEntry, { kind: "activity" }>>;
+  };
+
 type BuildHeadlessPreviewTimelineArgs = {
   previewSessions?: HeadlessPreviewSession[];
   fallbackText?: string;
@@ -143,4 +161,47 @@ export function buildHeadlessPreviewTimelineEntries(args: BuildHeadlessPreviewTi
   return entries
     .sort(compareTimelineEntries)
     .map(({ order: _order, ...entry }) => entry);
+}
+
+export function buildHeadlessPreviewRenderGroups(entries: HeadlessPreviewTimelineEntry[]): HeadlessPreviewRenderGroup[] {
+  const groups: HeadlessPreviewRenderGroup[] = [];
+  let activityBand: Array<Extract<HeadlessPreviewTimelineEntry, { kind: "activity" }>> = [];
+
+  const flushActivityBand = () => {
+    if (activityBand.length <= 0) return;
+    const first = activityBand[0];
+    const last = activityBand[activityBand.length - 1];
+    groups.push({
+      id: `activity-band:${first.id}:${last.id}`,
+      kind: "activity-band",
+      pendingEventId: first.pendingEventId,
+      ts: String(last.ts || first.ts || "").trim(),
+      live: activityBand.some((entry) => entry.live),
+      entries: activityBand,
+    });
+    activityBand = [];
+  };
+
+  for (const entry of entries) {
+    if (entry.kind === "activity") {
+      if (activityBand.length > 0 && activityBand[0]?.pendingEventId !== entry.pendingEventId) {
+        flushActivityBand();
+      }
+      activityBand.push(entry);
+      continue;
+    }
+
+    flushActivityBand();
+    groups.push({
+      id: `message:${entry.id}`,
+      kind: "message",
+      pendingEventId: entry.pendingEventId,
+      ts: entry.ts,
+      live: entry.live,
+      entry,
+    });
+  }
+
+  flushActivityBand();
+  return groups;
 }
