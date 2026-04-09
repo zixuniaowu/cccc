@@ -760,7 +760,8 @@ class ClaudeAppSession:
             with self._lock:
                 self._active_turn_id = turn_id
                 self._active_event_id = payload.event_id
-                self._session_state.status = "working"
+                if not payload.control_kind:
+                    self._session_state.status = "working"
                 self._session_state.current_task_id = turn_id or payload.event_id or None
                 self._session_state.updated_at = utc_now_iso()
             self._persist_state()

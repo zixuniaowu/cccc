@@ -108,6 +108,18 @@ export function createGroupStoreAsyncActions(
               if (typeof meta.state === "string" && meta.state !== doc.state) patch.state = meta.state;
               if (typeof meta.title === "string" && meta.title !== doc.title) patch.title = meta.title;
               if (typeof meta.topic === "string" && meta.topic !== doc.topic) patch.topic = meta.topic;
+              if (typeof meta.running === "boolean" && meta.running !== doc.running) patch.running = meta.running;
+              if (meta.runtime_status) {
+                const curRT = doc.runtime_status;
+                if (
+                  !curRT
+                  || curRT.lifecycle_state !== meta.runtime_status.lifecycle_state
+                  || curRT.runtime_running !== meta.runtime_status.runtime_running
+                  || curRT.running_actor_count !== meta.runtime_status.running_actor_count
+                ) {
+                  patch.runtime_status = meta.runtime_status;
+                }
+              }
               if (Object.keys(patch).length > 0) {
                 const nextDoc = { ...doc, ...patch };
                 set({ groupDoc: nextDoc });

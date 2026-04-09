@@ -603,11 +603,12 @@ export const MessageBubble = memo(function MessageBubble({
     const actorId = String(ev.by || "").trim();
     const hasLiveReplySession = useGroupStore(useCallback((state) => {
         if (isUserMessage || !actorId || !pendingEventId) return false;
-        return !!selectStreamingReplySession(state, groupId, {
+        const session = selectStreamingReplySession(state, groupId, {
             pendingEventId,
             streamId,
             actorId,
         });
+        return !!session && (session.phase === "pending" || session.phase === "streaming");
     }, [actorId, groupId, isUserMessage, pendingEventId, streamId]));
     const shouldRenderStreamingBody = isStreaming || hasLiveReplySession;
     const isQueuedOnlyPlaceholder = useMemo(() => {

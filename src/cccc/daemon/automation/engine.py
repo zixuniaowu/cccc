@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from ...contracts.v1 import AutomationRule, AutomationRuleSet, SystemNotifyData
-from ...kernel.actors import find_foreman, list_visible_actors
+from ...kernel.actors import find_actor, find_foreman, list_visible_actors
 from ...kernel.agent_state_hygiene import evaluate_agent_state_hygiene, sync_mind_context_runtime_state
 from ...kernel.context import ContextStorage
 from ...kernel.group import (
@@ -39,7 +39,12 @@ from ...kernel.terminal_transcript import get_terminal_transcript_settings
 from ...kernel.messaging import enabled_recipient_actor_ids
 from ...runners import pty as pty_runner
 from ...runners import headless as headless_runner
-from ..messaging.delivery import flush_pending_messages, queue_system_notify
+from ..messaging.delivery import (
+    flush_pending_messages,
+    queue_system_notify,
+    render_headless_control_text,
+    render_system_notify_delivery_text,
+)
 from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
 from ...util.time import parse_utc_iso, utc_now_iso
@@ -683,6 +688,49 @@ def _queue_notify_to_pty(
     ev: Dict[str, Any],
     notify: SystemNotifyData,
 ) -> None:
+    if runner_kind == "headless":
+        actor = find_actor(group, actor_id)
+        if not isinstance(actor, dict):
+            return
+        runtime = str(actor.get("runtime") or "").strip().lower()
+        event_id = str(ev.get("id") or "").strip()
+        if not event_id:
+            return
+        event_ts = str(ev.get("ts") or "").strip()
+        headless_control_text = render_headless_control_text(
+            control_kind="system_notify",
+            body=render_system_notify_delivery_text(notify=notify),
+        )
+        if not headless_control_text:
+            return
+        try:
+            if runtime == "codex":
+                from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+
+                if codex_app_supervisor.actor_running(group.group_id, actor_id):
+                    codex_app_supervisor.submit_control_message(
+                        group_id=group.group_id,
+                        actor_id=actor_id,
+                        text=headless_control_text,
+                        control_kind="system_notify",
+                        event_id=event_id,
+                        ts=event_ts,
+                    )
+            elif runtime == "claude":
+                from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
+
+                if claude_app_supervisor.actor_running(group.group_id, actor_id):
+                    claude_app_supervisor.submit_control_message(
+                        group_id=group.group_id,
+                        actor_id=actor_id,
+                        text=headless_control_text,
+                        control_kind="system_notify",
+                        event_id=event_id,
+                        ts=event_ts,
+                    )
+        except Exception:
+            pass
+        return
     if runner_kind != "pty":
         return
     if not pty_runner.SUPERVISOR.actor_running(group.group_id, actor_id):

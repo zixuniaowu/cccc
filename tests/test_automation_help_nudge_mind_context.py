@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -12,14 +13,14 @@ def _iso(dt: datetime) -> str:
 
 
 class TestAutomationHelpNudgeMindContext(unittest.TestCase):
-    def _setup_group(self):
+    def _setup_group(self, *, runner: str = "pty"):
         from cccc.kernel.actors import add_actor
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry
 
         reg = load_registry()
         group = create_group(reg, title="help-nudge")
-        add_actor(group, actor_id="peer1", runtime="codex", runner="pty", enabled=True)
+        add_actor(group, actor_id="peer1", runtime="codex", runner=runner, enabled=True)
         automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
         automation.update(
             {
@@ -220,6 +221,58 @@ class TestAutomationHelpNudgeMindContext(unittest.TestCase):
 
                 after = group.ledger_path.read_text(encoding="utf-8")
                 self.assertEqual(after, before)
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+    def test_help_nudge_injects_headless_codex_control_turn(self) -> None:
+        from cccc.daemon.automation import AutomationManager, _cfg
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                group = self._setup_group(runner="headless")
+                now = datetime(2026, 3, 12, 3, 30, 0, tzinfo=timezone.utc)
+                self._seed_agent_state(
+                    group,
+                    focus="",
+                    next_action="",
+                    what_changed="",
+                    environment_summary="workspace is noisy",
+                    user_model="prefers concise evidence",
+                    persona_notes="stay low-noise",
+                    updated_at=_iso(now),
+                )
+                self._seed_automation_state(group, now=now)
+
+                manager = AutomationManager()
+                cfg = _cfg(group)
+                with (
+                    patch("cccc.daemon.automation.engine.headless_runner.SUPERVISOR.actor_running", return_value=True),
+                    patch(
+                        "cccc.daemon.automation.engine.headless_runner.SUPERVISOR.get_state",
+                        return_value=SimpleNamespace(started_at="sess1"),
+                    ),
+                    patch("cccc.daemon.codex_app_sessions.SUPERVISOR.actor_running", return_value=True),
+                    patch(
+                        "cccc.daemon.codex_app_sessions.SUPERVISOR.submit_control_message",
+                        return_value=True,
+                    ) as submit_control_message,
+                ):
+                    manager._check_help_nudge(group, cfg, now)
+
+                submit_control_message.assert_called_once()
+                kwargs = submit_control_message.call_args.kwargs
+                self.assertEqual(kwargs.get("group_id"), group.group_id)
+                self.assertEqual(kwargs.get("actor_id"), "peer1")
+                self.assertEqual(kwargs.get("control_kind"), "system_notify")
+
+                ev = self._latest_notify(group)
+                self.assertEqual(kwargs.get("event_id"), str(ev.get("id") or ""))
+                self.assertIn("Refresh collaboration context", str(kwargs.get("text") or ""))
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)
