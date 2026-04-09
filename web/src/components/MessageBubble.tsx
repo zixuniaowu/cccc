@@ -21,12 +21,15 @@ import {
 } from "./messageBubble/model";
 import { ActorAvatar } from "./ActorAvatar";
 import {
-    getMessageBubbleMotionClass,
-    isQueuedOnlyStreamingPlaceholder,
-    normalizeStreamingActivities,
     StreamingMessageBody,
 } from "./messageBubble/StreamingMessageBody";
-import { formatEventLine, mayContainMarkdown } from "./messageBubble/helpers";
+import {
+    formatEventLine,
+    getMessageBubbleMotionClass,
+    isQueuedOnlyStreamingPlaceholder,
+    mayContainMarkdown,
+    normalizeStreamingActivities,
+} from "./messageBubble/helpers";
 
 const LazyMarkdownRenderer = lazy(() =>
     import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))

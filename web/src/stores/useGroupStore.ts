@@ -4,24 +4,14 @@ import type {
   GroupMeta,
   GroupDoc,
   GroupRuntimeStatus,
-  LedgerEvent,
-  LedgerEventStatusPayload,
-  Actor,
-  RuntimeInfo,
-  GroupContext,
-  GroupSettings,
-  GroupPresentation,
-  StreamingActivity,
 } from "../types";
 import {
-  type StreamingReplySession,
   normalizeReplySessionTimestamp,
   upsertReplySession,
 } from "./chatStreamingSessions";
 import {
   buildChatBucketPatch,
   buildPrimedGroupState,
-  clearDeferredUnreadRefresh,
   ensureGroupChatBucket,
   getCachedGroupView,
   getGroupChatBucket,
@@ -43,8 +33,6 @@ import {
   saveGroupOrder,
   saveGroupView,
   saveSelectedGroupId,
-  selectChatBucketState,
-  selectStreamingReplySession,
   beginGroupRequestEpoch,
   settingsRequestEpochByGroup,
   updateAckAtIndex,

@@ -372,7 +372,7 @@ function HeadlessPreviewSurface({
     <section
       className={classNames(
         "w-[min(96vw,780px)] rounded-[28px] border px-5 py-5 shadow-[0_38px_120px_-52px_rgba(15,23,42,0.82)]",
-        isDark ? "bg-slate-950 backdrop-blur-xl" : "bg-white backdrop-blur-xl",
+        isDark ? "bg-slate-950/90 backdrop-blur-2xl backdrop-saturate-150" : "bg-white/90 backdrop-blur-2xl backdrop-saturate-150",
         borderClassName,
       )}
       aria-label={t("chat:runtimeDockPreviewLabel", {
@@ -569,7 +569,7 @@ function PtyPreviewSurface({
     <section
       className={classNames(
         "w-[min(94vw,420px)] rounded-[24px] border px-4 py-3.5 shadow-[0_30px_84px_-48px_rgba(15,23,42,0.82)]",
-        isDark ? "bg-slate-950 backdrop-blur-xl" : "bg-white backdrop-blur-xl",
+        isDark ? "bg-slate-950/90 backdrop-blur-2xl backdrop-saturate-150" : "bg-white/90 backdrop-blur-2xl backdrop-saturate-150",
         borderClassName,
       )}
     >
@@ -619,8 +619,6 @@ function PtyPreviewSurface({
 function RuntimeDockActorButton({
   groupId,
   item,
-  index,
-  total,
   isDark,
   isSmallScreen,
   isPreviewVisible,
@@ -634,8 +632,6 @@ function RuntimeDockActorButton({
 }: {
   groupId: string;
   item: RuntimeDockItem;
-  index: number;
-  total: number;
   isDark: boolean;
   isSmallScreen: boolean;
   isPreviewVisible: boolean;
@@ -670,6 +666,8 @@ function RuntimeDockActorButton({
     whileElementsMounted: autoUpdate,
     strategy: "fixed",
   });
+  const setReference = useCallback((node: HTMLButtonElement | null) => refs.setReference(node), [refs]);
+  const setFloating = useCallback((node: HTMLDivElement | null) => refs.setFloating(node), [refs]);
 
   const handleOpenInspector = () => {
     onClosePreview(item.actorId, "auto");
@@ -690,7 +688,7 @@ function RuntimeDockActorButton({
       {isPreviewVisible ? (
         <FloatingPortal>
           <div
-            ref={refs.setFloating}
+            ref={setFloating}
             style={floatingStyles}
             className="pointer-events-auto z-40"
             onMouseEnter={() => onOpenPreview(item.actorId, "hover")}
@@ -723,7 +721,7 @@ function RuntimeDockActorButton({
       ) : null}
 
       <button
-        ref={refs.setReference}
+        ref={setReference}
         type="button"
         onClick={handleOpenInspector}
         onFocus={() => onOpenPreview(item.actorId, "focus")}
@@ -939,13 +937,11 @@ export function RuntimeDock({
     <div className="pointer-events-none relative z-30 px-3 sm:px-4">
       <div className="mx-auto flex w-full max-w-[1400px] justify-center">
         <div className={classNames("pointer-events-auto flex items-end", isSmallScreen ? "max-w-[calc(100vw-2.5rem)] gap-2.5 overflow-x-auto pb-1 scrollbar-hide" : "gap-3.5") }>
-          {items.map((item, index) => (
+          {items.map((item) => (
             <RuntimeDockActorButton
               key={item.actorId}
               groupId={groupId}
               item={item}
-              index={index}
-              total={items.length}
               isDark={isDark}
               isSmallScreen={isSmallScreen}
               isPreviewVisible={visiblePreview?.actorId === item.actorId}

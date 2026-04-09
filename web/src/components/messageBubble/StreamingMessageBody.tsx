@@ -3,17 +3,11 @@ import type { LedgerEvent, StreamingActivity } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { useGroupStore } from "../../stores";
 import {
-  normalizeStreamingActivities as _normalizeStreamingActivities,
-  getMessageBubbleMotionClass as _getMessageBubbleMotionClass,
-  isQueuedOnlyStreamingPlaceholder as _isQueuedOnlyStreamingPlaceholder,
+  normalizeStreamingActivities,
   getEffectiveStreamingActivities,
   deriveStreamingRenderPhase,
   getStreamingPendingDelayMs,
 } from "./helpers";
-
-export const normalizeStreamingActivities = _normalizeStreamingActivities;
-export const getMessageBubbleMotionClass = _getMessageBubbleMotionClass;
-export const isQueuedOnlyStreamingPlaceholder = _isQueuedOnlyStreamingPlaceholder;
 
 const STREAMING_STATUS_EXIT_MS = 140;
 const STREAMING_ACTIVITY_DISPLAY_LIMIT = 5;

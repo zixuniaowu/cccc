@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, type ReactNode, type CSSProperties } from "react";
+import { useCallback, useRef, useEffect, useState, type ReactNode, type CSSProperties } from "react";
 import { classNames } from "../utils/classNames";
 
 interface ScrollFadeProps {
@@ -31,7 +31,7 @@ export function ScrollFade({
   const dragStateRef = useRef<{ pointerId: number; startX: number; startY: number; startLeft: number; startTop: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
 
-  const check = () => {
+  const check = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     if (direction === "horizontal") {
@@ -43,7 +43,7 @@ export function ScrollFade({
       setCanScrollStart(el.scrollTop > tol);
       setCanScrollEnd(el.scrollTop + el.clientHeight < el.scrollHeight - tol);
     }
-  };
+  }, [direction]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -87,8 +87,7 @@ export function ScrollFade({
       mo?.disconnect();
       window.removeEventListener("resize", onWindowResize);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [direction]);
+  }, [check]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -180,7 +179,7 @@ export function ScrollFade({
       dragStateRef.current = null;
       suppressClickRef.current = false;
     };
-  }, [direction]);
+  }, [check, direction]);
 
   const isH = direction === "horizontal";
   const maskParts: string[] = [];
@@ -219,7 +218,7 @@ export function ScrollFade({
       <div
         ref={scrollRef}
         className={classNames(
-          isH ? "overflow-x-auto scrollbar-hide touch-pan-x" : "overflow-y-auto scrollbar-hide",
+          isH ? "overflow-x-auto scrollbar-hide touch-pan-y" : "overflow-y-auto scrollbar-hide",
           innerClassName
         )}
       >

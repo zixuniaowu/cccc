@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   FloatingPortal,
   autoUpdate,
@@ -78,11 +78,11 @@ export function SortableGroupItem({
   const { getReferenceProps, getFloatingProps } = useInteractions([click, dismiss, role]);
   const setReference = useCallback((node: HTMLElement | null) => refs.setReference(node), [refs]);
   const setFloating = useCallback((node: HTMLElement | null) => refs.setFloating(node), [refs]);
-  const dragListeners = listeners ?? {};
+  const dragListeners = useMemo(() => listeners ?? {}, [listeners]);
   const handleDragHandlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    dragListeners.onPointerDown?.(event);
+    listeners?.onPointerDown?.(event);
     event.stopPropagation();
-  }, [dragListeners]);
+  }, [listeners]);
 
   if (isCollapsed) {
     const initial = (group.title || gid).charAt(0).toUpperCase();

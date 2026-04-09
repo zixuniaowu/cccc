@@ -384,6 +384,7 @@ export function SettingsModal({
     if (!isOpen || !developerMode) return;
     if (scope !== "global" || globalTab !== "developer") return;
     void loadLogTail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Keep refresh tied to modal/view controls; callback identity is not meaningful here.
   }, [developerMode, globalTab, groupId, isOpen, logComponent, logLines, scope]);
 
   // ============ Data Loading ============
