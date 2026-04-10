@@ -200,6 +200,16 @@ export function ChatComposer({
     () => (quotedPresentationRef ? getPresentationRefChipLabel(quotedPresentationRef) : ""),
     [quotedPresentationRef],
   );
+  const recipientLabelMap = useMemo(() => {
+    const map = new Map<string, { label: string; secondary?: string }>();
+    for (const actor of recipientActors) {
+      const id = String(actor.id || "").trim();
+      if (!id) continue;
+      const title = String(actor.title || "").trim();
+      map.set(id, title && title !== id ? { label: title, secondary: id } : { label: title || id });
+    }
+    return map;
+  }, [recipientActors]);
 
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -816,6 +826,11 @@ export function ChatComposer({
                 role="listbox"
               >
                 {mentionSuggestions.slice(0, 8).map((s, idx) => (
+                  (() => {
+                    const option = recipientLabelMap.get(s);
+                    const primaryLabel = option?.label || s;
+                    const secondaryLabel = option?.secondary;
+                    return (
                   <button
                     key={s}
                     className={classNames(
@@ -832,8 +847,20 @@ export function ChatComposer({
                     }}
                     onMouseEnter={() => setMentionSelectedIndex(idx)}
                   >
-                    <span className="opacity-60 mr-1">@</span>{s}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="opacity-60 flex-shrink-0">@</span>
+                      <div className="min-w-0">
+                        <div className="truncate">{primaryLabel}</div>
+                        {secondaryLabel ? (
+                          <div className={classNames("truncate text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
+                            @{secondaryLabel}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
                   </button>
+                    );
+                  })()
                 ))}
               </div>
             )}
