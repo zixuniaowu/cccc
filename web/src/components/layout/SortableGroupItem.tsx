@@ -79,10 +79,6 @@ export function SortableGroupItem({
   const setReference = useCallback((node: HTMLElement | null) => refs.setReference(node), [refs]);
   const setFloating = useCallback((node: HTMLElement | null) => refs.setFloating(node), [refs]);
   const dragListeners = useMemo(() => listeners ?? {}, [listeners]);
-  const handleDragHandlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    listeners?.onPointerDown?.(event);
-    event.stopPropagation();
-  }, [listeners]);
 
   if (isCollapsed) {
     const initial = (group.title || gid).charAt(0).toUpperCase();
@@ -122,15 +118,14 @@ export function SortableGroupItem({
   }
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      className={classNames(
-        "group/item relative",
-        isDragging && "z-50"
-      )}
-    >
+      <div
+        ref={setNodeRef}
+        style={style}
+        className={classNames(
+          "group/item relative",
+          isDragging && "z-50"
+        )}
+      >
       <div
         className={classNames(
           "w-full px-3 py-3 rounded-xl transition-all min-h-[48px] flex items-center gap-2 relative",
@@ -151,7 +146,8 @@ export function SortableGroupItem({
       >
         {/* Drag handle */}
         {!dragDisabled && (
-          <div
+          <button
+            type="button"
             {...dragListeners}
             {...attributes}
             ref={setActivatorNodeRef}
@@ -161,11 +157,11 @@ export function SortableGroupItem({
               isDragging && "!block !opacity-100",
               "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
             )}
-            onPointerDown={handleDragHandlePointerDown}
+            aria-label="Drag group"
             onClick={(event) => event.stopPropagation()}
           >
             <GripIcon size={14} />
-          </div>
+          </button>
         )}
 
         <div

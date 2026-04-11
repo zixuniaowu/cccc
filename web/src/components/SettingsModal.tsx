@@ -125,7 +125,6 @@ export function SettingsModal({
   const [imWecomSecret, setImWecomSecret] = useState("");
   // Weixin fields
   const [imWeixinAccountId, setImWeixinAccountId] = useState("");
-  const [imWeixinCommand, setImWeixinCommand] = useState("");
   const [weixinLoginStatus, setWeixinLoginStatus] = useState<WeixinLoginStatus | null>(null);
   const [imBusy, setImBusy] = useState(false);
   const imLoadSeq = useRef(0);
@@ -234,7 +233,6 @@ export function SettingsModal({
     setImWecomBotId("");
     setImWecomSecret("");
     setImWeixinAccountId("");
-    setImWeixinCommand("");
   };
 
   const loadIMStatus = useCallback(async (opts?: { resetFirst?: boolean }) => {
@@ -276,7 +274,6 @@ export function SettingsModal({
         setImWecomBotId(im.wecom_bot_id || "");
         setImWecomSecret(im.wecom_secret || "");
         setImWeixinAccountId(im.weixin_account_id || "");
-        setImWeixinCommand(im.weixin_command || "");
       }
     } catch (e) {
       console.error("Failed to load IM status:", e);
@@ -320,6 +317,9 @@ export function SettingsModal({
       }
     };
     void loadWeixinStatus();
+    // Only poll while waiting for QR scan; stop once logged in or idle
+    const needsPoll = weixinLoginStatus?.status === "waiting_scan";
+    if (!needsPoll) return () => { cancelled = true; };
     const timer = window.setInterval(() => {
       void loadWeixinStatus();
     }, 3000);
@@ -327,7 +327,7 @@ export function SettingsModal({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isOpen, groupId, imPlatform, t, toWeixinErrorStatus]);
+  }, [isOpen, groupId, imPlatform, weixinLoginStatus?.status, t, toWeixinErrorStatus]);
 
   useEffect(() => {
     if (imPlatform !== "weixin") {
@@ -573,7 +573,6 @@ export function SettingsModal({
     wecomBotId: imWecomBotId,
     wecomSecret: imWecomSecret,
     weixinAccountId: imWeixinAccountId,
-    weixinCommand: imWeixinCommand,
   });
 
   // Apply a draft to current IM config fields
@@ -589,7 +588,6 @@ export function SettingsModal({
     setImWecomBotId(draft.wecomBotId);
     setImWecomSecret(draft.wecomSecret);
     setImWeixinAccountId(draft.weixinAccountId);
-    setImWeixinCommand(draft.weixinCommand);
   };
 
   const getCurrentIMSaveRequest = () => ({
@@ -625,7 +623,6 @@ export function SettingsModal({
       setImWecomBotId("");
       setImWecomSecret("");
       setImWeixinAccountId("");
-      setImWeixinCommand("");
     }
 
     // 3. Set new platform
@@ -662,7 +659,6 @@ export function SettingsModal({
         setImWecomBotId("");
         setImWecomSecret("");
         setImWeixinAccountId("");
-        setImWeixinCommand("");
         await loadIMStatus();
       }
     } catch (e) {
@@ -1118,8 +1114,6 @@ export function SettingsModal({
                   setImWecomSecret={setImWecomSecret}
                   imWeixinAccountId={imWeixinAccountId}
                   setImWeixinAccountId={setImWeixinAccountId}
-                  imWeixinCommand={imWeixinCommand}
-                  setImWeixinCommand={setImWeixinCommand}
                   weixinLoginStatus={weixinLoginStatus}
                   onStartWeixinLogin={handleStartWeixinLogin}
                   onLogoutWeixin={handleLogoutWeixin}

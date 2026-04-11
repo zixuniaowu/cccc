@@ -292,7 +292,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_im_set.add_argument("--wecom-bot-id", default="", help="WeCom Bot ID (or env var name)")
     p_im_set.add_argument("--wecom-secret", default="", help="WeCom Secret (or env var name)")
     p_im_set.add_argument("--weixin-account-id", default="", help="Weixin account id (optional)")
-    p_im_set.add_argument("--weixin-command", default="", help="Weixin sidecar command line (optional)")
     p_im_set.add_argument("--token", default="", help="Token value directly (not recommended, use env vars)")
     p_im_set.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_im_set.set_defaults(func=cmd_im_set)

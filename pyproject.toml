@@ -24,6 +24,7 @@ dependencies = [
   "pywinpty>=2.0; platform_system == 'Windows'",
   "python-multipart>=0.0.7,<1.0",
   "uvicorn[standard]>=0.27,<1.0",
+  "wechatbot-sdk>=0.2.0",
   "websocket-client>=1.8,<2.0",
 ]
 classifiers = [
@@ -57,7 +58,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 "cccc.ports.web" = ["dist/**"]
-"cccc.resources" = ["*.md", "*.yaml", "im/*.mjs"]
+"cccc.resources" = ["*.md", "*.yaml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

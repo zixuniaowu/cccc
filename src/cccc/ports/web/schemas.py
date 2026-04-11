@@ -406,7 +406,6 @@ class IMSetRequest(BaseModel):
     wecom_secret: str = ""
     # Weixin fields
     weixin_account_id: str = ""
-    weixin_command: str = ""
 
 
 class IMActionRequest(BaseModel):

@@ -234,7 +234,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_actor",
-        "description": "Actor operations: list/profile_list/add/remove/start/stop/restart. Standard actor creation uses PTY only.",
+        "description": "Actor operations: list/profile_list/add/remove/start/stop/restart. Actor creation follows the caller's allowed runner/profile surface.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -246,6 +246,7 @@ MCP_TOOLS = [
                 },
                 "actor_id": {"type": "string"},
                 "runtime": {"type": "string", "default": "codex"},
+                "runner": {"type": "string", "enum": ["pty", "headless"], "default": "pty"},
                 "title": {"type": "string"},
                 "command": {"type": "array", "items": {"type": "string"}},
                 "env": {"type": "object", "additionalProperties": {"type": "string"}},

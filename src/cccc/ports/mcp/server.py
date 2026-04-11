@@ -462,7 +462,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         if action == "list":
             return actor_list(group_id=gid)
         if action == "profile_list":
-            return actor_profile_list(by=by)
+            return actor_profile_list(group_id=gid, by=by)
         if action == "add":
             cmd_raw = arguments.get("command")
             env_raw = arguments.get("env")

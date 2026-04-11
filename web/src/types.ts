@@ -972,7 +972,6 @@ export type IMConfig = {
   wecom_secret?: string;
   // Weixin fields
   weixin_account_id?: string;
-  weixin_command?: string;
 };
 
 export type IMStatus = {

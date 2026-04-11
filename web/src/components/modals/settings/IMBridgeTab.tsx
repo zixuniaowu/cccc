@@ -40,8 +40,6 @@ interface IMBridgeTabProps {
   // Weixin fields
   imWeixinAccountId: string;
   setImWeixinAccountId: (v: string) => void;
-  imWeixinCommand: string;
-  setImWeixinCommand: (v: string) => void;
   weixinLoginStatus: WeixinLoginStatus | null;
   onStartWeixinLogin: () => void;
   onLogoutWeixin: () => void;
@@ -148,8 +146,6 @@ export function IMBridgeTab({
   setImWecomSecret,
   imWeixinAccountId,
   setImWeixinAccountId,
-  imWeixinCommand,
-  setImWeixinCommand,
   weixinLoginStatus,
   onStartWeixinLogin,
   onLogoutWeixin,
@@ -165,7 +161,7 @@ export function IMBridgeTab({
   const weixinErrorText = String(weixinLoginStatus?.error || "").trim();
   const weixinLoggedIn = !!weixinLoginStatus?.logged_in;
   const weixinHasQr = !!String(weixinLoginStatus?.qrcode_url || "").trim();
-  const weixinHasCustomAdvanced = !!String(imWeixinAccountId || "").trim() || !!String(imWeixinCommand || "").trim();
+  const weixinHasCustomAdvanced = !!String(imWeixinAccountId || "").trim();
   const getBotTokenLabel = () => {
     switch (imPlatform) {
       case "telegram": return t("imBridge.botTokenTelegram");
@@ -728,27 +724,9 @@ export function IMBridgeTab({
                     {t("imBridge.weixinAccountIdHint")}
                   </p>
                 </div>
-                <div>
-                  <label className={labelClass()}>{t("imBridge.weixinCommand")}</label>
-                  <input
-                    type="text"
-                    value={imWeixinCommand}
-                    onChange={(e) => setImWeixinCommand(e.target.value)}
-                    placeholder="node scripts/im/weixin_sidecar.mjs"
-                    className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
-                  />
-                  <p className="text-xs mt-1 text-[var(--color-text-muted)]">
-                    {t("imBridge.weixinCommandHint")}
-                  </p>
-                  {imWeixinCommand.trim() && (
-                    <p className="text-xs mt-1 text-amber-600 dark:text-amber-400">
-                      {t("imBridge.weixinCustomCommandWarning")}
-                    </p>
-                  )}
-                  <p className="text-xs mt-1 text-[var(--color-text-muted)]">
-                    {t("imBridge.weixinPackageHint")}
-                  </p>
-                </div>
+                <p className="text-xs mt-1 text-[var(--color-text-muted)]">
+                  {t("imBridge.weixinPackageHint")}
+                </p>
               </div>
             </details>
           </>
