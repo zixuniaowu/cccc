@@ -213,6 +213,9 @@ export function IMBridgeTab({
   const [showBindInput, setShowBindInput] = useState(false);
   const [bindKey, setBindKey] = useState("");
   const [binding, setBinding] = useState(false);
+  const weixinAuthorizedChatCount = authChats.filter(
+    (chat) => String(chat.platform || "").trim().toLowerCase() === "weixin",
+  ).length;
 
   const loadAuthorizedChats = useCallback(async () => {
     if (!groupId) return;
@@ -292,6 +295,13 @@ export function IMBridgeTab({
     if (weixinLoggedIn) return t("imBridge.weixinHintLoggedIn");
     if (weixinStatus === "error") return t("imBridge.weixinHintError");
     return t("imBridge.weixinHintIdle");
+  };
+
+  const getWeixinSubscribeBodyKey = () => {
+    if (weixinAuthorizedChatCount > 0) return "imBridge.weixinSubscribeBoundBody";
+    if (!imStatus?.configured) return "imBridge.weixinSubscribeNeedsConfigBody";
+    if (!imStatus.running) return "imBridge.weixinSubscribeNeedsRunningBody";
+    return "imBridge.weixinSubscribeNextBody";
   };
 
   const loadIMAuthState = useCallback(async () => {
@@ -705,6 +715,23 @@ export function IMBridgeTab({
               <p className="text-xs mt-2 text-[var(--color-text-muted)]">
                 {getWeixinHint()}
               </p>
+              {weixinLoggedIn && (
+                <div className="mt-3 rounded-lg border border-blue-500/15 bg-blue-500/5 p-3 text-xs text-[var(--color-text-muted)]">
+                  <div className="font-medium text-[var(--color-text-secondary)]">
+                    {t("imBridge.weixinSubscribeTitle")}
+                  </div>
+                  <p className="mt-1 leading-relaxed">
+                    <Trans
+                      i18nKey={getWeixinSubscribeBodyKey()}
+                      ns="settings"
+                      values={{ count: weixinAuthorizedChatCount }}
+                      components={[
+                        <code className="rounded bg-black/5 px-1 py-0.5 font-mono text-[11px] text-[var(--color-text-secondary)]" />,
+                      ]}
+                    />
+                  </p>
+                </div>
+              )}
             </div>
             <details className={cardClass()} open={weixinHasCustomAdvanced}>
               <summary className="cursor-pointer text-sm font-medium text-[var(--color-text-secondary)]">
@@ -717,7 +744,7 @@ export function IMBridgeTab({
                     type="text"
                     value={imWeixinAccountId}
                     onChange={(e) => setImWeixinAccountId(e.target.value)}
-                    placeholder="默认首个已登录微信账号"
+                    placeholder={t("imBridge.weixinAccountIdPlaceholder")}
                     className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
                   />
                   <p className="text-xs mt-1 text-[var(--color-text-muted)]">
