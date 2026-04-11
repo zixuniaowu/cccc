@@ -16,7 +16,7 @@
   "nextShort": "下一步：{{value}}",
   "headlessAgent": "无终端智能体",
   "headlessDescription": "该智能体以无终端模式运行。它通过 MCP 工具和收件箱系统进行通信。",
-  "headlessStreamDescription": "该智能体以无终端模式运行。过程输出会显示在 Chat 里，正式回复需要通过消息工具发送。",
+  "headlessStreamDescription": "该智能体以无终端模式运行。过程输出会显示在 runtime dock ticker 和 inspect 面板里，正式回复需要通过消息工具发送。",
   "streamingOutput": "流式输出",
   "noStreamingOutputYet": "当前还没有可显示的流式输出。",
   "statusRunning": "状态：运行中",

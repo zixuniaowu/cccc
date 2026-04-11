@@ -30,6 +30,7 @@ EventKind = Literal[
     "actor.stop",
     "actor.restart",
     "actor.remove",
+    "actor.activity",
     "context.sync",
     "chat.message",
     "chat.stream",
@@ -167,6 +168,13 @@ class ActorLifecycleData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ActorActivityData(BaseModel):
+    """Periodic runtime status snapshot for running actors."""
+    actors: List[Dict[str, Any]] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="allow")
+
+
 class ContextSyncData(BaseModel):
     version: str = ""
     changes: List[Dict[str, Any]] = Field(default_factory=list)
@@ -242,6 +250,7 @@ _KIND_TO_MODEL = {
     "actor.stop": ActorLifecycleData,
     "actor.restart": ActorLifecycleData,
     "actor.remove": ActorLifecycleData,
+    "actor.activity": ActorActivityData,
     "context.sync": ContextSyncData,
     "chat.message": ChatMessageData,
     "chat.stream": ChatStreamData,

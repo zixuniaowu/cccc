@@ -18,7 +18,6 @@ import json
 import mimetypes
 import os
 import random
-import subprocess
 import threading
 import time
 import urllib.parse
@@ -27,6 +26,8 @@ import uuid
 from base64 import b64decode
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .base import IMAdapter, OutboundStreamHandle
 
@@ -47,7 +48,6 @@ WS_RECONNECT_JITTER = 0.2  # 0-20%
 # Keep the latest callback handle per chat for the lifetime of this bridge
 # process. We only need a bounded cache, not a time-based expiry.
 REPLY_REF_MAX_ENTRIES = 256
-WECOM_MEDIA_CIPHER = "aes-256-cbc"
 WECOM_MEDIA_BLOCK_SIZE = 32
 
 
@@ -249,30 +249,12 @@ class WecomAdapter(IMAdapter):
     def _decrypt_media_bytes(self, encrypted: bytes, aes_key: str) -> bytes:
         key = self._decode_media_aes_key(aes_key)
         iv = key[:16]
-        cmd = [
-            "openssl",
-            "enc",
-            "-d",
-            f"-{WECOM_MEDIA_CIPHER}",
-            "-nopad",
-            "-K",
-            key.hex(),
-            "-iv",
-            iv.hex(),
-        ]
         try:
-            proc = subprocess.run(
-                cmd,
-                input=encrypted,
-                capture_output=True,
-                check=False,
-            )
+            decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+            decrypted = decryptor.update(encrypted) + decryptor.finalize()
         except Exception as e:
-            raise ValueError(f"wecom media decrypt command failed: {e}") from e
-        if proc.returncode != 0:
-            stderr = proc.stderr.decode("utf-8", errors="replace").strip()
-            raise ValueError(f"wecom media decrypt failed: {stderr or f'openssl exit {proc.returncode}'}")
-        return self._strip_pkcs7_padding(proc.stdout)
+            raise ValueError(f"wecom media decrypt failed: {e}") from e
+        return self._strip_pkcs7_padding(decrypted)
 
     def _upload_media(self, raw: bytes, filename: str, media_type: str) -> str:
         boundary = "----cccc" + uuid.uuid4().hex

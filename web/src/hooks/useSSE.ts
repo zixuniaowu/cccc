@@ -11,7 +11,7 @@ import { mergeStreamingActivity } from "../stores/chatStreamingSessions";
 import { beginContextRequest, isLatestContextRequest } from "../stores/groupStoreCore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
-import type { Actor, ChatMessageData, HeadlessStreamEvent, GroupContext, StreamingActivity } from "../types";
+import type { Actor, ChatMessageData, HeadlessStreamEvent, GroupContext, GroupRuntimeStatus, StreamingActivity } from "../types";
 import { runReconnectCatchup, scheduleContextSummaryCatchup } from "./sseCatchup";
 import {
   isContextSyncEvent,
@@ -43,6 +43,15 @@ export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
 
 const MAX_RECONCILED_EVENTS = 800;
 const RECONNECT_LEDGER_TAIL_LIMIT = 60;
+export const GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS = 90_000;
+
+export function shouldStartGroupStreams(documentHidden: boolean): boolean {
+  return !documentHidden;
+}
+
+export function getGroupStreamsHiddenDisconnectDelayMs(documentHidden: boolean): number | null {
+  return documentHidden ? GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS : null;
+}
 
 function mergeCanonicalAttachmentsWithOptimisticPreview(
   ev: Record<string, unknown>,
@@ -104,6 +113,51 @@ function headlessActorKey(groupId: string, actorId: string): string {
   return `${String(groupId || "").trim()}:${String(actorId || "").trim()}`;
 }
 
+type ActorActivityUpdate = {
+  id: string;
+  idle_seconds?: number | null;
+  running: boolean;
+  effective_working_state?: string;
+  effective_working_reason?: string;
+  effective_working_updated_at?: string | null;
+  effective_active_task_id?: string | null;
+};
+
+export function computeGroupRuntimeFromActorActivityUpdate(
+  actors: Actor[],
+  update: ActorActivityUpdate,
+): GroupRuntimeStatus {
+  const actorById = new Map<string, Actor>();
+  for (const actor of Array.isArray(actors) ? actors : []) {
+    const actorId = String(actor?.id || "").trim();
+    if (!actorId) continue;
+    actorById.set(actorId, actor);
+  }
+
+  const updatedActorId = String(update.id || "").trim();
+  if (updatedActorId) {
+    actorById.set(updatedActorId, {
+      ...(actorById.get(updatedActorId) || { id: updatedActorId }),
+      ...update,
+      id: updatedActorId,
+    });
+  }
+
+  const projectedActors = Array.from(actorById.values());
+  const runningActors = projectedActors.filter((actor) => !!actor.running);
+  const hasBusyActor = runningActors.some((actor) => {
+    const state = String(actor.effective_working_state || "").trim().toLowerCase();
+    return state !== "idle" && state !== "stopped";
+  });
+
+  return {
+    lifecycle_state: hasBusyActor ? "active" : (runningActors.length > 0 ? "idle" : "stopped"),
+    runtime_running: runningActors.length > 0,
+    running_actor_count: runningActors.length,
+    has_running_foreman: runningActors.some((actor) => String(actor.role || "").trim().toLowerCase() === "foreman"),
+  };
+}
+
 export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptions) {
   // Use individual selectors to avoid subscribing to the entire store.
   // Without selectors, every state change (e.g. appendEvent) would trigger
@@ -142,7 +196,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const reconnectTimerRef = useRef<number | null>(null);
   const headlessReconnectDelayRef = useRef<number>(1000);
   const headlessReconnectTimerRef = useRef<number | null>(null);
+  const hiddenDisconnectTimerRef = useRef<number | null>(null);
   const hasConnectedOnceRef = useRef<boolean>(false);
+  const needsVisibilityCatchupRef = useRef<boolean>(false);
   const headlessThreadIdByActorRef = useRef(new Map<string, string>());
   const pendingHeadlessMessageFlushRef = useRef<number | null>(null);
   const pendingHeadlessActivityFlushRef = useRef<number | null>(null);
@@ -414,15 +470,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       if (!isHeadlessActorRunner(actor)) continue;
       const actorId = String(actor.id || "").trim();
       if (!actorId) continue;
-      const hasLiveText = Boolean(String(bucket?.latestActorTextByActorId?.[actorId] || "").trim());
-      const hasLiveActivities = Array.isArray(bucket?.latestActorActivitiesByActorId?.[actorId])
-        && (bucket?.latestActorActivitiesByActorId?.[actorId]?.length || 0) > 0;
       const hasLiveStream = Array.isArray(bucket?.streamingEvents)
-        && bucket.streamingEvents.some((event) => String(event.by || "").trim() === actorId);
-      const hasLiveSession = Object.values(bucket?.replySessionsByPendingEventId || {}).some(
-        (session) => String(session?.actorId || "").trim() === actorId,
-      );
-      if (hasLiveText || hasLiveActivities || hasLiveStream || hasLiveSession) {
+        && bucket.streamingEvents.some((event) => String(event.by || "").trim() === actorId && !!event._streaming);
+      if (hasLiveStream) {
         liveActorIds.add(actorId);
       }
     }
@@ -443,6 +493,15 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       const pendingEventId = typeof data.event_id === "string" ? data.event_id.trim() : "";
       if (!actorId || !eventType) return;
 
+      function updateHeadlessActorRuntime(update: ActorActivityUpdate) {
+        const actorsSnapshot = useGroupStore.getState().actors;
+        updateActorActivity([update]);
+        updateGroupRuntimeState(groupId, computeGroupRuntimeFromActorActivityUpdate(
+          actorsSnapshot.length > 0 ? actorsSnapshot : actorsRef.current,
+          update,
+        ));
+      }
+
       if (eventType === "headless.thread.started") {
         const threadId = typeof data.thread_id === "string" ? data.thread_id.trim() : "";
         const actorKey = headlessActorKey(groupId, actorId);
@@ -453,7 +512,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         if (threadId) {
           headlessThreadIdByActorRef.current.set(actorKey, threadId);
         }
-        updateActorActivity([{
+        updateHeadlessActorRuntime({
           id: actorId,
           running: true,
           idle_seconds: null,
@@ -461,14 +520,14 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           effective_working_reason: "headless_thread_started",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: null,
-        }]);
+        });
         return;
       }
 
       if (eventType === "headless.session.stopped") {
         clearHeadlessLiveOutput(groupId, actorId);
         headlessThreadIdByActorRef.current.delete(headlessActorKey(groupId, actorId));
-        updateActorActivity([{
+        updateHeadlessActorRuntime({
           id: actorId,
           running: false,
           idle_seconds: null,
@@ -476,16 +535,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           effective_working_reason: "headless_session_stopped",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: null,
-        }]);
+        });
         return;
       }
 
       if (eventType === "headless.turn.started" || eventType === "headless.turn.progress") {
-        updateGroupRuntimeState(groupId, {
-          lifecycle_state: "active",
-          runtime_running: true,
-        });
-        updateActorActivity([{
+        updateHeadlessActorRuntime({
           id: actorId,
           running: true,
           idle_seconds: null,
@@ -493,7 +548,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           effective_working_reason: "headless_turn_active",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: typeof data.turn_id === "string" ? data.turn_id : null,
-        }]);
+        });
         return;
       }
 
@@ -503,11 +558,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         clearPendingHeadlessBuffers(groupId, actorId);
         completeStreamingEventsForActor(actorId, groupId);
         clearTransientStreamingEventsForActor(actorId, groupId);
-        updateGroupRuntimeState(groupId, {
-          lifecycle_state: "idle",
-          runtime_running: true,
-        });
-        updateActorActivity([{
+        updateHeadlessActorRuntime({
           id: actorId,
           running: true,
           idle_seconds: null,
@@ -515,7 +566,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           effective_working_reason: "headless_turn_idle",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: null,
-        }]);
+        });
         if (eventType === "headless.turn.failed") {
           clearStreamingEventsForActor(actorId, groupId);
         } else {
@@ -672,7 +723,27 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     headlessEventSourceRef.current = headlessEs;
   }
 
+  function clearHiddenGroupStreamDisconnectTimer() {
+    if (hiddenDisconnectTimerRef.current == null) return;
+    window.clearTimeout(hiddenDisconnectTimerRef.current);
+    hiddenDisconnectTimerRef.current = null;
+  }
+
+  function scheduleHiddenGroupStreamDisconnect() {
+    clearHiddenGroupStreamDisconnectTimer();
+    const delayMs = getGroupStreamsHiddenDisconnectDelayMs(document.hidden);
+    if (delayMs == null) return;
+    hiddenDisconnectTimerRef.current = window.setTimeout(() => {
+      hiddenDisconnectTimerRef.current = null;
+      if (!document.hidden) return;
+      disconnectGroupStreams({ resetConnected: false });
+    }, delayMs);
+  }
+
   function connectStream(groupId: string) {
+    if (shouldStartGroupStreams(document.hidden)) {
+      clearHiddenGroupStreamDisconnectTimer();
+    }
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -690,10 +761,16 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       headlessEventSourceRef.current = null;
     }
 
+    if (!shouldStartGroupStreams(document.hidden)) {
+      needsVisibilityCatchupRef.current = true;
+      setSSEStatus("disconnected");
+      return;
+    }
+
     setSSEStatus("connecting");
     const es = new EventSource(api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`));
 
-    const isReconnect = hasConnectedOnceRef.current;
+    const isReconnect = hasConnectedOnceRef.current || needsVisibilityCatchupRef.current;
 
     es.onopen = () => {
       reconnectDelayRef.current = 1000;
@@ -703,6 +780,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       // New SSE connections start at EOF, so every reconnect needs a
       // lightweight catch-up to cover the disconnect window.
       if (isReconnect) {
+        needsVisibilityCatchupRef.current = false;
         void resyncAfterReconnect(groupId);
       }
     };
@@ -918,7 +996,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       });
   }
 
-  function cleanup() {
+  function disconnectGroupStreams(options?: { resetConnected?: boolean }) {
+    clearHiddenGroupStreamDisconnectTimer();
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -935,6 +1014,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       headlessEventSourceRef.current.close();
       headlessEventSourceRef.current = null;
     }
+    const flushBeforeClearing = options?.resetConnected === false;
     if (pendingHeadlessMessageFlushRef.current != null) {
       window.cancelAnimationFrame(pendingHeadlessMessageFlushRef.current);
       pendingHeadlessMessageFlushRef.current = null;
@@ -942,6 +1022,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (pendingHeadlessActivityFlushRef.current != null) {
       window.cancelAnimationFrame(pendingHeadlessActivityFlushRef.current);
       pendingHeadlessActivityFlushRef.current = null;
+    }
+    if (flushBeforeClearing) {
+      flushPendingHeadlessActivities();
+      flushPendingHeadlessMessages();
     }
     pendingHeadlessMessagesRef.current.clear();
     pendingHeadlessActivitiesRef.current.clear();
@@ -952,8 +1036,50 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
     reconnectDelayRef.current = 1000;
     headlessReconnectDelayRef.current = 1000;
-    hasConnectedOnceRef.current = false;
+    if (options?.resetConnected !== false) {
+      hasConnectedOnceRef.current = false;
+      needsVisibilityCatchupRef.current = false;
+    } else {
+      needsVisibilityCatchupRef.current = true;
+    }
     setSSEStatus("disconnected");
+  }
+
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (!shouldStartGroupStreams(document.hidden)) {
+        scheduleHiddenGroupStreamDisconnect();
+        return;
+      }
+      clearHiddenGroupStreamDisconnectTimer();
+      const gid = String(selectedGroupIdRef.current || "").trim();
+      if (!gid) return;
+      if (!eventSourceRef.current) {
+        connectStream(gid);
+        return;
+      }
+      if (!headlessEventSourceRef.current) {
+        void hydrateHeadlessSnapshot(gid)
+          .catch(() => {
+            /* ignore snapshot hydration failures */
+          })
+          .finally(() => {
+            if (selectedGroupIdRef.current === gid && !headlessEventSourceRef.current) {
+              connectHeadlessStream(gid, { replay: false });
+            }
+          });
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- uses refs and stable store actions; selected group changes are handled by App lifecycle.
+  }, []);
+
+  function cleanup() {
+    disconnectGroupStreams({ resetConnected: true });
   }
 
   return {

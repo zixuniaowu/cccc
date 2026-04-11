@@ -1,5 +1,6 @@
 """Tests for WecomAdapter core functionality (Steps 7-13)."""
 
+import subprocess
 import sys
 import tempfile
 import threading
@@ -7,6 +8,16 @@ import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+
+def _encrypt_wecom_media_for_test(raw: bytes, aes_key: str) -> bytes:
+    key = aes_key.encode("utf-8")
+    pad = 32 - (len(raw) % 32)
+    padded = raw + bytes([pad]) * pad
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(key[:16])).encryptor()
+    return encryptor.update(padded) + encryptor.finalize()
 
 
 class TestWecomAuthFrames(unittest.TestCase):
@@ -735,6 +746,25 @@ class TestWecomAttachments(unittest.TestCase):
 
         self.assertEqual(raw, b"plain-bytes")
         mock_decrypt.assert_called_once_with(b"encrypted-bytes", "12345678901234567890123456789012")
+
+    def test_download_attachment_decrypts_direct_url_without_external_openssl(self):
+        adapter = self._make_adapter()
+        aes_key = "12345678901234567890123456789012"
+        encrypted = _encrypt_wecom_media_for_test(b"plain attachment bytes", aes_key)
+
+        def fake_urlopen(req, timeout=0):
+            self.assertEqual(req.full_url, "https://example.test/media.enc")
+            self.assertEqual(timeout, 60)
+            return _FakeHttpResponse(encrypted)
+
+        with patch("cccc.ports.im.adapters.wecom.urllib.request.urlopen", side_effect=fake_urlopen):
+            with patch.object(subprocess, "run", side_effect=AssertionError("external openssl should not be used")):
+                raw = adapter.download_attachment({
+                    "download_url": "https://example.test/media.enc",
+                    "aeskey": aes_key,
+                })
+
+        self.assertEqual(raw, b"plain attachment bytes")
 
     def test_download_attachment_uses_direct_url_without_decrypt_when_no_aeskey(self):
         adapter = self._make_adapter()

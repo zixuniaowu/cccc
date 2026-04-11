@@ -568,6 +568,17 @@ select {
   }
 }
 
+@keyframes runtime-dock-ticker-entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
 }
@@ -578,6 +589,30 @@ select {
 
 .animate-scale-in {
   animation: scale-in 0.2s ease-out;
+}
+
+.runtime-dock-ticker-entry {
+  animation: runtime-dock-ticker-entry-in 0.24s ease-out;
+}
+
+.runtime-dock-actor-label {
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "Noto Sans",
+    "Noto Sans CJK SC",
+    "Hiragino Sans",
+    "Microsoft YaHei UI",
+    sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-dock-ticker-entry {
+    animation: none !important;
+  }
 }
 
 @keyframes cccc-bubble-soft-in {
@@ -591,17 +626,6 @@ select {
   }
 }
 
-@keyframes cccc-status-panel-out {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-3px) scale(0.985);
-  }
-}
-
 .cccc-transient-bubble {
   animation: cccc-bubble-soft-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   will-change: opacity, transform;
@@ -609,46 +633,6 @@ select {
 
 .cccc-transient-bubble-commentary {
   animation-duration: 0.16s;
-}
-
-.cccc-streaming-status-panel {
-  transform-origin: top left;
-  transition: opacity 0.16s ease-out, transform 0.18s ease-out, filter 0.18s ease-out;
-  will-change: opacity, transform, filter;
-}
-
-.cccc-streaming-status-panel-enter {
-  animation: cccc-bubble-soft-in 0.16s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.cccc-streaming-status-panel-exit {
-  animation: cccc-status-panel-out 0.14s ease-out forwards;
-}
-
-.cccc-streaming-status-shell {
-  contain: layout paint;
-}
-
-.cccc-streaming-status-layer {
-  transition:
-    opacity 0.16s ease-out,
-    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
-    filter 0.18s ease-out;
-  will-change: opacity, transform, filter;
-}
-
-.cccc-streaming-status-layer-active {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-  filter: blur(0);
-}
-
-.cccc-streaming-status-layer-inactive {
-  opacity: 0;
-  transform: translateY(-4px) scale(0.985);
-  filter: blur(3px);
-  pointer-events: none;
-  user-select: none;
 }
 
 /* ============================================

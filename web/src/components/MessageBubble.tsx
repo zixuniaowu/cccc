@@ -2,13 +2,12 @@ import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 
 import type { CSSProperties } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
-import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef, StreamingActivity } from "../types";
+import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getReplyEventId } from "../utils/chatReply";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
-import { selectStreamingReplySession, useGroupStore } from "../stores";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { MessageFooter, MessageMetadataHeader } from "./messageBubble/MessageBubbleChrome";
 import { withAuthToken } from "../services/api/base";
@@ -21,34 +20,14 @@ import {
 } from "./messageBubble/model";
 import { ActorAvatar } from "./ActorAvatar";
 import {
-    StreamingMessageBody,
-} from "./messageBubble/StreamingMessageBody";
-import {
     formatEventLine,
     getMessageBubbleMotionClass,
-    isQueuedOnlyStreamingPlaceholder,
     mayContainMarkdown,
-    normalizeStreamingActivities,
 } from "./messageBubble/helpers";
 
 const LazyMarkdownRenderer = lazy(() =>
     import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
 );
-
-const TYPING_DOT_STYLE_ID = "cccc-message-bubble-typing-dot-style";
-function ensureTypingDotStyle(): void {
-    if (typeof document === "undefined") return;
-    if (document.getElementById(TYPING_DOT_STYLE_ID)) return;
-    const style = document.createElement("style");
-    style.id = TYPING_DOT_STYLE_ID;
-    style.textContent = `
-      @keyframes ccccMessageTypingDot {
-        0%, 70%, 100% { transform: translateY(0) scale(0.92); opacity: 0.28; }
-        35% { transform: translateY(-3px) scale(1); opacity: 0.95; }
-      }
-    `;
-    document.head.appendChild(style);
-}
 
 function buildSenderAvatarUrl(groupId: string, senderAvatarPath?: string): string {
     const gid = String(groupId || "").trim();
@@ -142,7 +121,6 @@ function MessageBubbleBody({
     event,
     isUserMessage,
     isDark,
-    groupId,
     groupLabelById,
     hasSource,
     srcGroupId,
@@ -153,14 +131,7 @@ function MessageBubbleBody({
     relayChipClass,
     quoteText,
     presentationRefs,
-    isStreaming,
-    streamingActivities,
-    streamId,
-    actorId,
-    pendingEventId,
     messageText,
-    isQueuedOnlyPlaceholder,
-    streamingPlaceholderLabel,
     shouldRenderMarkdown,
     blobAttachments,
     blobGroupId,
@@ -171,7 +142,6 @@ function MessageBubbleBody({
     event: LedgerEvent;
     isUserMessage: boolean;
     isDark: boolean;
-    groupId: string;
     groupLabelById: Record<string, string>;
     hasSource: boolean;
     srcGroupId: string;
@@ -182,14 +152,7 @@ function MessageBubbleBody({
     relayChipClass: string;
     quoteText?: string;
     presentationRefs: PresentationMessageRef[];
-    isStreaming: boolean;
-    streamingActivities: StreamingActivity[];
-    streamId: string;
-    actorId: string;
-    pendingEventId: string;
     messageText: string;
-    isQueuedOnlyPlaceholder: boolean;
-    streamingPlaceholderLabel: string;
     shouldRenderMarkdown: boolean;
     blobAttachments: Array<{
         kind: string;
@@ -276,15 +239,7 @@ function MessageBubbleBody({
             ) : null}
 
             <MessageContent
-                isStreaming={isStreaming}
-                groupId={groupId}
-                streamId={streamId}
-                actorId={actorId}
-                pendingEventId={pendingEventId}
                 fallbackText={messageText}
-                streamingActivities={streamingActivities}
-                isQueuedOnlyPlaceholder={isQueuedOnlyPlaceholder}
-                streamingPlaceholderLabel={streamingPlaceholderLabel}
                 shouldRenderMarkdown={shouldRenderMarkdown}
                 isDark={isDark}
                 isUserMessage={isUserMessage}
@@ -303,47 +258,16 @@ function MessageBubbleBody({
 }
 
 function MessageContent({
-    isStreaming,
-    groupId,
-    streamId,
-    actorId,
-    pendingEventId,
     fallbackText,
-    streamingActivities,
-    isQueuedOnlyPlaceholder,
-    streamingPlaceholderLabel,
     shouldRenderMarkdown,
     isDark,
     isUserMessage,
 }: {
-    isStreaming: boolean;
-    groupId: string;
-    streamId: string;
-    actorId: string;
-    pendingEventId: string;
     fallbackText: string;
-    streamingActivities: StreamingActivity[];
-    isQueuedOnlyPlaceholder: boolean;
-    streamingPlaceholderLabel: string;
     shouldRenderMarkdown: boolean;
     isDark: boolean;
     isUserMessage: boolean;
 }) {
-    if (isStreaming) {
-        return (
-            <StreamingMessageBody
-                groupId={groupId}
-                streamId={streamId}
-                actorId={actorId}
-                pendingEventId={pendingEventId}
-                fallbackText={fallbackText}
-                streamingActivities={streamingActivities}
-                isQueuedOnlyPlaceholder={isQueuedOnlyPlaceholder}
-                streamingPlaceholderLabel={streamingPlaceholderLabel}
-            />
-        );
-    }
-
     if (shouldRenderMarkdown) {
         return (
             <Suspense
@@ -508,9 +432,6 @@ export const MessageBubble = memo(function MessageBubble({
     const isOptimistic = !!(ev.data as Record<string, unknown> | undefined)?._optimistic;
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
     const isStreaming = !!ev._streaming;
-    const streamId = ev.data && typeof ev.data === "object"
-        ? String((ev.data as { stream_id?: unknown }).stream_id || "").trim()
-        : "";
     const canReply = !!getReplyEventId(ev);
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
 
@@ -542,9 +463,6 @@ export const MessageBubble = memo(function MessageBubble({
 
     const { t } = useTranslation('chat');
 
-    useEffect(() => {
-        ensureTypingDotStyle();
-    }, []);
     const agentStateText = String(agentState?.hot?.focus || "").trim();
     const agentStateDisplay = agentStateText || t('noAgentStateYet');
     const stateTask = String(agentState?.hot?.active_task_id || "").trim();
@@ -592,51 +510,12 @@ export const MessageBubble = memo(function MessageBubble({
     }, [blobAttachments, messageText, sourcePlatform]);
     const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
     const shouldRenderMarkdown = useMemo(() => !isStreaming && mayContainMarkdown(displayMessageText), [displayMessageText, isStreaming]);
-    const streamingActivities = useMemo(() => {
-        return normalizeStreamingActivities((msgData as { activities?: unknown } | undefined)?.activities);
-    }, [msgData]);
-    const pendingEventId = String(
-        (msgData as { pending_event_id?: unknown; reply_to?: unknown } | undefined)?.pending_event_id
-        || (msgData as { pending_event_id?: unknown; reply_to?: unknown } | undefined)?.reply_to
-        || ""
-    ).trim();
-    const actorId = String(ev.by || "").trim();
-    const hasLiveReplySession = useGroupStore(useCallback((state) => {
-        if (isUserMessage || !actorId || !pendingEventId) return false;
-        const session = selectStreamingReplySession(state, groupId, {
-            pendingEventId,
-            streamId,
-            actorId,
-        });
-        return !!session && (session.phase === "pending" || session.phase === "streaming");
-    }, [actorId, groupId, isUserMessage, pendingEventId, streamId]));
-    const shouldRenderStreamingBody = isStreaming || hasLiveReplySession;
-    const isQueuedOnlyPlaceholder = useMemo(() => {
-        return isQueuedOnlyStreamingPlaceholder({
-            isStreaming: shouldRenderStreamingBody,
-            messageText: displayMessageText,
-            liveStreamingText: "",
-            blobAttachmentCount: blobAttachments.length,
-            presentationRefCount: presentationRefs.length,
-            activities: streamingActivities,
-        });
-    }, [blobAttachments.length, displayMessageText, presentationRefs.length, shouldRenderStreamingBody, streamingActivities]);
     const streamPhase = String((msgData as { stream_phase?: unknown } | undefined)?.stream_phase || "").trim().toLowerCase();
     const bubbleMotionClass = useMemo(() => getMessageBubbleMotionClass({
         isStreaming,
         isOptimistic,
         streamPhase,
     }), [isOptimistic, isStreaming, streamPhase]);
-    const streamingPlaceholderLabel = useMemo(() => {
-        if (!isStreaming) return "";
-        if (streamPhase === "commentary") {
-            return t("streamCommentaryPending");
-        }
-        if (streamPhase === "final_answer") {
-            return t("streamFinalAnswerPending");
-        }
-        return t("streamWorkingPending");
-    }, [isStreaming, streamPhase, t]);
     const stableMessageAttachmentKey = useMemo(() => {
         const clientId = typeof msgData?.client_id === "string" ? String(msgData.client_id || "").trim() : "";
         if (clientId) return `client:${clientId}`;
@@ -871,7 +750,6 @@ export const MessageBubble = memo(function MessageBubble({
                 <div
                     className={classNames(
                         "inline-flex max-w-full flex-col px-4 py-2.5 text-sm leading-relaxed transition-[opacity,transform,box-shadow,background-color] duration-200 ease-out",
-                        isQueuedOnlyPlaceholder ? "min-h-0 px-3 py-2" : "",
                         isStreaming ? "opacity-95 translate-y-0" : "opacity-100 translate-y-0",
                         bubbleMotionClass,
                         isUserMessage
@@ -888,7 +766,6 @@ export const MessageBubble = memo(function MessageBubble({
                         event={ev}
                         isUserMessage={isUserMessage}
                         isDark={isDark}
-                        groupId={groupId}
                         groupLabelById={groupLabelById}
                         hasSource={hasSource}
                         srcGroupId={srcGroupId}
@@ -899,14 +776,7 @@ export const MessageBubble = memo(function MessageBubble({
                         relayChipClass={relayChipClass}
                         quoteText={quoteText}
                         presentationRefs={presentationRefs}
-                        isStreaming={shouldRenderStreamingBody}
-                        streamingActivities={streamingActivities}
-                        streamId={streamId}
-                        actorId={actorId}
-                        pendingEventId={pendingEventId}
                         messageText={displayMessageText}
-                        isQueuedOnlyPlaceholder={isQueuedOnlyPlaceholder}
-                        streamingPlaceholderLabel={streamingPlaceholderLabel}
                         shouldRenderMarkdown={shouldRenderMarkdown}
                         blobAttachments={blobAttachments}
                         blobGroupId={blobGroupId}

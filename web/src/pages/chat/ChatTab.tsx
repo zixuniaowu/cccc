@@ -706,7 +706,7 @@ export function ChatTab({
               )}
 
               {!chatWindowProps && runtimeActors.length > 0 ? (
-                <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 sm:bottom-4">
+                <div className="pointer-events-none absolute inset-x-0 bottom-1 z-20 sm:bottom-2">
                   <RuntimeDock
                     groupId={selectedGroupId}
                     runtimeActors={runtimeActors}

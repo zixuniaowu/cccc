@@ -1539,6 +1539,168 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_activity_thread_writes_ledger_on_state_change(self) -> None:
+        """actor.activity should be written to ledger on working-state transitions."""
+        from cccc.daemon.serve_ops import start_actor_activity_thread
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            created = create_group(reg, title="codex-ledger-activity", topic="")
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="headless")  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            # Re-load to get fresh ledger_path
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            ledger_path = group.ledger_path  # type: ignore[union-attr]
+
+            class _Broadcaster:
+                def publish(self, event: dict) -> None:
+                    pass
+
+            status_holder = {"status": "working", "running": True}
+
+            class _CodexSupervisor:
+                @staticmethod
+                def get_state(group_id: str, actor_id: str) -> dict:
+                    return {
+                        "group_id": group_id,
+                        "actor_id": actor_id,
+                        "status": status_holder["status"],
+                        "current_task_id": "turn-1",
+                        "updated_at": "2026-04-02T10:00:00Z",
+                    }
+
+                @staticmethod
+                def actor_running(_group_id: str, _actor_id: str) -> bool:
+                    return bool(status_holder.get("running", True))
+
+            stop_event = threading.Event()
+            thread = start_actor_activity_thread(
+                stop_event=stop_event,
+                home=Path(home),
+                pty_supervisor=object(),
+                headless_supervisor=object(),
+                codex_supervisor=_CodexSupervisor(),
+                event_broadcaster=_Broadcaster(),
+                load_group=load_group,
+                interval_seconds=1.0,
+            )
+            try:
+                # First tick runs immediately: new actor → state_changed → writes to ledger
+                time.sleep(0.25)
+                # Verify ledger has actor.activity
+                import json
+                lines = ledger_path.read_text(encoding="utf-8").strip().split("\n")
+                activity_lines = [json.loads(line) for line in lines if '"actor.activity"' in line]
+                self.assertTrue(activity_lines, "First tick should write actor.activity to ledger")
+                self.assertEqual(activity_lines[-1]["data"]["actors"][0]["effective_working_state"], "working")
+
+                initial_count = len(activity_lines)
+                # Wait another tick (>1s interval) — no state change → no new ledger write
+                time.sleep(1.3)
+                lines2 = ledger_path.read_text(encoding="utf-8").strip().split("\n")
+                activity_lines2 = [json.loads(line) for line in lines2 if '"actor.activity"' in line]
+                self.assertEqual(len(activity_lines2), initial_count, "No state change should not add ledger entries")
+
+                # Change state: working → idle → should write to ledger on next tick
+                status_holder["status"] = "idle"
+                time.sleep(1.3)
+                lines3 = ledger_path.read_text(encoding="utf-8").strip().split("\n")
+                activity_lines3 = [json.loads(line) for line in lines3 if '"actor.activity"' in line]
+                self.assertGreater(len(activity_lines3), initial_count, "State change should add ledger entry")
+                self.assertEqual(activity_lines3[-1]["data"]["actors"][0]["effective_working_state"], "idle")
+
+                # Simulate actor stopping (actor_running returns False)
+                idle_count = len(activity_lines3)
+                status_holder["running"] = False
+                time.sleep(1.3)
+                lines4 = ledger_path.read_text(encoding="utf-8").strip().split("\n")
+                activity_lines4 = [json.loads(line) for line in lines4 if '"actor.activity"' in line]
+                self.assertGreater(len(activity_lines4), idle_count, "Actor stop should add ledger entry")
+                last_event = activity_lines4[-1]
+                stopped_actors = [a for a in last_event["data"]["actors"] if a["id"] == "peer1"]
+                self.assertEqual(len(stopped_actors), 1, "Stopped actor should appear in event")
+                self.assertEqual(stopped_actors[0]["effective_working_state"], "stopped")
+                self.assertFalse(stopped_actors[0]["running"])
+            finally:
+                stop_event.set()
+                thread.join(timeout=1.0)
+        finally:
+            cleanup()
+
+    def test_actor_activity_thread_preserves_runner_on_stopped_entry(self) -> None:
+        from cccc.daemon.serve_ops import start_actor_activity_thread
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            created = create_group(reg, title="pty-ledger-activity", topic="")
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")  # type: ignore[arg-type]
+            group.save()  # type: ignore[union-attr]
+
+            group = load_group(created.group_id)
+            self.assertIsNotNone(group)
+            ledger_path = group.ledger_path  # type: ignore[union-attr]
+            status_holder = {"running": True}
+
+            class _PtySupervisor:
+                @staticmethod
+                def actor_running(_group_id: str, _actor_id: str) -> bool:
+                    return bool(status_holder.get("running", True))
+
+                @staticmethod
+                def idle_seconds(*, group_id: str, actor_id: str) -> float:
+                    return 0.0
+
+                @staticmethod
+                def terminal_override(*, group_id: str, actor_id: str):
+                    return None
+
+            class _Broadcaster:
+                def publish(self, event: dict) -> None:
+                    pass
+
+            stop_event = threading.Event()
+            thread = start_actor_activity_thread(
+                stop_event=stop_event,
+                home=Path(home),
+                pty_supervisor=_PtySupervisor(),
+                headless_supervisor=object(),
+                codex_supervisor=object(),
+                event_broadcaster=_Broadcaster(),
+                load_group=load_group,
+                interval_seconds=1.0,
+            )
+            try:
+                time.sleep(0.25)
+                status_holder["running"] = False
+                time.sleep(1.3)
+
+                lines = ledger_path.read_text(encoding="utf-8").strip().split("\n")
+                activity_lines = [json.loads(line) for line in lines if '"actor.activity"' in line]
+                self.assertTrue(activity_lines, "Actor stop should write actor.activity to ledger")
+                stopped_actors = [a for a in activity_lines[-1]["data"]["actors"] if a["id"] == "peer1"]
+                self.assertEqual(len(stopped_actors), 1)
+                self.assertEqual(stopped_actors[0]["effective_working_state"], "stopped")
+                self.assertEqual(stopped_actors[0]["runner_effective"], "pty")
+            finally:
+                stop_event.set()
+                thread.join(timeout=1.0)
+        finally:
+            cleanup()
+
     def test_codex_session_persists_headless_state_file(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
         from cccc.daemon.runner_state_ops import headless_state_path
