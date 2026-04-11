@@ -26,6 +26,7 @@ const { localStorageMock } = vi.hoisted(() => {
 import {
   GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS,
   computeGroupRuntimeFromActorActivityUpdate,
+  computeGroupRuntimeFromActorActivityUpdates,
   getGroupStreamsHiddenDisconnectDelayMs,
   shouldStartGroupStreams,
 } from "../../src/hooks/useSSE";
@@ -89,6 +90,23 @@ describe("computeGroupRuntimeFromActorActivityUpdate", () => {
       lifecycle_state: "stopped",
       runtime_running: false,
       running_actor_count: 0,
+    });
+  });
+
+  it("derives full runtime fields from batched actor.activity updates", () => {
+    const actors: Actor[] = [
+      { id: "foreman", role: "foreman", running: true, effective_working_state: "working" },
+      { id: "peer-1", role: "peer", running: true, effective_working_state: "idle" },
+    ];
+
+    expect(computeGroupRuntimeFromActorActivityUpdates(actors, [
+      { id: "foreman", running: false, effective_working_state: "stopped" },
+      { id: "peer-1", running: true, effective_working_state: "idle" },
+    ])).toMatchObject({
+      lifecycle_state: "idle",
+      runtime_running: true,
+      running_actor_count: 1,
+      has_running_foreman: false,
     });
   });
 });

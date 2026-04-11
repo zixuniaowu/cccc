@@ -34,6 +34,7 @@ _LEGACY_KEYS: Set[str] = {
     "wecom_bot_id_env",
     "wecom_secret",
     "wecom_secret_env",
+    "weixin_command",
 }
 
 

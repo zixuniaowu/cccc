@@ -1,6 +1,6 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Actor, GroupMeta, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon } from "../../components/Icons";
@@ -116,12 +116,12 @@ export function ChatComposer({
   const composerFontSize = (isSmallScreen ? 15 : 14) * rootFontScale;
   const composerLineHeight = (isSmallScreen ? 24 : 20) * rootFontScale;
 
-  const resizeComposer = (node: HTMLTextAreaElement) => {
+  const resizeComposer = useCallback((node: HTMLTextAreaElement) => {
     node.style.height = "auto";
     const nextHeight = Math.min(Math.max(node.scrollHeight, baseComposerHeight), maxComposerHeight);
     node.style.height = `${nextHeight}px`;
     composerHeightRef.current = nextHeight;
-  };
+  }, [baseComposerHeight, maxComposerHeight]);
 
   // Auto-adjust textarea height when composerText changes programmatically
   // (e.g. mention selection). Skips when handleChange already handled resize.
@@ -140,7 +140,7 @@ export function ChatComposer({
     });
 
     return () => cancelAnimationFrame(rafId);
-  }, [baseComposerHeight, composerText, composerRef, maxComposerHeight]);
+  }, [composerText, composerRef, resizeComposer]);
 
   useEffect(() => {
     const el = composerRef.current;
@@ -160,7 +160,7 @@ export function ChatComposer({
       cancelAnimationFrame(rafId);
       observer.disconnect();
     };
-  }, [composerRef]);
+  }, [composerRef, resizeComposer]);
 
   useEffect(() => {
     if (!showModeMenu) return;

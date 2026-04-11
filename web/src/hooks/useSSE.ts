@@ -127,6 +127,13 @@ export function computeGroupRuntimeFromActorActivityUpdate(
   actors: Actor[],
   update: ActorActivityUpdate,
 ): GroupRuntimeStatus {
+  return computeGroupRuntimeFromActorActivityUpdates(actors, [update]);
+}
+
+export function computeGroupRuntimeFromActorActivityUpdates(
+  actors: Actor[],
+  updates: ActorActivityUpdate[],
+): GroupRuntimeStatus {
   const actorById = new Map<string, Actor>();
   for (const actor of Array.isArray(actors) ? actors : []) {
     const actorId = String(actor?.id || "").trim();
@@ -134,8 +141,9 @@ export function computeGroupRuntimeFromActorActivityUpdate(
     actorById.set(actorId, actor);
   }
 
-  const updatedActorId = String(update.id || "").trim();
-  if (updatedActorId) {
+  for (const update of Array.isArray(updates) ? updates : []) {
+    const updatedActorId = String(update.id || "").trim();
+    if (!updatedActorId) continue;
     actorById.set(updatedActorId, {
       ...(actorById.get(updatedActorId) || { id: updatedActorId }),
       ...update,
@@ -825,15 +833,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           const actors = ev.data?.actors;
           if (Array.isArray(actors) && actors.length > 0) {
             updateActorActivity(actors);
-            const hasRunningActor = actors.some((actor) => !!actor.running);
-            const hasBusyActor = actors.some((actor) => {
-              const state = String(actor.effective_working_state || "").trim().toLowerCase();
-              return !!actor.running && state !== "idle" && state !== "stopped";
-            });
-            updateGroupRuntimeState(groupId, {
-              lifecycle_state: hasBusyActor ? "active" : (hasRunningActor ? "idle" : "stopped"),
-              runtime_running: hasRunningActor,
-            });
+            updateGroupRuntimeState(groupId, computeGroupRuntimeFromActorActivityUpdates(actorsRef.current, actors));
           }
           return;
         }

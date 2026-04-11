@@ -828,9 +828,11 @@ export function AppModals({
     if (!latest) return;
     const configChanged =
       String(editingActor.profile_id || "").trim() !== String(latest.profile_id || "").trim() ||
+      String(editingActor.profile_scope || "global").trim() !== String(latest.profile_scope || "global").trim() ||
+      String(editingActor.profile_owner || "").trim() !== String(latest.profile_owner || "").trim() ||
       Number(editingActor.profile_revision_applied || 0) !== Number(latest.profile_revision_applied || 0) ||
       String(editingActor.runtime || "").trim() !== String(latest.runtime || "").trim() ||
-      String(editingActor.runner || "").trim() !== String(latest.runner || "").trim() ||
+      getEffectiveActorRunner(editingActor) !== getEffectiveActorRunner(latest) ||
       String(editingActor.title || "") !== String(latest.title || "") ||
       String(Array.isArray(editingActor.command) ? editingActor.command.join("\u0000") : "") !==
         String(Array.isArray(latest.command) ? latest.command.join("\u0000") : "") ||

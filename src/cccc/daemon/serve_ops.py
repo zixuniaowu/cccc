@@ -442,8 +442,11 @@ def start_actor_activity_thread(
                                         by="system",
                                         data={"actors": ledger_actors},
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    _log_loop_error(
+                                        f"actor_activity ledger append failed group={gid} actor_count={len(ledger_actors)}",
+                                        e,
+                                    )
             except Exception as e:
                 _log_loop_error("actor_activity_tick failed", e)
             stop_event.wait(interval)

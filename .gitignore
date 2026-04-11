@@ -45,6 +45,7 @@ uv.lock
 
 # Local iteration notes (not shipped)
 /docs/ITERATION_PLAN.md
+/docs/review/
 
 /docs/plan/
 /docs/superpowers/

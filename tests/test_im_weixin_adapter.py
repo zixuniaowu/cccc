@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import tempfile
 import threading
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -50,6 +52,60 @@ class TestWeixinAdapterContextCache(unittest.TestCase):
 
             payload = json.loads(context_path.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("chat-1"), "ctx-token-1")
+
+    def test_loaded_context_tokens_hydrate_sdk_cache_on_connect(self) -> None:
+        from cccc.ports.im.adapters.weixin import WeixinAdapter
+
+        class FakeBot:
+            last: "FakeBot | None" = None
+
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+                self._context_tokens: dict[str, str] = {}
+                self._handlers = []
+                FakeBot.last = self
+
+            def on_message(self, handler):
+                self._handlers.append(handler)
+                return handler
+
+            async def start(self) -> None:
+                await asyncio.sleep(3600)
+
+        async def _fake_load_credentials(path: Path | None = None):
+            _ = path
+            return types.SimpleNamespace(base_url="https://example.test")
+
+        async def _run() -> None:
+            with tempfile.TemporaryDirectory() as td:
+                context_path = Path(td) / "ctx.json"
+                context_path.write_text(json.dumps({"chat-1": "ctx-token-1"}), encoding="utf-8")
+                adapter = WeixinAdapter(
+                    cred_path=Path(td) / "creds.json",
+                    context_cache_path=context_path,
+                )
+
+                fake_pkg = types.ModuleType("wechatbot")
+                fake_pkg.__path__ = []  # mark as package
+                fake_pkg.WeChatBot = FakeBot
+                fake_auth = types.ModuleType("wechatbot.auth")
+                fake_auth.load_credentials = _fake_load_credentials
+
+                with unittest.mock.patch.dict(sys.modules, {
+                    "wechatbot": fake_pkg,
+                    "wechatbot.auth": fake_auth,
+                }):
+                    await adapter._async_connect()
+
+                self.assertIsNotNone(FakeBot.last)
+                self.assertEqual(FakeBot.last._context_tokens, {"chat-1": "ctx-token-1"})
+                adapter._receiver_task.cancel()
+                try:
+                    await adapter._receiver_task
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(_run())
 
 
 class TestWeixinAdapterSendMessage(unittest.TestCase):

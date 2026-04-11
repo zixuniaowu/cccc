@@ -15,8 +15,7 @@ import {
 } from "./runtimeDockTickerCache";
 import { buildRuntimeDockTickerEntries, type RuntimeDockTickerEntry } from "./runtimeDockTickerEntries";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
-
-type RuntimeRingTone = "stopped" | "ready" | "queued" | "working" | "streaming" | "drafting" | "failed";
+import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
 
 type RuntimeRingPresentation = {
   ringClassName: string;
@@ -47,6 +46,8 @@ function getRuntimeStatusLabel(
 ): string {
   if (!isRunning) return t("stopped", { defaultValue: "Stopped" });
   if (workingState === "working") return t("working", { defaultValue: "Working" });
+  if (workingState === "waiting") return t("waiting", { defaultValue: "Waiting" });
+  if (workingState === "stuck") return t("stuck", { defaultValue: "Stuck" });
   return t("running", { defaultValue: "Running" });
 }
 
@@ -54,29 +55,16 @@ function getLiveWorkBadgeLabel(card: LiveWorkCard, t: (key: string, options?: Re
   if (card.phase === "failed") {
     return t("liveWorkPhaseFailed", { defaultValue: "Failed" });
   }
-  if (card.streamPhase === "final_answer") {
-    return t("liveWorkPhaseFinalAnswer", { defaultValue: "Drafting reply" });
-  }
-  if (card.streamPhase === "commentary") {
-    return t("liveWorkPhaseCommentary", { defaultValue: "Streaming commentary" });
-  }
   if (card.phase === "pending") {
     return t("liveWorkPhaseQueued", { defaultValue: "Queued" });
+  }
+  if (card.phase === "streaming") {
+    return t("liveWorkPhaseWorking", { defaultValue: "Working" });
   }
   if (card.phase === "completed") {
     return t("liveWorkPhaseCompleted", { defaultValue: "Recent" });
   }
   return t("liveWorkPhaseWorking", { defaultValue: "Working" });
-}
-
-function getRuntimeRingTone(item: RuntimeDockItem, isRunning: boolean, workingState: string): RuntimeRingTone {
-  if (item.liveWorkCard?.phase === "failed") return "failed";
-  if (item.liveWorkCard?.phase === "pending") return "queued";
-  if (item.liveWorkCard?.streamPhase === "final_answer") return "drafting";
-  if (item.liveWorkCard?.phase === "streaming" || item.liveWorkCard?.streamPhase === "commentary") return "streaming";
-  if (workingState === "working") return "working";
-  if (isRunning) return "ready";
-  return "stopped";
 }
 
 function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): RuntimeRingPresentation {
@@ -93,7 +81,7 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
         ),
         unreadBadgeClassName: isDark ? "bg-amber-300/[0.18] text-amber-50" : "bg-amber-500/[0.14] text-amber-700",
       };
-    case "working":
+    case "active":
       return {
         ringClassName: "absolute -inset-[2px] rounded-full animate-[spin_5s_linear_infinite] motion-reduce:animate-none",
         ringStyle: buildMaskedRing(
@@ -105,36 +93,7 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
         ),
         unreadBadgeClassName: isDark ? "bg-emerald-300/[0.18] text-emerald-50" : "bg-emerald-500/[0.14] text-emerald-700",
       };
-    case "streaming":
-      return {
-        ringClassName: "absolute -inset-[2px] rounded-full animate-[spin_3.2s_linear_infinite] motion-reduce:animate-none",
-        ringStyle: buildMaskedRing(
-          "conic-gradient(from 64deg, transparent 0deg 30deg, rgba(34,211,238,0.98) 30deg 116deg, transparent 116deg 172deg, rgba(56,189,248,0.92) 172deg 254deg, transparent 254deg 308deg, rgba(103,232,249,0.8) 308deg 360deg)"
-        ),
-        haloClassName: classNames(
-          "absolute -inset-[5px] rounded-full blur-md animate-pulse motion-reduce:animate-none",
-          isDark ? "bg-cyan-300/[0.18]" : "bg-cyan-400/[0.18]"
-        ),
-        unreadBadgeClassName: isDark ? "bg-cyan-300/[0.18] text-cyan-50" : "bg-cyan-500/[0.14] text-cyan-700",
-      };
-    case "drafting":
-      return {
-        ringClassName: "absolute -inset-[2px] rounded-full animate-[spin_2.6s_linear_infinite] motion-reduce:animate-none",
-        ringStyle: buildMaskedRing(
-          "conic-gradient(from 54deg, transparent 0deg 20deg, rgba(59,130,246,0.98) 20deg 132deg, transparent 132deg 190deg, rgba(14,165,233,0.9) 190deg 300deg, transparent 300deg 360deg)"
-        ),
-        secondaryRingClassName:
-          "absolute -inset-[3px] rounded-full animate-[spin_7s_linear_infinite_reverse] motion-reduce:animate-none",
-        secondaryRingStyle: buildMaskedRing(
-          "conic-gradient(from 180deg, rgba(125,211,252,0.18) 0deg 44deg, transparent 44deg 204deg, rgba(37,99,235,0.76) 204deg 296deg, transparent 296deg 360deg)"
-        ),
-        haloClassName: classNames(
-          "absolute -inset-[5px] rounded-full blur-md animate-pulse motion-reduce:animate-none",
-          isDark ? "bg-sky-300/[0.18]" : "bg-sky-400/[0.18]"
-        ),
-        unreadBadgeClassName: isDark ? "bg-sky-300/[0.18] text-sky-50" : "bg-sky-500/[0.14] text-sky-700",
-      };
-    case "failed":
+    case "attention":
       return {
         ringClassName: "absolute -inset-[2px] rounded-full",
         ringStyle: buildMaskedRing(

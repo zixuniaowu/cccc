@@ -6,7 +6,7 @@ import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../utils/privateEnvInput";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
-import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/actorProfiles";
+import { actorProfileIdentityKey } from "../../utils/actorProfiles";
 import { CapabilityPicker } from "../CapabilityPicker";
 import { RolePresetPicker } from "../RolePresetPicker";
 import { ActorAvatarField } from "../ActorAvatarField";
@@ -187,7 +187,7 @@ export function EditActorModal({
     [actorProfiles, attachProfileId]
   );
   const selectedProfileName = String(selectedProfile?.name || "").trim();
-  const selectedProfileRunner = normalizeActorRunner(selectedProfile?.runner);
+  const selectedProfileRunner = normalizeActorRunner(selectedProfile?.runner || runner);
 
   const secretsPlaceholder = SECRETS_PLACEHOLDER[runtime] ?? DEFAULT_SECRETS_PLACEHOLDER;
 
@@ -327,25 +327,6 @@ export function EditActorModal({
     if (!hasLinked) void refreshSecretKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId, actorId, isOpen, linkedProfileId, linkedProfileOwner, linkedProfileScope]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const linkedId = String(linkedProfileId || "").trim();
-    if (!linkedId || actorProfilesBusy) return;
-    const exists = actorProfiles.some((profile) =>
-      actorProfileMatchesRef(profile, {
-        profileId: linkedId,
-        profileScope: linkedProfileScope || "global",
-        profileOwner: linkedProfileOwner || "",
-      })
-    );
-    if (exists) return;
-    // Defensive fallback: when profile was deleted/detached and actor list is briefly stale,
-    // prefer Custom tab to avoid opening in an invalid "Use Profile" state.
-    setEditMode("custom");
-    setPendingConvertToCustom(false);
-    setAttachProfileId("");
-  }, [isOpen, linkedProfileId, linkedProfileOwner, linkedProfileScope, actorProfilesBusy, actorProfiles]);
 
   useEffect(() => {
     if (!isOpen) return;

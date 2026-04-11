@@ -1595,6 +1595,78 @@ describe("useGroupStore streaming placeholder cleanup", () => {
     });
   });
 
+  it("promoteStreamingEventToStream does not rebind an existing real transcript stream", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().reconcileStreamingMessage({
+      actorId: "peer-1",
+      pendingEventId: "evt-phase",
+      streamId: "stream-commentary-phase",
+      ts: "2026-04-09T10:00:00Z",
+      fullText: "Inspecting the implementation",
+      eventText: "Inspecting the implementation",
+      activities: [],
+      completed: true,
+      transientStream: true,
+      phase: "commentary",
+      groupId: "g-demo",
+    });
+
+    mod.useGroupStore.getState().promoteStreamingEventToStream("peer-1", "evt-phase", "stream-final-phase", "g-demo");
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents).toHaveLength(1);
+    expect(bucket.streamingEvents[0]?.data?.stream_id).toBe("stream-commentary-phase");
+    expect(bucket.streamingTextByStreamId["stream-commentary-phase"]).toBe("Inspecting the implementation");
+    expect(bucket.streamingTextByStreamId["stream-final-phase"]).toBeUndefined();
+  });
+
+  it("reconcileStreamingMessage keeps separate real transcript streams for the same pending event", async () => {
+    const mod = await importFreshStore();
+    mod.useGroupStore.getState().reconcileStreamingMessage({
+      actorId: "peer-1",
+      pendingEventId: "evt-multi-stream",
+      streamId: "stream-commentary-multi",
+      ts: "2026-04-09T10:00:00Z",
+      fullText: "Reviewing the store path",
+      eventText: "Reviewing the store path",
+      activities: [],
+      completed: true,
+      transientStream: true,
+      phase: "commentary",
+      groupId: "g-demo",
+    });
+
+    mod.useGroupStore.getState().reconcileStreamingMessage({
+      actorId: "peer-1",
+      pendingEventId: "evt-multi-stream",
+      streamId: "stream-final-multi",
+      ts: "2026-04-09T10:00:02Z",
+      fullText: "Final answer body",
+      eventText: "Final answer body",
+      activities: [],
+      completed: false,
+      transientStream: false,
+      phase: "final_answer",
+      groupId: "g-demo",
+    });
+
+    const bucket = mod.useGroupStore.getState().chatByGroup["g-demo"];
+    expect(bucket.streamingEvents.map((event) => event.data?.stream_id)).toEqual([
+      "stream-commentary-multi",
+      "stream-final-multi",
+    ]);
+    expect(bucket.streamingTextByStreamId["stream-commentary-multi"]).toBe("Reviewing the store path");
+    expect(bucket.streamingTextByStreamId["stream-final-multi"]).toBe("Final answer body");
+    expect(bucket.latestActorPreviewByActorId["peer-1"]?.transcriptBlocks.map((block) => block.streamPhase)).toEqual([
+      "commentary",
+      "final_answer",
+    ]);
+    expect(bucket.latestActorPreviewByActorId["peer-1"]?.transcriptBlocks.map((block) => block.text)).toEqual([
+      "Reviewing the store path",
+      "Final answer body",
+    ]);
+  });
+
   it("promoteStreamingEventToStream binds the latest local queued placeholder when server pending ids differ", async () => {
     const mod = await importFreshStore();
     mod.useGroupStore.getState().upsertStreamingEvent({

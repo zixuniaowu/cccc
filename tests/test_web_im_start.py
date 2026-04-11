@@ -1,5 +1,6 @@
 import os
 import hashlib
+import json
 import subprocess
 import sys
 import tempfile
@@ -231,6 +232,84 @@ class TestWebImStart(unittest.TestCase):
                 result = payload.get("result") or {}
                 self.assertEqual(result.get("status"), "waiting_scan")
                 self.assertEqual(result.get("qrcode_url"), "https://example.test/qr")
+        finally:
+            cleanup()
+
+    def test_im_weixin_login_status_rejects_confirmed_without_credentials(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        try:
+            gid = self._create_group("im-weixin-login-missing-creds")
+
+            with TestClient(create_app()) as client:
+                set_resp = client.post(
+                    "/api/im/set",
+                    json={
+                        "group_id": gid,
+                        "platform": "weixin",
+                    },
+                )
+                self.assertEqual(set_resp.status_code, 200)
+                self.assertTrue(bool(set_resp.json().get("ok")))
+
+                state_dir = Path(home) / "groups" / gid / "state"
+                state_dir.mkdir(parents=True, exist_ok=True)
+                status_path = state_dir / "im_weixin_login.json"
+                status_path.write_text(
+                    json.dumps(
+                        {
+                            "status": "waiting_scan",
+                            "logged_in": False,
+                            "qrcode": "qr-token-1",
+                            "qrcode_url": "https://example.test/qr",
+                            "poll_base_url": "https://example.test",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                class _FakeApi:
+                    async def poll_qr_status(self, base_url: str, qrcode: str):
+                        _ = base_url
+                        _ = qrcode
+                        return {"status": "confirmed"}
+
+                async def _unexpected_save_credentials(*args, **kwargs):
+                    _ = args
+                    _ = kwargs
+                    raise AssertionError("credentials should not be saved when confirmed payload is incomplete")
+
+                class _Credentials:
+                    def __init__(self, **kwargs) -> None:
+                        self.kwargs = kwargs
+
+                fake_auth = types.ModuleType("wechatbot.auth")
+                fake_auth.FIXED_QR_BASE_URL = "https://ilinkai.weixin.qq.com"
+                fake_auth.save_credentials = _unexpected_save_credentials
+                fake_protocol = types.ModuleType("wechatbot.protocol")
+                fake_protocol.ILinkApi = _FakeApi
+                fake_types = types.ModuleType("wechatbot.types")
+                fake_types.Credentials = _Credentials
+                fake_pkg = types.ModuleType("wechatbot")
+                fake_pkg.__path__ = []  # mark as package
+
+                with patch.dict(sys.modules, {
+                    "wechatbot": fake_pkg,
+                    "wechatbot.auth": fake_auth,
+                    "wechatbot.protocol": fake_protocol,
+                    "wechatbot.types": fake_types,
+                }):
+                    status_resp = client.get(f"/api/im/weixin/login/status?group_id={gid}")
+
+                self.assertEqual(status_resp.status_code, 200)
+                payload = status_resp.json()
+                self.assertTrue(bool(payload.get("ok")))
+                result = payload.get("result") or {}
+                self.assertEqual(result.get("status"), "error")
+                self.assertFalse(bool(result.get("logged_in")))
+                self.assertIn("missing credentials", str(result.get("error") or ""))
+                self.assertFalse((state_dir / "im_weixin_credentials.json").exists())
         finally:
             cleanup()
 

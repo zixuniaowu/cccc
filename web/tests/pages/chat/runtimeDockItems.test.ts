@@ -5,6 +5,7 @@ import { buildRuntimeDockTickerEntries } from "../../../src/pages/chat/runtimeDo
 import type { RuntimeDockTickerEntry } from "../../../src/pages/chat/runtimeDockTickerEntries";
 import type { LiveWorkCard } from "../../../src/pages/chat/liveWorkCards";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "../../../src/pages/chat/runtimeDockItems";
+import { getRuntimeRingTone } from "../../../src/pages/chat/runtimeDockRingTone";
 import type { Actor, HeadlessPreviewBlock, StreamingActivity } from "../../../src/types";
 
 function makeActivity(args: {
@@ -44,6 +45,7 @@ function makeLiveWorkCard(args: {
   actorId: string;
   actorLabel: string;
   phase?: LiveWorkCard["phase"];
+  streamPhase?: string;
   activities?: StreamingActivity[];
   text?: string;
   transcriptBlocks?: HeadlessPreviewBlock[];
@@ -57,7 +59,7 @@ function makeLiveWorkCard(args: {
     actorLabel: args.actorLabel,
     runtime: "codex",
     phase: args.phase || "streaming",
-    streamPhase: "commentary",
+    streamPhase: args.streamPhase || "commentary",
     text: args.text || "",
     transcriptBlocks: args.transcriptBlocks || [],
     activities: args.activities || [],
@@ -67,7 +69,7 @@ function makeLiveWorkCard(args: {
           pendingEventId: `pending-${args.actorId}`,
           currentStreamId: `stream-${args.actorId}`,
           phase: args.phase || "streaming",
-          streamPhase: "commentary",
+          streamPhase: args.streamPhase || "commentary",
           updatedAt: args.updatedAt || "2025-01-02T12:00:00Z",
           latestText: String(args.previewBlocks?.[args.previewBlocks.length - 1]?.text || ""),
           transcriptBlocks: args.previewBlocks || [],
@@ -84,19 +86,21 @@ function makeRuntimeDockItem(args: {
   actorId: string;
   actorLabel: string;
   liveWorkCard: LiveWorkCard | null;
+  runner?: RuntimeDockItem["runner"];
 }): RuntimeDockItem {
+  const runner = args.runner || "headless";
   const actor: Actor = {
     id: args.actorId,
     title: args.actorLabel,
     runtime: "codex",
-    runner: "headless",
+    runner,
   };
   return {
     actor,
     actorId: args.actorId,
     actorLabel: args.actorLabel,
     runtime: "codex",
-    runner: "headless",
+    runner,
     unreadCount: 0,
     liveWorkCard: args.liveWorkCard,
   };
@@ -678,5 +682,63 @@ describe("runtimeDockItems", () => {
       "First draft.",
       "Rewritten answer.",
     ]);
+  });
+
+  it("maps runtime dock ring tone from coarse actor state for both headless and PTY actors", () => {
+    const failedItem = makeRuntimeDockItem({
+      actorId: "failed",
+      actorLabel: "Failed",
+      liveWorkCard: makeLiveWorkCard({
+        actorId: "failed",
+        actorLabel: "Failed",
+        phase: "failed",
+      }),
+    });
+    const pendingItem = makeRuntimeDockItem({
+      actorId: "pending",
+      actorLabel: "Pending",
+      liveWorkCard: makeLiveWorkCard({
+        actorId: "pending",
+        actorLabel: "Pending",
+        phase: "pending",
+      }),
+    });
+    const streamingFinalAnswerItem = makeRuntimeDockItem({
+      actorId: "streaming",
+      actorLabel: "Streaming",
+      liveWorkCard: makeLiveWorkCard({
+        actorId: "streaming",
+        actorLabel: "Streaming",
+        phase: "streaming",
+        streamPhase: "final_answer",
+      }),
+    });
+    const completedFinalAnswerItem = makeRuntimeDockItem({
+      actorId: "completed",
+      actorLabel: "Completed",
+      liveWorkCard: makeLiveWorkCard({
+        actorId: "completed",
+        actorLabel: "Completed",
+        phase: "completed",
+        streamPhase: "final_answer",
+      }),
+    });
+    const ptyItem = makeRuntimeDockItem({
+      actorId: "pty",
+      actorLabel: "PTY",
+      liveWorkCard: null,
+      runner: "pty",
+    });
+
+    expect(getRuntimeRingTone(failedItem, false, "idle")).toBe("attention");
+    expect(getRuntimeRingTone(pendingItem, false, "idle")).toBe("stopped");
+    expect(getRuntimeRingTone(pendingItem, true, "idle")).toBe("queued");
+    expect(getRuntimeRingTone(streamingFinalAnswerItem, true, "working")).toBe("active");
+    expect(getRuntimeRingTone(completedFinalAnswerItem, true, "idle")).toBe("ready");
+    expect(getRuntimeRingTone(ptyItem, true, "working")).toBe("active");
+    expect(getRuntimeRingTone(ptyItem, true, "waiting")).toBe("active");
+    expect(getRuntimeRingTone(ptyItem, true, "stuck")).toBe("attention");
+    expect(getRuntimeRingTone(ptyItem, true, "idle")).toBe("ready");
+    expect(getRuntimeRingTone(ptyItem, false, "working")).toBe("stopped");
   });
 });

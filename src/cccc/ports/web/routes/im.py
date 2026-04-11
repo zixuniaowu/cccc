@@ -87,16 +87,27 @@ async def _refresh_weixin_login_status(group: Any, status: Dict[str, Any]) -> Di
             account_id = str(result.get("ilink_bot_id") or "").strip()
             user_id = str(result.get("ilink_user_id") or "").strip()
             base_url = str(result.get("baseurl") or poll_base_url or FIXED_QR_BASE_URL).strip()
-            if token and account_id and user_id:
-                await save_credentials(
-                    Credentials(
-                        token=token,
-                        base_url=base_url,
-                        account_id=account_id,
-                        user_id=user_id,
-                    ),
-                    paths["cred_path"],
-                )
+            if not (token and account_id and user_id):
+                _write_weixin_status(status_path, {
+                    "status": "error",
+                    "logged_in": False,
+                    "account_id": "",
+                    "error": "Login confirmed but missing credentials",
+                    "user_id": "",
+                    "qrcode_url": "",
+                    "qrcode": "",
+                    "poll_base_url": "",
+                })
+                return _read_weixin_status(group)
+            await save_credentials(
+                Credentials(
+                    token=token,
+                    base_url=base_url,
+                    account_id=account_id,
+                    user_id=user_id,
+                ),
+                paths["cred_path"],
+            )
             _write_weixin_status(status_path, {
                 "status": "logged_in",
                 "logged_in": True,

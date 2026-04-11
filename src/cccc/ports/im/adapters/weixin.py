@@ -123,11 +123,27 @@ class WeixinAdapter(IMAdapter):
         normalized_token = str(token or "").strip()
         if not normalized_chat or not normalized_token:
             return
+        changed = False
         with self._context_lock:
-            if self._context_tokens.get(normalized_chat) == normalized_token:
-                return
-            self._context_tokens[normalized_chat] = normalized_token
-            self._save_context_tokens()
+            if self._context_tokens.get(normalized_chat) != normalized_token:
+                self._context_tokens[normalized_chat] = normalized_token
+                changed = True
+            self._merge_bot_context_tokens({normalized_chat: normalized_token})
+            if changed:
+                self._save_context_tokens()
+
+    def _merge_bot_context_tokens(self, tokens: Dict[str, str]) -> None:
+        bot = self._bot
+        if bot is None or not tokens:
+            return
+        target = getattr(bot, "_context_tokens", None)
+        if not isinstance(target, dict):
+            try:
+                setattr(bot, "_context_tokens", dict(tokens))
+            except Exception as e:
+                self._log(f"[context] failed to initialize sdk cache: {e}")
+            return
+        target.update(tokens)
 
     def _run_async(self, coro: Any, timeout: float = 30.0) -> Any:
         """Submit a coroutine to the background event loop and wait for result."""
@@ -235,12 +251,14 @@ class WeixinAdapter(IMAdapter):
         )
         bot._credentials = creds
         bot._base_url = str(creds.base_url or self.api_base_url or "").strip()
+        with self._context_lock:
+            self._bot = bot
+            self._merge_bot_context_tokens(dict(self._context_tokens))
 
         @bot.on_message
         async def _on_message(msg: Any) -> None:
             await self._handle_incoming(msg)
 
-        self._bot = bot
         self._connected = True
         self._receiver_task = asyncio.create_task(bot.start())
 

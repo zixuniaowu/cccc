@@ -57,6 +57,8 @@ def cmd_send(args: argparse.Namespace) -> int:
         if resp.get("ok"):
             _print_json(resp)
             return 0
+        if not _daemon_response_allows_local_fallback(resp):
+            return _return_daemon_rejection(resp)
 
     # Fallback: local execution (dev convenience)
     try:
@@ -170,6 +172,8 @@ def cmd_reply(args: argparse.Namespace) -> int:
         if resp.get("ok"):
             _print_json(resp)
             return 0
+        if not _daemon_response_allows_local_fallback(resp):
+            return _return_daemon_rejection(resp)
 
     # Fallback: local execution
     if not to_tokens:
