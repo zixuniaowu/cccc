@@ -18,6 +18,7 @@ from ....paths import ensure_home
 
 _SOURCE_IDS = (
     "manual_import",
+    "agent_self_proposed",
     "mcp_registry_official",
     "anthropic_skills",
     "github_skills_curated",

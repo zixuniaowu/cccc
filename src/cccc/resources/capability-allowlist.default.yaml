@@ -15,6 +15,7 @@ defaults:
   source_level:
     cccc_builtin: mounted
     manual_import: mounted
+    agent_self_proposed: indexed
     anthropic_skills: mounted
     github_skills_curated: mounted
     skillsmp_remote: indexed
@@ -48,6 +49,9 @@ sources:
   - source_id: manual_import
     enabled: true
     rationale: "Agent/user imported records from arbitrary external references."
+  - source_id: agent_self_proposed
+    enabled: true
+    rationale: "Agent-proposed procedural skill candidates; MCP toolpacks stay indexed unless policy explicitly promotes them."
   - source_id: anthropic_skills
     enabled: true
     rationale: "Official Anthropic skill source."
@@ -283,6 +287,9 @@ skills:
     - source_id: github_skills_curated
       level: mounted
       rationale: "Curated third-party skills are cataloged; explicit promotion required."
+    - source_id: agent_self_proposed
+      level: mounted
+      rationale: "Low-risk capsule skill candidates may be validated and enabled at narrow scope; promotion remains policy-gated."
 
   # Keep all official Anthropic skills discoverable by default.
   official_anthropic:
@@ -310,6 +317,33 @@ skills:
     - capability_id: skill:anthropic:skill-creator
       level: mounted
       pinned_roles: [foreman]
+      description_short: "Creates and maintains procedural skills from proven workflows."
+      tags:
+        - self-evolution
+        - skill-authoring
+      capsule_text: |
+        Skill: skill-creator
+        When to use:
+        - A completed task produced a reusable procedure, recurring pitfall, user correction, or stable verification path.
+        - A loaded skill is stale, incomplete, wrong, or duplicative and should be maintained instead of copied.
+        Avoid when:
+        - The lesson is a one-off fact, transient task status, broad user preference, or unverified workaround.
+        - The candidate would require scripts, global mutation, credentials, destructive actions, or external-source edits.
+        Procedure:
+        1. Search existing capabilities first; patch an existing self-proposed skill when the workflow matches.
+        2. For new autonomous proposals, use capability_id skill:agent_self_proposed:<stable-slug> and source_id agent_self_proposed.
+        3. Write capsule_text with When to use, Avoid when, Procedure, Pitfalls, and Verification sections.
+        4. Direct-import low-risk syntax-valid capsule skills; use dry_run=true first when enabling immediately or when scope/risk is unclear.
+        5. Enable only at session or actor scope first, then prove activation with capability_state.active_capsule_skills.
+        6. For stale or wrong self-proposed skills, reuse the same capability_id with revised capsule_text; do not create near-duplicates.
+        Pitfalls:
+        - Do not confuse catalog presence with runtime activation.
+        - Do not overwrite curated namespaces such as skill:anthropic:* or skill:github:* with self-proposed content.
+        - Do not wait for the user to gate routine low-risk skill evolution, but keep it visible and reversible.
+        Verification:
+        - Confirm the import result is qualified or intentionally blocked with explicit qualification_reasons.
+        - Re-read capability_state.active_capsule_skills when activation is intended.
+        - Check the Web Capability Governance self-evolving candidates list for visibility and later management.
     - capability_id: skill:anthropic:slack-gif-creator
       level: mounted
     - capability_id: skill:anthropic:theme-factory
@@ -334,8 +368,27 @@ skills:
       description_short: "Captures non-obvious lessons and turns them into reusable skills."
       capsule_text: |
         Skill: Claudeception
-        Use when the actor discovers non-obvious debugging/workflow insights worth reusing.
-        Output should be concise and actionable; avoid rewriting baseline safety rules.
+        When to use:
+        - The actor discovers a non-obvious debugging path, workflow insight, or recurring correction that should improve future runs.
+        - A current skill failed, was incomplete, or caused duplicate rediscovery and should be patched or superseded.
+        Avoid when:
+        - The content is only task progress, broad memory, transient environment state, or a generic best practice.
+        - The proposed change would mutate global defaults, external curated skills, or executable scripts without explicit policy support.
+        Procedure:
+        1. Search existing skills and self-proposed candidates before creating anything new.
+        2. Prefer a targeted update to the existing self-proposed capability_id when the semantics match.
+        3. Create new CCCC-native proposals under skill:agent_self_proposed:<stable-slug> with source_id agent_self_proposed.
+        4. Keep the capsule concise and procedural: trigger, steps, pitfalls, and concrete verification.
+        5. Use dry_run=true when enabling immediately, risk/scope is unclear, or diagnostics are needed; otherwise direct-import low-risk capsule proposals.
+        6. Activate first at session or actor scope and verify via capability_state.active_capsule_skills.
+        Pitfalls:
+        - Do not emit diary-style transcripts as skills.
+        - Do not create near-duplicate skills when an existing candidate can be updated.
+        - Do not assume indexed child skills are active; explicitly search or enable the specific capability needed.
+        Verification:
+        - The candidate appears in the agent_self_proposed source list after import.
+        - If enabled, active_capsule_skills contains the expected capability_id for the target actor.
+        - If unsafe or overbroad, the record is blocked with qualification_reasons instead of activated.
 
     - capability_id: skill:github:blader:humanizer
       level: mounted

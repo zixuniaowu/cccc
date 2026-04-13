@@ -327,6 +327,20 @@ MCP_TOOLS = [
             "Import an agent-prepared normalized capability record (mcp_toolpack or skill) from any external source. "
             "Daemon performs validation/probe/persist and can optionally enable after import. "
             "record.source_id is optional; empty/unknown values are normalized to manual_import. "
+            "Use source_id=agent_self_proposed for autonomous low-risk capsule skill proposals; "
+            "self-proposed skill capability_id values must use skill:agent_self_proposed:<stable-slug>; "
+            "include required When to use/Avoid when/Procedure/Pitfalls/Verification sections; "
+            "real imports missing them are rejected to preserve the last valid active version, "
+            "direct import is acceptable for low-risk syntax-valid proposals, "
+            "while dry_run is recommended before immediate enablement or unclear-risk records; "
+            "reuse the same capability_id to update stale/incomplete/wrong self-proposed skills instead of duplicating; "
+            "import results report scope/import_action/record_changed/already_active/active_after_import; "
+            "import_action is the primary create/update/unchanged signal, while record_changed only compares an existing record; "
+            "already_active is the pre-import binding and active_after_import is the post-import runnable binding; "
+            "when active/readiness_preview.active, do not enable again; "
+            "verify full active capsule updates via capability_state.active_capsule_skills[].capsule_text; "
+            "use scope=session for a temporary trial, scope=actor for cross-session reusable self-proposed skills, "
+            "and scope=group only for shared team-wide behavior. "
             "Dry runs return readiness_preview; external capability actionability follows external capability safety mode."
         ),
         "inputSchema": _obj(
@@ -342,7 +356,10 @@ MCP_TOOLS = [
                         "description_short": {"type": "string"},
                         "source_id": {
                             "type": "string",
-                            "description": "Optional source id; empty/unknown values are normalized to manual_import.",
+                            "description": (
+                                "Optional source id; empty/unknown values are normalized to manual_import. "
+                                "Use agent_self_proposed for autonomous capsule skill proposals."
+                            ),
                         },
                         "source_uri": {"type": "string"},
                         "source_record_id": {"type": "string"},
@@ -417,7 +434,11 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_capability_uninstall",
-        "description": "Uninstall external capability runtime cache and revoke bindings.",
+        "description": (
+            "Uninstall a capability from local use: revoke bindings and runtime cache, remove current-group actor autoload references, "
+            "and for source_id=agent_self_proposed skill records also remove the generated local catalog record plus all actor/profile autoload references. "
+            "External registry catalog records are not deleted."
+        ),
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -433,6 +454,10 @@ MCP_TOOLS = [
         "description": (
             "One-step capability use: enable capability and optionally call a target tool. "
             "For skill:* capabilities this is runtime capsule activation (not full local skill package install). "
+            "Use cccc_capability_import to create or update self-proposed capsule skills; use capability_use only to activate an existing valid skill id. "
+            "Returns top-level scope/requested_scope so callers do not have to infer activation scope from nested enable_result. "
+            "Use scope=session for temporary activation and scope=actor for cross-session reuse by the selected actor. "
+            "Legacy self-proposed ids under skill:agent:* are invalid; re-import under skill:agent_self_proposed:<stable-slug>, then call cccc_capability_uninstall on the legacy id. "
             "If enable returns activation_pending, relist/reconnect before claiming success; inspect diagnostics/resolution_plan for blockers. "
             "For skill:* capsule runtime, success is primarily visible in capability_state.active_capsule_skills, not necessarily in dynamic_tools."
         ),

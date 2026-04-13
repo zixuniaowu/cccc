@@ -163,6 +163,7 @@ def _build_readiness_preview(
     cached_install_state: str = "",
     install_error_code: str = "",
     recent_success: Optional[Dict[str, Any]] = None,
+    already_active: bool = False,
 ) -> Dict[str, Any]:
     source_id = str(rec.get("source_id") or "").strip()
     install_mode = str(rec.get("install_mode") or "").strip()
@@ -194,6 +195,7 @@ def _build_readiness_preview(
         "preview_basis": preview_basis,
         "policy_level": _normalize_policy_level(policy_level),
         "enable_supported": bool(enable_supported),
+        "already_active": bool(already_active),
         "install_mode": install_mode,
     }
     if required_env:
@@ -206,6 +208,10 @@ def _build_readiness_preview(
         preview["install_error_code"] = install_error_code
     if has_recent_success:
         preview["recent_success"] = dict(recent_success or {})
+
+    unsupported_reason = str(
+        _pkg()._record_enable_unsupported_reason(rec, capability_id=capability_id) or ""
+    ).strip()
 
     if str(blocked_reason_code or "").strip():
         code = str(blocked_reason_code or "").strip()
@@ -225,6 +231,16 @@ def _build_readiness_preview(
             preview["next_step"] = "fix_known_blocker"
         return preview
 
+    if unsupported_reason:
+        preview["preview_status"] = "blocked"
+        preview["enable_block_reason"] = unsupported_reason
+        if unsupported_reason == "legacy_agent_self_proposed_namespace":
+            preview["next_step"] = "reimport_under_canonical_self_proposed_id"
+            preview["canonical_prefix"] = "skill:agent_self_proposed:"
+        else:
+            preview["next_step"] = "fix_known_blocker"
+        return preview
+
     if qualification_status == _QUAL_BLOCKED:
         preview["preview_status"] = "blocked"
         preview["enable_block_reason"] = "qualification_blocked"
@@ -237,7 +253,12 @@ def _build_readiness_preview(
         preview["next_step"] = "fix_known_blocker"
         return preview
 
-    if enable_supported or has_recent_success or cached_install_state in {"installed", "installed_degraded"}:
+    if already_active:
+        preview["preview_status"] = "active"
+        preview["next_step"] = "none"
+        return preview
+
+    if enable_supported:
         preview["preview_status"] = "enableable"
         preview["next_step"] = "enable"
         return preview
@@ -633,10 +654,14 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
                 "description_short": str(rec.get("description_short") or ""),
                 "source_id": source_id,
                 "source_uri": str(rec.get("source_uri") or ""),
+                "source_record_id": str(rec.get("source_record_id") or ""),
+                "source_record_version": str(rec.get("source_record_version") or ""),
                 "source_tier": str(rec.get("source_tier") or ""),
                 "trust_tier": str(rec.get("trust_tier") or ""),
                 "license": str(rec.get("license") or ""),
                 "sync_state": str(rec.get("sync_state") or ""),
+                "updated_at_source": str(rec.get("updated_at_source") or ""),
+                "last_synced_at": str(rec.get("last_synced_at") or ""),
                 "policy_level": policy_level,
                 "enable_supported": bool(enable_supported),
                 "qualification_status": qualification_status,
@@ -657,6 +682,11 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
                 item["cached_install_error_code"] = install_error_code
             if install_error:
                 item["cached_install_error"] = install_error
+            if kind == "skill" and source_id == "agent_self_proposed":
+                item["capsule_text"] = str(rec.get("capsule_text") or "")
+                reasons = rec.get("qualification_reasons")
+                if isinstance(reasons, list):
+                    item["qualification_reasons"] = [str(x).strip() for x in reasons if str(x).strip()]
             item["readiness_preview"] = _build_readiness_preview(
                 rec=rec,
                 capability_id=cap_id,
@@ -1055,10 +1085,14 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
                 "source_id": str(rec.get("source_id") or ""),
                 "source_tier": str(rec.get("source_tier") or ""),
                 "source_uri": str(rec.get("source_uri") or ""),
+                "source_record_id": str(rec.get("source_record_id") or ""),
+                "source_record_version": str(rec.get("source_record_version") or ""),
                 "trust_tier": str(rec.get("trust_tier") or ""),
                 "license": str(rec.get("license") or ""),
                 "qualification_status": qualification_status,
                 "sync_state": str(rec.get("sync_state") or ""),
+                "updated_at_source": str(rec.get("updated_at_source") or ""),
+                "last_synced_at": str(rec.get("last_synced_at") or ""),
                 "enabled": cap_id in enabled_set,
                 "enable_supported": enable_supported,
                 "install_mode": str(rec.get("install_mode") or ""),
@@ -1089,6 +1123,8 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
                 item["enable_hint"] = "enable_now"
             else:
                 item["enable_hint"] = "unsupported"
+            if cap_id in enabled_set and bool(enable_supported) and not blocked_scope:
+                item["enable_hint"] = "active"
             if blocked_scope:
                 item["blocked_scope"] = blocked_scope
             item["readiness_preview"] = _build_readiness_preview(
@@ -1102,6 +1138,7 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
                 cached_install_state=cached_install_state,
                 install_error_code=install_error_code,
                 recent_success=recent_payload,
+                already_active=cap_id in enabled_set and bool(enable_supported),
             )
             items.append(item)
 
@@ -1138,6 +1175,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or args.get("actor_id") or "").strip()
     actor_id = str(args.get("actor_id") or by).strip()
+    usage_capability_id = str(args.get("capability_id") or "").strip()
 
     try:
         group = _ensure_group(group_id)
@@ -1318,6 +1356,48 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                         return True
             return False
 
+        def _activation_sources_for_capability(capability_id: str) -> List[Dict[str, Any]]:
+            cap = str(capability_id or "").strip()
+            if not cap:
+                return []
+            sources: List[Dict[str, Any]] = []
+            if cap in set(group_enabled_map.get(group_id) or []):
+                sources.append({"scope": "group"})
+            actor_scoped = per_group_actor.get(actor_id) if isinstance(per_group_actor.get(actor_id), list) else []
+            if cap in set(actor_scoped):
+                sources.append({"scope": "actor", "actor_id": actor_id})
+            session_entries = (
+                per_group_session.get(actor_id)
+                if isinstance(per_group_session.get(actor_id), list)
+                else []
+            )
+            for item in session_entries:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("capability_id") or "").strip() != cap:
+                    continue
+                expires_at = str(item.get("expires_at") or "").strip()
+                dt = parse_utc_iso(expires_at)
+                if dt is None or dt <= now:
+                    continue
+                sources.append(
+                    {
+                        "scope": "session",
+                        "actor_id": actor_id,
+                        "expires_at": expires_at,
+                        "ttl_seconds": max(0, int((dt - now).total_seconds())),
+                    }
+                )
+            return sources
+
+        def _hidden_catalog_metadata(capability_id: str, rec: Dict[str, Any]) -> Dict[str, str]:
+            return {
+                "name": str(rec.get("name") or capability_id),
+                "description_short": str(rec.get("description_short") or ""),
+                "kind": str(rec.get("kind") or ""),
+                "source_id": str(rec.get("source_id") or ""),
+            }
+
         session_bindings: List[Dict[str, Any]] = []
         own_session_entries = per_group_session.get(actor_id) if isinstance(per_group_session.get(actor_id), list) else []
         for entry in own_session_entries:
@@ -1366,8 +1446,8 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
         profile_autoload_capabilities: List[str] = []
         if profile_id:
             try:
-                from ..actors.actor_profile_runtime import actor_profile_ref as _actor_profile_ref
-                from ..actors.actor_profile_store import get_actor_profile as _get_actor_profile, get_actor_profile_by_ref as _get_actor_profile_by_ref
+                from ...actors.actor_profile_runtime import actor_profile_ref as _actor_profile_ref
+                from ...actors.actor_profile_store import get_actor_profile as _get_actor_profile, get_actor_profile_by_ref as _get_actor_profile_by_ref
 
                 profile_ref = _actor_profile_ref(actor_record) if isinstance(actor_record, dict) else None
                 profile_doc = _get_actor_profile_by_ref(profile_ref) if profile_ref is not None else _get_actor_profile(profile_id)
@@ -1380,6 +1460,112 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             [*profile_autoload_capabilities, *actor_autoload_capabilities]
         )
 
+        def _actor_usage_row(actor_doc: Dict[str, Any]) -> Dict[str, str]:
+            aid = str(actor_doc.get("id") or "").strip()
+            title = str(actor_doc.get("title") or "").strip()
+            return {
+                "actor_id": aid,
+                "actor_title": title,
+                "label": title or aid,
+            }
+
+        def _actor_profile_autoload(actor_doc: Dict[str, Any]) -> Tuple[List[str], str, str]:
+            profile_id_for_actor = str(actor_doc.get("profile_id") or "").strip()
+            if not profile_id_for_actor:
+                return [], "", ""
+            try:
+                from ...actors.actor_profile_runtime import actor_profile_ref as _actor_profile_ref
+                from ...actors.actor_profile_store import get_actor_profile as _get_actor_profile, get_actor_profile_by_ref as _get_actor_profile_by_ref
+
+                profile_ref = _actor_profile_ref(actor_doc) if isinstance(actor_doc, dict) else None
+                profile_doc = _get_actor_profile_by_ref(profile_ref) if profile_ref is not None else _get_actor_profile(profile_id_for_actor)
+                if not isinstance(profile_doc, dict):
+                    return [], profile_id_for_actor, ""
+                defaults_cfg = _pkg()._normalize_profile_capability_defaults(profile_doc.get("capability_defaults"))
+                profile_name = str(profile_doc.get("name") or "").strip()
+                return list(defaults_cfg.get("autoload_capabilities") or []), profile_id_for_actor, profile_name
+            except Exception:
+                return [], profile_id_for_actor, ""
+
+        capability_usage: Optional[Dict[str, Any]] = None
+        if usage_capability_id:
+            cap = usage_capability_id
+            group_used = cap in set(group_enabled_map.get(group_id) or [])
+            actor_used: List[Dict[str, Any]] = []
+            session_used: List[Dict[str, Any]] = []
+            actor_autoload_used: List[Dict[str, Any]] = []
+            profile_autoload_used: List[Dict[str, Any]] = []
+            actor_rows_by_id = {
+                str(item.get("id") or "").strip(): item
+                for item in actors
+                if isinstance(item, dict) and str(item.get("id") or "").strip()
+            }
+
+            for aid, items in per_group_actor.items():
+                if cap not in set(items if isinstance(items, list) else []):
+                    continue
+                actor_doc = actor_rows_by_id.get(str(aid), {"id": str(aid)})
+                actor_used.append(_actor_usage_row(actor_doc))
+
+            for aid, entries in per_group_session.items():
+                if not isinstance(entries, list):
+                    continue
+                actor_doc = actor_rows_by_id.get(str(aid), {"id": str(aid)})
+                for item in entries:
+                    if not isinstance(item, dict):
+                        continue
+                    if str(item.get("capability_id") or "").strip() != cap:
+                        continue
+                    expires_at = str(item.get("expires_at") or "").strip()
+                    dt = parse_utc_iso(expires_at)
+                    if dt is None or dt <= now:
+                        continue
+                    session_used.append(
+                        {
+                            **_actor_usage_row(actor_doc),
+                            "expires_at": expires_at,
+                            "ttl_seconds": max(0, int((dt - now).total_seconds())),
+                        }
+                    )
+
+            for actor_doc in actors:
+                if not isinstance(actor_doc, dict):
+                    continue
+                autoload = _pkg()._normalize_capability_id_list(actor_doc.get("capability_autoload"))
+                if cap in autoload:
+                    actor_autoload_used.append(_actor_usage_row(actor_doc))
+                profile_autoload, profile_id_for_actor, profile_name = _actor_profile_autoload(actor_doc)
+                if cap in profile_autoload:
+                    profile_autoload_used.append(
+                        {
+                            **_actor_usage_row(actor_doc),
+                            "profile_id": profile_id_for_actor,
+                            "profile_name": profile_name,
+                        }
+                    )
+
+            blocked_entry = blocked_caps.get(cap) if isinstance(blocked_caps.get(cap), dict) else None
+            capability_usage = {
+                "capability_id": cap,
+                "used": bool(
+                    group_used
+                    or actor_used
+                    or session_used
+                    or actor_autoload_used
+                    or profile_autoload_used
+                ),
+                "group_enabled": bool(group_used),
+                "group_actor_count": len(actor_rows_by_id),
+                "actor_enabled": actor_used,
+                "session_enabled": session_used,
+                "actor_autoload": actor_autoload_used,
+                "profile_autoload": profile_autoload_used,
+                "blocked": bool(blocked_entry),
+            }
+            if isinstance(blocked_entry, dict):
+                capability_usage["blocked_scope"] = str(blocked_entry.get("scope") or "group")
+                capability_usage["blocked_reason"] = str(blocked_entry.get("reason") or "")
+
         active_capsule_skills: List[Dict[str, Any]] = []
         for cap_id in enabled_caps_effective:
             rec = external_records.get(cap_id)
@@ -1387,14 +1573,20 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                 continue
             if str(rec.get("kind") or "").strip().lower() != "skill":
                 continue
+            if str(rec.get("qualification_status") or "").strip().lower() == _QUAL_BLOCKED:
+                continue
+            if not _pkg()._record_enable_supported(rec, capability_id=cap_id):
+                continue
             active_capsule_skills.append(
                 {
                     "capability_id": cap_id,
                     "name": str(rec.get("name") or cap_id),
                     "description_short": str(rec.get("description_short") or ""),
                     "capsule_preview": _skill_capsule_preview(rec.get("capsule_text")),
+                    "capsule_text": str(rec.get("capsule_text") or ""),
                     "source_id": str(rec.get("source_id") or ""),
                     "source_uri": str(rec.get("source_uri") or ""),
+                    "activation_sources": _activation_sources_for_capability(cap_id),
                     "policy_level": _effective_policy_level(
                         policy,
                         capability_id=cap_id,
@@ -1412,12 +1604,17 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                 continue
             if str(rec.get("kind") or "").strip().lower() != "skill":
                 continue
+            if str(rec.get("qualification_status") or "").strip().lower() == _QUAL_BLOCKED:
+                continue
+            if not _pkg()._record_enable_supported(rec, capability_id=cap_id):
+                continue
             autoload_skills.append(
                 {
                     "capability_id": cap_id,
                     "name": str(rec.get("name") or cap_id),
                     "description_short": str(rec.get("description_short") or ""),
                     "capsule_preview": _skill_capsule_preview(rec.get("capsule_text")),
+                    "capsule_text": str(rec.get("capsule_text") or ""),
                     "source_id": str(rec.get("source_id") or ""),
                     "policy_level": _effective_policy_level(
                         policy,
@@ -1434,7 +1631,12 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             if isinstance(block_entry, dict):
                 scope_token = str(block_entry.get("scope") or "group").strip().lower()
                 reason_token = "blocked_by_global_policy" if scope_token == "global" else "blocked_by_group_policy"
-                row: Dict[str, Any] = {"capability_id": cap_id, "reason": reason_token, "policy_level": "blocked"}
+                row: Dict[str, Any] = {
+                    "capability_id": cap_id,
+                    "reason": reason_token,
+                    "policy_level": "blocked",
+                    **_hidden_catalog_metadata(cap_id, rec),
+                }
                 reason_text = str(block_entry.get("reason") or "").strip()
                 if reason_text:
                     row["blocked_reason"] = reason_text
@@ -1457,6 +1659,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                             "capability_id": cap_id,
                             "reason": "binding_missing",
                             "policy_level": policy_level,
+                            **_hidden_catalog_metadata(cap_id, rec),
                         }
                     )
                     continue
@@ -1469,6 +1672,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                             "reason": "install_failed",
                             "state": state,
                             "policy_level": policy_level,
+                            **_hidden_catalog_metadata(cap_id, rec),
                             **({"install_error_code": install_error_code} if install_error_code else {}),
                             **({"install_error": install_error} if install_error else {}),
                         }
@@ -1481,6 +1685,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                             "reason": "binding_not_ready",
                             "state": binding_state,
                             "policy_level": policy_level,
+                            **_hidden_catalog_metadata(cap_id, rec),
                         }
                     )
                 continue
@@ -1491,26 +1696,51 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                         "capability_id": cap_id,
                         "reason": "policy_indexed",
                         "policy_level": policy_level,
+                        **_hidden_catalog_metadata(cap_id, rec),
                     }
                 )
                 continue
 
+            unsupported_reason = _pkg()._record_enable_unsupported_reason(rec, capability_id=cap_id)
+            if unsupported_reason:
+                hidden_reason = "unavailable" if unsupported_reason == "capability_unavailable" else unsupported_reason
+                hidden_capabilities.append(
+                    {
+                        "capability_id": cap_id,
+                        "reason": hidden_reason,
+                        "policy_level": policy_level,
+                        **_hidden_catalog_metadata(cap_id, rec),
+                    }
+                )
+                continue
             qualification = str(rec.get("qualification_status") or "").strip().lower()
             if qualification == _QUAL_BLOCKED:
                 hidden_capabilities.append(
-                    {"capability_id": cap_id, "reason": "policy_blocked", "policy_level": policy_level}
+                    {
+                        "capability_id": cap_id,
+                        "reason": "policy_blocked",
+                        "policy_level": policy_level,
+                        **_hidden_catalog_metadata(cap_id, rec),
+                    }
                 )
-            elif not _pkg()._record_enable_supported(rec, capability_id=cap_id):
-                hidden_capabilities.append(
-                    {"capability_id": cap_id, "reason": "unavailable", "policy_level": policy_level}
-                )
+                continue
             elif _scope_mismatch_for_capability(cap_id):
                 hidden_capabilities.append(
-                    {"capability_id": cap_id, "reason": "scope_mismatch", "policy_level": policy_level}
+                    {
+                        "capability_id": cap_id,
+                        "reason": "scope_mismatch",
+                        "policy_level": policy_level,
+                        **_hidden_catalog_metadata(cap_id, rec),
+                    }
                 )
             else:
                 hidden_capabilities.append(
-                    {"capability_id": cap_id, "reason": "not_enabled", "policy_level": policy_level}
+                    {
+                        "capability_id": cap_id,
+                        "reason": "not_enabled",
+                        "policy_level": policy_level,
+                        **_hidden_catalog_metadata(cap_id, rec),
+                    }
                 )
 
         external_binding_states: Dict[str, Dict[str, str]] = {}
@@ -1572,33 +1802,33 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             }
             blocked_capabilities.append(item)
 
-        return DaemonResponse(
-            ok=True,
-            result={
-                "group_id": group_id,
-                "actor_id": actor_id,
-                "default_profile": "core",
-                "core_tool_count": len(resolve_core_tool_names(actor_role=actor_role, is_pet=actor_is_pet)),
-                "visible_tool_count": len(visible_tools),
-                "visible_tools": visible_tools,
-                "dynamic_tools": dynamic_tools,
-                "dynamic_tool_limit": max_dynamic_tools_visible,
-                "dynamic_tool_dropped": dynamic_tool_dropped,
-                "enabled_capabilities": enabled_caps_effective,
-                "active_capsule_skills": active_capsule_skills,
-                "autoload_skills": autoload_skills,
-                "autoload_capabilities": effective_autoload_capabilities,
-                "actor_autoload_capabilities": actor_autoload_capabilities,
-                "profile_autoload_capabilities": profile_autoload_capabilities,
-                "hidden_capabilities": hidden_capabilities,
-                "external_binding_states": external_binding_states,
-                "precedence_chain": ["session", "actor", "group"],
-                "session_bindings": session_bindings,
-                "source_states": source_states,
-                "blocked_capabilities": blocked_capabilities,
-                "is_foreman": bool(_is_foreman(group, actor_id)),
-            },
-        )
+        result = {
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "default_profile": "core",
+            "core_tool_count": len(resolve_core_tool_names(actor_role=actor_role, is_pet=actor_is_pet)),
+            "visible_tool_count": len(visible_tools),
+            "visible_tools": visible_tools,
+            "dynamic_tools": dynamic_tools,
+            "dynamic_tool_limit": max_dynamic_tools_visible,
+            "dynamic_tool_dropped": dynamic_tool_dropped,
+            "enabled_capabilities": enabled_caps_effective,
+            "active_capsule_skills": active_capsule_skills,
+            "autoload_skills": autoload_skills,
+            "autoload_capabilities": effective_autoload_capabilities,
+            "actor_autoload_capabilities": actor_autoload_capabilities,
+            "profile_autoload_capabilities": profile_autoload_capabilities,
+            "hidden_capabilities": hidden_capabilities,
+            "external_binding_states": external_binding_states,
+            "precedence_chain": ["session", "actor", "group"],
+            "session_bindings": session_bindings,
+            "source_states": source_states,
+            "blocked_capabilities": blocked_capabilities,
+            "is_foreman": bool(_is_foreman(group, actor_id)),
+        }
+        if capability_usage is not None:
+            result["capability_usage"] = capability_usage
+        return DaemonResponse(ok=True, result=result)
     except LookupError as e:
         return _error("group_not_found", str(e))
     except ValueError as e:

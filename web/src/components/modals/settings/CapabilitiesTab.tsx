@@ -1,32 +1,49 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
-import { CapabilityBlockEntry, CapabilityOverviewItem, CapabilityReadinessPreview, CapabilitySourceState } from "../../../types";
+import {
+  Actor,
+  CapabilityImportRecord,
+  CapabilityBlockEntry,
+  CapabilityOverviewItem,
+  CapabilityReadinessPreview,
+  CapabilitySourceState,
+  CapabilityUsageActorEntry,
+  CapabilityUsageSummary,
+} from "../../../types";
+import { useModalA11y } from "../../../hooks/useModalA11y";
 import { cardClass } from "./types";
 
 interface CapabilitiesTabProps {
   isDark: boolean;
   isActive: boolean;
+  groupId?: string;
 }
 
 type SourceVisibility = "all" | "enabled" | "disabled";
 type RegistryKindFilter = "all" | "pack" | "mcp" | "skill";
 type RegistryPolicyFilter = "all" | "actionable" | "blocked" | "indexed";
 type ExternalCapabilitySafetyMode = "normal" | "conservative";
+type ManageQualificationStatus = "qualified" | "blocked";
 
 const SOURCE_PREVIEW_LIMIT = 8;
 const REGISTRY_PAGE_SIZE_OPTIONS = [20, 40, 80];
+const SELF_PROPOSED_SOURCE_ID = "agent_self_proposed";
+const SELF_PROPOSED_CAPSULE_TEXT_MAX = 2400;
 const SOURCE_PRIORITY: Record<string, number> = {
   cccc_builtin: 0,
   mcp_registry_official: 1,
   anthropic_skills: 2,
   github_skills_curated: 3,
-  openclaw_skills_remote: 4,
-  clawskills_remote: 5,
-  clawhub_remote: 6,
-  skillsmp_remote: 7,
-  manual_import: 8,
+  agent_self_proposed: 4,
+  openclaw_skills_remote: 5,
+  clawskills_remote: 6,
+  clawhub_remote: 7,
+  skillsmp_remote: 8,
+  manual_import: 9,
 };
+// Do not include agent_self_proposed here: source-level mounting would make proposed MCP toolpacks actionable.
 const EXTERNAL_SOURCE_IDS = [
   "manual_import",
   "mcp_registry_official",
@@ -50,11 +67,89 @@ function firstRecommendationLine(value?: string[]) {
   return Array.isArray(value) ? String(value[0] || "").trim() : "";
 }
 
-export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabProps) {
+function selfProposedFallbackCapsule(row: CapabilityOverviewItem) {
+  const name = String(row.name || row.capability_id || "Self-Proposed Skill").trim();
+  const description = String(row.description_short || "Maintain a reusable self-proposed procedure.").trim();
+  return [
+    `Skill: ${name}`,
+    "When to use:",
+    `- ${description}`,
+    "Avoid when:",
+    "- The lesson is one-off, unverified, or belongs in memory/task notes instead of a skill.",
+    "Procedure:",
+    "1. Search existing self-proposed skills first.",
+    "2. Reuse the same capability_id when updating this workflow.",
+    "Pitfalls:",
+    "- Do not create a near-duplicate or silently delete the candidate.",
+    "Verification:",
+    "- Re-import the record and verify it appears under agent_self_proposed.",
+  ].join("\n");
+}
+
+function normalizeCapabilityIdList(raw: unknown) {
+  const out: string[] = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const value = String(item || "").trim();
+      if (value && !out.includes(value)) out.push(value);
+    }
+  }
+  return out;
+}
+
+function capabilitySlugTail(row: CapabilityOverviewItem) {
+  const capId = String(row.capability_id || "").trim().toLowerCase();
+  return capId.split(":").filter(Boolean).pop() || capId;
+}
+
+function capabilityUsageActorLabel(row: CapabilityUsageActorEntry) {
+  return String(row.label || row.actor_title || row.actor_id || "").trim() || "user";
+}
+
+function deriveManagedAssignedActorIds(
+  actors: Actor[],
+  capabilityId: string,
+  usage: CapabilityUsageSummary | null,
+) {
+  const capId = String(capabilityId || "").trim();
+  if (!capId) return [];
+  const assigned = new Set<string>();
+  const actorIds = actors.map((actor) => String(actor.id || "").trim()).filter(Boolean);
+  for (const actor of actors) {
+    const actorId = String(actor.id || "").trim();
+    if (actorId && normalizeCapabilityIdList(actor.capability_autoload).includes(capId)) {
+      assigned.add(actorId);
+    }
+  }
+  if (usage?.group_enabled) {
+    for (const actorId of actorIds) assigned.add(actorId);
+  }
+  for (const row of usage?.actor_enabled || []) {
+    const actorId = String(row.actor_id || "").trim();
+    if (actorId) assigned.add(actorId);
+  }
+  for (const row of usage?.actor_autoload || []) {
+    const actorId = String(row.actor_id || "").trim();
+    if (actorId) assigned.add(actorId);
+  }
+  return actorIds.filter((actorId) => assigned.has(actorId));
+}
+
+function formatCapabilityProvenanceTimestamp(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const ms = Date.parse(raw);
+  if (!Number.isFinite(ms)) return raw;
+  return new Date(ms).toLocaleString();
+}
+
+export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: CapabilitiesTabProps) {
   const { t } = useTranslation("settings");
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState("");
   const [err, setErr] = useState("");
+  const [manageErr, setManageErr] = useState("");
+  const [manageNotice, setManageNotice] = useState("");
   const [query, setQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
   const [sourceVisibility, setSourceVisibility] = useState<SourceVisibility>("all");
@@ -69,6 +164,25 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
   const [blocked, setBlocked] = useState<CapabilityBlockEntry[]>([]);
   const [allowlistSources, setAllowlistSources] = useState<Array<{ source_id: string; enabled: boolean; rationale?: string }>>([]);
   const [externalSafetyMode, setExternalSafetyMode] = useState<ExternalCapabilitySafetyMode>("normal");
+  const [manageCapabilityId, setManageCapabilityId] = useState("");
+  const [manageName, setManageName] = useState("");
+  const [manageDescription, setManageDescription] = useState("");
+  const [manageCapsuleText, setManageCapsuleText] = useState("");
+  const [manageQualificationStatus, setManageQualificationStatus] = useState<ManageQualificationStatus>("qualified");
+  const [manageQualificationReason, setManageQualificationReason] = useState("");
+  const [manageActors, setManageActors] = useState<Actor[]>([]);
+  const [manageAssignedActorIds, setManageAssignedActorIds] = useState<string[]>([]);
+  const [manageUsage, setManageUsage] = useState<CapabilityUsageSummary | null>(null);
+  const [manageUsageLoading, setManageUsageLoading] = useState(false);
+
+  const closeSelfProposedManager = useCallback(() => {
+    setManageCapabilityId("");
+    setManageAssignedActorIds([]);
+    setManageUsage(null);
+    setManageUsageLoading(false);
+    setManageErr("");
+    setManageNotice("");
+  }, []);
 
   const load = useCallback(async () => {
     if (!isActive) return;
@@ -170,6 +284,110 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
     };
   }, [sourceRows]);
 
+  const selfProposedCandidates = useMemo(() => {
+    return items.filter((row) => (
+      String(row.source_id || "").trim() === SELF_PROPOSED_SOURCE_ID
+      && String(row.kind || "").trim().toLowerCase() === "skill"
+    ));
+  }, [items]);
+
+  const managingCandidate = useMemo(() => {
+    if (!manageCapabilityId) return null;
+    return selfProposedCandidates.find((row) => String(row.capability_id || "").trim() === manageCapabilityId) || null;
+  }, [manageCapabilityId, selfProposedCandidates]);
+
+  const manageDuplicateCandidates = useMemo(() => {
+    if (!managingCandidate) return [];
+    const targetName = String(managingCandidate.name || "").trim().toLowerCase();
+    const targetSlug = capabilitySlugTail(managingCandidate);
+    return selfProposedCandidates
+      .filter((row) => String(row.capability_id || "").trim() !== manageCapabilityId)
+      .filter((row) => {
+        const name = String(row.name || "").trim().toLowerCase();
+        const slug = capabilitySlugTail(row);
+        return Boolean((targetName && name === targetName) || (targetSlug && slug === targetSlug));
+      })
+      .slice(0, 3);
+  }, [manageCapabilityId, managingCandidate, selfProposedCandidates]);
+
+  const { modalRef: manageDialogRef } = useModalA11y(Boolean(managingCandidate), closeSelfProposedManager);
+
+  const manageUsageTtlLabel = useCallback((seconds?: number) => {
+    const safeSeconds = Number.isFinite(Number(seconds)) ? Math.max(0, Math.trunc(Number(seconds))) : 0;
+    if (safeSeconds < 60) return t("capabilities.manageUsageTtlSeconds");
+    if (safeSeconds < 3600) return t("capabilities.manageUsageTtlMinutes", { count: Math.ceil(safeSeconds / 60) });
+    return t("capabilities.manageUsageTtlHours", { count: Math.ceil(safeSeconds / 3600) });
+  }, [t]);
+
+  const manageAssignedActorIdSet = useMemo(() => new Set(manageAssignedActorIds), [manageAssignedActorIds]);
+
+  const manageProfileActorIdSet = useMemo(() => {
+    return new Set((manageUsage?.profile_autoload || []).map((row) => String(row.actor_id || "").trim()).filter(Boolean));
+  }, [manageUsage]);
+
+  const manageSessionActorIdSet = useMemo(() => {
+    return new Set((manageUsage?.session_enabled || []).map((row) => String(row.actor_id || "").trim()).filter(Boolean));
+  }, [manageUsage]);
+
+  const manageActorScopeIdSet = useMemo(() => {
+    return new Set((manageUsage?.actor_enabled || []).map((row) => String(row.actor_id || "").trim()).filter(Boolean));
+  }, [manageUsage]);
+
+  const manageProvenanceRows = useMemo(() => {
+    if (!managingCandidate) return [];
+    const recordId = String(managingCandidate.source_record_id || manageCapabilityId || "").trim();
+    const recordVersion = String(managingCandidate.source_record_version || "").trim();
+    const sourceTier = String(managingCandidate.source_tier || "").trim();
+    const trustTier = String(managingCandidate.trust_tier || "").trim();
+    const updatedAt = formatCapabilityProvenanceTimestamp(managingCandidate.updated_at_source);
+    const importedAt = formatCapabilityProvenanceTimestamp(managingCandidate.last_synced_at);
+    const status = manageQualificationStatus === "blocked"
+      ? t("capabilities.manageStatusBlocked")
+      : t("capabilities.manageStatusAvailable");
+    const rows = [
+      {
+        label: t("capabilities.manageProvenanceSource"),
+        value: String(managingCandidate.source_id || SELF_PROPOSED_SOURCE_ID).trim() || SELF_PROPOSED_SOURCE_ID,
+      },
+      {
+        label: t("capabilities.manageProvenanceRecord"),
+        value: recordId || t("capabilities.manageProvenanceNotRecorded"),
+      },
+    ];
+    if (recordVersion) {
+      rows.push({
+        label: t("capabilities.manageProvenanceVersion"),
+        value: recordVersion,
+      });
+    }
+    rows.push(
+      {
+        label: t("capabilities.manageProvenanceUpdated"),
+        value: updatedAt || t("capabilities.manageProvenanceNotRecorded"),
+      },
+      {
+        label: t("capabilities.manageProvenanceImported"),
+        value: importedAt || t("capabilities.manageProvenanceNotRecorded"),
+      },
+      {
+        label: t("capabilities.manageProvenanceTrust"),
+        value: [trustTier, sourceTier].filter(Boolean).join(" / ") || t("capabilities.manageProvenanceNotRecorded"),
+      },
+      {
+        label: t("capabilities.manageProvenanceAvailability"),
+        value: status,
+      },
+    );
+    const blockReason = String(manageQualificationReason || "").trim();
+    if (manageQualificationStatus === "blocked" && blockReason) {
+      rows.push({
+        label: t("capabilities.manageProvenanceBlockReason"),
+        value: blockReason,
+      });
+    }
+    return rows;
+  }, [manageCapabilityId, manageQualificationReason, manageQualificationStatus, managingCandidate, t]);
+
   const levelDistribution = useMemo(() => {
     const counts: Record<string, number> = { indexed: 0, mounted: 0, pinned: 0 };
     for (const row of sourceRows) {
@@ -207,6 +425,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
 
   const registrySourceOptions = useMemo(() => {
     const out = new Set<string>();
+    out.add(SELF_PROPOSED_SOURCE_ID);
     for (const row of items) {
       const sid = String(row.source_id || "").trim();
       if (sid) out.add(sid);
@@ -431,6 +650,10 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
   const toggleBlock = async (row: CapabilityOverviewItem | CapabilityBlockEntry, nextBlocked: boolean) => {
     const capabilityId = String(row.capability_id || "").trim();
     if (!capabilityId) return;
+    if (!String(groupId || "").trim()) {
+      setErr(t("capabilities.requireGroup"));
+      return;
+    }
     let reason = "";
     if (nextBlocked) {
       reason = String(window.prompt(t("capabilities.blockReasonPrompt"), (row as CapabilityOverviewItem).blocked_reason || (row as CapabilityBlockEntry).reason || "") || "").trim();
@@ -438,7 +661,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
     setBusyKey(`block:${capabilityId}`);
     setErr("");
     try {
-      const resp = await api.blockCapabilityGlobal(capabilityId, nextBlocked, reason);
+      const resp = await api.blockCapabilityGlobal(capabilityId, nextBlocked, reason, String(groupId || "").trim());
       if (!resp.ok) {
         setErr(resp.error?.message || t("capabilities.failedBlock"));
         return;
@@ -446,6 +669,310 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
       await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : t("capabilities.failedBlock"));
+    } finally {
+      setBusyKey("");
+    }
+  };
+
+  const showSelfProposedCandidates = () => {
+    setRegistryKind("skill");
+    setRegistryPolicy("all");
+    setRegistrySource(SELF_PROPOSED_SOURCE_ID);
+    setQuery("");
+    setRegistryPage(1);
+  };
+
+  const refreshManageAssignmentState = async (capabilityId: string = manageCapabilityId) => {
+    const gid = String(groupId || "").trim();
+    const capId = String(capabilityId || "").trim();
+    if (!gid) {
+      setManageActors([]);
+      setManageAssignedActorIds([]);
+      setManageUsage(null);
+      setManageUsageLoading(false);
+      return;
+    }
+    setManageUsageLoading(true);
+    try {
+      const [actorsResp, usageResp] = await Promise.all([
+        api.fetchActors(gid, false, { noCache: true }),
+        capId
+          ? api.fetchGroupCapabilityState(gid, "user", {
+              capabilityId: capId,
+              noCache: true,
+            })
+          : Promise.resolve(null),
+      ]);
+      const actors = actorsResp.ok && Array.isArray(actorsResp.result?.actors) ? actorsResp.result.actors : [];
+      const usage = usageResp && usageResp.ok ? usageResp.result?.capability_usage || null : null;
+      setManageActors(actors);
+      setManageUsage(usage);
+      setManageAssignedActorIds(deriveManagedAssignedActorIds(actors, capId, usage));
+      if (!actorsResp.ok) {
+        setManageErr(actorsResp.error?.message || t("capabilities.manageActorLoadFailed"));
+      } else if (usageResp && !usageResp.ok) {
+        setManageErr(usageResp.error?.message || t("capabilities.manageUsageLoadFailed"));
+      }
+    } catch (e) {
+      setManageActors([]);
+      setManageAssignedActorIds([]);
+      setManageUsage(null);
+      setManageErr(e instanceof Error ? e.message : t("capabilities.manageUsageLoadFailed"));
+    } finally {
+      setManageUsageLoading(false);
+    }
+  };
+
+  const refreshManageUsage = async (capabilityId: string = manageCapabilityId) => {
+    const gid = String(groupId || "").trim();
+    const capId = String(capabilityId || "").trim();
+    if (!gid || !capId) {
+      setManageUsage(null);
+      setManageUsageLoading(false);
+      return;
+    }
+    setManageUsageLoading(true);
+    try {
+      const resp = await api.fetchGroupCapabilityState(gid, "user", {
+        capabilityId: capId,
+        noCache: true,
+      });
+      if (!resp.ok) {
+        setManageUsage(null);
+        setManageErr(resp.error?.message || t("capabilities.manageUsageLoadFailed"));
+        return;
+      }
+      setManageUsage(resp.result?.capability_usage || null);
+    } catch (e) {
+      setManageUsage(null);
+      setManageErr(e instanceof Error ? e.message : t("capabilities.manageUsageLoadFailed"));
+    } finally {
+      setManageUsageLoading(false);
+    }
+  };
+
+  const openSelfProposedManager = (row: CapabilityOverviewItem) => {
+    const capId = String(row.capability_id || "").trim();
+    if (!capId) return;
+    setManageCapabilityId(capId);
+    setManageName(String(row.name || capId));
+    setManageDescription(String(row.description_short || ""));
+    setManageCapsuleText(String(row.capsule_text || "").trim() || selfProposedFallbackCapsule(row));
+    setManageQualificationStatus(String(row.qualification_status || "").trim().toLowerCase() === "blocked" ? "blocked" : "qualified");
+    const reasons = Array.isArray(row.qualification_reasons) ? row.qualification_reasons : [];
+    setManageQualificationReason(String(row.blocked_reason || reasons[0] || ""));
+    setManageErr("");
+    setManageNotice("");
+    void refreshManageAssignmentState(capId);
+  };
+
+  const saveManagedSelfProposed = async (
+    qualificationOverride?: ManageQualificationStatus,
+    noticeKey: string = "capabilities.manageSaved",
+  ) => {
+    const gid = String(groupId || "").trim();
+    const capId = String(manageCapabilityId || "").trim();
+    const capsuleText = String(manageCapsuleText || "").trim();
+    const nextQualification = qualificationOverride || manageQualificationStatus;
+    if (!gid) {
+      setManageErr(t("capabilities.manageRequiresGroup"));
+      return;
+    }
+    if (!capId || !managingCandidate) {
+      setManageErr(t("capabilities.manageMissingCandidate"));
+      return;
+    }
+    if (!capId.startsWith("skill:agent_self_proposed:")) {
+      setManageErr(t("capabilities.manageInvalidNamespace"));
+      return;
+    }
+    if (!capsuleText) {
+      setManageErr(t("capabilities.manageCapsuleRequired"));
+      return;
+    }
+    const qualificationReasons = nextQualification === "blocked"
+      ? [String(manageQualificationReason || "manual_review_required").trim() || "manual_review_required"]
+      : [];
+    const record: CapabilityImportRecord = {
+      capability_id: capId,
+      kind: "skill",
+      source_id: SELF_PROPOSED_SOURCE_ID,
+      name: String(manageName || managingCandidate.name || capId).trim(),
+      description_short: String(manageDescription || managingCandidate.description_short || "").trim(),
+      source_uri: String(managingCandidate.source_uri || ""),
+      source_record_id: String(managingCandidate.source_record_id || capId),
+      source_record_version: String(managingCandidate.source_record_version || ""),
+      updated_at_source: String(managingCandidate.updated_at_source || ""),
+      trust_tier: String(managingCandidate.trust_tier || "tier2"),
+      source_tier: String(managingCandidate.source_tier || "tier2"),
+      tags: Array.isArray(managingCandidate.tags) ? managingCandidate.tags : [],
+      qualification_status: nextQualification,
+      qualification_reasons: qualificationReasons,
+      capsule_text: capsuleText,
+    };
+    setBusyKey(`manage:${capId}`);
+    setManageErr("");
+    setManageNotice("");
+    try {
+      const resp = await api.importCapability(gid, record, {
+        dryRun: false,
+        enableAfterImport: false,
+        actorId: "user",
+        reason: "web_self_proposed_manage",
+      });
+      if (!resp.ok) {
+        setManageErr(resp.error?.message || t("capabilities.manageSaveFailed"));
+        return;
+      }
+      const savedRecord = resp.result?.record && typeof resp.result.record === "object"
+        ? (resp.result.record as Record<string, unknown>)
+        : {};
+      const savedQualification = String(savedRecord.qualification_status || "").trim().toLowerCase();
+      if (savedQualification === "blocked" || savedQualification === "qualified") {
+        setManageQualificationStatus(savedQualification);
+      }
+      const savedReasons = Array.isArray(savedRecord.qualification_reasons)
+        ? savedRecord.qualification_reasons.map((item) => String(item || "").trim()).filter(Boolean)
+        : [];
+      if (savedReasons[0]) setManageQualificationReason(savedReasons[0]);
+      const savedCapsuleText = String(savedRecord.capsule_text || "").trim();
+      if (savedCapsuleText) setManageCapsuleText(savedCapsuleText);
+      setManageNotice(t(noticeKey));
+      await load();
+      await refreshManageUsage(capId);
+    } catch (e) {
+      setManageErr(e instanceof Error ? e.message : t("capabilities.manageSaveFailed"));
+    } finally {
+      setBusyKey("");
+    }
+  };
+
+  const toggleManagedActorAssignment = (actorId: string) => {
+    const aid = String(actorId || "").trim();
+    if (!aid) return;
+    setManageAssignedActorIds((current) => {
+      if (current.includes(aid)) return current.filter((item) => item !== aid);
+      return [...current, aid];
+    });
+  };
+
+  const saveManagedActorAssignments = async () => {
+    const gid = String(groupId || "").trim();
+    const capId = String(manageCapabilityId || "").trim();
+    if (!gid) {
+      setManageErr(t("capabilities.manageRequiresGroup"));
+      return;
+    }
+    if (!capId) return;
+    setBusyKey(`manage-use:${capId}`);
+    setManageErr("");
+    setManageNotice("");
+    try {
+      const actorsResp = await api.fetchActors(gid, false, { noCache: true });
+      if (!actorsResp.ok) {
+        setManageErr(actorsResp.error?.message || t("capabilities.manageActorLoadFailed"));
+        return;
+      }
+      const actors = Array.isArray(actorsResp.result?.actors) ? actorsResp.result.actors : [];
+      const desired = new Set(manageAssignedActorIds.map((item) => String(item || "").trim()).filter(Boolean));
+      const userSessionResp = await api.enableGroupCapability(gid, capId, {
+        enabled: false,
+        scope: "session",
+        actorId: "user",
+        reason: "web_self_proposed_actor_assignment",
+      });
+      if (!userSessionResp.ok) {
+        setManageErr(userSessionResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+        return;
+      }
+      for (const actor of actors) {
+        const aid = String(actor.id || "").trim();
+        if (!aid) continue;
+        const currentAutoload = normalizeCapabilityIdList(actor.capability_autoload);
+        const hasAutoload = currentAutoload.includes(capId);
+        const shouldAutoload = desired.has(aid);
+        if (hasAutoload !== shouldAutoload) {
+          const nextAutoload = shouldAutoload
+            ? [...currentAutoload, capId]
+            : currentAutoload.filter((item) => item !== capId);
+          const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
+            capabilityAutoload: nextAutoload,
+          });
+          if (!resp.ok) {
+            setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+            return;
+          }
+        }
+        if (!shouldAutoload) {
+          const actorResp = await api.enableGroupCapability(gid, capId, {
+            enabled: false,
+            scope: "actor",
+            actorId: aid,
+            reason: "web_self_proposed_actor_assignment",
+          });
+          if (!actorResp.ok) {
+            setManageErr(actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+            return;
+          }
+          const sessionResp = await api.enableGroupCapability(gid, capId, {
+            enabled: false,
+            scope: "session",
+            actorId: aid,
+            reason: "web_self_proposed_actor_assignment",
+          });
+          if (!sessionResp.ok) {
+            setManageErr(sessionResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+            return;
+          }
+        }
+      }
+      if (manageUsage?.group_enabled) {
+        const groupResp = await api.enableGroupCapability(gid, capId, {
+          enabled: false,
+          scope: "group",
+          actorId: "user",
+          reason: "web_self_proposed_actor_assignment",
+        });
+        if (!groupResp.ok) {
+          setManageErr(groupResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+          return;
+        }
+      }
+      setManageNotice(t("capabilities.manageActorAssignmentsSaved"));
+      await refreshManageAssignmentState(capId);
+      await load();
+    } catch (e) {
+      setManageErr(e instanceof Error ? e.message : t("capabilities.manageActorAssignmentsFailed"));
+    } finally {
+      setBusyKey("");
+    }
+  };
+
+  const uninstallManagedSelfProposed = async () => {
+    const gid = String(groupId || "").trim();
+    const capId = String(manageCapabilityId || "").trim();
+    if (!gid) {
+      setManageErr(t("capabilities.manageRequiresGroup"));
+      return;
+    }
+    if (!capId) return;
+    if (typeof window !== "undefined" && !window.confirm(t("capabilities.manageRemoveConfirm"))) return;
+    setBusyKey(`manage-remove:${capId}`);
+    setManageErr("");
+    setManageNotice("");
+    try {
+      const resp = await api.uninstallCapability(gid, capId, {
+        actorId: "user",
+        reason: "web_self_proposed_uninstall",
+      });
+      if (!resp.ok) {
+        setManageErr(resp.error?.message || t("capabilities.manageRemoveFailed"));
+        return;
+      }
+      closeSelfProposedManager();
+      await load();
+    } catch (e) {
+      setManageErr(e instanceof Error ? e.message : t("capabilities.manageRemoveFailed"));
     } finally {
       setBusyKey("");
     }
@@ -472,6 +999,68 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
         {err ? (
           <div className="mt-3 text-xs text-rose-600 dark:text-rose-400" role="alert">{err}</div>
         ) : null}
+      </div>
+
+      <div className={cardClass()}>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.selfProposedTitle")}</div>
+            <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.selfProposedHint")}</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="glass-btn px-3 py-2 rounded-lg text-xs min-h-[38px] text-[var(--color-text-secondary)]"
+              onClick={showSelfProposedCandidates}
+            >
+              {t("capabilities.selfProposedShowCandidates")}
+            </button>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{t("capabilities.selfProposedGenerated")}</div>
+            <div className="text-lg mt-1 font-semibold text-[var(--color-text-primary)]">{selfProposedCandidates.length}</div>
+          </div>
+          <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{t("capabilities.selfProposedSource")}</div>
+            <div className="text-sm mt-1 font-mono text-[var(--color-text-primary)]">{SELF_PROPOSED_SOURCE_ID}</div>
+          </div>
+        </div>
+        <div className="mt-3 space-y-2">
+            {selfProposedCandidates.slice(0, 3).map((row) => {
+              const capId = String(row.capability_id || "");
+              const isBlocked = String(row.qualification_status || "").trim().toLowerCase() === "blocked";
+              return (
+                <div key={capId} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-medium text-[var(--color-text-primary)]">{String(row.name || capId)}</span>
+                    {isBlocked ? (
+                      <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
+                        {t("capabilities.manageStatusBlocked")}
+                      </span>
+                    ) : null}
+                  </div>
+                <div className="text-[11px] mt-0.5 truncate text-[var(--color-text-tertiary)]">{capId}</div>
+                {String(row.description_short || "").trim() ? (
+                  <div className="text-[11px] mt-1 text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
+                ) : null}
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    className="glass-btn px-2.5 py-1.5 rounded text-xs min-h-[32px] text-[var(--color-text-secondary)]"
+                    onClick={() => openSelfProposedManager(row)}
+                  >
+                    {t("capabilities.selfProposedManage")}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {selfProposedCandidates.length === 0 ? (
+            <div className="text-xs text-[var(--color-text-muted)]">{t("capabilities.selfProposedNoCandidates")}</div>
+          ) : null}
+        </div>
       </div>
 
       <div className={cardClass()}>
@@ -608,6 +1197,10 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
           {pagedRegistry.map((row) => {
             const capId = String(row.capability_id || "");
             const blockedNow = Boolean(row.blocked_global);
+            const isSelfProposed = (
+              String(row.source_id || "").trim() === SELF_PROPOSED_SOURCE_ID
+              && String(row.kind || "").trim().toLowerCase() === "skill"
+            );
             const readinessPreview = normalizeReadinessPreview(row.readiness_preview);
             const recommendationMeta = [
               { label: t("capabilities.useWhen"), value: firstRecommendationLine(row.use_when) },
@@ -644,14 +1237,25 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
                     {renderReadinessPreview(readinessPreview)}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${blockedNow ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30" : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"} ${busyKey === `block:${capId}` ? "opacity-60 cursor-not-allowed" : ""}`}
-                      disabled={busyKey === `block:${capId}`}
-                      onClick={() => void toggleBlock(row, !blockedNow)}
-                    >
-                      {blockedNow ? t("capabilities.unblock") : t("capabilities.block")}
-                    </button>
+                    {isSelfProposed ? (
+                      <button
+                        type="button"
+                        className="glass-btn px-2.5 py-1.5 rounded text-xs min-h-[32px] text-[var(--color-text-secondary)]"
+                        onClick={() => openSelfProposedManager(row)}
+                      >
+                        {t("capabilities.selfProposedManage")}
+                      </button>
+                    ) : null}
+                    {!isSelfProposed ? (
+                      <button
+                        type="button"
+                        className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${blockedNow ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30" : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"} ${busyKey === `block:${capId}` ? "opacity-60 cursor-not-allowed" : ""}`}
+                        disabled={busyKey === `block:${capId}`}
+                        onClick={() => void toggleBlock(row, !blockedNow)}
+                      >
+                        {blockedNow ? t("capabilities.unblock") : t("capabilities.block")}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -695,6 +1299,301 @@ export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabPr
           )}
         </div>
       </div>
+
+      {managingCandidate && typeof document !== "undefined" ? createPortal(
+        <div
+          ref={manageDialogRef}
+          className="fixed inset-0 z-[1000] flex items-end justify-center bg-black/35 px-3 py-4 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="self-proposed-skill-manager-title"
+          onPointerDown={closeSelfProposedManager}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[88vh] overflow-hidden rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-elevated)] shadow-2xl"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-3">
+              <div className="min-w-0">
+                <div id="self-proposed-skill-manager-title" className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {t("capabilities.manageTitle")}
+                </div>
+                <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.manageSubtitle")}</div>
+              </div>
+              <button
+                type="button"
+                className="glass-btn shrink-0 rounded-lg px-3 py-2 text-xs min-h-[36px] text-[var(--color-text-secondary)]"
+                onClick={closeSelfProposedManager}
+              >
+                {t("capabilities.manageClose")}
+              </button>
+            </div>
+
+            <div className="max-h-[calc(88vh-62px)] overflow-auto px-4 py-4">
+              <div className="flex flex-wrap gap-1.5">
+                <span className="rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-secondary)]">
+                  {manageCapabilityId}
+                </span>
+                <span className="rounded bg-[var(--glass-tab-bg)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-secondary)]">
+                  {SELF_PROPOSED_SOURCE_ID}
+                </span>
+                {manageQualificationStatus === "blocked" ? (
+                  <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
+                    {t("capabilities.manageStatusBlocked")}
+                  </span>
+                ) : null}
+              </div>
+
+              {!String(groupId || "").trim() ? (
+                <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                  {t("capabilities.manageNoGroupHint")}
+                </div>
+              ) : null}
+
+              {manageErr ? (
+                <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+                  {manageErr}
+                </div>
+              ) : null}
+              {manageNotice ? (
+                <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300" role="status">
+                  {manageNotice}
+                </div>
+              ) : null}
+
+              {manageDuplicateCandidates.length ? (
+                <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                  <div className="text-xs font-medium text-amber-800 dark:text-amber-200">{t("capabilities.manageDuplicateTitle")}</div>
+                  <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{t("capabilities.manageDuplicateHint")}</div>
+                  <div className="mt-2 space-y-1">
+                    {manageDuplicateCandidates.map((row) => (
+                      <div key={String(row.capability_id || "")} className="truncate font-mono text-[11px] text-amber-800 dark:text-amber-200">
+                        {String(row.capability_id || "")}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="mt-4 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+                <div className="text-xs font-medium text-[var(--color-text-primary)]">{t("capabilities.manageProvenanceTitle")}</div>
+                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("capabilities.manageProvenanceHint")}</div>
+                <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {manageProvenanceRows.map((row) => (
+                    <div key={row.label} className="rounded-lg bg-[var(--color-bg-elevated)] px-2.5 py-2">
+                      <dt className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{row.label}</dt>
+                      <dd className="mt-1 break-words font-mono text-[11px] text-[var(--color-text-secondary)]">{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="block">
+                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">{t("capabilities.manageName")}</span>
+                  <input
+                    value={manageName}
+                    onChange={(e) => setManageName(e.target.value)}
+                    className="glass-input mt-1 w-full rounded-lg px-3 py-2 text-sm min-h-[40px] text-[var(--color-text-primary)]"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">{t("capabilities.manageDescription")}</span>
+                  <input
+                    value={manageDescription}
+                    onChange={(e) => setManageDescription(e.target.value)}
+                    className="glass-input mt-1 w-full rounded-lg px-3 py-2 text-sm min-h-[40px] text-[var(--color-text-primary)]"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-3">
+                <label className="block">
+                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">{t("capabilities.manageCapsule")}</span>
+                  <textarea
+                    value={manageCapsuleText}
+                    onChange={(e) => setManageCapsuleText(e.target.value)}
+                    maxLength={SELF_PROPOSED_CAPSULE_TEXT_MAX}
+                    rows={16}
+                    className="glass-input mt-1 w-full resize-y rounded-lg px-3 py-2 font-mono text-xs leading-5 text-[var(--color-text-primary)]"
+                  />
+                  <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
+                    {t("capabilities.manageCapsuleLimit", { count: manageCapsuleText.length, max: SELF_PROPOSED_CAPSULE_TEXT_MAX })}
+                  </span>
+                </label>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="glass-btn rounded-lg px-3 py-2 text-xs min-h-[38px] text-[var(--color-text-primary)] disabled:opacity-60"
+                  disabled={busyKey === `manage:${manageCapabilityId}`}
+                  onClick={() => void saveManagedSelfProposed()}
+                >
+                  {busyKey === `manage:${manageCapabilityId}` ? t("common:saving") : t("capabilities.manageSave")}
+                </button>
+              </div>
+
+              {manageQualificationStatus === "blocked" ? (
+                <div className="mt-4 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+                  {t("capabilities.manageBlockedBanner")}
+                </div>
+              ) : null}
+
+              <div className="mt-4">
+                <div className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+                  <div className="text-sm font-medium text-[var(--color-text-primary)]">{t("capabilities.manageRuntimeTitle")}</div>
+                  <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.manageAutoloadHint")}</div>
+                  <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
+                    <div className="text-xs font-medium text-[var(--color-text-primary)]">{t("capabilities.manageCurrentUseTitle")}</div>
+                    <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("capabilities.manageCurrentUseHint")}</div>
+                    {manageUsageLoading ? (
+                      <div className="mt-2 text-[11px] text-[var(--color-text-tertiary)]">{t("capabilities.manageUsageLoading")}</div>
+                    ) : manageUsage?.used ? (
+                      <div className="mt-2 space-y-1.5">
+                        {manageUsage.group_enabled ? (
+                          <div className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                            {t("capabilities.manageUsageGroup", { count: Number(manageUsage.group_actor_count || 0) })}
+                          </div>
+                        ) : null}
+                        {(manageUsage.session_enabled || []).map((row) => (
+                          <div key={`session:${row.actor_id}:${row.expires_at || ""}`} className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                            {t("capabilities.manageUsageSession", { actor: capabilityUsageActorLabel(row), ttl: manageUsageTtlLabel(row.ttl_seconds) })}
+                          </div>
+                        ))}
+                        {(manageUsage.actor_enabled || []).map((row) => (
+                          <div key={`actor:${row.actor_id}`} className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                            {t("capabilities.manageUsageActor", { actor: capabilityUsageActorLabel(row) })}
+                          </div>
+                        ))}
+                        {(manageUsage.actor_autoload || []).map((row) => (
+                          <div key={`autoload:${row.actor_id}`} className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                            {t("capabilities.manageUsageActorAutoload", { actor: capabilityUsageActorLabel(row) })}
+                          </div>
+                        ))}
+                        {(manageUsage.profile_autoload || []).map((row) => (
+                          <div key={`profile:${row.actor_id}:${row.profile_id || ""}`} className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                            {t("capabilities.manageUsageProfileAutoload", {
+                              actor: capabilityUsageActorLabel(row),
+                              profile: String(row.profile_name || row.profile_id || "").trim() || t("capabilities.manageUsageUnknownProfile"),
+                            })}
+                          </div>
+                        ))}
+                        {manageUsage.blocked ? (
+                          <div className="rounded-md bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-600 dark:text-rose-300">
+                            {t("capabilities.manageUsageBlocked")}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="mt-2 rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+                        {t("capabilities.manageNoCurrentUse")}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-4 border-t border-[var(--glass-border-subtle)] pt-3">
+                    <div className="text-xs font-medium text-[var(--color-text-primary)]">{t("capabilities.manageActorAssignmentsTitle")}</div>
+                    <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("capabilities.manageActorAssignmentsHint")}</div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {manageActors
+                      .filter((actor) => String(actor.id || "").trim())
+                      .map((actor) => {
+                        const actorId = String(actor.id || "").trim();
+                        const checked = manageAssignedActorIdSet.has(actorId);
+                        const profileInherited = manageProfileActorIdSet.has(actorId);
+                        const temporaryActive = manageSessionActorIdSet.has(actorId);
+                        const actorScopeActive = manageActorScopeIdSet.has(actorId);
+                        const runtimeLabel = [actor.runtime, actor.runner_effective || actor.runner].filter(Boolean).join(" / ");
+                        return (
+                          <label key={actorId} className="flex items-start gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5"
+                              checked={checked}
+                              onChange={() => toggleManagedActorAssignment(actorId)}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-xs font-medium text-[var(--color-text-primary)]">
+                                {actor.title ? `${actor.title} (${actorId})` : actorId}
+                              </span>
+                              {runtimeLabel ? (
+                                <span className="mt-0.5 block text-[11px] text-[var(--color-text-tertiary)]">{runtimeLabel}</span>
+                              ) : null}
+                              <span className="mt-1 flex flex-wrap gap-1">
+                                {profileInherited ? (
+                                  <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+                                    {t("capabilities.manageActorAssignmentProfileBadge")}
+                                  </span>
+                                ) : null}
+                                {temporaryActive ? (
+                                  <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
+                                    {t("capabilities.manageActorAssignmentTemporaryBadge")}
+                                  </span>
+                                ) : null}
+                                {actorScopeActive ? (
+                                  <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
+                                    {t("capabilities.manageActorAssignmentActorScopeBadge")}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    {manageActors.length === 0 ? (
+                      <div className="rounded-lg bg-[var(--glass-tab-bg)] px-3 py-2 text-[11px] text-[var(--color-text-tertiary)]">
+                        {t("capabilities.manageNoActors")}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      className="glass-btn rounded-lg px-3 py-2 text-xs min-h-[38px] text-[var(--color-text-primary)] disabled:opacity-60"
+                      disabled={busyKey === `manage-use:${manageCapabilityId}`}
+                      onClick={() => void saveManagedActorAssignments()}
+                    >
+                      {t("capabilities.manageSaveActorAssignments")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+                <div className="text-sm font-medium text-[var(--color-text-primary)]">{t("capabilities.manageOtherActionsTitle")}</div>
+                <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.manageOtherActionsHint")}</div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    className={`rounded-lg border px-3 py-2 text-xs min-h-[38px] disabled:opacity-60 ${
+                      manageQualificationStatus === "blocked"
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-300"
+                    }`}
+                    disabled={busyKey === `manage:${manageCapabilityId}`}
+                    onClick={() => void saveManagedSelfProposed(
+                      manageQualificationStatus === "blocked" ? "qualified" : "blocked",
+                      manageQualificationStatus === "blocked" ? "capabilities.manageUnblockedSaved" : "capabilities.manageBlockedSaved",
+                    )}
+                  >
+                    {manageQualificationStatus === "blocked" ? t("capabilities.manageUnblockSkill") : t("capabilities.manageBlockSkill")}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs min-h-[38px] text-rose-600 dark:text-rose-300 disabled:opacity-60"
+                    disabled={busyKey === `manage-remove:${manageCapabilityId}`}
+                    onClick={() => void uninstallManagedSelfProposed()}
+                  >
+                    {t("capabilities.manageRemove")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      ) : null}
     </div>
   );
 }

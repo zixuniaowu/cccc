@@ -512,6 +512,8 @@ Result:
     blocked_reason?: string
     enable_supported: boolean
     qualification_status: "qualified" | "unavailable" | "blocked"
+    qualification_reasons?: string[] // currently exposed for agent_self_proposed skill management
+    capsule_text?: string            // currently exposed for agent_self_proposed skill management
     install_mode?: string
     autoload_candidate: boolean
     tags?: string[]
@@ -595,8 +597,13 @@ Result:
     enable_supported: boolean
     install_mode?: string
     policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
-    enable_hint?: "enable_now" | "blocked" | "unsupported"
+    enable_hint?: "enable_now" | "blocked" | "unsupported" | "active"
     blocked_reason?: string
+    readiness_preview?: {
+      preview_status: "blocked" | "enableable" | "active" | "needs_inspect"
+      next_step: string
+      already_active?: boolean
+    }
     tags?: string[]
     tool_count?: number
     tool_names?: string[]
@@ -767,7 +774,12 @@ Read effective capability exposure and visible MCP tool names for caller scope.
 
 Args:
 ```ts
-{ group_id: string; actor_id?: string; by?: string }
+{
+  group_id: string
+  actor_id?: string
+  by?: string
+  capability_id?: string // optional; returns capability_usage for this id
+}
 ```
 
 Result:
@@ -793,14 +805,24 @@ Result:
     capability_id: string
     name: string
     description_short?: string
+    capsule_preview?: string
+    capsule_text?: string
     source_id?: string
     source_uri?: string
     policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
+    activation_sources?: Array<{
+      scope: "group" | "actor" | "session"
+      actor_id?: string
+      expires_at?: string
+      ttl_seconds?: number
+    }>
   }>
   autoload_skills?: Array<{
     capability_id: string
     name: string
     description_short?: string
+    capsule_preview?: string
+    capsule_text?: string
     source_id?: string
     policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
   }>
@@ -810,7 +832,11 @@ Result:
   hidden_capabilities: Array<{
     capability_id: string
     reason: string
-    policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
+    name?: string
+    description_short?: string
+    kind?: "mcp_toolpack" | "skill"
+    source_id?: string
+    policy_level?: "indexed" | "mounted" | "enabled" | "pinned" | "blocked"
     state?: string
     install_error_code?: string
     install_error?: string
@@ -838,6 +864,19 @@ Result:
     blocked_at?: string
     expires_at?: string
   }>
+  capability_usage?: {
+    capability_id: string
+    used: boolean
+    group_enabled: boolean
+    group_actor_count: number
+    actor_enabled: Array<{ actor_id: string; actor_title?: string; label?: string }>
+    session_enabled: Array<{ actor_id: string; actor_title?: string; label?: string; expires_at: string; ttl_seconds: number }>
+    actor_autoload: Array<{ actor_id: string; actor_title?: string; label?: string }>
+    profile_autoload: Array<{ actor_id: string; actor_title?: string; label?: string; profile_id?: string; profile_name?: string }>
+    blocked: boolean
+    blocked_scope?: "group" | "global"
+    blocked_reason?: string
+  }
   is_foreman: boolean
 }
 ```
@@ -850,6 +889,8 @@ Operational notes:
    - `CCCC_CAPABILITY_SOURCE_MCP_REGISTRY_ENABLED` (default `1`)
    - `CCCC_CAPABILITY_SOURCE_ANTHROPIC_SKILLS_ENABLED` (default `1`)
    - `github_skills_curated` is allowlist-curated (no periodic source crawler).
+   - `agent_self_proposed` is for agent-generated procedural skill candidates; default policy keeps MCP
+     toolpacks indexed while allowing capsule skills to be validated and enabled at narrow scope.
    - `skillsmp_remote` is on-demand SkillsMP remote search (API key mode + proxy fallback).
    - `clawhub_remote` is on-demand ClawHub remote search (official API).
    - `openclaw_skills_remote` is on-demand OpenClaw GitHub corpus search.
@@ -894,6 +935,28 @@ Notes:
 5. `command*` and `fallback_command*` may be provided as top-level shortcuts; daemon copies them into
    `install_spec` when missing.
 6. `record.source_id` is optional; empty or unknown source ids are normalized to `manual_import`.
+7. `record.source_id=agent_self_proposed` preserves autonomous skill-proposal provenance. Default policy treats
+   `kind=skill` capsule records from this source as mounted, while non-skill toolpacks remain indexed unless
+   policy explicitly promotes them.
+8. `agent_self_proposed` skill capsule text must include required proposal sections: `When to use`, `Avoid when`,
+   `Procedure`, `Pitfalls`, and `Verification`; non-dry-run imports missing sections are rejected before catalog
+   persistence so the last valid active record is preserved.
+9. `agent_self_proposed` skill capability ids must use `skill:agent_self_proposed:<stable-slug>` to avoid
+   colliding with curated namespaces such as `skill:anthropic:*` or `skill:github:*`.
+10. For low-risk, syntax-valid `agent_self_proposed` capsule skills, direct import is allowed. Use `dry_run=true`
+   first when enabling immediately, scope/risk is unclear, or probe diagnostics are useful; high-risk candidates
+   should be recorded as `qualification_status=blocked` with explicit `qualification_reasons`.
+11. Re-importing the same `capability_id` updates the catalog record. Agents should use that path for stale,
+    incomplete, wrong, or duplicative `agent_self_proposed` skills instead of creating near-duplicates or silently
+    deleting records.
+12. Import results use `import_action`, `record_changed`, `already_active`, and `active_after_import` to distinguish
+    create/update/no-op and whether the target actor had an effective binding before and after import. Local sync
+    timestamps do not count as semantic changes, while an explicitly supplied `updated_at_source` still participates
+    in the comparison. `import_action` is the primary create/update/unchanged signal; `record_changed` only compares
+    existing records. `already_active` is pre-import state; `active_after_import` is the post-import runnable binding.
+13. If `readiness_preview.preview_status=active` or `active_after_import=true`, agents must not re-enable the same skill
+    just to refresh its capsule text. Use `capability_state.active_capsule_skills[].capsule_text` for full post-import
+    verification; `capsule_preview` is only a compact display summary.
 
 Args:
 ```ts
@@ -906,7 +969,7 @@ Args:
     kind: "mcp_toolpack" | "skill"
     name?: string
     description_short?: string
-    source_id?: string // optional; unknown/empty -> manual_import
+    source_id?: string // optional; unknown/empty -> manual_import; agent_self_proposed preserves skill-proposal provenance
     source_uri?: string
     source_record_id?: string
     source_record_version?: string
@@ -945,7 +1008,11 @@ Result:
   kind: "mcp_toolpack" | "skill"
   dry_run: boolean
   imported: boolean
-  deduped?: boolean
+  scope: "group" | "actor" | "session"
+  import_action?: "created" | "updated" | "unchanged"
+  record_changed?: boolean
+  already_active?: boolean           // target actor had an effective binding before optional enable_after_import
+  active_after_import?: boolean      // target actor has a runnable binding after import/optional enablement
   record: Record<string, unknown>
   probe: {
     state: "runnable" | "failed" | "skipped"
@@ -967,8 +1034,9 @@ Result:
   enableable_now: boolean
   enable_block_reason?: "policy_level_indexed" | "qualification_blocked" | "capability_unavailable"
   readiness_preview?: {
-    preview_status: "blocked" | "enableable" | "needs_inspect"
+    preview_status: "blocked" | "enableable" | "active" | "needs_inspect"
     next_step: string
+    already_active?: boolean
     preview_basis?: string[]
     required_env?: string[]
     missing_env?: string[]
@@ -1099,7 +1167,10 @@ Result:
 
 #### `capability_uninstall`
 
-Revoke capability bindings for the target group. Installation cache is removed only when no other group/actor bindings remain.
+Revoke capability bindings for the target group, remove current-group actor autoload references, and remove runtime cache
+when no other group/actor bindings remain. For `source_id=agent_self_proposed` skill records, uninstall also removes the
+generated local catalog record plus all actor/profile autoload references for that capability id. External registry catalog
+records are not deleted.
 
 Args:
 ```ts
@@ -1120,9 +1191,12 @@ Result:
   actor_id: string
   capability_id: string
   state: "ready"
+  removed_record: boolean
   removed_bindings: number
   removed_installation: boolean
   removed_runtime_bindings?: number
+  removed_actor_autoload: number
+  removed_profile_autoload: number
   cleanup_skipped_reason?: "cleanup_skipped_capability_still_bound"
   refresh_required: boolean
   refresh_mode?: "relist_or_reconnect"

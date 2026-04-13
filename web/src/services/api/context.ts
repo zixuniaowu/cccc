@@ -226,11 +226,19 @@ export async function blockCapabilityGlobal(capabilityId: string, blocked: boole
   });
 }
 
-export async function fetchGroupCapabilityState(groupId: string, actorId: string = "user") {
+export async function fetchGroupCapabilityState(
+  groupId: string,
+  actorId: string = "user",
+  opts?: { capabilityId?: string; noCache?: boolean; signal?: AbortSignal },
+) {
   const params = new URLSearchParams();
   if (actorId) params.set("actor_id", actorId);
+  if (String(opts?.capabilityId || "").trim()) params.set("capability_id", String(opts?.capabilityId || "").trim());
+  if (opts?.noCache) params.set("_", String(Date.now()));
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  return apiJson<CapabilityStateResult>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/state${suffix}`);
+  return apiJson<CapabilityStateResult>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/state${suffix}`, {
+    signal: opts?.signal,
+  });
 }
 
 export async function enableGroupCapability(
@@ -280,6 +288,17 @@ export async function importCapability(
       scope: opts?.scope || "session",
       actor_id: opts?.actorId || "user",
       ttl_seconds: opts?.ttlSeconds || 3600,
+      reason: opts?.reason || "",
+    }),
+  });
+}
+
+export async function uninstallCapability(groupId: string, capabilityId: string, opts?: { actorId?: string; reason?: string }) {
+  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/uninstall`, {
+    method: "POST",
+    body: JSON.stringify({
+      capability_id: capabilityId,
+      actor_id: opts?.actorId || "user",
       reason: opts?.reason || "",
     }),
   });

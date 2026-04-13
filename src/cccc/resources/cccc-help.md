@@ -141,12 +141,23 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 - If enable or use fails, read `diagnostics` and `resolution_plan` before escalating.
 - Ask the user only for real environment or permission blockers.
 
+### Skill Evolution Proposals
+
+- Add/maintain only reusable procedures, recurring pitfalls, user corrections, or stable verification paths.
+- Use `cccc_capability_import` with `source_id=agent_self_proposed`; search first and update `skill:agent_self_proposed:<stable-slug>`. Required: `When to use`, `Avoid when`, `Procedure`, `Pitfalls`, `Verification`; invalid real imports preserve the last active version.
+- Direct import works for low-risk proposals; use `dry_run=true` when enabling immediately or risk/scope is unclear.
+- Use `scope="session"` for one-off trials; use `scope="actor"` for reusable skills across sessions; startup `autoload` is separate.
+- Read scope/import_action/record_changed/already_active/active_after_import; import_action is create/update/unchanged, already_active is pre-import, active_after_import is post-import runnable. If active, do not enable again. Verify via `cccc_capability_state.active_capsule_skills` `[].capsule_text`, not `capsule_preview`.
+- If stale, wrong, or duplicative, reuse the existing `capability_id` with revised `capsule_text`; do not create a near-duplicate or silently delete it.
+- Use `cccc_capability_use` only to activate an existing valid skill. For legacy `skill:agent:*`, re-import under `skill:agent_self_proposed:<stable-slug>`, then call `cccc_capability_uninstall` on the legacy id.
+- Mark high-risk/broad candidates `qualification_status=blocked` with a clear reason; do not wait for users or mutate global skills by default.
+
 ### Runtime Visibility and Cleanup
 
 - Verify current exposure with `cccc_capability_state`.
 - Temporary stop: `cccc_capability_enable(enabled=false)`.
 - Stop plus cache cleanup: `cccc_capability_enable(enabled=false, cleanup=true)`.
-- Remove unused external bindings and cache with `cccc_capability_uninstall`.
+- Remove unused bindings/cache/autoload with `cccc_capability_uninstall`; self-proposed skill records are removed by the same tool, external registry records are not.
 - Use `cccc_capability_block(...)` only as an emergency deny for risky runtime side effects.
 
 ## Role Notes

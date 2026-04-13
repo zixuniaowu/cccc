@@ -64,6 +64,7 @@ def _policy_default_compiled() -> Dict[str, Any]:
         "source_levels": {
             "cccc_builtin": _LEVEL_MOUNTED,
             "manual_import": _LEVEL_MOUNTED,
+            "agent_self_proposed": _LEVEL_INDEXED,
             "anthropic_skills": _LEVEL_MOUNTED,
             "github_skills_curated": _LEVEL_MOUNTED,
             "skillsmp_remote": _LEVEL_MOUNTED,
@@ -73,7 +74,9 @@ def _policy_default_compiled() -> Dict[str, Any]:
             "mcp_registry_official": _LEVEL_MOUNTED,
         },
         "capability_levels": {},
-        "skill_source_levels": {},
+        "skill_source_levels": {
+            "agent_self_proposed": _LEVEL_MOUNTED,
+        },
         "role_pinned": {},
         "curated_mcp_entries": [],
         "curated_skill_entries": [],

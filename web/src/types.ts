@@ -267,6 +267,7 @@ export type CapabilityReadinessPreview = {
   preview_basis?: string[];
   policy_level?: string;
   enable_supported?: boolean;
+  already_active?: boolean;
   install_mode?: string;
   required_env?: string[];
   missing_env?: string[];
@@ -288,14 +289,19 @@ export type CapabilityOverviewItem = {
   evidence_kind?: string;
   source_id?: string;
   source_uri?: string;
+  source_record_id?: string;
+  source_record_version?: string;
   source_tier?: string;
   trust_tier?: string;
   license?: string;
   sync_state?: string;
+  updated_at_source?: string;
+  last_synced_at?: string;
   policy_level?: string;
   policy_visible?: boolean;
   enable_supported?: boolean;
   qualification_status?: string;
+  qualification_reasons?: string[];
   install_mode?: string;
   tags?: string[];
   blocked_global?: boolean;
@@ -306,6 +312,7 @@ export type CapabilityOverviewItem = {
   cached_install_state?: string;
   cached_install_error_code?: string;
   cached_install_error?: string;
+  capsule_text?: string;
   tool_count?: number;
   tool_names?: string[];
 };
@@ -347,13 +354,49 @@ export type CapabilityStateResult = {
   group_id: string;
   actor_id: string;
   enabled: CapabilityEnabledEntry[];
+  enabled_capabilities?: string[];
   dynamic_tools?: Array<{ name: string; capability_id: string; description?: string }>;
+  active_capsule_skills?: Array<{
+    capability_id: string;
+    name?: string;
+    description_short?: string;
+    capsule_preview?: string;
+    capsule_text?: string;
+    source_id?: string;
+    source_uri?: string;
+    policy_level?: string;
+  }>;
+  capability_usage?: CapabilityUsageSummary;
+};
+
+export type CapabilityUsageActorEntry = {
+  actor_id: string;
+  actor_title?: string;
+  label?: string;
+  expires_at?: string;
+  ttl_seconds?: number;
+  profile_id?: string;
+  profile_name?: string;
+};
+
+export type CapabilityUsageSummary = {
+  capability_id: string;
+  used: boolean;
+  group_enabled?: boolean;
+  group_actor_count?: number;
+  actor_enabled?: CapabilityUsageActorEntry[];
+  session_enabled?: CapabilityUsageActorEntry[];
+  actor_autoload?: CapabilityUsageActorEntry[];
+  profile_autoload?: CapabilityUsageActorEntry[];
+  blocked?: boolean;
+  blocked_scope?: string;
+  blocked_reason?: string;
 };
 
 export type CapabilityImportRecord = {
   capability_id: string;
   kind: "mcp_toolpack" | "skill";
-  install_mode: "command" | "package" | "remote_only";
+  install_mode?: "command" | "package" | "remote_only";
   install_spec?: { command?: string; package?: string; url?: string };
   name?: string;
   description_short?: string;
