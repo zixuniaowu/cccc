@@ -69,6 +69,8 @@
   "important": "要確認",
   "relayedFrom": "{{groupId}} · {{eventId}} からの中継",
   "openOriginalMessage": "元のメッセージを開く",
+  "jumpToRepliedMessage": "返信先メッセージへ移動",
+  "replyTargetNotLoaded": "元のメッセージは読み込まれていません。",
   "sentTo": "{{label}} · {{to}} に送信",
   "updated": "更新： {{time}}",
   "noAgentStateYet": "エージェント状態はまだありません",

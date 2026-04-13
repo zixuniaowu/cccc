@@ -69,6 +69,8 @@
   "important": "请确认",
   "relayedFrom": "转发自 {{groupId}} · {{eventId}}",
   "openOriginalMessage": "打开原始消息",
+  "jumpToRepliedMessage": "跳转到被回复的消息",
+  "replyTargetNotLoaded": "原消息未加载。",
   "sentTo": "发送至 {{label}} · {{to}}",
   "updated": "更新于 {{time}}",
   "noAgentStateYet": "暂无智能体状态",

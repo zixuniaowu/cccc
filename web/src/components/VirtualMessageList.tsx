@@ -1,6 +1,7 @@
-import { memo, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import { memo, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useState } from "react";
 import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useTranslation } from "react-i18next";
 import { LedgerEvent, Actor, AgentState, PresentationMessageRef } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
@@ -91,6 +92,7 @@ type VirtualMessageRowProps = {
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+  onOpenReplyTarget?: (replyToEventId: string) => void;
   measureElement: (node: Element | null) => void;
 };
 
@@ -115,6 +117,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
   onRelay,
   onOpenSource,
   onOpenPresentationRef,
+  onOpenReplyTarget,
   measureElement,
 }: VirtualMessageRowProps) {
   const attachMeasuredRow = useCallback((node: HTMLDivElement | null) => {
@@ -159,6 +162,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
         onRelay={onRelay}
         onOpenSource={onOpenSource}
         onOpenPresentationRef={onOpenPresentationRef}
+        onOpenReplyTarget={onOpenReplyTarget}
       />
     </div>
   );
@@ -196,9 +200,14 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onLoadMore,
   resetKey,
 }: VirtualMessageListInnerProps) {
+  const { t } = useTranslation("chat");
   const parentRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const remeasureRafRef = useRef<number | null>(null);
+  const replyJumpClearTimerRef = useRef<number | null>(null);
+  const replyJumpNoticeTimerRef = useRef<number | null>(null);
+  const [replyJumpHighlightId, setReplyJumpHighlightId] = useState("");
+  const [replyJumpNotice, setReplyJumpNotice] = useState("");
   // Message ordering is resolved upstream in useChatTab. The virtual list
   // should render that order verbatim instead of maintaining a second,
   // divergent streaming-order cache locally.
@@ -457,6 +466,68 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     [cancelScheduledScroll, virtualizer]
   );
 
+  const showReplyJumpNotice = useCallback((message: string) => {
+    if (replyJumpNoticeTimerRef.current != null) {
+      window.clearTimeout(replyJumpNoticeTimerRef.current);
+      replyJumpNoticeTimerRef.current = null;
+    }
+    setReplyJumpNotice(message);
+    replyJumpNoticeTimerRef.current = window.setTimeout(() => {
+      replyJumpNoticeTimerRef.current = null;
+      setReplyJumpNotice("");
+    }, 2200);
+  }, []);
+
+  const handleOpenReplyTarget = useCallback((replyToEventId: string) => {
+    const targetId = String(replyToEventId || "").trim();
+    if (!targetId) return;
+
+    const idx = displayMessages.findIndex((message) => String(message?.id || "") === targetId);
+    if (idx < 0) {
+      showReplyJumpNotice(t("replyTargetNotLoaded"));
+      return;
+    }
+
+    setAtBottom(false);
+    setFollowMode("detached");
+    forceStickToBottomUntilRef.current = 0;
+    cancelScheduledScroll();
+    setReplyJumpHighlightId(targetId);
+    if (replyJumpClearTimerRef.current != null) {
+      window.clearTimeout(replyJumpClearTimerRef.current);
+      replyJumpClearTimerRef.current = null;
+    }
+    replyJumpClearTimerRef.current = window.setTimeout(() => {
+      replyJumpClearTimerRef.current = null;
+      setReplyJumpHighlightId((current) => (current === targetId ? "" : current));
+    }, 2200);
+
+    if (shouldVirtualize) {
+      scrollToIndexStable(idx);
+      return;
+    }
+
+    const el = parentRef.current;
+    const row = getMessageRowById(targetId);
+    if (!el || !row) {
+      showReplyJumpNotice(t("replyTargetNotLoaded"));
+      return;
+    }
+    const top = Math.max(0, row.offsetTop - Math.max(0, (el.clientHeight - row.offsetHeight) / 2));
+    el.scrollTo({ top, behavior: "auto" });
+    lastScrollTopRef.current = top;
+  }, [
+    cancelScheduledScroll,
+    displayMessages,
+    getMessageRowById,
+    scrollToIndexStable,
+    setAtBottom,
+    setFollowMode,
+    shouldVirtualize,
+    showReplyJumpNotice,
+    t,
+  ]);
+
   const handleScroll = useCallback(() => {
     if (scrollRafScheduledRef.current) return;
     scrollRafScheduledRef.current = true;
@@ -711,6 +782,19 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
   useEffect(() => {
+    return () => {
+      if (replyJumpClearTimerRef.current != null) {
+        window.clearTimeout(replyJumpClearTimerRef.current);
+        replyJumpClearTimerRef.current = null;
+      }
+      if (replyJumpNoticeTimerRef.current != null) {
+        window.clearTimeout(replyJumpNoticeTimerRef.current);
+        replyJumpNoticeTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const scrollEl = parentRef.current;
     const observedEl = contentRef.current;
     if (!scrollEl || !observedEl || typeof ResizeObserver === "undefined") return;
@@ -792,6 +876,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     topLoadArmedRef.current = false;
   }, [displayMessages, getCurrentContentSize, isLoadingHistory, shouldVirtualize, virtualizer]);
 
+  const effectiveHighlightEventId = replyJumpHighlightId || highlightEventId;
+
   return (
     <div
       ref={(el) => {
@@ -845,6 +931,19 @@ const VirtualMessageListInner = function VirtualMessageListInner({
             </div>
           )}
 
+          {replyJumpNotice ? (
+            <div className="pointer-events-none absolute inset-x-0 top-12 z-20 flex justify-center px-4">
+              <div
+                className={`rounded-full px-3 py-1 text-xs shadow-sm ${isDark
+                  ? "bg-slate-900/90 text-slate-300 ring-1 ring-white/10"
+                  : "bg-white/95 text-gray-600 ring-1 ring-gray-200"
+                  }`}
+              >
+                {replyJumpNotice}
+              </div>
+            </div>
+          ) : null}
+
           {shouldVirtualize ? (
             <div
               ref={contentRef}
@@ -874,7 +973,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     readOnly={readOnly}
                     groupId={groupId}
                     groupLabelById={groupLabelById}
-                    highlightEventId={highlightEventId}
+                    highlightEventId={effectiveHighlightEventId}
                     onReply={onReply}
                     onShowRecipients={onShowRecipients}
                     onCopyLink={onCopyLink}
@@ -882,6 +981,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     onRelay={onRelay}
                     onOpenSource={onOpenSource}
                     onOpenPresentationRef={onOpenPresentationRef}
+                    onOpenReplyTarget={handleOpenReplyTarget}
                     measureElement={measureElement}
                   />
                 );
@@ -909,7 +1009,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                       readOnly={readOnly}
                       groupId={groupId}
                       groupLabelById={groupLabelById}
-                      isHighlighted={!!highlightEventId && String(message.id || "") === String(highlightEventId)}
+                      isHighlighted={!!effectiveHighlightEventId && String(message.id || "") === String(effectiveHighlightEventId)}
                       collapseHeader={grouping.collapseHeader}
                       onReply={() => onReply(message)}
                       onShowRecipients={() => {
@@ -922,6 +1022,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                       onRelay={onRelay}
                       onOpenSource={onOpenSource}
                       onOpenPresentationRef={onOpenPresentationRef}
+                      onOpenReplyTarget={handleOpenReplyTarget}
                     />
                   </div>
                 );
