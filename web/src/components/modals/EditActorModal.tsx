@@ -655,19 +655,6 @@ export function EditActorModal({
                             {selectedProfileRunner === "headless" ? t("headless") : t("pty", { defaultValue: "PTY" })}
                           </span>
                         </div>
-                        <div className="mt-3">
-                          <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
-                            {t("runnerMode", { defaultValue: "运行模式" })}
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <button type="button" className={modeButtonClass(selectedProfileRunner === "pty")} disabled>
-                              {t("pty", { defaultValue: "PTY" })}
-                            </button>
-                            <button type="button" className={modeButtonClass(selectedProfileRunner === "headless")} disabled>
-                              {t("headless")}
-                            </button>
-                          </div>
-                        </div>
                         {commandPreview(selectedProfile.command) ? <div className="mt-1 font-mono break-all">{commandPreview(selectedProfile.command)}</div> : null}
                       </div>
                     ) : null}
