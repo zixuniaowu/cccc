@@ -291,6 +291,7 @@ export type CapabilityOverviewItem = {
   source_uri?: string;
   source_record_id?: string;
   source_record_version?: string;
+  origin_group_id?: string;
   source_tier?: string;
   trust_tier?: string;
   license?: string;
@@ -384,6 +385,8 @@ export type CapabilityUsageSummary = {
   used: boolean;
   group_enabled?: boolean;
   group_actor_count?: number;
+  active_actor_count?: number;
+  startup_autoload_actor_count?: number;
   actor_enabled?: CapabilityUsageActorEntry[];
   session_enabled?: CapabilityUsageActorEntry[];
   actor_autoload?: CapabilityUsageActorEntry[];

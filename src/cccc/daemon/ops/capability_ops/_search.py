@@ -684,6 +684,7 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
                 item["cached_install_error"] = install_error
             if kind == "skill" and source_id == "agent_self_proposed":
                 item["capsule_text"] = str(rec.get("capsule_text") or "")
+                item["origin_group_id"] = str(rec.get("origin_group_id") or "")
                 reasons = rec.get("qualification_reasons")
                 if isinstance(reasons, list):
                     item["qualification_reasons"] = [str(x).strip() for x in reasons if str(x).strip()]
@@ -1106,6 +1107,11 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
                 item["cached_install_error_code"] = install_error_code
             if recent_payload:
                 item["recent_success"] = recent_payload
+            if (
+                str(rec.get("kind") or "").strip().lower() == "skill"
+                and str(rec.get("source_id") or "").strip() == "agent_self_proposed"
+            ):
+                item["origin_group_id"] = str(rec.get("origin_group_id") or "")
             if cap_id.startswith("pack:"):
                 item["tool_count"] = int(rec.get("tool_count") or 0)
                 tool_names = rec.get("tool_names") if isinstance(rec.get("tool_names"), list) else []
@@ -1544,6 +1550,25 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                         }
                     )
 
+            active_actor_ids = set(actor_rows_by_id) if group_used else set()
+            active_actor_ids.update(
+                str(item.get("actor_id") or "").strip()
+                for item in actor_used
+                if isinstance(item, dict)
+            )
+            active_actor_ids.update(
+                str(item.get("actor_id") or "").strip()
+                for item in session_used
+                if isinstance(item, dict)
+            )
+            active_actor_ids.discard("")
+            startup_autoload_actor_ids = {
+                str(item.get("actor_id") or "").strip()
+                for item in [*actor_autoload_used, *profile_autoload_used]
+                if isinstance(item, dict)
+            }
+            startup_autoload_actor_ids.discard("")
+
             blocked_entry = blocked_caps.get(cap) if isinstance(blocked_caps.get(cap), dict) else None
             capability_usage = {
                 "capability_id": cap,
@@ -1556,6 +1581,8 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                 ),
                 "group_enabled": bool(group_used),
                 "group_actor_count": len(actor_rows_by_id),
+                "active_actor_count": len(active_actor_ids),
+                "startup_autoload_actor_count": len(startup_autoload_actor_ids),
                 "actor_enabled": actor_used,
                 "session_enabled": session_used,
                 "actor_autoload": actor_autoload_used,

@@ -2555,6 +2555,33 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertIn("skill:anthropic:triage", autoload_result.get("applied") or [])
             self.assertFalse(autoload_result.get("skipped") or [])
+
+            active_state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(active_state_resp.ok, getattr(active_state_resp, "error", None))
+            active_state = active_state_resp.result if isinstance(active_state_resp.result, dict) else {}
+            active_capsule_skills = (
+                active_state.get("active_capsule_skills")
+                if isinstance(active_state.get("active_capsule_skills"), list)
+                else []
+            )
+            active_row = next(
+                (
+                    item
+                    for item in active_capsule_skills
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == "skill:anthropic:triage"
+                ),
+                {},
+            )
+            self.assertTrue(active_row)
+            activation_sources = (
+                active_row.get("activation_sources")
+                if isinstance(active_row.get("activation_sources"), list)
+                else []
+            )
+            self.assertEqual({str(item.get("scope") or "") for item in activation_sources if isinstance(item, dict)}, {"actor"})
         finally:
             cleanup()
 
@@ -3844,6 +3871,7 @@ class TestCapabilityOps(unittest.TestCase):
             rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
             record = rows.get(capability_id) if isinstance(rows.get(capability_id), dict) else {}
             self.assertEqual(str(record.get("source_id") or ""), "agent_self_proposed")
+            self.assertEqual(str(record.get("origin_group_id") or ""), gid)
             self.assertEqual(str(record.get("qualification_status") or ""), "qualified")
 
             overview_resp, _ = self._call(
@@ -3868,6 +3896,7 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(overview_row)
             self.assertEqual(str(overview_row.get("source_id") or ""), "agent_self_proposed")
             self.assertEqual(str(overview_row.get("source_record_id") or ""), capability_id)
+            self.assertEqual(str(overview_row.get("origin_group_id") or ""), gid)
             self.assertTrue(str(overview_row.get("updated_at_source") or "").strip())
             self.assertTrue(str(overview_row.get("last_synced_at") or "").strip())
             self.assertIn("Self Evolution Smoke", str(overview_row.get("capsule_text") or ""))
@@ -4211,6 +4240,104 @@ class TestCapabilityOps(unittest.TestCase):
             capsule_text = str(record.get("capsule_text") or "")
             self.assertIn("Patch the existing capability_id with revised capsule_text.", capsule_text)
             self.assertNotIn("Capture the first proven maintenance path.", capsule_text)
+        finally:
+            cleanup()
+
+    def test_capability_import_agent_self_proposed_reimport_preserves_origin_group(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            origin_gid = self._create_group()
+            other_gid = self._create_group()
+            self._add_actor(origin_gid, "peer-1", by="user")
+            self._add_actor(other_gid, "peer-2", by="user")
+            capability_id = "skill:agent_self_proposed:origin-group-preserved"
+
+            def _capsule(version: str) -> str:
+                return (
+                    "Skill: Origin Group Preserved\n"
+                    "When to use:\n"
+                    f"- Track origin group metadata during {version} imports.\n"
+                    "Avoid when:\n"
+                    "- The record is not self-proposed.\n"
+                    "Procedure:\n"
+                    "1. Re-import the same capability id from another group.\n"
+                    "Pitfalls:\n"
+                    "- Do not silently reassign the origin group on edit.\n"
+                    "Verification:\n"
+                    "- Re-read the catalog record and overview row."
+                )
+
+            first_resp, _ = self._call(
+                "capability_import",
+                {
+                    "group_id": origin_gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "probe": False,
+                    "record": {
+                        "capability_id": capability_id,
+                        "kind": "skill",
+                        "source_id": "agent_self_proposed",
+                        "name": "Origin Group Preserved",
+                        "description_short": "initial origin group",
+                        "origin_group_id": other_gid,
+                        "capsule_text": _capsule("initial"),
+                    },
+                },
+            )
+            self.assertTrue(first_resp.ok, getattr(first_resp, "error", None))
+
+            second_resp, _ = self._call(
+                "capability_import",
+                {
+                    "group_id": other_gid,
+                    "by": "peer-2",
+                    "actor_id": "peer-2",
+                    "probe": False,
+                    "record": {
+                        "capability_id": capability_id,
+                        "kind": "skill",
+                        "source_id": "agent_self_proposed",
+                        "name": "Origin Group Preserved",
+                        "description_short": "updated elsewhere",
+                        "origin_group_id": other_gid,
+                        "capsule_text": _capsule("cross-group update"),
+                    },
+                },
+            )
+            self.assertTrue(second_resp.ok, getattr(second_resp, "error", None))
+            second = second_resp.result if isinstance(second_resp.result, dict) else {}
+            second_record = second.get("record") if isinstance(second.get("record"), dict) else {}
+            self.assertEqual(str(second_record.get("origin_group_id") or ""), origin_gid)
+
+            _, catalog_doc = ops._load_catalog_doc()
+            rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            record = rows.get(capability_id) if isinstance(rows.get(capability_id), dict) else {}
+            self.assertEqual(str(record.get("origin_group_id") or ""), origin_gid)
+
+            overview_resp, _ = self._call(
+                "capability_overview",
+                {
+                    "query": capability_id,
+                    "limit": 200,
+                    "include_indexed": True,
+                },
+            )
+            self.assertTrue(overview_resp.ok, getattr(overview_resp, "error", None))
+            overview = overview_resp.result if isinstance(overview_resp.result, dict) else {}
+            rows = overview.get("items") if isinstance(overview.get("items"), list) else []
+            row = next(
+                (
+                    item
+                    for item in rows
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == capability_id
+                ),
+                {},
+            )
+            self.assertTrue(row)
+            self.assertEqual(str(row.get("origin_group_id") or ""), origin_gid)
         finally:
             cleanup()
 
@@ -4737,6 +4864,8 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertTrue(usage.get("used"))
             self.assertTrue(usage.get("group_enabled"))
             self.assertEqual(int(usage.get("group_actor_count") or 0), 3)
+            self.assertEqual(int(usage.get("active_actor_count") or 0), 3)
+            self.assertEqual(int(usage.get("startup_autoload_actor_count") or 0), 2)
             self.assertIn("peer-1", {str(item.get("actor_id") or "") for item in usage.get("actor_enabled") or []})
             self.assertIn("peer-2", {str(item.get("actor_id") or "") for item in usage.get("session_enabled") or []})
             self.assertIn("peer-1", {str(item.get("actor_id") or "") for item in usage.get("actor_autoload") or []})
@@ -4790,6 +4919,119 @@ class TestCapabilityOps(unittest.TestCase):
                 if isinstance(item, dict) and str(item.get("scope") or "") == "session"
             ]
             self.assertTrue(any(int(item.get("ttl_seconds") or 0) > 0 for item in session_sources))
+        finally:
+            cleanup()
+
+    def test_self_proposed_actor_assignment_persists_autoload_and_can_activate_now(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            self._add_actor(gid, "peer-2", by="user")
+            capability_id = "skill:agent_self_proposed:assignment-activate-now"
+            capsule_text = (
+                "Skill: Assignment Activate Now\n"
+                "When to use:\n"
+                "- Verify actor assignment writes startup autoload and supports immediate activation.\n"
+                "Avoid when:\n"
+                "- The skill should only be tried in a temporary session.\n"
+                "Procedure:\n"
+                "1. Persist actor capability_autoload, then enable actor scope for immediate use.\n"
+                "Pitfalls:\n"
+                "- Autoload metadata alone is not current runtime activation.\n"
+                "Verification:\n"
+                "- Re-read actor_autoload_capabilities and active_capsule_skills."
+            )
+            import_resp, _ = self._call(
+                "capability_import",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "user",
+                    "record": {
+                        "capability_id": capability_id,
+                        "kind": "skill",
+                        "source_id": "agent_self_proposed",
+                        "name": "Assignment Activate Now",
+                        "description_short": "assignment activation validation",
+                        "capsule_text": capsule_text,
+                    },
+                    "probe": False,
+                },
+            )
+            self.assertTrue(import_resp.ok, getattr(import_resp, "error", None))
+
+            actor_update, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "user",
+                    "patch": {"capability_autoload": [capability_id]},
+                },
+            )
+            self.assertTrue(actor_update.ok, getattr(actor_update, "error", None))
+
+            before_enable, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(before_enable.ok, getattr(before_enable, "error", None))
+            before_state = before_enable.result if isinstance(before_enable.result, dict) else {}
+            self.assertIn(capability_id, before_state.get("actor_autoload_capabilities") or [])
+            before_active = (
+                before_state.get("active_capsule_skills")
+                if isinstance(before_state.get("active_capsule_skills"), list)
+                else []
+            )
+            before_active_ids = {
+                str(item.get("capability_id") or "")
+                for item in before_active
+                if isinstance(item, dict)
+            }
+            self.assertNotIn(capability_id, before_active_ids)
+
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "actor_id": "peer-1",
+                    "capability_id": capability_id,
+                    "scope": "actor",
+                    "enabled": True,
+                    "reason": "web_self_proposed_actor_assignment",
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+
+            after_enable, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(after_enable.ok, getattr(after_enable, "error", None))
+            after_state = after_enable.result if isinstance(after_enable.result, dict) else {}
+            self.assertIn(capability_id, after_state.get("actor_autoload_capabilities") or [])
+            self.assertIn(capability_id, after_state.get("enabled_capabilities") or [])
+            after_active = (
+                after_state.get("active_capsule_skills")
+                if isinstance(after_state.get("active_capsule_skills"), list)
+                else []
+            )
+            after_active_ids = {
+                str(item.get("capability_id") or "")
+                for item in after_active
+                if isinstance(item, dict)
+            }
+            self.assertIn(capability_id, after_active_ids)
+
+            other_actor, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-2", "by": "peer-2"},
+            )
+            self.assertTrue(other_actor.ok, getattr(other_actor, "error", None))
+            other_state = other_actor.result if isinstance(other_actor.result, dict) else {}
+            self.assertNotIn(capability_id, other_state.get("enabled_capabilities") or [])
         finally:
             cleanup()
 

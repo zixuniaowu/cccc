@@ -11,6 +11,7 @@ import {
   CapabilitySourceState,
   CapabilityUsageActorEntry,
   CapabilityUsageSummary,
+  GroupMeta,
 } from "../../../types";
 import { useModalA11y } from "../../../hooks/useModalA11y";
 import { cardClass } from "./types";
@@ -19,6 +20,7 @@ interface CapabilitiesTabProps {
   isDark: boolean;
   isActive: boolean;
   groupId?: string;
+  surface?: "global" | "selfEvolving";
 }
 
 type SourceVisibility = "all" | "enabled" | "disabled";
@@ -106,6 +108,19 @@ function capabilityUsageActorLabel(row: CapabilityUsageActorEntry) {
   return String(row.label || row.actor_title || row.actor_id || "").trim() || "user";
 }
 
+function capabilityEnableResultSucceeded(result: unknown) {
+  if (!result || typeof result !== "object") return false;
+  const row = result as Record<string, unknown>;
+  const state = String(row.state || "").trim().toLowerCase();
+  return row.enabled === true && !["blocked", "denied", "failed"].includes(state);
+}
+
+function capabilityEnableResultReason(result: unknown) {
+  if (!result || typeof result !== "object") return "";
+  const row = result as Record<string, unknown>;
+  return String(row.reason || row.state || row.policy_level || "").trim();
+}
+
 function deriveManagedAssignedActorIds(
   actors: Actor[],
   capabilityId: string,
@@ -143,8 +158,9 @@ function formatCapabilityProvenanceTimestamp(value: unknown) {
   return new Date(ms).toLocaleString();
 }
 
-export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: CapabilitiesTabProps) {
+export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surface = "global" }: CapabilitiesTabProps) {
   const { t } = useTranslation("settings");
+  const selfEvolvingSurface = surface === "selfEvolving";
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState("");
   const [err, setErr] = useState("");
@@ -160,6 +176,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
   const [registryPageSize, setRegistryPageSize] = useState(40);
   const [registryPage, setRegistryPage] = useState(1);
   const [items, setItems] = useState<CapabilityOverviewItem[]>([]);
+  const [groups, setGroups] = useState<GroupMeta[]>([]);
   const [sources, setSources] = useState<Record<string, CapabilitySourceState>>({});
   const [blocked, setBlocked] = useState<CapabilityBlockEntry[]>([]);
   const [allowlistSources, setAllowlistSources] = useState<Array<{ source_id: string; enabled: boolean; rationale?: string }>>([]);
@@ -189,13 +206,15 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
     setLoading(true);
     setErr("");
     try {
-      const [overviewResp, allowlistResp] = await Promise.all([
+      const [overviewResp, allowlistResp, groupsResp] = await Promise.all([
         api.fetchCapabilityOverview({ includeIndexed: true, limit: 1200 }),
-        api.fetchCapabilityAllowlist(),
+        selfEvolvingSurface ? Promise.resolve(null) : api.fetchCapabilityAllowlist(),
+        selfEvolvingSurface ? Promise.resolve(null) : api.fetchGroups(),
       ]);
       if (!overviewResp.ok) {
         setErr(overviewResp.error?.message || t("capabilities.failedLoad"));
         setItems([]);
+        setGroups([]);
         setSources({});
         setBlocked([]);
       } else {
@@ -211,7 +230,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
             : []
         );
       }
-      if (allowlistResp.ok) {
+      if (groupsResp?.ok) {
+        setGroups(Array.isArray(groupsResp.result?.groups) ? groupsResp.result.groups : []);
+      } else if (!selfEvolvingSurface) {
+        setGroups([]);
+      }
+      if (allowlistResp?.ok) {
         const effective = allowlistResp.result?.effective && typeof allowlistResp.result.effective === "object"
           ? allowlistResp.result.effective
           : {};
@@ -237,12 +261,13 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
     } catch (e) {
       setErr(e instanceof Error ? e.message : t("capabilities.failedLoad"));
       setItems([]);
+      setGroups([]);
       setSources({});
       setBlocked([]);
     } finally {
       setLoading(false);
     }
-  }, [isActive, t]);
+  }, [isActive, selfEvolvingSurface, t]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -285,11 +310,42 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
   }, [sourceRows]);
 
   const selfProposedCandidates = useMemo(() => {
+    const gid = String(groupId || "").trim();
     return items.filter((row) => (
       String(row.source_id || "").trim() === SELF_PROPOSED_SOURCE_ID
       && String(row.kind || "").trim().toLowerCase() === "skill"
+      && (!selfEvolvingSurface || !gid || String(row.origin_group_id || "").trim() === gid)
     ));
-  }, [items]);
+  }, [groupId, items, selfEvolvingSurface]);
+
+  const selfProposedGroupSections = useMemo(() => {
+    const groupById = new Map<string, GroupMeta>();
+    for (const group of groups) {
+      const gid = String(group.group_id || "").trim();
+      if (gid) groupById.set(gid, group);
+    }
+    const sections = new Map<string, { key: string; groupId: string; label: string; hint: string; rows: CapabilityOverviewItem[] }>();
+    for (const row of selfProposedCandidates) {
+      const originGroupId = String(row.origin_group_id || "").trim();
+      const key = originGroupId || "__ungrouped__";
+      const group = originGroupId ? groupById.get(originGroupId) : null;
+      const title = group ? String(group.title || group.topic || "").trim() : "";
+      const label = originGroupId
+        ? (title || originGroupId)
+        : t("capabilities.selfProposedUngroupedTitle");
+      const hint = originGroupId
+        ? originGroupId
+        : t("capabilities.selfProposedUngroupedHint");
+      const existing = sections.get(key);
+      if (existing) existing.rows.push(row);
+      else sections.set(key, { key, groupId: originGroupId, label, hint, rows: [row] });
+    }
+    return Array.from(sections.values()).sort((a, b) => {
+      if (!a.groupId && b.groupId) return 1;
+      if (a.groupId && !b.groupId) return -1;
+      return a.label.localeCompare(b.label);
+    });
+  }, [groups, selfProposedCandidates, t]);
 
   const managingCandidate = useMemo(() => {
     if (!manageCapabilityId) return null;
@@ -339,6 +395,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
     const recordVersion = String(managingCandidate.source_record_version || "").trim();
     const sourceTier = String(managingCandidate.source_tier || "").trim();
     const trustTier = String(managingCandidate.trust_tier || "").trim();
+    const originGroupId = String(managingCandidate.origin_group_id || "").trim();
     const updatedAt = formatCapabilityProvenanceTimestamp(managingCandidate.updated_at_source);
     const importedAt = formatCapabilityProvenanceTimestamp(managingCandidate.last_synced_at);
     const status = manageQualificationStatus === "blocked"
@@ -354,6 +411,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
         value: recordId || t("capabilities.manageProvenanceNotRecorded"),
       },
     ];
+    if (originGroupId) {
+      rows.push({
+        label: t("capabilities.manageProvenanceOriginGroup"),
+        value: originGroupId,
+      });
+    }
     if (recordVersion) {
       rows.push({
         label: t("capabilities.manageProvenanceVersion"),
@@ -674,14 +737,6 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
     }
   };
 
-  const showSelfProposedCandidates = () => {
-    setRegistryKind("skill");
-    setRegistryPolicy("all");
-    setRegistrySource(SELF_PROPOSED_SOURCE_ID);
-    setQuery("");
-    setRegistryPage(1);
-  };
-
   const refreshManageAssignmentState = async (capabilityId: string = manageCapabilityId) => {
     const gid = String(groupId || "").trim();
     const capId = String(capabilityId || "").trim();
@@ -802,6 +857,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
       source_uri: String(managingCandidate.source_uri || ""),
       source_record_id: String(managingCandidate.source_record_id || capId),
       source_record_version: String(managingCandidate.source_record_version || ""),
+      origin_group_id: String(managingCandidate.origin_group_id || gid),
       updated_at_source: String(managingCandidate.updated_at_source || ""),
       trust_tier: String(managingCandidate.trust_tier || "tier2"),
       source_tier: String(managingCandidate.source_tier || "tier2"),
@@ -891,19 +947,51 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
         const currentAutoload = normalizeCapabilityIdList(actor.capability_autoload);
         const hasAutoload = currentAutoload.includes(capId);
         const shouldAutoload = desired.has(aid);
-        if (hasAutoload !== shouldAutoload) {
-          const nextAutoload = shouldAutoload
-            ? [...currentAutoload, capId]
-            : currentAutoload.filter((item) => item !== capId);
-          const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
-            capabilityAutoload: nextAutoload,
+        if (shouldAutoload) {
+          const actorResp = await api.enableGroupCapability(gid, capId, {
+            enabled: true,
+            scope: "actor",
+            actorId: aid,
+            reason: "web_self_proposed_actor_assignment",
           });
-          if (!resp.ok) {
-            setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+          if (!actorResp.ok) {
+            setManageErr(actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
             return;
           }
-        }
-        if (!shouldAutoload) {
+          if (!capabilityEnableResultSucceeded(actorResp.result)) {
+            const reason = capabilityEnableResultReason(actorResp.result);
+            setManageErr(
+              reason
+                ? t("capabilities.manageActorActivationFailedWithReason", { reason })
+                : t("capabilities.manageActorActivationFailed")
+            );
+            return;
+          }
+          if (!hasAutoload) {
+            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
+              capabilityAutoload: [...currentAutoload, capId],
+            });
+            if (!resp.ok) {
+              await api.enableGroupCapability(gid, capId, {
+                enabled: false,
+                scope: "actor",
+                actorId: aid,
+                reason: "web_self_proposed_actor_assignment_rollback",
+              });
+              setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+              return;
+            }
+          }
+        } else {
+          if (hasAutoload) {
+            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
+              capabilityAutoload: currentAutoload.filter((item) => item !== capId),
+            });
+            if (!resp.ok) {
+              setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+              return;
+            }
+          }
           const actorResp = await api.enableGroupCapability(gid, capId, {
             enabled: false,
             scope: "actor",
@@ -980,6 +1068,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
 
   return (
     <div className="space-y-4">
+      {!selfEvolvingSurface ? (
       <div className={cardClass()}>
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -1000,35 +1089,52 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
           <div className="mt-3 text-xs text-rose-600 dark:text-rose-400" role="alert">{err}</div>
         ) : null}
       </div>
+      ) : err ? (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+          {err}
+        </div>
+      ) : null}
 
       <div className={cardClass()}>
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.selfProposedTitle")}</div>
-            <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.selfProposedHint")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupTitle" : "capabilities.selfProposedTitle")}
+            </div>
+            <div className="text-xs mt-1 text-[var(--color-text-muted)]">
+              {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupHint" : "capabilities.selfProposedHint")}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               className="glass-btn px-3 py-2 rounded-lg text-xs min-h-[38px] text-[var(--color-text-secondary)]"
-              onClick={showSelfProposedCandidates}
+              onClick={() => void load()}
+              disabled={loading}
             >
-              {t("capabilities.selfProposedShowCandidates")}
+              {loading ? t("common:loading") : t("capabilities.refresh")}
             </button>
           </div>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-2">
           <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
-            <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{t("capabilities.selfProposedGenerated")}</div>
+            <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+              {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupCount" : "capabilities.selfProposedGenerated")}
+            </div>
             <div className="text-lg mt-1 font-semibold text-[var(--color-text-primary)]">{selfProposedCandidates.length}</div>
           </div>
           <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
-            <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{t("capabilities.selfProposedSource")}</div>
-            <div className="text-sm mt-1 font-mono text-[var(--color-text-primary)]">{SELF_PROPOSED_SOURCE_ID}</div>
+            <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+              {t(selfEvolvingSurface ? "capabilities.selfProposedSource" : "capabilities.selfProposedGroups")}
+            </div>
+            <div className={`${selfEvolvingSurface ? "text-sm font-mono" : "text-lg font-semibold"} mt-1 text-[var(--color-text-primary)]`}>
+              {selfEvolvingSurface ? SELF_PROPOSED_SOURCE_ID : selfProposedGroupSections.length}
+            </div>
           </div>
         </div>
-        <div className="mt-3 space-y-2">
-            {selfProposedCandidates.slice(0, 3).map((row) => {
+        {selfEvolvingSurface ? (
+          <div className="mt-3 space-y-2">
+            {selfProposedCandidates.map((row) => {
               const capId = String(row.capability_id || "");
               const isBlocked = String(row.qualification_status || "").trim().toLowerCase() === "blocked";
               return (
@@ -1041,28 +1147,84 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
                       </span>
                     ) : null}
                   </div>
-                <div className="text-[11px] mt-0.5 truncate text-[var(--color-text-tertiary)]">{capId}</div>
-                {String(row.description_short || "").trim() ? (
-                  <div className="text-[11px] mt-1 text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
-                ) : null}
-                <div className="mt-2">
-                  <button
-                    type="button"
-                    className="glass-btn px-2.5 py-1.5 rounded text-xs min-h-[32px] text-[var(--color-text-secondary)]"
-                    onClick={() => openSelfProposedManager(row)}
-                  >
-                    {t("capabilities.selfProposedManage")}
-                  </button>
+                  <div className="text-[11px] mt-0.5 truncate text-[var(--color-text-tertiary)]">{capId}</div>
+                  {String(row.description_short || "").trim() ? (
+                    <div className="text-[11px] mt-1 text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
+                  ) : null}
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      className="glass-btn px-2.5 py-1.5 rounded text-xs min-h-[32px] text-[var(--color-text-secondary)]"
+                      onClick={() => openSelfProposedManager(row)}
+                    >
+                      {t("capabilities.selfProposedManage")}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {selfProposedCandidates.length === 0 ? (
+              <div className="text-xs text-[var(--color-text-muted)]">
+                {t("capabilities.selfEvolvingGroupNoCandidates")}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {selfProposedGroupSections.map((section) => (
+              <div key={section.key} className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{section.label}</div>
+                    <div className="mt-0.5 font-mono text-[11px] text-[var(--color-text-tertiary)]">{section.hint}</div>
+                  </div>
+                  <span className="w-fit rounded-full bg-[var(--glass-tab-bg)] px-2 py-1 text-[10px] font-medium text-[var(--color-text-secondary)]">
+                    {t("capabilities.selfProposedGroupSkillCount", { count: section.rows.length })}
+                  </span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {section.rows.map((row) => {
+                    const capId = String(row.capability_id || "");
+                    const isBlocked = String(row.qualification_status || "").trim().toLowerCase() === "blocked";
+                    return (
+                      <div key={capId} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs font-medium text-[var(--color-text-primary)]">{String(row.name || capId)}</span>
+                          {isBlocked ? (
+                            <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
+                              {t("capabilities.manageStatusBlocked")}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="text-[11px] mt-0.5 truncate text-[var(--color-text-tertiary)]">{capId}</div>
+                        {String(row.description_short || "").trim() ? (
+                          <div className="text-[11px] mt-1 text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
+                        ) : null}
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            className="glass-btn px-2.5 py-1.5 rounded text-xs min-h-[32px] text-[var(--color-text-secondary)]"
+                            onClick={() => openSelfProposedManager(row)}
+                          >
+                            {t("capabilities.selfProposedManage")}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            );
-          })}
-          {selfProposedCandidates.length === 0 ? (
-            <div className="text-xs text-[var(--color-text-muted)]">{t("capabilities.selfProposedNoCandidates")}</div>
-          ) : null}
-        </div>
+            ))}
+            {selfProposedGroupSections.length === 0 ? (
+              <div className="text-xs text-[var(--color-text-muted)]">
+                {t("capabilities.selfProposedNoCandidates")}
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
 
+      {!selfEvolvingSurface ? (
       <div className={cardClass()}>
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -1096,7 +1258,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
           {t("capabilities.safetyModeCurrentRule", { mode: t(`capabilities.safetyMode.${externalSafetyMode}.label`) })}
         </div>
       </div>
+      ) : null}
 
+      {!selfEvolvingSurface ? (
       <div className={cardClass()}>
         <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.sourcesTitle")}</div>
         <div className="text-xs mt-1 mb-2 text-[var(--color-text-muted)]">{t("capabilities.sourcesHint")}</div>
@@ -1156,7 +1320,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
           ) : null}
         </div>
       </div>
+      ) : null}
 
+      {!selfEvolvingSurface ? (
       <div className={cardClass()}>
         <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.libraryTitle")}</div>
         <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.libraryHint")}</div>
@@ -1269,7 +1435,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
           <button type="button" className="glass-btn px-3 py-1.5 rounded text-xs min-h-[34px] text-[var(--color-text-secondary)] disabled:opacity-50" disabled={registryPage >= registryTotalPages} onClick={() => setRegistryPage((p) => Math.min(registryTotalPages, p + 1))}>{t("capabilities.pageNext")}</button>
         </div>
       </div>
+      ) : null}
 
+      {!selfEvolvingSurface ? (
       <div className={cardClass()}>
         <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.blockedListTitle")}</div>
         <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.blockedListHint")}</div>
@@ -1299,6 +1467,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
           )}
         </div>
       </div>
+      ) : null}
 
       {managingCandidate && typeof document !== "undefined" ? createPortal(
         <div
@@ -1451,6 +1620,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "" }: Cap
                       <div className="mt-2 text-[11px] text-[var(--color-text-tertiary)]">{t("capabilities.manageUsageLoading")}</div>
                     ) : manageUsage?.used ? (
                       <div className="mt-2 space-y-1.5">
+                        <div className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+                          {t("capabilities.manageUsageSummary", {
+                            active: Number(manageUsage.active_actor_count || 0),
+                            startup: Number(manageUsage.startup_autoload_actor_count || 0),
+                          })}
+                        </div>
                         {manageUsage.group_enabled ? (
                           <div className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
                             {t("capabilities.manageUsageGroup", { count: Number(manageUsage.group_actor_count || 0) })}

@@ -1041,6 +1041,19 @@ def _is_self_proposed_skill_record(rec: Dict[str, Any]) -> bool:
     )
 
 
+def _self_proposed_origin_group_id(
+    *,
+    group_id: str,
+    existing: Optional[Dict[str, Any]] = None,
+) -> str:
+    existing_origin = (
+        str(existing.get("origin_group_id") or "").strip()
+        if isinstance(existing, dict)
+        else ""
+    )
+    return existing_origin or str(group_id or "").strip()
+
+
 def _remove_actor_autoload_references(group: Any, capability_id: str) -> int:
     cap_id = str(capability_id or "").strip()
     if not cap_id or group is None:
@@ -1202,6 +1215,10 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
             and bool(str(raw_record_arg.get("updated_at_source") or "").strip())
         )
         rec = _normalize_import_record(raw_record_arg)
+        if _is_self_proposed_skill_record(rec):
+            origin_group_id = _self_proposed_origin_group_id(group_id=group_id)
+            if origin_group_id:
+                rec["origin_group_id"] = origin_group_id
         cap_id = str(rec.get("capability_id") or "").strip()
         policy = _pkg()._allowlist_policy()
         actor_role = _pkg()._resolve_actor_role(group, actor_id)
@@ -1314,6 +1331,10 @@ def handle_capability_import(args: Dict[str, Any]) -> DaemonResponse:
             catalog_path, catalog_doc = _pkg()._load_catalog_doc()
             rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
             existing = rows.get(cap_id) if isinstance(rows.get(cap_id), dict) else None
+            if _is_self_proposed_skill_record(rec):
+                origin_group_id = _self_proposed_origin_group_id(group_id=group_id, existing=existing)
+                if origin_group_id:
+                    rec["origin_group_id"] = origin_group_id
             record_existed = isinstance(existing, dict)
             record_unchanged = bool(
                 record_existed

@@ -223,6 +223,7 @@
     "agentsHint": "此视图用于恢复各个 agent 的当前执行状态，而不是用来调度整个项目。",
     "all": "全部",
     "viewOptions": "视图",
+    "selfEvolvingSkillsTab": "Self-Evolving Skills",
     "desktopPetTitle": "Web 宠物",
     "desktopPetTab": "Web 宠物",
     "desktopPetHint": "在网页角落显示一只浮动像素猫，实时反映该团队的工作状态。",

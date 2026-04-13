@@ -223,6 +223,7 @@
     "agentsHint": "このビューは各 agent の現在の実行状態を復元するためのもので、プロジェクト全体を舵取りする場所ではありません。",
     "all": "すべて",
     "viewOptions": "表示",
+    "selfEvolvingSkillsTab": "Self-Evolving Skills",
     "desktopPetTitle": "Web ペット",
     "desktopPetTab": "Web ペット",
     "desktopPetHint": "チームの状態をリアルタイムに反映するピクセル猫を Web UI の隅に表示します。",
