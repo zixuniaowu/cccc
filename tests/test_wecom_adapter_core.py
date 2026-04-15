@@ -196,7 +196,7 @@ class TestWecomEnqueueMessage(unittest.TestCase):
         adapter._enqueue_message(data)
         msgs = adapter.poll()
         self.assertEqual(len(msgs), 1)
-        self.assertEqual(msgs[0]["text"], "[file: unknown]")
+        self.assertEqual(msgs[0]["text"], "[file]")
         self.assertEqual(msgs[0]["attachments"][0]["kind"], "file")
         self.assertEqual(msgs[0]["attachments"][0]["media_id"], "media_file_img")
         self.assertEqual(msgs[0]["attachments"][0]["file_name"], "file")
@@ -714,6 +714,20 @@ class TestWecomSendMessage(unittest.TestCase):
             result = adapter.send_message("conv_1", "hello")
             self.assertFalse(result)
 
+    def test_send_uses_response_url_when_req_id_missing(self):
+        adapter = self._make_adapter()
+        adapter._store_reply_ref("conv_1", response_url="https://bot.example.test/response")
+        with patch.object(adapter, "_post_json", return_value=True) as mock_post:
+            result = adapter.send_message("conv_1", "hello")
+
+        self.assertTrue(result)
+        mock_post.assert_called_once()
+        self.assertEqual(mock_post.call_args[0][0], "https://bot.example.test/response")
+        payload = mock_post.call_args[0][1]
+        self.assertEqual(payload["msgtype"], "stream")
+        self.assertTrue(payload["stream"]["finish"])
+        self.assertEqual(payload["stream"]["content"], "hello")
+
     def test_compose_safe_truncates(self):
         adapter = self._make_adapter()
         long_text = "x" * 3000
@@ -913,11 +927,30 @@ class TestWecomStreaming(unittest.TestCase):
             handle = adapter.begin_stream("conv_1", "s1", text="starting...")
             self.assertIsNotNone(handle)
             self.assertEqual(handle["stream_id"], "s1")
-            self.assertEqual(handle["platform_handle"], {"req_id": "req_stream", "stream_id": "s1"})
+            self.assertEqual(
+                handle["platform_handle"],
+                {"chat_id": "conv_1", "req_id": "req_stream", "response_url": "", "stream_id": "s1"},
+            )
+
+    def test_begin_stream_returns_handle_with_response_url_only(self):
+        adapter = self._make_adapter()
+        adapter._store_reply_ref("conv_1", response_url="https://bot.example.test/response")
+        handle = adapter.begin_stream("conv_1", "s1")
+
+        self.assertIsNotNone(handle)
+        self.assertEqual(
+            handle["platform_handle"],
+            {
+                "chat_id": "conv_1",
+                "req_id": "",
+                "response_url": "https://bot.example.test/response",
+                "stream_id": "s1",
+            },
+        )
 
     def test_update_stream_sends_intermediate(self):
         adapter = self._make_adapter()
-        handle = {"stream_id": "s1", "platform_handle": {"req_id": "req_test", "stream_id": "s1"}}
+        handle = {"stream_id": "s1", "platform_handle": {"chat_id": "conv_1", "req_id": "req_test", "response_url": "", "stream_id": "s1"}}
         with patch.object(adapter, "_ws_send_and_wait_ack", return_value=(True, {"errcode": 0})) as mock_ws:
             result = adapter.update_stream(handle, text="chunk 1")
             self.assertTrue(result)
@@ -927,13 +960,55 @@ class TestWecomStreaming(unittest.TestCase):
 
     def test_end_stream_sends_final(self):
         adapter = self._make_adapter()
-        handle = {"stream_id": "s1", "platform_handle": {"req_id": "req_test", "stream_id": "s1"}}
+        handle = {"stream_id": "s1", "platform_handle": {"chat_id": "conv_1", "req_id": "req_test", "response_url": "", "stream_id": "s1"}}
         with patch.object(adapter, "_ws_send_and_wait_ack", return_value=(True, {"errcode": 0})) as mock_ws:
             result = adapter.end_stream(handle, text="final text")
             self.assertTrue(result)
             payload = mock_ws.call_args[0][0]
             self.assertTrue(payload["body"]["stream"]["finish"])
             self.assertEqual(payload["body"]["stream"]["content"], "final text")
+
+    def test_update_stream_uses_response_url_when_req_id_missing(self):
+        adapter = self._make_adapter()
+        handle = {
+            "stream_id": "s1",
+            "platform_handle": {
+                "chat_id": "conv_1",
+                "req_id": "",
+                "response_url": "https://bot.example.test/response",
+                "stream_id": "s1",
+            },
+        }
+        with patch.object(adapter, "_post_json", return_value=True) as mock_post:
+            result = adapter.update_stream(handle, text="chunk 1")
+
+        self.assertTrue(result)
+        mock_post.assert_called_once()
+        self.assertEqual(mock_post.call_args[0][0], "https://bot.example.test/response")
+        payload = mock_post.call_args[0][1]
+        self.assertFalse(payload["stream"]["finish"])
+        self.assertEqual(payload["stream"]["content"], "chunk 1")
+
+    def test_end_stream_uses_response_url_when_req_id_missing(self):
+        adapter = self._make_adapter()
+        handle = {
+            "stream_id": "s1",
+            "platform_handle": {
+                "chat_id": "conv_1",
+                "req_id": "",
+                "response_url": "https://bot.example.test/response",
+                "stream_id": "s1",
+            },
+        }
+        with patch.object(adapter, "_post_json", return_value=True) as mock_post:
+            result = adapter.end_stream(handle, text="")
+
+        self.assertTrue(result)
+        mock_post.assert_called_once()
+        self.assertEqual(mock_post.call_args[0][0], "https://bot.example.test/response")
+        payload = mock_post.call_args[0][1]
+        self.assertTrue(payload["stream"]["finish"])
+        self.assertEqual(payload["stream"]["content"], "")
 
     def test_update_stream_fails_with_empty_handle(self):
         adapter = self._make_adapter()

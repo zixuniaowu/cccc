@@ -5,6 +5,7 @@ const DEFAULT_STREAMING_HEIGHT = 108;
 const DEFAULT_QUEUED_PLACEHOLDER_HEIGHT = 84;
 const DEFAULT_REPLY_CONTEXT_HEIGHT = 60;
 const DEFAULT_IMAGE_ATTACHMENT_HEIGHT = 200;
+const DEFAULT_IMAGE_ATTACHMENT_LABEL_HEIGHT = 20;
 const DEFAULT_FILE_ATTACHMENT_HEIGHT = 48;
 const DEFAULT_CODE_BLOCK_HEIGHT = 80;
 const AVG_CHARS_PER_LINE = 40;
@@ -22,7 +23,9 @@ function getEstimatedAttachmentHeight(attachments: MessageAttachment[]): number 
   let total = 0;
   for (const attachment of attachments) {
     const mime = String(attachment?.mime_type || "");
-    total += mime.startsWith("image/") ? DEFAULT_IMAGE_ATTACHMENT_HEIGHT : DEFAULT_FILE_ATTACHMENT_HEIGHT;
+    total += mime.startsWith("image/")
+      ? DEFAULT_IMAGE_ATTACHMENT_HEIGHT + DEFAULT_IMAGE_ATTACHMENT_LABEL_HEIGHT
+      : DEFAULT_FILE_ATTACHMENT_HEIGHT;
   }
   return total;
 }

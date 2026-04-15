@@ -37,14 +37,27 @@ export function MessageAttachments({
             );
             const label = attachment.title || blobName || "image";
             return (
-              <ImagePreview
+              <div
                 key={`img:${attachmentKeyPrefix}:${index}`}
-                href={href}
-                alt={label}
-                isSvg={isSvgAttachment(attachment)}
-                isUserMessage={isUserMessage}
-                isDark={isDark}
-              />
+                className="flex max-w-[min(22rem,70vw)] flex-col gap-1 sm:max-w-[min(30rem,60vw)]"
+              >
+                <ImagePreview
+                  href={href}
+                  alt={label}
+                  isSvg={isSvgAttachment(attachment)}
+                  isUserMessage={isUserMessage}
+                  isDark={isDark}
+                />
+                <span
+                  className={classNames(
+                    "truncate px-1 text-[11px]",
+                    isUserMessage ? "text-blue-100/90" : "text-[var(--color-text-secondary)]",
+                  )}
+                  title={label}
+                >
+                  {label}
+                </span>
+              </div>
             );
           })}
         </div>

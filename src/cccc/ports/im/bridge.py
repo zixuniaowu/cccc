@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import shlex
@@ -56,6 +57,25 @@ def _is_env_var_name(value: str) -> bool:
 
 
 _PRESERVED_RECIPIENT_TOKENS = frozenset({"user", "@user", "@all", "@peers", "@foreman"})
+_GENERIC_ATTACHMENT_FILENAMES = frozenset({"", "file", "unknown", "attachment"})
+
+
+def _is_generic_attachment_filename(value: str) -> bool:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return True
+    stem = Path(raw).stem.strip().lower()
+    return raw in _GENERIC_ATTACHMENT_FILENAMES or stem in _GENERIC_ATTACHMENT_FILENAMES
+
+
+def _guess_extension_from_mime_type(mime_type: str) -> str:
+    normalized = str(mime_type or "").strip().lower()
+    if not normalized:
+        return ""
+    if normalized == "image/jpeg":
+        return ".jpg"
+    guessed = mimetypes.guess_extension(normalized) or ""
+    return guessed if guessed.startswith(".") else ""
 
 
 def _sniff_attachment_content_type(raw: bytes) -> Tuple[str, str]:
@@ -77,6 +97,14 @@ def _sniff_attachment_content_type(raw: bytes) -> Tuple[str, str]:
         text_head = ""
     if text_head.startswith("<svg") or text_head.startswith("<?xml") and "<svg" in text_head:
         return ("image/svg+xml", ".svg")
+    if text_head:
+        lines = [line.strip() for line in text_head.splitlines() if line.strip()]
+        if lines:
+            has_ini_header = any(line.startswith("[") and "]" in line for line in lines[:3])
+            has_key_value = any("=" in line for line in lines[:8])
+            if has_ini_header and has_key_value:
+                return ("text/plain", ".ini")
+            return ("text/plain", ".txt")
     return ("", "")
 
 
@@ -87,14 +115,12 @@ def _normalize_inbound_attachment_metadata(
     mime_type: str,
     kind: str,
 ) -> Tuple[str, str, str]:
-    normalized_filename = str(filename or "").strip() or "file"
+    raw_filename = str(filename or "").strip()
+    normalized_filename = raw_filename or "file"
     normalized_mime_type = str(mime_type or "").strip().lower()
     normalized_kind = str(kind or "").strip().lower() or "file"
 
-    sniffed_mime_type = ""
-    sniffed_ext = ""
-    if not normalized_mime_type or normalized_kind != "image":
-        sniffed_mime_type, sniffed_ext = _sniff_attachment_content_type(raw)
+    sniffed_mime_type, sniffed_ext = _sniff_attachment_content_type(raw)
 
     effective_mime_type = normalized_mime_type or sniffed_mime_type
     effective_kind = normalized_kind
@@ -103,11 +129,27 @@ def _normalize_inbound_attachment_metadata(
     elif sniffed_mime_type.startswith("image/"):
         effective_kind = "image"
 
+    if _is_generic_attachment_filename(normalized_filename):
+        inferred_ext = sniffed_ext or _guess_extension_from_mime_type(effective_mime_type)
+        normalized_filename = f"file{inferred_ext}" if inferred_ext else "file"
+
     has_suffix = bool(Path(normalized_filename).suffix)
     if effective_kind == "image" and not has_suffix and sniffed_ext:
         normalized_filename = f"{normalized_filename}{sniffed_ext}"
 
     return (normalized_filename, effective_mime_type, effective_kind)
+
+
+def _normalize_inbound_attachment_message_text(msg_text: str, stored_attachments: List[Dict[str, Any]]) -> str:
+    normalized_text = str(msg_text or "").strip()
+    if len(stored_attachments) != 1:
+        return normalized_text
+    title = str(stored_attachments[0].get("title") or "").strip() or "file"
+    if not normalized_text:
+        return f"[file] {title}"
+    if re.fullmatch(r"\[file(?::\s*(unknown|file))?\]", normalized_text, flags=re.IGNORECASE):
+        return f"[file] {title}"
+    return normalized_text
 
 
 def _acquire_singleton_lock(lock_path: Path) -> Optional[Any]:
@@ -771,17 +813,12 @@ class IMBridge:
                 if targets is not None:
                     handle = targets.get(target_key)
                     if handle is not None:
-                        if not text:
-                            targets.pop(target_key, None)
-                            if not targets:
-                                self._active_streams.pop(stream_id, None)
-                            continue
                         end_ok = False
                         try:
                             end_ok = bool(self.adapter.end_stream(handle, text=text))
                         except Exception:
                             self._log(f"[stream] end_stream exception for stream={stream_id} target={target_key}")
-                        if end_ok:
+                        if end_ok and text:
                             completed = self._completed_stream_targets.setdefault(stream_id, set())
                             completed.add(target_key)
                         targets.pop(target_key, None)
@@ -1344,6 +1381,8 @@ class IMBridge:
                         kind=normalized_kind,
                     )
                 )
+
+        msg_text = _normalize_inbound_attachment_message_text(msg_text, stored_attachments)
 
         if not msg_text and stored_attachments:
             if len(stored_attachments) == 1:

@@ -145,7 +145,7 @@ class TestBridgeStreamForwarding(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_forward_stream_end_with_empty_text_skips_adapter_and_keeps_fallback(self) -> None:
+    def test_forward_stream_end_with_empty_text_closes_adapter_and_keeps_fallback(self) -> None:
         adapter = FakeStreamAdapter()
         bridge, cleanup = self._make_bridge(adapter)
         try:
@@ -165,7 +165,8 @@ class TestBridgeStreamForwarding(unittest.TestCase):
 
             self.assertNotIn("s3-empty", bridge._active_streams)
             self.assertNotIn("s3-empty", bridge._completed_stream_targets)
-            self.assertEqual(len(adapter.streams_ended), 0)
+            self.assertEqual(len(adapter.streams_ended), 1)
+            self.assertEqual(adapter.streams_ended[0]["text"], "")
 
             bridge._forward_event({
                 "kind": "chat.message",
