@@ -1,5 +1,6 @@
 """Tests for WecomAdapter core functionality (Steps 7-13)."""
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -570,6 +571,25 @@ class TestWecomRespondHandles(unittest.TestCase):
         adapter._enqueue_message(data)
         self.assertEqual(adapter._get_reply_req_id("conv_1"), "req_abc123")
 
+    def test_enqueue_captures_response_url(self):
+        adapter = self._make_adapter()
+        data = {
+            "cmd": "aibot_msg_callback",
+            "headers": {"req_id": "req_abc123"},
+            "body": {
+                "chatid": "conv_1",
+                "msgid": "msg_1",
+                "chattype": "single",
+                "msgtype": "text",
+                "text": {"content": "hello"},
+                "response_url": "https://bot.example.test/response",
+                "from": {"userid": "u1"},
+            },
+        }
+        adapter._enqueue_message(data)
+        self.assertEqual(adapter._get_reply_req_id("conv_1"), "req_abc123")
+        self.assertEqual(adapter._get_response_url("conv_1"), "https://bot.example.test/response")
+
     def test_reply_req_id_does_not_artificially_expire(self):
         adapter = self._make_adapter()
         adapter._store_reply_ref("conv_1", "req_old")
@@ -660,7 +680,7 @@ class TestWecomSendMessage(unittest.TestCase):
     def test_send_via_ws_respond(self):
         adapter = self._make_adapter()
         adapter._store_reply_ref("conv_1", "req_test")
-        with patch.object(adapter, "_ws_send", return_value=True) as mock_ws:
+        with patch.object(adapter, "_ws_send_and_wait_ack", return_value=(True, {"errcode": 0})) as mock_ws:
             result = adapter.send_message("conv_1", "hello")
             self.assertTrue(result)
             mock_ws.assert_called_once()
@@ -679,7 +699,18 @@ class TestWecomSendMessage(unittest.TestCase):
     def test_send_returns_false_when_ws_fails(self):
         adapter = self._make_adapter()
         adapter._store_reply_ref("conv_1", "req_test")
-        with patch.object(adapter, "_ws_send", return_value=False):
+        with patch.object(adapter, "_ws_send_and_wait_ack", return_value=(False, None)):
+            result = adapter.send_message("conv_1", "hello")
+            self.assertFalse(result)
+
+    def test_send_returns_false_when_ack_rejects(self):
+        adapter = self._make_adapter()
+        adapter._store_reply_ref("conv_1", "req_test")
+        with patch.object(
+            adapter,
+            "_ws_send_and_wait_ack",
+            return_value=(False, {"errcode": 40008, "errmsg": "invalid message type"}),
+        ):
             result = adapter.send_message("conv_1", "hello")
             self.assertFalse(result)
 
@@ -721,6 +752,8 @@ class TestWecomAttachments(unittest.TestCase):
         def fake_urlopen(req, timeout=0):
             self.assertIn("/media/get?", req.full_url)
             self.assertIn("media_id=media_abc", req.full_url)
+            self.assertIn("bot_id=corp", req.full_url)
+            self.assertIn("secret=sec", req.full_url)
             self.assertEqual(timeout, 60)
             return _FakeHttpResponse(b"image-bytes")
 
@@ -787,21 +820,12 @@ class TestWecomAttachments(unittest.TestCase):
         adapter = self._make_adapter()
         adapter._store_reply_ref("conv_1", "req_test")
 
-        requests: list[object] = []
-
-        def fake_urlopen(req, timeout=0):
-            requests.append(req)
-            self.assertIn("/media/upload?", req.full_url)
-            self.assertIn("type=image", req.full_url)
-            self.assertEqual(timeout, 60)
-            return _FakeHttpResponse(b'{"errcode":0,"media_id":"media_uploaded"}')
-
         with tempfile.TemporaryDirectory() as td:
             image_path = Path(td) / "photo.png"
             image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
 
-            with patch("cccc.ports.im.adapters.wecom.urllib.request.urlopen", side_effect=fake_urlopen):
-                with patch.object(adapter, "_ws_send", return_value=True) as mock_ws:
+            with patch("cccc.ports.im.adapters.wecom.urllib.request.urlopen") as mock_urlopen:
+                with patch.object(adapter, "_ws_send_and_wait_ack", return_value=(True, {"errcode": 0})) as mock_ws:
                     with patch.object(adapter, "send_message", return_value=True) as mock_caption:
                         ok = adapter.send_file(
                             "conv_1",
@@ -811,42 +835,62 @@ class TestWecomAttachments(unittest.TestCase):
                         )
 
         self.assertTrue(ok)
-        self.assertEqual(len(requests), 1)
+        mock_urlopen.assert_not_called()
         payload = mock_ws.call_args[0][0]
         self.assertEqual(payload["cmd"], "aibot_respond_msg")
         self.assertEqual(payload["headers"]["req_id"], "req_test")
-        self.assertEqual(payload["body"]["msgtype"], "image")
-        self.assertEqual(payload["body"]["image"]["media_id"], "media_uploaded")
-        mock_caption.assert_called_once_with("conv_1", "caption text")
+        self.assertEqual(payload["body"]["msgtype"], "stream")
+        self.assertEqual(payload["body"]["stream"]["content"], "caption text")
+        self.assertEqual(payload["body"]["stream"]["msg_item"][0]["msgtype"], "image")
+        self.assertTrue(payload["body"]["stream"]["msg_item"][0]["image"]["base64"])
+        self.assertEqual(len(payload["body"]["stream"]["msg_item"][0]["image"]["md5"]), 32)
+        mock_caption.assert_not_called()
 
-    def test_send_file_uploads_regular_file(self):
+    def test_send_file_uploads_regular_file_via_media_api(self):
         adapter = self._make_adapter()
-        adapter._store_reply_ref("conv_1", "req_test")
+        adapter._store_reply_ref("conv_1", req_id="req_test")
 
-        def fake_urlopen(req, timeout=0):
-            self.assertIn("/media/upload?", req.full_url)
-            self.assertIn("type=file", req.full_url)
-            self.assertEqual(timeout, 60)
-            return _FakeHttpResponse(b'{"errcode":0,"media_id":"media_file"}')
+        ws_calls: list[dict] = []
+
+        def fake_ws_send_and_wait_ack(payload, *, timeout=5.0):
+            ws_calls.append(payload)
+            cmd = payload.get("cmd", "")
+            if cmd == "aibot_respond_msg":
+                return True, {"errcode": 0}
+            return True, {"errcode": 0}
+
+        # Mock HTTP upload response
+        upload_response = json.dumps({"errcode": 0, "media_id": "media_file"}).encode()
+        mock_resp = unittest.mock.MagicMock()
+        mock_resp.read.return_value = upload_response
+        mock_resp.status = 200
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = unittest.mock.MagicMock(return_value=False)
 
         with tempfile.TemporaryDirectory() as td:
             file_path = Path(td) / "report.pdf"
             file_path.write_bytes(b"%PDF-1.4")
 
-            with patch("cccc.ports.im.adapters.wecom.urllib.request.urlopen", side_effect=fake_urlopen):
-                with patch.object(adapter, "_ws_send", return_value=True) as mock_ws:
-                    ok = adapter.send_file(
-                        "conv_1",
-                        file_path=file_path,
-                        filename="report.pdf",
-                    )
+            with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+                with patch.object(adapter, "_ws_send_and_wait_ack", side_effect=fake_ws_send_and_wait_ack) as mock_ws:
+                    with patch.object(adapter, "send_message", return_value=True) as mock_caption:
+                        ok = adapter.send_file(
+                            "conv_1",
+                            file_path=file_path,
+                            filename="report.pdf",
+                            caption="caption text",
+                        )
 
         self.assertTrue(ok)
-        payload = mock_ws.call_args[0][0]
-        self.assertEqual(payload["body"]["msgtype"], "file")
-        self.assertEqual(payload["body"]["file"]["media_id"], "media_file")
-        self.assertEqual(payload["body"]["file"]["filename"], "report.pdf")
-
+        # HTTP upload should have been called
+        mock_urlopen.assert_called_once()
+        # WS respond_msg should contain file msgtype with correct media_id
+        respond = [c for c in ws_calls if c.get("cmd") == "aibot_respond_msg"]
+        self.assertEqual(len(respond), 1)
+        self.assertEqual(respond[0]["body"]["msgtype"], "file")
+        self.assertEqual(respond[0]["body"]["file"]["media_id"], "media_file")
+        self.assertEqual(respond[0]["body"]["file"]["filename"], "report.pdf")
+        mock_caption.assert_called_once_with("conv_1", "caption text")
 
 class TestWecomStreaming(unittest.TestCase):
     """Step 11: Streaming reply tests."""
@@ -865,7 +909,7 @@ class TestWecomStreaming(unittest.TestCase):
     def test_begin_stream_returns_handle(self):
         adapter = self._make_adapter()
         adapter._store_reply_ref("conv_1", "req_stream")
-        with patch.object(adapter, "_ws_send", return_value=True):
+        with patch.object(adapter, "_ws_send_and_wait_ack", return_value=(True, {"errcode": 0})):
             handle = adapter.begin_stream("conv_1", "s1", text="starting...")
             self.assertIsNotNone(handle)
             self.assertEqual(handle["stream_id"], "s1")
@@ -874,7 +918,7 @@ class TestWecomStreaming(unittest.TestCase):
     def test_update_stream_sends_intermediate(self):
         adapter = self._make_adapter()
         handle = {"stream_id": "s1", "platform_handle": {"req_id": "req_test", "stream_id": "s1"}}
-        with patch.object(adapter, "_ws_send", return_value=True) as mock_ws:
+        with patch.object(adapter, "_ws_send_and_wait_ack", return_value=(True, {"errcode": 0})) as mock_ws:
             result = adapter.update_stream(handle, text="chunk 1")
             self.assertTrue(result)
             payload = mock_ws.call_args[0][0]
@@ -884,7 +928,7 @@ class TestWecomStreaming(unittest.TestCase):
     def test_end_stream_sends_final(self):
         adapter = self._make_adapter()
         handle = {"stream_id": "s1", "platform_handle": {"req_id": "req_test", "stream_id": "s1"}}
-        with patch.object(adapter, "_ws_send", return_value=True) as mock_ws:
+        with patch.object(adapter, "_ws_send_and_wait_ack", return_value=(True, {"errcode": 0})) as mock_ws:
             result = adapter.end_stream(handle, text="final text")
             self.assertTrue(result)
             payload = mock_ws.call_args[0][0]
@@ -900,6 +944,58 @@ class TestWecomStreaming(unittest.TestCase):
         adapter = self._make_adapter()
         handle = {"stream_id": "s1", "platform_handle": {}}
         self.assertFalse(adapter.end_stream(handle, text="x"))
+
+
+class _AckingWebSocket:
+    def __init__(self, adapter, ack_frame):
+        self.adapter = adapter
+        self.ack_frame = ack_frame
+
+    def send(self, payload: str) -> None:
+        _ = payload
+        threading.Thread(
+            target=lambda: self.adapter._resolve_reply_ack(self.ack_frame),
+            daemon=True,
+        ).start()
+
+
+class TestWecomReplyAck(unittest.TestCase):
+    def _make_adapter(self):
+        from cccc.ports.im.adapters.wecom import WecomAdapter
+        adapter = WecomAdapter(bot_id="corp", secret="sec")
+        adapter._connected = True
+        return adapter
+
+    def test_ws_send_and_wait_ack_returns_true_on_success(self):
+        adapter = self._make_adapter()
+        frame = {
+            "cmd": "aibot_respond_msg",
+            "headers": {"req_id": "req_ok"},
+            "body": {"msgtype": "stream", "stream": {"id": "s1", "finish": True, "content": "ok"}},
+        }
+        adapter._ws_app = _AckingWebSocket(adapter, {"headers": {"req_id": "req_ok"}, "errcode": 0})
+
+        ok, ack = adapter._ws_send_and_wait_ack(frame, timeout=0.5)
+
+        self.assertTrue(ok)
+        self.assertEqual(ack["errcode"], 0)
+
+    def test_ws_send_and_wait_ack_returns_false_on_rejection(self):
+        adapter = self._make_adapter()
+        frame = {
+            "cmd": "aibot_respond_msg",
+            "headers": {"req_id": "req_bad"},
+            "body": {"msgtype": "stream", "stream": {"id": "s1", "finish": True, "content": "bad"}},
+        }
+        adapter._ws_app = _AckingWebSocket(
+            adapter,
+            {"headers": {"req_id": "req_bad"}, "errcode": 40008, "errmsg": "invalid message type"},
+        )
+
+        ok, ack = adapter._ws_send_and_wait_ack(frame, timeout=0.5)
+
+        self.assertFalse(ok)
+        self.assertEqual(ack["errcode"], 40008)
 
 
 class TestWecomDisconnect(unittest.TestCase):

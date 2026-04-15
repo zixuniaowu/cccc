@@ -313,6 +313,43 @@ class TestWebImStart(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_im_status_reports_disabled_after_stop(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("im-status-disabled-after-stop")
+
+            with TestClient(create_app()) as client:
+                set_resp = client.post(
+                    "/api/im/set",
+                    json={
+                        "group_id": gid,
+                        "platform": "weixin",
+                    },
+                )
+                self.assertEqual(set_resp.status_code, 200)
+                self.assertTrue(bool(set_resp.json().get("ok")))
+
+                start_resp = client.post("/api/im/start", json={"group_id": gid})
+                self.assertEqual(start_resp.status_code, 200)
+                self.assertTrue(bool(start_resp.json().get("ok")))
+
+                stop_resp = client.post("/api/im/stop", json={"group_id": gid})
+                self.assertEqual(stop_resp.status_code, 200)
+                self.assertTrue(bool(stop_resp.json().get("ok")))
+
+                status_resp = client.get(f"/api/im/status?group_id={gid}")
+                self.assertEqual(status_resp.status_code, 200)
+                payload = status_resp.json()
+                self.assertTrue(bool(payload.get("ok")))
+                result = payload.get("result") or {}
+                self.assertTrue(bool(result.get("configured")))
+                self.assertFalse(bool(result.get("enabled")))
+                self.assertFalse(bool(result.get("running")))
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -318,6 +318,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             "result": {
                 "group_id": group_id,
                 "configured": bool(im_config),
+                "enabled": coerce_bool(im_config.get("enabled"), default=False) if im_config else False,
                 "platform": platform,
                 "running": running,
                 "pid": pid,

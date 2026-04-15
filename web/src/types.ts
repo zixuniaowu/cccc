@@ -1023,6 +1023,7 @@ export type IMConfig = {
 export type IMStatus = {
   group_id: string;
   configured: boolean;
+  enabled: boolean;
   platform?: string;
   running: boolean;
   pid?: number;

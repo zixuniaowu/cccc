@@ -337,6 +337,10 @@ export function SettingsModal({
     if (!groupId) return;
     if (!weixinLoginStatus?.logged_in) return;
     if (!imStatus?.configured || String(imStatus.platform || "") !== "weixin") return;
+    if (!imStatus.enabled) {
+      weixinAutoStartRef.current = false;
+      return;
+    }
     if (imStatus.running) {
       weixinAutoStartRef.current = false;
       return;

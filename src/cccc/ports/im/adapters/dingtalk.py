@@ -1370,6 +1370,11 @@ class DingTalkAdapter(IMAdapter):
                 self._get_token,
                 robot_code=self.robot_code,
             )
+        else:
+            try:
+                self._card_client._robot_code = self.robot_code
+            except Exception:
+                pass
         return self._card_client
 
     @staticmethod

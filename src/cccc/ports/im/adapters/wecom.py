@@ -14,15 +14,17 @@ Features:
 
 from __future__ import annotations
 
+import base64
 import json
+import hashlib
 import mimetypes
 import os
 import random
 import threading
 import time
+import uuid
 import urllib.parse
 import urllib.request
-import uuid
 from base64 import b64decode
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -39,6 +41,7 @@ DEFAULT_MAX_LINES = 64
 # WebSocket defaults
 WECOM_WS_URL = "wss://openws.work.weixin.qq.com"
 WECOM_API_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
+WECOM_ACTIVE_STREAM_IMAGE_MAX_BYTES = 2 * 1024 * 1024
 WS_HEARTBEAT_INTERVAL = 25  # seconds
 WS_HEARTBEAT_MAX_FAILURES = 3
 WS_RECONNECT_INITIAL = 1.0  # seconds
@@ -115,6 +118,8 @@ class WecomAdapter(IMAdapter):
         self._ws_running = False
         self._ws_app: Any = None  # active WebSocketApp instance
         self._ws_send_lock = threading.Lock()
+        self._reply_ack_waiters: Dict[str, List[Dict[str, Any]]] = {}
+        self._reply_ack_lock = threading.Lock()
 
         # Early failure detection (Feishu pattern)
         self._ws_started = threading.Event()
@@ -123,7 +128,7 @@ class WecomAdapter(IMAdapter):
         # Deduplication
         self._seen_msg_ids: Dict[str, float] = {}
 
-        # Reply refs: chat_id → {"req_id": str, "ts": float}
+        # Reply refs: chat_id → {"req_id": str, "response_url": str, "ts": float}
         self._reply_refs: Dict[str, Dict[str, Any]] = {}
         self._reply_lock = threading.Lock()
 
@@ -137,15 +142,21 @@ class WecomAdapter(IMAdapter):
             except Exception:
                 pass
 
-    def _store_reply_ref(self, chat_id: str, req_id: str) -> None:
-        """Store the latest callback req_id for outbound replies."""
-        if not chat_id or not req_id:
+    def _store_reply_ref(self, chat_id: str, req_id: str = "", response_url: str = "") -> None:
+        """Store the latest callback refs for outbound replies."""
+        normalized_chat_id = str(chat_id or "").strip()
+        normalized_req_id = str(req_id or "").strip()
+        normalized_response_url = str(response_url or "").strip()
+        if not normalized_chat_id or (not normalized_req_id and not normalized_response_url):
             return
         with self._reply_lock:
-            self._reply_refs[chat_id] = {
-                "req_id": req_id,
-                "ts": time.time(),
-            }
+            entry = dict(self._reply_refs.get(normalized_chat_id) or {})
+            if normalized_req_id:
+                entry["req_id"] = normalized_req_id
+            if normalized_response_url:
+                entry["response_url"] = normalized_response_url
+            entry["ts"] = time.time()
+            self._reply_refs[normalized_chat_id] = entry
             if len(self._reply_refs) > REPLY_REF_MAX_ENTRIES:
                 sorted_items = sorted(
                     self._reply_refs.items(),
@@ -153,13 +164,61 @@ class WecomAdapter(IMAdapter):
                 )
                 self._reply_refs = dict(sorted_items[-REPLY_REF_MAX_ENTRIES:])
 
+    def _get_reply_ref(self, chat_id: str) -> Dict[str, Any]:
+        with self._reply_lock:
+            return dict(self._reply_refs.get(chat_id) or {})
+
     def _get_reply_req_id(self, chat_id: str) -> str:
         """Get the latest callback req_id for the given chat_id."""
-        with self._reply_lock:
-            entry = self._reply_refs.get(chat_id)
-            if not entry:
-                return ""
-            return str(entry.get("req_id") or "")
+        return str(self._get_reply_ref(chat_id).get("req_id") or "")
+
+    def _get_response_url(self, chat_id: str) -> str:
+        """Get the latest response_url for the given chat_id."""
+        return str(self._get_reply_ref(chat_id).get("response_url") or "")
+
+    def _extract_response_url(self, payload: Dict[str, Any]) -> str:
+        for raw in (
+            payload.get("response_url"),
+            payload.get("responseUrl"),
+            payload.get("reply_url"),
+            payload.get("replyUrl"),
+        ):
+            normalized = str(raw or "").strip()
+            if normalized:
+                return normalized
+        return ""
+
+    def _post_json(self, url: str, payload: Dict[str, Any], *, timeout: int = 10) -> bool:
+        req = urllib.request.Request(
+            str(url or "").strip(),
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Accept", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status = int(getattr(resp, "status", 200) or 200)
+                raw = resp.read().decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            self._log(f"[response_url] POST failed: {e}")
+            return False
+        if status < 200 or status >= 300:
+            self._log(f"[response_url] Unexpected HTTP status: {status}")
+            return False
+        if not raw:
+            return True
+        try:
+            result = json.loads(raw)
+        except Exception:
+            return True
+        errcode = result.get("errcode")
+        if errcode in (None, "", 0, "0"):
+            return True
+        self._log(
+            f"[response_url] Rejected: errcode={errcode} errmsg={result.get('errmsg') or 'unknown'}"
+        )
+        return False
 
     # -- WebSocket send helper --
 
@@ -175,6 +234,76 @@ class WecomAdapter(IMAdapter):
             except Exception as e:
                 self._log(f"[ws_send] Error: {e}")
                 return False
+
+    def _resolve_reply_ack(self, frame: Dict[str, Any]) -> bool:
+        req_id = str(((frame or {}).get("headers") or {}).get("req_id") or "").strip()
+        if not req_id:
+            return False
+
+        with self._reply_ack_lock:
+            queue = self._reply_ack_waiters.get(req_id) or []
+            if not queue:
+                return False
+            waiter = queue.pop(0)
+            if queue:
+                self._reply_ack_waiters[req_id] = queue
+            else:
+                self._reply_ack_waiters.pop(req_id, None)
+
+        waiter["frame"] = dict(frame or {})
+        waiter["event"].set()
+        return True
+
+    def _ws_send_and_wait_ack(
+        self,
+        payload: Dict[str, Any],
+        *,
+        timeout: float = 5.0,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        req_id = str((payload.get("headers") or {}).get("req_id") or "").strip()
+        if not req_id:
+            return self._ws_send(payload), None
+
+        waiter: Dict[str, Any] = {"event": threading.Event(), "frame": None}
+        with self._reply_ack_lock:
+            self._reply_ack_waiters.setdefault(req_id, []).append(waiter)
+
+        if not self._ws_send(payload):
+            with self._reply_ack_lock:
+                queue = self._reply_ack_waiters.get(req_id) or []
+                if waiter in queue:
+                    queue.remove(waiter)
+                if queue:
+                    self._reply_ack_waiters[req_id] = queue
+                else:
+                    self._reply_ack_waiters.pop(req_id, None)
+            return False, None
+
+        if not waiter["event"].wait(timeout):
+            with self._reply_ack_lock:
+                queue = self._reply_ack_waiters.get(req_id) or []
+                if waiter in queue:
+                    queue.remove(waiter)
+                if queue:
+                    self._reply_ack_waiters[req_id] = queue
+                else:
+                    self._reply_ack_waiters.pop(req_id, None)
+            self._log(f"[ws_ack] Timeout waiting for ack req_id={req_id}")
+            return False, None
+
+        frame = waiter.get("frame")
+        if not isinstance(frame, dict):
+            self._log(f"[ws_ack] Invalid ack payload req_id={req_id}")
+            return False, None
+
+        errcode = int(frame.get("errcode", 0) or 0)
+        if errcode != 0:
+            self._log(
+                f"[ws_ack] Rejected req_id={req_id} errcode={errcode} "
+                f"errmsg={frame.get('errmsg') or 'unknown'}"
+            )
+            return False, frame
+        return True, frame
 
     def _build_subscribe_frame(self) -> Dict[str, Any]:
         return {
@@ -206,6 +335,13 @@ class WecomAdapter(IMAdapter):
             return "image/png"
         guessed, _ = mimetypes.guess_type(filename or "")
         return guessed or "application/octet-stream"
+
+    def _supports_stream_msg_item_image(self, raw: bytes) -> bool:
+        if not raw or len(raw) < 3:
+            return False
+        if raw[:3] == b"\xff\xd8\xff":
+            return True
+        return len(raw) >= 8 and raw[:8] == b"\x89PNG\r\n\x1a\n"
 
     def _build_media_api_url(self, path: str, **query: str) -> str:
         params = {
@@ -257,6 +393,7 @@ class WecomAdapter(IMAdapter):
         return self._strip_pkcs7_padding(decrypted)
 
     def _upload_media(self, raw: bytes, filename: str, media_type: str) -> str:
+        """Upload media via HTTP multipart to /media/upload (bot_id+secret auth)."""
         boundary = "----cccc" + uuid.uuid4().hex
         safe_fn = (filename or "file").replace("\\", "_").replace("/", "_")
         content_type = self._guess_content_type(safe_fn, media_type)
@@ -289,6 +426,7 @@ class WecomAdapter(IMAdapter):
         media_id = str(result.get("media_id") or "").strip()
         if not media_id:
             raise ValueError("upload response missing media_id")
+        self._log(f"[upload] media_id={media_id} type={media_type} size={len(raw)}")
         return media_id
 
     def _send_media_reply(self, chat_id: str, *, msgtype: str, body: Dict[str, Any]) -> bool:
@@ -299,7 +437,48 @@ class WecomAdapter(IMAdapter):
                 "Ask the user to send any message in that chat to re-establish outbound replies."
             )
             return False
-        return self._ws_send(self._build_reply_frame(req_id=req_id, body={"msgtype": msgtype, **body}))
+        ok, _ = self._ws_send_and_wait_ack(
+            self._build_reply_frame(req_id=req_id, body={"msgtype": msgtype, **body})
+        )
+        return ok
+
+    def _send_stream_msg_item_image(self, chat_id: str, *, raw: bytes, caption: str = "") -> bool:
+        req_id = self._get_reply_req_id(chat_id)
+        if not req_id:
+            self._log(
+                f"[send_file] No callback req_id for chat={chat_id}, cannot send image msg_item. "
+                "Ask the user to send any message in that chat to re-establish outbound replies."
+            )
+            return False
+        if len(raw) > WECOM_ACTIVE_STREAM_IMAGE_MAX_BYTES:
+            self._log(f"[send_file] Image too large for stream msg_item: {len(raw)} bytes")
+            return False
+        if not self._supports_stream_msg_item_image(raw):
+            self._log("[send_file] Unsupported stream msg_item image format (jpg/png only)")
+            return False
+
+        safe_caption = self._compose_safe(caption)
+        body = {
+            "msgtype": "stream",
+            "stream": {
+                "id": self._next_stream_id(),
+                "finish": True,
+                "content": safe_caption,
+                "msg_item": [
+                    {
+                        "msgtype": "image",
+                        "image": {
+                            "base64": base64.b64encode(raw).decode("ascii"),
+                            "md5": hashlib.md5(raw).hexdigest(),
+                        },
+                    }
+                ],
+            },
+        }
+        ok, _ = self._ws_send_and_wait_ack(self._build_reply_frame(req_id=req_id, body=body))
+        if ok:
+            self._log(f"[send_file] Sent image via stream msg_item (chat={chat_id})")
+        return ok
 
     # -- WebSocket connection --
 
@@ -411,6 +590,9 @@ class WecomAdapter(IMAdapter):
                         else:
                             errmsg = str(data.get("errmsg") or "subscribe failed")
                             error_holder.append(f"Authentication failed: {errmsg}")
+                    elif self._resolve_reply_ack(data):
+                        heartbeat_failures = 0
+                        awaiting_ping_ack = False
                     else:
                         heartbeat_failures = 0
                         awaiting_ping_ack = False
@@ -688,8 +870,9 @@ class WecomAdapter(IMAdapter):
             if not self._should_enqueue_message(conversation_id, msg_id):
                 return
 
-            if req_id and conversation_id:
-                self._store_reply_ref(conversation_id, req_id)
+            response_url = self._extract_response_url(payload)
+            if conversation_id and (req_id or response_url):
+                self._store_reply_ref(conversation_id, req_id=req_id, response_url=response_url)
 
             # Extract text based on msg_type
             msg_type = str(payload.get("msg_type") or payload.get("msgtype") or "text").strip()
@@ -851,7 +1034,7 @@ class WecomAdapter(IMAdapter):
             )
             return False
 
-        ok = self._ws_send(self._build_reply_frame(
+        ok, _ = self._ws_send_and_wait_ack(self._build_reply_frame(
             req_id=req_id,
             body={
                 "msgtype": "stream",
@@ -932,10 +1115,16 @@ class WecomAdapter(IMAdapter):
 
         ext = file_path.suffix.lower()
         is_image = ext in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
-        media_type = "image" if is_image else "file"
+        inline_stream_image = ext in {".png", ".jpg", ".jpeg"}
 
         self._rate_limiter.wait_and_acquire(chat_id)
 
+        if inline_stream_image:
+            ok = self._send_stream_msg_item_image(chat_id, raw=raw, caption=caption)
+            if ok:
+                return True
+
+        media_type = "image" if is_image else "file"
         try:
             media_id = self._upload_media(raw, filename or file_path.name, media_type)
         except Exception as e:
@@ -996,7 +1185,7 @@ class WecomAdapter(IMAdapter):
             },
         }
         if text:
-            ok = self._ws_send(self._build_reply_frame(req_id=req_id, body=stream_body))
+            ok, _ = self._ws_send_and_wait_ack(self._build_reply_frame(req_id=req_id, body=stream_body))
             if not ok:
                 self._log(f"[stream] begin_stream WS send failed (chat={chat_id})")
                 return None
@@ -1025,7 +1214,7 @@ class WecomAdapter(IMAdapter):
             return False
         _ = seq
 
-        return self._ws_send(self._build_reply_frame(
+        ok, _ = self._ws_send_and_wait_ack(self._build_reply_frame(
             req_id=req_id,
             body={
                 "msgtype": "stream",
@@ -1036,6 +1225,7 @@ class WecomAdapter(IMAdapter):
                 },
             },
         ))
+        return ok
 
     def end_stream(
         self,
@@ -1052,7 +1242,7 @@ class WecomAdapter(IMAdapter):
         if not req_id or not stream_id:
             return False
 
-        ok = self._ws_send(self._build_reply_frame(
+        ok, _ = self._ws_send_and_wait_ack(self._build_reply_frame(
             req_id=req_id,
             body={
                 "msgtype": "stream",

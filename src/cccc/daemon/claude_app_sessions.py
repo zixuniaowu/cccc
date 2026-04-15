@@ -26,6 +26,10 @@ from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.headless_events import append_headless_event
 from ..kernel.group import load_group
 from ..kernel.system_prompt import render_system_prompt
+from .messaging.headless_bridge import (
+    append_headless_chat_message,
+    append_headless_chat_stream,
+)
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from ..util.fs import atomic_write_json
@@ -113,8 +117,10 @@ class ClaudeAppSession:
         # Streaming text delta tracking (snapshot diffing)
         self._last_text_snapshot = ""
         self._current_stream_id = ""
+        self._current_stream_seq = 0
         self._current_message_id = ""
         self._message_started = False
+        self._materialized_stream_ids: set[str] = set()
 
         # stream_event end-of-turn tracking (for providers that skip result events)
         self._stream_end_turn_pending = False
@@ -211,6 +217,57 @@ class ClaudeAppSession:
         if len(text) <= limit:
             return text
         return text[: max(0, limit - 1)].rstrip() + "…"
+
+    def _bridge_stream_start(self, *, stream_id: str, reply_to: str) -> None:
+        if not stream_id:
+            return
+        self._current_stream_seq = 0
+        append_headless_chat_stream(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            stream_id=stream_id,
+            op="start",
+            text="",
+            seq=0,
+            reply_to=reply_to or None,
+        )
+
+    def _bridge_stream_update(self, *, stream_id: str, text: str, reply_to: str) -> None:
+        if not stream_id:
+            return
+        self._current_stream_seq += 1
+        append_headless_chat_stream(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            stream_id=stream_id,
+            op="update",
+            text=text,
+            seq=self._current_stream_seq,
+            reply_to=reply_to or None,
+        )
+
+    def _bridge_stream_complete(self, *, stream_id: str, text: str, pending_event_id: str) -> None:
+        if not stream_id or stream_id in self._materialized_stream_ids:
+            return
+        self._materialized_stream_ids.add(stream_id)
+        self._current_stream_seq += 1
+        append_headless_chat_stream(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            stream_id=stream_id,
+            op="end",
+            text=text,
+            seq=self._current_stream_seq,
+            reply_to=pending_event_id or None,
+        )
+        append_headless_chat_message(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            text=text,
+            stream_id=stream_id,
+            pending_event_id=pending_event_id or None,
+            reply_to=pending_event_id or None,
+        )
 
     @staticmethod
     def _normalize_string_list(values: list[str]) -> list[str]:
@@ -751,9 +808,11 @@ class ClaudeAppSession:
             # Reset streaming state for new turn
             self._last_text_snapshot = ""
             self._current_stream_id = ""
+            self._current_stream_seq = 0
             self._current_message_id = ""
             self._message_started = False
             self._stream_end_turn_pending = False
+            self._materialized_stream_ids.clear()
             self._active_tool_activities.clear()
             self._tool_activity_context.clear()
 
@@ -1050,6 +1109,7 @@ class ClaudeAppSession:
                                     "stream_id": stream_id,
                                 },
                             )
+                            self._bridge_stream_start(stream_id=stream_id, reply_to=active_event_id)
                         self._last_text_snapshot += text
                         self._emit(
                             "headless.message.delta",
@@ -1059,6 +1119,11 @@ class ClaudeAppSession:
                                 "stream_id": stream_id,
                                 "delta": text,
                             },
+                        )
+                        self._bridge_stream_update(
+                            stream_id=stream_id,
+                            text=self._last_text_snapshot,
+                            reply_to=active_event_id,
                         )
 
         elif inner_type == "message_delta":
@@ -1116,11 +1181,17 @@ class ClaudeAppSession:
                     "text": text,
                 },
             )
+            self._bridge_stream_complete(
+                stream_id=stream_id,
+                text=text,
+                pending_event_id=active_event_id,
+            )
 
         # Reset streaming state so _handle_assistant_event won't re-emit for same turn.
         self._message_started = False
         self._last_text_snapshot = ""
         self._current_stream_id = ""
+        self._current_stream_seq = 0
         self._current_message_id = ""
 
         self._emit(
@@ -1184,6 +1255,7 @@ class ClaudeAppSession:
                         "stream_id": stream_id,
                     },
                 )
+                self._bridge_stream_start(stream_id=stream_id, reply_to=active_event_id)
 
             # Compute delta from snapshot
             delta = accumulated_text[len(self._last_text_snapshot):]
@@ -1197,6 +1269,11 @@ class ClaudeAppSession:
                         "stream_id": stream_id,
                         "delta": delta,
                     },
+                )
+                self._bridge_stream_update(
+                    stream_id=stream_id,
+                    text=accumulated_text,
+                    reply_to=active_event_id,
                 )
 
         # Handle tool use blocks — emit activity events
@@ -1226,9 +1303,15 @@ class ClaudeAppSession:
                     "text": accumulated_text,
                 },
             )
+            self._bridge_stream_complete(
+                stream_id=stream_id,
+                text=accumulated_text,
+                pending_event_id=active_event_id,
+            )
             # Reset for potential next message in same turn
             self._last_text_snapshot = ""
             self._current_stream_id = ""
+            self._current_stream_seq = 0
             self._current_message_id = ""
             self._message_started = False
 

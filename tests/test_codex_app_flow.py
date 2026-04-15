@@ -1039,8 +1039,18 @@ class TestCodexAppFlow(unittest.TestCase):
                 for line in loaded_group.ledger_path.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
+            stream_events = [event for event in ledger_events if str(event.get("kind") or "") == "chat.stream"]
+            self.assertEqual([str((event.get("data") or {}).get("op") or "") for event in stream_events], ["start", "update", "update", "end"])
+            self.assertEqual([str((event.get("data") or {}).get("text") or "") for event in stream_events], ["", "Hel", "Hello", "Hello"])
+            self.assertTrue(all(str((event.get("data") or {}).get("stream_id") or "") == "msg-1" for event in stream_events))
+            self.assertTrue(all(str((event.get("data") or {}).get("reply_to") or "") == "evt-1" for event in stream_events))
             chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
-            self.assertEqual(chat_messages, [])
+            self.assertEqual(len(chat_messages), 1)
+            message_data = chat_messages[0].get("data") if isinstance(chat_messages[0].get("data"), dict) else {}
+            self.assertEqual(str(message_data.get("text") or ""), "Hello")
+            self.assertEqual(str(message_data.get("stream_id") or ""), "msg-1")
+            self.assertEqual(str(message_data.get("pending_event_id") or ""), "evt-1")
+            self.assertEqual(str(message_data.get("reply_to") or ""), "evt-1")
         finally:
             cleanup()
 
@@ -1198,12 +1208,18 @@ class TestCodexAppFlow(unittest.TestCase):
                 for line in loaded_group.ledger_path.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
+            stream_events = [event for event in ledger_events if str(event.get("kind") or "") == "chat.stream"]
+            self.assertEqual([str((event.get("data") or {}).get("op") or "") for event in stream_events], ["start", "update", "update", "end"])
+            self.assertEqual([str((event.get("data") or {}).get("text") or "") for event in stream_events], ["", "Hel", "Hello", "Hello"])
             chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
-            self.assertEqual(chat_messages, [])
+            self.assertEqual(len(chat_messages), 1)
+            message_data = chat_messages[0].get("data") if isinstance(chat_messages[0].get("data"), dict) else {}
+            self.assertEqual(str(message_data.get("text") or ""), "Hello")
+            self.assertEqual(str(message_data.get("stream_id") or ""), "msg-fallback")
         finally:
             cleanup()
 
-    def test_claude_stream_completion_does_not_auto_materialize_chat_message(self) -> None:
+    def test_claude_stream_completion_materializes_user_facing_stream_and_chat_message(self) -> None:
         from cccc.daemon.claude_app_sessions import ClaudeAppSession
         from cccc.kernel.headless_events import headless_events_path
         from cccc.kernel.group import create_group, load_group
@@ -1249,8 +1265,15 @@ class TestCodexAppFlow(unittest.TestCase):
                 for line in loaded_group.ledger_path.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
+            stream_events = [event for event in ledger_events if str(event.get("kind") or "") == "chat.stream"]
+            self.assertEqual([str((event.get("data") or {}).get("op") or "") for event in stream_events], ["start", "update", "end"])
+            self.assertEqual([str((event.get("data") or {}).get("text") or "") for event in stream_events], ["", "Hello", "Hello"])
             chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
-            self.assertEqual(chat_messages, [])
+            self.assertEqual(len(chat_messages), 1)
+            message_data = chat_messages[0].get("data") if isinstance(chat_messages[0].get("data"), dict) else {}
+            self.assertEqual(str(message_data.get("text") or ""), "Hello")
+            self.assertEqual(str(message_data.get("stream_id") or ""), "msg-claude")
+            self.assertEqual(str(message_data.get("pending_event_id") or ""), "evt-claude")
         finally:
             cleanup()
 

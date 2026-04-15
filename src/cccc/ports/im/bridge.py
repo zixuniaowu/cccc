@@ -771,6 +771,11 @@ class IMBridge:
                 if targets is not None:
                     handle = targets.get(target_key)
                     if handle is not None:
+                        if not text:
+                            targets.pop(target_key, None)
+                            if not targets:
+                                self._active_streams.pop(stream_id, None)
+                            continue
                         end_ok = False
                         try:
                             end_ok = bool(self.adapter.end_stream(handle, text=text))

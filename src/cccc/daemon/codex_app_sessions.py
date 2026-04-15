@@ -16,6 +16,11 @@ from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.headless_events import append_headless_event
 from ..kernel.group import load_group
 from ..kernel.system_prompt import render_system_prompt
+from .messaging.headless_bridge import (
+    append_headless_chat_message,
+    append_headless_chat_stream,
+    is_user_facing_stream_phase,
+)
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from ..util.fs import atomic_write_json
@@ -105,6 +110,8 @@ class CodexAppSession:
         self._stderr_thread: Optional[threading.Thread] = None
         self._turn_thread: Optional[threading.Thread] = None
         self._completed_stream_ids: set[str] = set()
+        self._stream_seq_by_id: Dict[str, int] = {}
+        self._stream_text_by_id: Dict[str, str] = {}
         self._plan_activity_id = ""
         self._agent_message_phase_by_stream_id: Dict[str, str] = {}
         self._item_snapshots_by_id: Dict[str, Dict[str, Any]] = {}
@@ -195,6 +202,64 @@ class CodexAppSession:
         if len(text) <= limit:
             return text
         return text[: max(0, limit - 1)].rstrip() + "…"
+
+    def _bridge_stream_start(self, *, stream_id: str, phase: str, reply_to: str) -> None:
+        if not stream_id or not is_user_facing_stream_phase(phase):
+            return
+        self._stream_seq_by_id[stream_id] = 0
+        self._stream_text_by_id[stream_id] = ""
+        append_headless_chat_stream(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            stream_id=stream_id,
+            op="start",
+            text="",
+            seq=0,
+            reply_to=reply_to or None,
+        )
+
+    def _bridge_stream_update(self, *, stream_id: str, phase: str, delta: str, reply_to: str) -> None:
+        if not stream_id or not delta or not is_user_facing_stream_phase(phase):
+            return
+        snapshot = f"{self._stream_text_by_id.get(stream_id, '')}{delta}"
+        self._stream_text_by_id[stream_id] = snapshot
+        seq = int(self._stream_seq_by_id.get(stream_id, 0)) + 1
+        self._stream_seq_by_id[stream_id] = seq
+        append_headless_chat_stream(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            stream_id=stream_id,
+            op="update",
+            text=snapshot,
+            seq=seq,
+            reply_to=reply_to or None,
+        )
+
+    def _bridge_stream_complete(self, *, stream_id: str, phase: str, text: str, pending_event_id: str) -> None:
+        if not stream_id or not is_user_facing_stream_phase(phase):
+            return
+        self._stream_text_by_id[stream_id] = str(text or "")
+        seq = int(self._stream_seq_by_id.get(stream_id, 0)) + 1
+        self._stream_seq_by_id[stream_id] = seq
+        append_headless_chat_stream(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            stream_id=stream_id,
+            op="end",
+            text=text,
+            seq=seq,
+            reply_to=pending_event_id or None,
+        )
+        append_headless_chat_message(
+            group_id=self.group_id,
+            actor_id=self.actor_id,
+            text=text,
+            stream_id=stream_id,
+            pending_event_id=pending_event_id or None,
+            reply_to=pending_event_id or None,
+        )
+        self._stream_seq_by_id.pop(stream_id, None)
+        self._stream_text_by_id.pop(stream_id, None)
 
     def _remember_item_snapshot(self, item: Dict[str, Any]) -> Dict[str, Any]:
         item_id = str(item.get("id") or "").strip()
@@ -808,6 +873,8 @@ class CodexAppSession:
                 self._session_state.updated_at = now
             self._persist_state()
             self._completed_stream_ids.clear()
+            self._stream_seq_by_id.clear()
+            self._stream_text_by_id.clear()
             self._agent_message_phase_by_stream_id.clear()
             self._item_snapshots_by_id.clear()
             self._plan_activity_id = ""
@@ -872,6 +939,11 @@ class CodexAppSession:
                 if phase:
                     payload["phase"] = phase
                 self._emit("headless.message.started", payload)
+                self._bridge_stream_start(
+                    stream_id=item_id,
+                    phase=phase,
+                    reply_to=active_event_id,
+                )
             else:
                 self._emit("headless.item.started", {"turn_id": str(params.get("turnId") or ""), "event_id": active_event_id, "stream_id": item_id, "item": item})
             self._emit_item_activity(status="started", turn_id=str(params.get("turnId") or ""), item=item)
@@ -892,6 +964,12 @@ class CodexAppSession:
             if phase:
                 payload["phase"] = phase
             self._emit("headless.message.delta", payload)
+            self._bridge_stream_update(
+                stream_id=stream_id,
+                phase=phase,
+                delta=delta,
+                reply_to=active_event_id,
+            )
             return
 
         if method == "item/reasoning/summaryTextDelta":
@@ -1034,6 +1112,7 @@ class CodexAppSession:
                 phase = self._agent_message_phase(item_id, item)
                 self._agent_message_phase_by_stream_id.pop(item_id, None)
                 text = str(item.get("text") or "")
+                already_completed = item_id in self._completed_stream_ids
                 if phase != "commentary":
                     self._completed_stream_ids.add(item_id)
                 payload = {
@@ -1045,6 +1124,13 @@ class CodexAppSession:
                 if phase:
                     payload["phase"] = phase
                 self._emit("headless.message.completed", payload)
+                if not already_completed:
+                    self._bridge_stream_complete(
+                        stream_id=item_id,
+                        phase=phase,
+                        text=text,
+                        pending_event_id=active_event_id,
+                    )
                 self._emit_item_activity(status="completed", turn_id=str(params.get("turnId") or ""), item=item)
                 return
             self._emit_item_activity(status="completed", turn_id=str(params.get("turnId") or ""), item=item)
@@ -1064,6 +1150,8 @@ class CodexAppSession:
                 self._session_state.updated_at = now
             self._persist_state()
             self._completed_stream_ids.clear()
+            self._stream_seq_by_id.clear()
+            self._stream_text_by_id.clear()
             self._agent_message_phase_by_stream_id.clear()
             self._item_snapshots_by_id.clear()
             if self._plan_activity_id:
