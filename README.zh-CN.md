@@ -83,6 +83,14 @@ pip install -U --pre \
 
 > **环境要求**: Python 3.9+，macOS / Linux / Windows
 
+### 升级
+
+```bash
+cccc update
+```
+
+如需先查看检测到的安装类型和将要执行的命令，可使用 `cccc update --check`。
+
 ### 启动
 
 ```bash

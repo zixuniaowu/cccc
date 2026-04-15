@@ -236,6 +236,21 @@ cccc setup --runtime codex         # Auto-configure for Codex
 cccc setup --runtime kimi          # Auto-configure for Kimi CLI
 ```
 
+### `cccc update`
+
+Upgrade CCCC in the current Python environment.
+
+```bash
+cccc update                        # Upgrade using the detected channel
+cccc update --channel stable       # Force the stable PyPI channel
+cccc update --channel rc           # Force the TestPyPI RC channel
+cccc update --check                # Show install detection + planned command
+```
+
+Notes:
+- The default channel follows the detected install metadata when possible, then falls back to `stable`.
+- Editable and local-path installs are reported but not updated automatically.
+
 ## Web Commands
 
 ### `cccc web`
