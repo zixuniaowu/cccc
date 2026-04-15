@@ -84,6 +84,14 @@ pip install -U --pre \
 
 > **Requirements**: Python 3.9+, macOS / Linux / Windows
 
+### Upgrade
+
+```bash
+cccc update
+```
+
+Use `cccc update --check` to inspect the detected install type and the command that would run.
+
 ### Launch
 
 ```bash

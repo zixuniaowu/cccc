@@ -361,6 +361,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.add_argument("--path", default=".", help="Project path (default: current directory)")
     p_setup.set_defaults(func=cmd_setup)
 
+    p_update = sub.add_parser("update", help="Update CCCC in the current Python environment")
+    p_update.add_argument(
+        "--channel",
+        choices=["stable", "rc"],
+        default="",
+        help="Release channel override (default: detect current channel, fallback to stable)",
+    )
+    p_update.add_argument("--check", action="store_true", help="Show detected install info and planned command without executing it")
+    p_update.set_defaults(func=cmd_update)
+
     p_doctor = sub.add_parser("doctor", help="Check environment and show available agent runtimes")
     p_doctor.add_argument("--all", action="store_true", help="Show all known runtimes (not just primary ones)")
     p_doctor.set_defaults(func=cmd_doctor)
