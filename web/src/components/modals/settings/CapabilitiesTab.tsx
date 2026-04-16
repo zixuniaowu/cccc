@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
@@ -31,6 +31,8 @@ type ManageQualificationStatus = "qualified" | "blocked";
 
 const SOURCE_PREVIEW_LIMIT = 8;
 const REGISTRY_PAGE_SIZE_OPTIONS = [20, 40, 80];
+const CAPABILITY_OVERVIEW_INITIAL_LIMIT = 40;
+const CAPABILITY_OVERVIEW_QUERY_DEBOUNCE_MS = 250;
 const SELF_PROPOSED_SOURCE_ID = "agent_self_proposed";
 const SELF_PROPOSED_CAPSULE_TEXT_MAX = 2400;
 const SOURCE_PRIORITY: Record<string, number> = {
@@ -167,6 +169,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   const [manageErr, setManageErr] = useState("");
   const [manageNotice, setManageNotice] = useState("");
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
   const [sourceVisibility, setSourceVisibility] = useState<SourceVisibility>("all");
   const [showAllSources, setShowAllSources] = useState(false);
@@ -174,8 +177,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   const [registryPolicy, setRegistryPolicy] = useState<RegistryPolicyFilter>("all");
   const [registrySource, setRegistrySource] = useState("all");
   const [registryPageSize, setRegistryPageSize] = useState(40);
-  const [registryPage, setRegistryPage] = useState(1);
   const [items, setItems] = useState<CapabilityOverviewItem[]>([]);
+  const [registryTotalCount, setRegistryTotalCount] = useState(0);
+  const [registryHasMore, setRegistryHasMore] = useState(false);
   const [groups, setGroups] = useState<GroupMeta[]>([]);
   const [sources, setSources] = useState<Record<string, CapabilitySourceState>>({});
   const [blocked, setBlocked] = useState<CapabilityBlockEntry[]>([]);
@@ -191,6 +195,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   const [manageAssignedActorIds, setManageAssignedActorIds] = useState<string[]>([]);
   const [manageUsage, setManageUsage] = useState<CapabilityUsageSummary | null>(null);
   const [manageUsageLoading, setManageUsageLoading] = useState(false);
+  const overviewRequestSeqRef = useRef(0);
+  const registryListRef = useRef<HTMLDivElement | null>(null);
+  const registryLoadMoreRef = useRef<HTMLDivElement | null>(null);
 
   const closeSelfProposedManager = useCallback(() => {
     setManageCapabilityId("");
@@ -201,41 +208,71 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     setManageNotice("");
   }, []);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedQuery(String(query || "").trim());
+    }, CAPABILITY_OVERVIEW_QUERY_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  const load = useCallback(async (opts?: { append?: boolean }) => {
     if (!isActive) return;
+    const append = opts?.append === true;
+    const requestSeq = overviewRequestSeqRef.current + 1;
+    overviewRequestSeqRef.current = requestSeq;
     setLoading(true);
     setErr("");
     try {
+      const overviewQuery = String(debouncedQuery || "").trim();
+      const nextOffset = append ? items.length : 0;
       const [overviewResp, allowlistResp, groupsResp] = await Promise.all([
-        api.fetchCapabilityOverview({ includeIndexed: true, limit: 1200 }),
-        selfEvolvingSurface ? Promise.resolve(null) : api.fetchCapabilityAllowlist(),
-        selfEvolvingSurface ? Promise.resolve(null) : api.fetchGroups(),
+        api.fetchCapabilityOverview({
+          includeIndexed: true,
+          limit: registryPageSize || CAPABILITY_OVERVIEW_INITIAL_LIMIT,
+          offset: nextOffset,
+          query: overviewQuery || undefined,
+          kind: registryKind,
+          policy: registryPolicy,
+          sourceId: registrySource,
+        }),
+        append || selfEvolvingSurface ? Promise.resolve(null) : api.fetchCapabilityAllowlist(),
+        append || selfEvolvingSurface ? Promise.resolve(null) : api.fetchGroups(),
       ]);
+      if (overviewRequestSeqRef.current != requestSeq) return;
       if (!overviewResp.ok) {
         setErr(overviewResp.error?.message || t("capabilities.failedLoad"));
         setItems([]);
+        setRegistryTotalCount(0);
+        setRegistryHasMore(false);
         setGroups([]);
         setSources({});
         setBlocked([]);
       } else {
-        setItems(Array.isArray(overviewResp.result?.items) ? overviewResp.result.items : []);
-        setSources(
-          overviewResp.result?.sources && typeof overviewResp.result.sources === "object"
-            ? overviewResp.result.sources
-            : {}
-        );
-        setBlocked(
-          Array.isArray(overviewResp.result?.blocked_capabilities)
-            ? overviewResp.result.blocked_capabilities
-            : []
-        );
+        const nextItems = Array.isArray(overviewResp.result?.items) ? overviewResp.result.items : [];
+        setItems((current) => append ? [...current, ...nextItems] : nextItems);
+        setRegistryTotalCount(Math.max(0, Number(overviewResp.result?.total_count || 0)));
+        setRegistryHasMore(Boolean(overviewResp.result?.has_more));
+        if (!append) {
+          setSources(
+            overviewResp.result?.sources && typeof overviewResp.result.sources === "object"
+              ? overviewResp.result.sources
+              : {}
+          );
+          setBlocked(
+            Array.isArray(overviewResp.result?.blocked_capabilities)
+              ? overviewResp.result.blocked_capabilities
+              : []
+          );
+        }
       }
-      if (groupsResp?.ok) {
+      if (!append && groupsResp?.ok) {
         setGroups(Array.isArray(groupsResp.result?.groups) ? groupsResp.result.groups : []);
-      } else if (!selfEvolvingSurface) {
+      } else if (!append && !selfEvolvingSurface) {
         setGroups([]);
       }
-      if (allowlistResp?.ok) {
+      if (!append && allowlistResp?.ok) {
         const effective = allowlistResp.result?.effective && typeof allowlistResp.result.effective === "object"
           ? allowlistResp.result.effective
           : {};
@@ -259,20 +296,50 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         );
       }
     } catch (e) {
+      if (overviewRequestSeqRef.current != requestSeq) return;
       setErr(e instanceof Error ? e.message : t("capabilities.failedLoad"));
-      setItems([]);
-      setGroups([]);
-      setSources({});
-      setBlocked([]);
+      if (!append) {
+        setItems([]);
+        setRegistryTotalCount(0);
+        setRegistryHasMore(false);
+        setGroups([]);
+        setSources({});
+        setBlocked([]);
+      }
     } finally {
-      setLoading(false);
+      if (overviewRequestSeqRef.current === requestSeq) {
+        setLoading(false);
+      }
     }
-  }, [isActive, selfEvolvingSurface, t]);
+  }, [debouncedQuery, isActive, items.length, registryKind, registryPageSize, registryPolicy, registrySource, selfEvolvingSurface, t]);
 
   useEffect(() => {
     if (!isActive) return;
     void load();
   }, [isActive, load]);
+
+  useEffect(() => {
+    const root = registryListRef.current;
+    const target = registryLoadMoreRef.current;
+    if (!root || !target || typeof IntersectionObserver === "undefined") return;
+    if (!isActive || selfEvolvingSurface || !registryHasMore || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) return;
+        void load({ append: true });
+      },
+      {
+        root,
+        rootMargin: "0px 0px 160px 0px",
+        threshold: 0,
+      },
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [isActive, load, loading, registryHasMore, selfEvolvingSurface]);
 
   const sourceRationaleMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -489,7 +556,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   const registrySourceOptions = useMemo(() => {
     const out = new Set<string>();
     out.add(SELF_PROPOSED_SOURCE_ID);
-    for (const row of items) {
+    for (const row of sourceRows) {
       const sid = String(row.source_id || "").trim();
       if (sid) out.add(sid);
     }
@@ -499,7 +566,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       if (aPriority !== bPriority) return aPriority - bPriority;
       return a.localeCompare(b);
     });
-  }, [items]);
+  }, [sourceRows]);
 
   const readinessBadgeClass = (status: string) => {
     if (status === "blocked") {
@@ -556,86 +623,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     );
   };
 
-  const filteredRegistry = useMemo(() => {
-    const q = String(query || "").trim().toLowerCase();
-    const rows = items.filter((row) => {
-      const capId = String(row.capability_id || "").trim();
-      const kind = String(row.kind || "").trim().toLowerCase();
-      const blockedNow = Boolean(row.blocked_global);
-      const policyLevel = String(row.policy_level || "").trim().toLowerCase();
-      const policyVisible = policyLevel !== "indexed";
-      const readinessPreview = normalizeReadinessPreview(row.readiness_preview);
-      const previewStatus = String(readinessPreview?.preview_status || "").trim().toLowerCase();
-      const actionableNow = previewStatus ? previewStatus === "enableable" : (policyVisible && !blockedNow);
-      const blockedByReadiness = blockedNow || previewStatus === "blocked";
-
-      if (registryKind === "pack" && kind !== "pack") return false;
-      if (registryKind === "mcp" && kind !== "mcp_toolpack") return false;
-      if (registryKind === "skill" && kind !== "skill") return false;
-
-      if (registryPolicy === "actionable" && !actionableNow) return false;
-      if (registryPolicy === "blocked" && !blockedByReadiness) return false;
-      if (registryPolicy === "indexed" && policyLevel !== "indexed") return false;
-
-      if (registrySource !== "all" && String(row.source_id || "").trim() !== registrySource) return false;
-
-      if (!q) return true;
-      const text = [
-        capId,
-        String(row.name || ""),
-        String(row.description_short || ""),
-        ...(Array.isArray(row.use_when) ? row.use_when.map((x) => String(x || "")) : []),
-        ...(Array.isArray(row.avoid_when) ? row.avoid_when.map((x) => String(x || "")) : []),
-        ...(Array.isArray(row.gotchas) ? row.gotchas.map((x) => String(x || "")) : []),
-        String(row.evidence_kind || ""),
-        String(row.source_id || ""),
-        ...(Array.isArray(row.tags) ? row.tags.map((x) => String(x || "")) : []),
-      ]
-        .join(" ")
-        .toLowerCase();
-      return text.includes(q);
-    });
-    rows.sort((a, b) => {
-      const aBlocked = (a.blocked_global || String(normalizeReadinessPreview(a.readiness_preview)?.preview_status || "").trim().toLowerCase() === "blocked") ? 1 : 0;
-      const bBlocked = (b.blocked_global || String(normalizeReadinessPreview(b.readiness_preview)?.preview_status || "").trim().toLowerCase() === "blocked") ? 1 : 0;
-      if (aBlocked !== bBlocked) return aBlocked - bBlocked;
-      const aPolicy = String(a.policy_level || "").toLowerCase() === "indexed" ? 1 : 0;
-      const bPolicy = String(b.policy_level || "").toLowerCase() === "indexed" ? 1 : 0;
-      if (aPolicy !== bPolicy) return aPolicy - bPolicy;
-      const aRecent = Number(a.recent_success?.success_count || 0);
-      const bRecent = Number(b.recent_success?.success_count || 0);
-      if (aRecent !== bRecent) return bRecent - aRecent;
-      return String(a.name || a.capability_id || "").localeCompare(String(b.name || b.capability_id || ""));
-    });
-    return rows;
-  }, [items, query, registryKind, registryPolicy, registrySource]);
-
-  const registryTotalPages = useMemo(
-    () => Math.max(1, Math.ceil(Math.max(1, filteredRegistry.length) / Math.max(1, registryPageSize))),
-    [filteredRegistry.length, registryPageSize]
-  );
-
-  useEffect(() => {
-    setRegistryPage(1);
-  }, [query, registryKind, registryPolicy, registrySource, registryPageSize]);
-
-  useEffect(() => {
-    setRegistryPage((prev) => (prev <= registryTotalPages ? prev : registryTotalPages));
-  }, [registryTotalPages]);
-
-  const pagedRegistry = useMemo(() => {
-    const safePage = Math.max(1, Math.min(registryPage, registryTotalPages));
-    const start = (safePage - 1) * registryPageSize;
-    return filteredRegistry.slice(start, start + registryPageSize);
-  }, [filteredRegistry, registryPage, registryPageSize, registryTotalPages]);
-
   const registryRange = useMemo(() => {
-    if (!filteredRegistry.length) return { from: 0, to: 0 };
-    const safePage = Math.max(1, Math.min(registryPage, registryTotalPages));
-    const from = (safePage - 1) * registryPageSize + 1;
-    const to = from + pagedRegistry.length - 1;
+    if (!items.length) return { from: 0, to: 0 };
+    const from = 1;
+    const to = items.length;
     return { from, to };
-  }, [filteredRegistry.length, registryPage, registryPageSize, registryTotalPages, pagedRegistry.length]);
+  }, [items.length]);
 
   const toggleSource = async (sourceId: string, nextEnabled: boolean) => {
     const sid = String(sourceId || "").trim();
@@ -1357,10 +1350,10 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
           </div>
         </div>
         <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-          {t("capabilities.resultsSummary", { count: filteredRegistry.length })} · {t("capabilities.showingRange", { from: registryRange.from, to: registryRange.to })}
+          {t("capabilities.resultsSummary", { count: registryTotalCount })} · {t("capabilities.showingRange", { from: registryRange.from, to: registryRange.to })}
         </div>
-        <div className="mt-2 max-h-[420px] overflow-auto space-y-2">
-          {pagedRegistry.map((row) => {
+        <div ref={registryListRef} className="mt-2 max-h-[420px] overflow-auto space-y-2">
+          {items.map((row) => {
             const capId = String(row.capability_id || "");
             const blockedNow = Boolean(row.blocked_global);
             const isSelfProposed = (
@@ -1427,12 +1420,27 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               </div>
             );
           })}
-          {pagedRegistry.length === 0 ? <div className="text-xs text-[var(--color-text-muted)]">{t("capabilities.noLibraryMatches")}</div> : null}
+          {items.length === 0 ? <div className="text-xs text-[var(--color-text-muted)]">{t("capabilities.noLibraryMatches")}</div> : null}
+          {registryHasMore ? <div ref={registryLoadMoreRef} className="h-1 w-full" aria-hidden="true" /> : null}
         </div>
         <div className="mt-2 flex items-center justify-between gap-2">
-          <button type="button" className="glass-btn px-3 py-1.5 rounded text-xs min-h-[34px] text-[var(--color-text-secondary)] disabled:opacity-50" disabled={registryPage <= 1} onClick={() => setRegistryPage((p) => Math.max(1, p - 1))}>{t("capabilities.pagePrev")}</button>
-          <div className="text-xs text-[var(--color-text-tertiary)]">{t("capabilities.pageLabel", { page: registryPage, total: registryTotalPages })}</div>
-          <button type="button" className="glass-btn px-3 py-1.5 rounded text-xs min-h-[34px] text-[var(--color-text-secondary)] disabled:opacity-50" disabled={registryPage >= registryTotalPages} onClick={() => setRegistryPage((p) => Math.min(registryTotalPages, p + 1))}>{t("capabilities.pageNext")}</button>
+          <div className="text-xs text-[var(--color-text-tertiary)]">
+            {loading
+              ? t("capabilities.loading")
+              : registryHasMore
+                ? t("capabilities.showingRange", { from: registryRange.from, to: registryRange.to })
+                : t("capabilities.resultsSummary", { count: registryTotalCount })}
+          </div>
+          {registryHasMore ? (
+            <button
+              type="button"
+              className="glass-btn px-3 py-1.5 rounded text-xs min-h-[34px] text-[var(--color-text-secondary)] disabled:opacity-50"
+              disabled={loading}
+              onClick={() => void load({ append: true })}
+            >
+              {t("capabilities.pageNext")}
+            </button>
+          ) : null}
         </div>
       </div>
       ) : null}

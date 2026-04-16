@@ -374,13 +374,21 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def capability_overview(
         query: str = "",
         limit: int = 400,
+        offset: int = 0,
         include_indexed: bool = True,
+        kind: str = "",
+        policy: str = "",
+        source_id: str = "",
     ) -> Dict[str, Any]:
         """Get global capability overview (policy + blocked + recent-success + source states)."""
         args = {
             "query": str(query or ""),
             "limit": int(limit or 400),
+            "offset": max(0, int(offset or 0)),
             "include_indexed": bool(include_indexed),
+            "kind": str(kind or ""),
+            "policy": str(policy or ""),
+            "source_id": str(source_id or ""),
         }
         return await ctx.daemon({"op": "capability_overview", "args": args})
 

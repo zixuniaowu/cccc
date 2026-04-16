@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Actor } from "../types";
 
+export function isChatViewportAtBottom(scrollHeight: number, scrollTop: number, clientHeight: number, threshold = 100): boolean {
+  return scrollHeight - scrollTop - clientHeight < threshold;
+}
+
 type UseAppTabStateOptions = {
   activeTab: string;
   actors: Actor[];
   runtimeActors: Actor[];
   selectedGroupId: string;
-  chatSessionFollowMode: boolean | undefined;
   isSmallScreen: boolean;
   setActiveTab: (tab: string) => void;
   setShowScrollButton: (groupId: string, value: boolean) => void;
@@ -32,7 +35,6 @@ export function useAppTabState({
   actors,
   runtimeActors,
   selectedGroupId,
-  chatSessionFollowMode,
   isSmallScreen,
   setActiveTab,
   setShowScrollButton,
@@ -66,12 +68,11 @@ export function useAppTabState({
     const el = eventContainerRef.current;
     if (!el) return;
 
-    const threshold = 100;
-    const atBottom = (chatSessionFollowMode ?? false) || (el.scrollHeight - el.scrollTop - el.clientHeight < threshold);
+    const atBottom = isChatViewportAtBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
     chatAtBottomRef.current = atBottom;
     setShowScrollButton(selectedGroupId, !atBottom);
     if (atBottom) setChatUnreadCount(selectedGroupId, 0);
-  }, [activeTab, selectedGroupId, chatSessionFollowMode, setChatUnreadCount, setShowScrollButton]);
+  }, [activeTab, selectedGroupId, setChatUnreadCount, setShowScrollButton]);
 
   useEffect(() => {
     if (activeTab !== "chat") return;

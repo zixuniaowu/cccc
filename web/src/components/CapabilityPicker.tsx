@@ -14,6 +14,8 @@ interface CapabilityPickerProps {
 }
 
 const BADGE_CLASS = "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
+const CAPABILITY_PICKER_FETCH_LIMIT = 200;
+const CAPABILITY_PICKER_QUERY_DEBOUNCE_MS = 250;
 
 function firstRecommendationLine(value?: string[]) {
   return Array.isArray(value) ? String(value[0] || "").trim() : "";
@@ -31,9 +33,19 @@ export function CapabilityPicker({
   const selected = normalizeCapabilityIdList(value);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [rows, setRows] = useState<CapabilityOverviewItem[]>([]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedQuery(String(query || "").trim());
+    }, CAPABILITY_PICKER_QUERY_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [query]);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,7 +53,11 @@ export function CapabilityPicker({
       setLoading(true);
       setError("");
       try {
-        const resp = await api.fetchCapabilityOverview({ includeIndexed: true, limit: 1200 });
+        const resp = await api.fetchCapabilityOverview({
+          includeIndexed: true,
+          limit: CAPABILITY_PICKER_FETCH_LIMIT,
+          query: debouncedQuery || undefined,
+        });
         if (cancelled) return;
         if (!resp.ok) {
           setError(resp.error?.message || "Failed to load capabilities");
@@ -61,7 +77,7 @@ export function CapabilityPicker({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [debouncedQuery]);
 
   const candidateRows = useMemo(() => {
     const q = String(query || "").trim().toLowerCase();

@@ -5386,6 +5386,27 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertEqual(item.get("avoid_when"), ["greenfield feature implementation"])
             self.assertEqual(item.get("gotchas"), ["capture concrete failing evidence before routing work"])
             self.assertEqual(str(item.get("evidence_kind") or ""), "error log plus minimal repro note")
+
+            paged_resp, _ = self._call(
+                "capability_overview",
+                {
+                    "query": "",
+                    "limit": 1,
+                    "offset": 0,
+                    "include_indexed": True,
+                    "kind": "skill",
+                    "source_id": "github_skills_curated",
+                },
+            )
+            self.assertTrue(paged_resp.ok, getattr(paged_resp, "error", None))
+            paged_result = paged_resp.result if isinstance(paged_resp.result, dict) else {}
+            paged_items = paged_result.get("items") if isinstance(paged_result.get("items"), list) else []
+            self.assertEqual(len(paged_items), 1)
+            self.assertGreaterEqual(int(paged_result.get("total_count") or 0), 1)
+            self.assertIn("has_more", paged_result)
+            only_item = paged_items[0] if paged_items and isinstance(paged_items[0], dict) else {}
+            self.assertEqual(str(only_item.get("kind") or ""), "skill")
+            self.assertEqual(str(only_item.get("source_id") or ""), "github_skills_curated")
         finally:
             cleanup()
 

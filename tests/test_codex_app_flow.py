@@ -147,6 +147,9 @@ class TestCodexAppFlow(unittest.TestCase):
 
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             submit_user_message.assert_called_once()
+            submitted_text = str(submit_user_message.call_args.kwargs.get("text") or "")
+            self.assertIn("[cccc] user → peer1:", submitted_text)
+            self.assertIn("hello codex", submitted_text)
             queue_chat_message.assert_not_called()
             request_flush_pending_messages.assert_not_called()
             group = load_group(group_id)
@@ -216,7 +219,10 @@ class TestCodexAppFlow(unittest.TestCase):
 
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             submit_user_message.assert_called_once()
-            self.assertIn(MCP_REMINDER_LINE, str(submit_user_message.call_args.kwargs.get("text") or ""))
+            submitted_text = str(submit_user_message.call_args.kwargs.get("text") or "")
+            self.assertIn("[cccc] user → peer1", submitted_text)
+            self.assertIn("hello codex", submitted_text)
+            self.assertIn(MCP_REMINDER_LINE, submitted_text)
             queue_chat_message.assert_not_called()
             request_flush_pending_messages.assert_not_called()
 
@@ -254,6 +260,90 @@ class TestCodexAppFlow(unittest.TestCase):
 
             ledger_events = self._ledger_events(group)
             self.assertEqual(str(ledger_events[-1].get("kind") or ""), "chat.read")
+        finally:
+            cleanup()
+
+    def test_reply_headless_codex_does_not_leak_original_external_source_into_sender_header(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_reply
+        from cccc.kernel.group import load_group
+        from cccc.kernel.ledger import append_event
+        from cccc.contracts.v1 import ChatMessageData
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "codex-reply-source-header", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_resp.ok, getattr(add_resp, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            original_event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key=str(group.doc.get("active_scope_key") or ""),
+                by="user",
+                data=ChatMessageData(
+                    text="外部用户原话",
+                    to=["peer1"],
+                    source_platform="dingtalk",
+                    source_user_name="Alice",
+                    source_user_id="1729",
+                ).model_dump(),
+            )
+            reply_to = str(original_event.get("id") or "").strip()
+            self.assertTrue(reply_to)
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as submit_user_message,
+                patch("cccc.daemon.messaging.chat_ops.queue_chat_message") as queue_chat_message,
+                patch("cccc.daemon.messaging.chat_ops.request_flush_pending_messages") as request_flush_pending_messages,
+                patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
+            ):
+                resp = handle_reply(
+                    {
+                        "group_id": group_id,
+                        "by": "peer2",
+                        "text": "收到，我来处理。",
+                        "reply_to": reply_to,
+                        "to": ["peer1"],
+                    },
+                    coerce_bool=lambda value: bool(value),
+                    normalize_attachments=lambda _group, _attachments: [],
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    auto_wake_recipients=lambda _group, _to, _by: [],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _reasons: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            submit_user_message.assert_called_once()
+            submitted_text = str(submit_user_message.call_args.kwargs.get("text") or "")
+            self.assertIn("[cccc] peer2 → peer1", submitted_text)
+            self.assertIn('> "外部用户原话"', submitted_text)
+            self.assertIn("收到，我来处理。", submitted_text)
+            self.assertNotIn("Alice", submitted_text)
+            self.assertNotIn("dingtalk", submitted_text)
+            self.assertNotIn("1729", submitted_text)
+            queue_chat_message.assert_not_called()
+            request_flush_pending_messages.assert_not_called()
         finally:
             cleanup()
 

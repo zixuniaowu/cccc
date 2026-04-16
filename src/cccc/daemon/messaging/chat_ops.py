@@ -122,6 +122,42 @@ def _build_delivery_text(
     return delivery_text
 
 
+def _build_headless_delivery_text(
+    *,
+    by: str,
+    to: list[str],
+    body: str,
+    quote_text: str = "",
+    source_platform: str = "",
+    source_user_name: str = "",
+    source_user_id: str = "",
+) -> str:
+    who = str(by or "user").strip() or "user"
+    targets = ", ".join([str(item).strip() for item in (to or []) if str(item).strip()]) or "@all"
+    source_bits: list[str] = []
+    if source_platform:
+        source_bits.append(str(source_platform).strip())
+    if source_user_name:
+        source_bits.append(str(source_user_name).strip())
+    if source_user_id:
+        source_bits.append(str(source_user_id).strip())
+    if source_bits:
+        who = f"{who}[{' / '.join([bit for bit in source_bits if bit])}]"
+
+    header = f"[cccc] {who} → {targets}"
+    quote = str(quote_text or "").strip()
+    if quote:
+        quote_preview = quote[:80].replace("\n", " ")
+        if len(quote) > 80:
+            quote_preview += "..."
+        header += f'\n> "{quote_preview}"'
+
+    content = str(body or "").rstrip("\n")
+    if not content:
+        return header
+    return f"{header}:\n{content}" if "\n" in content else f"{header}: {content}"
+
+
 def _compact_delivery_text(value: Any, *, limit: int) -> str:
     text = re.sub(r"\s+", " ", str(value or "").strip())
     if not text:
@@ -465,7 +501,17 @@ def handle_send(
         src_group_id=src_group_id,
         src_event_id=src_event_id,
     )
-    headless_delivery_text = append_mcp_reply_reminder(delivery_text)
+    headless_delivery_text = append_mcp_reply_reminder(
+        _build_headless_delivery_text(
+            by=by,
+            to=effective_to,
+            body=delivery_text,
+            quote_text=quote_text,
+            source_platform=source_platform,
+            source_user_name=source_user_name,
+            source_user_id=source_user_id,
+        )
+    )
     actors = list_actors(group)
     skip_headless_notify_actor_ids: set[str] = set()
     logger.debug(f"[SEND] group={group_id} text={text[:30]!r} actors={[a.get('id') for a in actors]} effective_to={effective_to}")
@@ -726,7 +772,14 @@ def handle_reply(
         refs=refs,
         attachments=attachments,
     )
-    headless_delivery_text = append_mcp_reply_reminder(delivery_text)
+    headless_delivery_text = append_mcp_reply_reminder(
+        _build_headless_delivery_text(
+            by=by,
+            to=effective_to,
+            body=delivery_text,
+            quote_text=quote_text,
+        )
+    )
     skip_headless_notify_actor_ids: set[str] = set()
     for actor in list_actors(group):
         if not isinstance(actor, dict):

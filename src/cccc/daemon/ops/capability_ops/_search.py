@@ -526,7 +526,11 @@ def _render_source_states(catalog_doc: Dict[str, Any]) -> Dict[str, Dict[str, An
 def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
     query = str(args.get("query") or "").strip()
     limit = max(1, min(int(args.get("limit") or 400), 2000))
+    offset = max(0, int(args.get("offset") or 0))
     include_indexed = bool(args.get("include_indexed", True))
+    kind_filter = str(args.get("kind") or "").strip().lower()
+    policy_filter = str(args.get("policy") or "").strip().lower()
+    source_filter = str(args.get("source_id") or "").strip()
 
     try:
         with _POLICY_LOCK:
@@ -710,6 +714,35 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
         if query:
             rows = [row for row in rows if _search_matches(query, row)]
 
+        if kind_filter == "pack":
+            rows = [row for row in rows if str(row.get("kind") or "").strip().lower() == "pack"]
+        elif kind_filter == "mcp":
+            rows = [row for row in rows if str(row.get("kind") or "").strip().lower() == "mcp_toolpack"]
+        elif kind_filter == "skill":
+            rows = [row for row in rows if str(row.get("kind") or "").strip().lower() == "skill"]
+
+        if policy_filter:
+            filtered_rows: List[Dict[str, Any]] = []
+            for row in rows:
+                blocked_now = bool(row.get("blocked_global"))
+                policy_level = str(row.get("policy_level") or "").strip().lower()
+                policy_visible = bool(row.get("policy_visible"))
+                readiness_preview = row.get("readiness_preview") if isinstance(row.get("readiness_preview"), dict) else {}
+                preview_status = str(readiness_preview.get("preview_status") or "").strip().lower()
+                actionable_now = preview_status == "enableable" if preview_status else (policy_visible and not blocked_now)
+                blocked_by_readiness = blocked_now or preview_status == "blocked"
+                if policy_filter == "actionable" and not actionable_now:
+                    continue
+                if policy_filter == "blocked" and not blocked_by_readiness:
+                    continue
+                if policy_filter == "indexed" and policy_level != "indexed":
+                    continue
+                filtered_rows.append(row)
+            rows = filtered_rows
+
+        if source_filter:
+            rows = [row for row in rows if str(row.get("source_id") or "").strip() == source_filter]
+
         def _rank(row: Dict[str, Any]) -> Tuple[int, int, int, str]:
             blocked_penalty = 1 if bool(row.get("blocked_global")) else 0
             recent = row.get("recent_success") if isinstance(row.get("recent_success"), dict) else {}
@@ -725,7 +758,8 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
             )
 
         rows.sort(key=_rank)
-        items = rows[:limit]
+        total_count = len(rows)
+        items = rows[offset: offset + limit]
 
         source_ids = sorted(
             {
@@ -769,6 +803,10 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
             result={
                 "items": items,
                 "count": len(items),
+                "total_count": total_count,
+                "offset": offset,
+                "limit": limit,
+                "has_more": (offset + len(items)) < total_count,
                 "query": query,
                 "sources": sources,
                 "blocked_capabilities": blocked_list,

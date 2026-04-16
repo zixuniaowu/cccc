@@ -125,7 +125,6 @@ export default function App() {
     () => getChatSession(selectedGroupId, chatSessions),
     [selectedGroupId, chatSessions]
   );
-  const chatSessionFollowMode = chatSession.scrollSnapshot?.mode === "follow";
 
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [_mentionFilter, setMentionFilter] = React.useState("");
@@ -177,7 +176,6 @@ export default function App() {
     actors,
     runtimeActors: visibleRuntimeActors,
     selectedGroupId,
-    chatSessionFollowMode,
     isSmallScreen,
     setActiveTab,
     setShowScrollButton,

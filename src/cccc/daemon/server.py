@@ -143,12 +143,14 @@ _SPACE_SYNC_RUN_QUEUE: Optional[GroupSpaceSyncRunQueue] = None
 _REQUEST_FAST_QUEUE_OPS = {"send", "reply", "chat_ack"}
 _REQUEST_READ_QUEUE_OPS = {
     "branding_get",
+    "capability_overview",
     "context_get",
     "groups",
     "group_space_status",
     "im_list_authorized",
     "im_list_pending",
     "actor_list",
+    "actor_profile_list",
     "observability_get",
     "ping",
 }
