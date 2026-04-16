@@ -158,6 +158,8 @@ graph TB
         DC["Discord"]
         FS["飞书"]
         DT["钉钉"]
+        WC["企业微信"]
+        WX["微信"]
     end
 
     Agents <-->|MCP 工具| Daemon
@@ -194,6 +196,8 @@ cccc setup --runtime claude    # 自动配置该运行时的 MCP
 cccc runtime list --all        # 列出所有可用运行时
 cccc doctor                    # 检查环境和运行时可用性
 ```
+
+Actor 可以以 **PTY**（嵌入式终端）或 **headless**（无终端的结构化 I/O）模式运行。Claude Code 和 Codex CLI 支持两种模式；headless 模式下 daemon 对投递和流式传输具有更精细的控制。
 
 ## 消息与协调
 
@@ -236,8 +240,10 @@ CCCC 实现的是 IM 级消息语义，而不是"往终端里粘贴一段文字"
 - **协作组与 actor 管理** — 创建、配置、启停、重启
 - **自动化规则编辑器** — 可视化配置触发器、排程和动作
 - **Context 面板** — 共享 vision、sketch、里程碑和任务
-- **IM 桥接配置** — 连接 Telegram/Slack/Discord/飞书/钉钉
+- **Group Space** — NotebookLM 集成，共享知识管理
+- **IM 桥接配置** — 连接 Telegram/Slack/Discord/飞书/钉钉/企业微信/微信
 - **设置** — 消息策略、触达调优、终端日志控制
+- **文本缩放** — 90% / 100% / 125% 三级字体大小，按浏览器持久化
 - **亮色 / 暗色 / 跟随系统 主题**
 
 | 聊天 | 终端 |
@@ -248,9 +254,14 @@ CCCC 实现的是 IM 级消息语义，而不是"往终端里粘贴一段文字"
 
 从外部访问 Web UI：
 
+- **局域网 / 内网** — 绑定所有本地接口：`CCCC_WEB_HOST=0.0.0.0 cccc`
 - **Cloudflare Tunnel**（推荐）— `cloudflared tunnel --url http://127.0.0.1:8848`
 - **Tailscale** — 绑定 tailnet IP：`CCCC_WEB_HOST=$TAILSCALE_IP cccc`
 - 在对外暴露之前，先在 **Settings > Web Access** 中创建一个 **管理员访问令牌**，并在令牌创建完成前保持网络边界保护。
+- 在 **Settings > Web Access** 中，`127.0.0.1` 表示仅本地访问，`0.0.0.0` 表示本机加局域网 IP。如果 CCCC 运行在 WSL2 的默认 NAT 网络下，`0.0.0.0` 仅在 WSL 内暴露；局域网设备需要使用 WSL mirrored networking 或 Windows portproxy/防火墙规则。
+- `Save` 保存目标绑定。如果 Web 由 `cccc` 或 `cccc web` 启动，请在 **Settings > Web Access** 中使用 `Apply now` 执行短暂的受控重启。如果 Web 由 Docker、systemd 或其他外部主管管理，则重启该服务即可。
+- `Start` / `Stop` 仅用于 Tailscale 远程访问，不会重新绑定已运行的 Web socket。
+- 令牌策略分层设计：仅本地时可保持简单，局域网/内网暴露默认需要访问令牌，任何已配置的公共 URL/隧道暴露则强制要求访问令牌。
 
 ## IM 桥接
 
@@ -268,6 +279,10 @@ cccc im start
 | Discord | ✅ 已支持 |
 | 飞书 / Lark | ✅ 已支持 |
 | 钉钉 | ✅ 已支持 |
+| 企业微信 / WeCom | ✅ 已支持 |
+| 微信 / Weixin | ✅ 已支持 |
+
+> 钉钉和企业微信支持流式回复（分别为 AI Card 和 aibot 流式）；其余平台投递最终消息。
 
 在任一已支持平台上，使用 `/send @all <消息>` 与 agent 对话、`/status` 查看组状态、`/pause` / `/resume` 控制运维 — 全部在手机上完成。
 
@@ -341,6 +356,7 @@ CCCC 是**协作内核** — 它拥有协调层，与外部 CI/CD、编排器、
 - **Daemon IPC 无认证。** 默认仅绑定 localhost。
 - **IM bot token** 从环境变量读取，不存储在配置文件中。
 - **运行时状态** 存放在 `CCCC_HOME`（`~/.cccc/`），不在代码仓库内。
+- **能力白名单** 管控 agent 可启用的可选 MCP 能力面。策略由内置默认值与 `CCCC_HOME/config/` 下的用户覆盖层组合而成。
 
 详细安全指南见 [SECURITY.md](SECURITY.md)。
 
@@ -353,7 +369,11 @@ CCCC 是**协作内核** — 它拥有协调层，与外部 CI/CD、编排器、
 | [快速上手](https://chesterra.github.io/cccc/guide/getting-started/) | 安装、启动、创建第一个协作组 |
 | [场景示例](https://chesterra.github.io/cccc/guide/use-cases) | 实际多智能体场景 |
 | [Web UI 指南](https://chesterra.github.io/cccc/guide/web-ui) | 看板导航 |
-| [IM 桥接配置](https://chesterra.github.io/cccc/guide/im-bridge/) | 连接 Telegram、Slack、Discord、飞书、钉钉 |
+| [IM 桥接配置](https://chesterra.github.io/cccc/guide/im-bridge/) | 连接 Telegram、Slack、Discord、飞书、钉钉、企业微信、微信 |
+| [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM 知识集成 |
+| [能力白名单](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP 能力治理 |
+| [最佳实践](https://chesterra.github.io/cccc/guide/best-practices) | 推荐模式与工作流 |
+| [常见问题](https://chesterra.github.io/cccc/guide/faq) | FAQ |
 | [运维手册](https://chesterra.github.io/cccc/guide/operations) | 恢复、排障、维护 |
 | [CLI 参考](https://chesterra.github.io/cccc/reference/cli) | 完整命令参考 |
 | [SDK（Python/TypeScript）](https://github.com/ChesterRa/cccc-sdk) | 用官方客户端将 CCCC 接入应用与服务 |
