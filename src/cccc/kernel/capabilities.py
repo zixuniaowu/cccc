@@ -53,6 +53,11 @@ PET_CORE_TOOLS: Tuple[str, ...] = (
     "cccc_agent_state",
 )
 
+VOICE_SECRETARY_CORE_TOOLS: Tuple[str, ...] = PET_CORE_TOOLS + (
+    "cccc_voice_secretary_document",
+    "cccc_voice_secretary_request",
+)
+
 
 BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
     "pack:group-runtime": {
@@ -190,7 +195,10 @@ def resolve_core_tool_names(
     *,
     actor_role: str = "",
     is_pet: bool = False,
+    is_voice_secretary: bool = False,
 ) -> Set[str]:
+    if bool(is_voice_secretary):
+        return set(VOICE_SECRETARY_CORE_TOOLS)
     if bool(is_pet):
         return set(PET_CORE_TOOLS)
     role = str(actor_role or "").strip().lower()
@@ -204,8 +212,13 @@ def resolve_visible_tool_names(
     *,
     actor_role: str = "",
     is_pet: bool = False,
+    is_voice_secretary: bool = False,
 ) -> Set[str]:
-    visible = resolve_core_tool_names(actor_role=actor_role, is_pet=is_pet)
+    visible = resolve_core_tool_names(
+        actor_role=actor_role,
+        is_pet=is_pet,
+        is_voice_secretary=is_voice_secretary,
+    )
     for cap_id in enabled_capability_ids:
         cap = BUILTIN_CAPABILITY_PACKS.get(str(cap_id))
         if not isinstance(cap, dict):

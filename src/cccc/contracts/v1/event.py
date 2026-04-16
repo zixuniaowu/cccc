@@ -7,6 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ...util.time import utc_now_iso
 from .actor import Actor, ActorRole, ActorSubmit, AgentRuntime, RunnerKind
+from .assistant import (
+    AssistantSettingsUpdateData,
+    AssistantStatusUpdateData,
+    AssistantVoiceDocumentData,
+    AssistantVoiceRequestData,
+)
 from .message import ChatMessageData, ChatReactionData, ChatStreamData
 from .notify import NotifyAckData, SystemNotifyData
 from .presentation import PresentationCardType
@@ -39,6 +45,10 @@ EventKind = Literal[
     "chat.reaction",
     "system.notify",
     "system.notify_ack",
+    "assistant.settings_update",
+    "assistant.status_update",
+    "assistant.voice.document",
+    "assistant.voice.request",
     "presentation.publish",
     "presentation.clear",
 ]
@@ -259,6 +269,10 @@ _KIND_TO_MODEL = {
     "chat.reaction": ChatReactionData,
     "system.notify": SystemNotifyData,
     "system.notify_ack": NotifyAckData,
+    "assistant.settings_update": AssistantSettingsUpdateData,
+    "assistant.status_update": AssistantStatusUpdateData,
+    "assistant.voice.document": AssistantVoiceDocumentData,
+    "assistant.voice.request": AssistantVoiceRequestData,
     "presentation.publish": PresentationPublishData,
     "presentation.clear": PresentationClearData,
 }

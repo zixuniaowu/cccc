@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { MarkdownRenderer } from "../MarkdownRenderer";
+import { MarkdownDocumentSurface } from "../document/MarkdownDocumentSurface";
 import { CloseIcon, CopyIcon, EditIcon, RefreshIcon, SplitViewIcon, TrashIcon, WindowViewIcon } from "../Icons";
 import { ModalFrame } from "../modals/ModalFrame";
 import { useModalA11y } from "../../hooks/useModalA11y";
@@ -653,17 +653,11 @@ function PresentationViewer({
       {t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}
     </div>
   ) : card.card_type === "markdown" ? (
-    <div className={classNames("rounded-3xl border p-5", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90")}>
-      {linkedMarkdownError ? (
-        <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>{linkedMarkdownError}</div>
-      ) : (
-        <MarkdownRenderer
-          content={String(card.content.mode === "inline" ? card.content.markdown || "" : linkedMarkdown || "")}
-          isDark={isDark}
-          className="break-words [overflow-wrap:anywhere]"
-        />
-      )}
-    </div>
+    <MarkdownDocumentSurface
+      content={String(card.content.mode === "inline" ? card.content.markdown || "" : linkedMarkdown || "")}
+      error={linkedMarkdownError}
+      isDark={isDark}
+    />
   ) : card.card_type === "table" ? (
     <div className={classNames("overflow-hidden rounded-3xl border", isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/95")}>
       <div className="overflow-auto">

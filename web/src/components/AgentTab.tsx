@@ -835,7 +835,7 @@ export function AgentTab({
             <div className="text-lg font-medium mb-2">{t('headlessAgent')}</div>
             <div className="text-sm text-center max-w-md">
               {supportsStandardWebHeadlessRuntime(String(actor.runtime || "").trim())
-                ? t('headlessStreamDescription', { defaultValue: '该智能体以无终端模式运行。过程输出会显示在 runtime dock ticker 和 inspect 面板里，正式回复需要通过消息工具发送。' })
+                ? t('headlessStreamDescription', { defaultValue: '该智能体以无终端模式运行。过程输出会显示在 runtime dock ticker 和 inspect 面板里；正式回复必须通过 message 工具发送。' })
                 : t('headlessDescription')}
             </div>
             {isRunning && (

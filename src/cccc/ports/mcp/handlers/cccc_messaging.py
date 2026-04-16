@@ -22,17 +22,6 @@ def _find_target_actor(*, group_id: str, actor_id: str) -> Optional[Dict[str, An
     return dict(actor) if isinstance(actor, dict) else None
 
 
-def _guard_headless_codex_message_tool(*, group_id: str, actor_id: str, tool_name: str) -> None:
-    actor = _find_target_actor(group_id=group_id, actor_id=actor_id)
-    runtime = str((actor or {}).get("runtime") or "").strip().lower()
-    runner = str((actor or {}).get("runner") or "").strip().lower()
-    if runtime == "codex" and runner == "headless":
-        raise MCPError(
-            code="tool_disabled_for_runtime",
-            message=f"{tool_name} is disabled for headless codex actors",
-        )
-
-
 def _normalize_runtime_escaped_text(*, group_id: str, actor_id: str, text: str) -> str:
     """Normalize double-escaped control characters only for codex actor runtimes."""
     raw = str(text or "")
@@ -62,11 +51,8 @@ def message_send(
     priority: str = "normal",
     reply_required: bool = False,
     refs: Optional[List[Dict[str, Any]]] = None,
-    enforce_runtime_guard: bool = True,
 ) -> Dict[str, Any]:
     """Send a message to the group (or cross-group)."""
-    if enforce_runtime_guard:
-        _guard_headless_codex_message_tool(group_id=group_id, actor_id=actor_id, tool_name="message_send")
     text = _normalize_runtime_escaped_text(group_id=group_id, actor_id=actor_id, text=text)
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):
@@ -118,13 +104,10 @@ def message_reply(
     priority: str = "normal",
     reply_required: bool = False,
     refs: Optional[List[Dict[str, Any]]] = None,
-    enforce_runtime_guard: bool = True,
 ) -> Dict[str, Any]:
     """Reply to a message."""
     if not str(reply_to or "").strip():
         raise MCPError(code="missing_event_id", message="missing event_id (reply target)")
-    if enforce_runtime_guard:
-        _guard_headless_codex_message_tool(group_id=group_id, actor_id=actor_id, tool_name="message_reply")
     text = _normalize_runtime_escaped_text(group_id=group_id, actor_id=actor_id, text=text)
     prio = str(priority or "normal").strip() or "normal"
     if prio not in ("normal", "attention"):

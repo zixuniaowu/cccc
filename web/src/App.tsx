@@ -21,7 +21,6 @@ import { useAppChrome } from "./hooks/useAppChrome";
 import { useAppGroupLifecycle } from "./hooks/useAppGroupLifecycle";
 import { useAppTabState } from "./hooks/useAppTabState";
 import { getEffectiveComposerDestGroupId } from "./stores/useComposerStore";
-import { getChatSession } from "./stores/useUIStore";
 import {
   useGroupStore,
   useUIStore,
@@ -75,7 +74,6 @@ export default function App() {
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const sidebarWidth = useUIStore((s) => s.sidebarWidth);
   const activeTab = useUIStore((s) => s.activeTab);
-  const chatSessions = useUIStore((s) => s.chatSessions);
   const isSmallScreen = useUIStore((s) => s.isSmallScreen);
   const webReadOnly = useUIStore((s) => s.webReadOnly);
   const showError = useUIStore((s) => s.showError);
@@ -120,11 +118,6 @@ export default function App() {
     removeActor,
     openActorInbox,
   } = useActorActions(selectedGroupId);
-
-  const chatSession = useMemo(
-    () => getChatSession(selectedGroupId, chatSessions),
-    [selectedGroupId, chatSessions]
-  );
 
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [_mentionFilter, setMentionFilter] = React.useState("");
@@ -190,11 +183,15 @@ export default function App() {
 
   useEffect(() => {
     const gid = String(selectedGroupId || "").trim();
-    if (!gid || petRuntimeVisibility !== "visible" || groupSettings?.desktop_pet_enabled === false) {
-      return;
+    if (!gid || petRuntimeVisibility !== "visible") {
+      return undefined;
     }
     void refreshInternalRuntimeActors(gid);
-  }, [selectedGroupId, petRuntimeVisibility, groupSettings?.desktop_pet_enabled, refreshInternalRuntimeActors]);
+    const interval = window.setInterval(() => {
+      void refreshInternalRuntimeActors(gid);
+    }, 10000);
+    return () => window.clearInterval(interval);
+  }, [selectedGroupId, petRuntimeVisibility, refreshInternalRuntimeActors]);
 
   // Custom hooks
   const { connectStream, fetchContext, cleanup: cleanupSSE } = useSSE({

@@ -196,6 +196,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   const [manageUsage, setManageUsage] = useState<CapabilityUsageSummary | null>(null);
   const [manageUsageLoading, setManageUsageLoading] = useState(false);
   const overviewRequestSeqRef = useRef(0);
+  const overviewItemCountRef = useRef(0);
   const registryListRef = useRef<HTMLDivElement | null>(null);
   const registryLoadMoreRef = useRef<HTMLDivElement | null>(null);
 
@@ -226,7 +227,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     setErr("");
     try {
       const overviewQuery = String(debouncedQuery || "").trim();
-      const nextOffset = append ? items.length : 0;
+      const nextOffset = append ? overviewItemCountRef.current : 0;
       const [overviewResp, allowlistResp, groupsResp] = await Promise.all([
         api.fetchCapabilityOverview({
           includeIndexed: true,
@@ -244,6 +245,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       if (!overviewResp.ok) {
         setErr(overviewResp.error?.message || t("capabilities.failedLoad"));
         setItems([]);
+        overviewItemCountRef.current = 0;
         setRegistryTotalCount(0);
         setRegistryHasMore(false);
         setGroups([]);
@@ -251,7 +253,11 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         setBlocked([]);
       } else {
         const nextItems = Array.isArray(overviewResp.result?.items) ? overviewResp.result.items : [];
-        setItems((current) => append ? [...current, ...nextItems] : nextItems);
+        setItems((current) => {
+          const merged = append ? [...current, ...nextItems] : nextItems;
+          overviewItemCountRef.current = merged.length;
+          return merged;
+        });
         setRegistryTotalCount(Math.max(0, Number(overviewResp.result?.total_count || 0)));
         setRegistryHasMore(Boolean(overviewResp.result?.has_more));
         if (!append) {
@@ -300,6 +306,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       setErr(e instanceof Error ? e.message : t("capabilities.failedLoad"));
       if (!append) {
         setItems([]);
+        overviewItemCountRef.current = 0;
         setRegistryTotalCount(0);
         setRegistryHasMore(false);
         setGroups([]);
@@ -311,7 +318,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         setLoading(false);
       }
     }
-  }, [debouncedQuery, isActive, items.length, registryKind, registryPageSize, registryPolicy, registrySource, selfEvolvingSurface, t]);
+  }, [debouncedQuery, isActive, registryKind, registryPageSize, registryPolicy, registrySource, selfEvolvingSurface, t]);
 
   useEffect(() => {
     if (!isActive) return;

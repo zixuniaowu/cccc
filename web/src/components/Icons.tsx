@@ -584,6 +584,28 @@ export function AttachmentIcon({ className, size = 18 }: IconProps) {
   );
 }
 
+export function MicrophoneIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor" opacity="0.1" />
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+      <path d="M8.5 21h7" />
+    </svg>
+  );
+}
+
 export function ReplyIcon({ className, size = 18 }: IconProps) {
   return (
     <svg

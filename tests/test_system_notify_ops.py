@@ -138,6 +138,60 @@ class TestSystemNotifyOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_input_notify_delivery_is_lightweight(self) -> None:
+        from cccc.contracts.v1 import SystemNotifyData
+        from cccc.daemon.messaging.delivery import render_system_notify_delivery_text
+
+        text = render_system_notify_delivery_text(
+            notify=SystemNotifyData(
+                kind="info",
+                priority="normal",
+                title="Voice Secretary input available",
+                message='New Secretary input is waiting. Call cccc_voice_secretary_document(action="read_new_input").',
+                target_actor_id="voice-secretary",
+                requires_ack=False,
+                context={
+                    "kind": "voice_secretary_input",
+                    "reason": "new_input",
+                },
+            )
+        )
+
+        self.assertIn("read_new_input", text)
+        self.assertNotIn("alpha beta transcript", text)
+        self.assertIn("cccc_voice_secretary_document", text)
+        self.assertNotIn("source_chars", text)
+
+    def test_voice_secretary_action_request_notify_delivery_is_actionable(self) -> None:
+        from cccc.contracts.v1 import SystemNotifyData
+        from cccc.daemon.messaging.delivery import render_system_notify_delivery_text
+
+        text = render_system_notify_delivery_text(
+            notify=SystemNotifyData(
+                kind="info",
+                priority="normal",
+                title="Voice Secretary action request",
+                message="Please review the weather plan.",
+                target_actor_id="lead",
+                requires_ack=True,
+                context={
+                    "kind": "voice_secretary_action_request",
+                    "request_id": "voice-request-1",
+                    "document_path": "docs/voice-secretary/weather-plan.md",
+                    "summary": "Spoken task detected.",
+                    "request_text": "Please review the weather plan and assign an owner.",
+                },
+            )
+        )
+
+        self.assertIn("voice_secretary_action_request", text)
+        self.assertIn("voice-request-1", text)
+        self.assertIn("docs/voice-secretary/weather-plan.md", text)
+        self.assertNotIn("voice-doc-1", text)
+        self.assertNotIn("voice-job-1", text)
+        self.assertIn("Please review the weather plan", text)
+        self.assertIn("Action: handle the request", text)
+
     def test_system_notify_accepts_auto_idle_kind(self) -> None:
         _, cleanup = self._with_home()
         try:

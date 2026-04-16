@@ -659,6 +659,107 @@ export type GroupSettings = {
   desktop_pet_enabled: boolean;
 };
 
+export type BuiltinAssistantPolicy = {
+  action_allowlist?: string[];
+  requires_user_confirmation?: string[];
+};
+
+export type BuiltinAssistant = {
+  assistant_id: string;
+  kind: "pet" | "voice_secretary" | string;
+  enabled: boolean;
+  principal?: string;
+  lifecycle: "disabled" | "idle" | "running" | "working" | "waiting" | "failed" | string;
+  health?: Record<string, unknown>;
+  policy?: BuiltinAssistantPolicy;
+  config?: Record<string, unknown>;
+  ui?: Record<string, unknown>;
+};
+
+export type AssistantStateResult = {
+  group_id: string;
+  assistants?: BuiltinAssistant[];
+  assistants_by_id?: Record<string, BuiltinAssistant>;
+  assistant?: BuiltinAssistant;
+  documents?: AssistantVoiceDocument[];
+  documents_by_id?: Record<string, AssistantVoiceDocument>;
+  active_document_id?: string;
+  capture_target_document_id?: string;
+  active_document_path?: string;
+  capture_target_document_path?: string;
+  documents_by_path?: Record<string, AssistantVoiceDocument>;
+  new_input_available?: boolean;
+};
+
+export type AssistantVoiceTrigger = {
+  schema?: number;
+  trigger_kind?: string;
+  mode?: string;
+  capture_mode?: string;
+  recognition_backend?: string;
+  client_session_id?: string;
+  input_device_label?: string;
+  document_path?: string;
+  language?: string;
+  intent_hint?: string;
+};
+
+export type AssistantVoiceDocument = {
+  document_id: string;
+  document_path?: string;
+  filename?: string;
+  assistant_id?: string;
+  title: string;
+  status: "active" | "archived" | "deleted" | string;
+  storage_kind?: "workspace" | "cccc_home" | string;
+  workspace_path?: string;
+  content?: string;
+  content_sha256?: string;
+  content_chars?: number;
+  revision_count?: number;
+  source_segment_count?: number;
+  last_source_segment_id?: string;
+  last_source_path?: string;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: string;
+};
+
+export type AssistantVoiceTranscriptionResult = {
+  group_id: string;
+  assistant?: BuiltinAssistant;
+  transcript: string;
+  mime_type?: string;
+  language?: string;
+  bytes?: number;
+  backend?: string;
+  service?: Record<string, unknown>;
+  asr?: Record<string, unknown>;
+};
+
+export type AssistantVoiceTranscriptSegmentResult = {
+  group_id: string;
+  assistant?: BuiltinAssistant;
+  session_id: string;
+  segment?: Record<string, unknown>;
+  segment_path?: string;
+  document?: AssistantVoiceDocument;
+  document_updated?: boolean;
+  input_event?: Record<string, unknown>;
+  input_event_created?: boolean;
+  input_notify_emitted?: boolean;
+};
+
+export type AssistantVoiceDocumentMutationResult = {
+  group_id: string;
+  assistant?: BuiltinAssistant;
+  document?: AssistantVoiceDocument;
+  input_event?: Record<string, unknown>;
+  input_event_created?: boolean;
+  input_notify_emitted?: boolean;
+  event?: unknown;
+};
+
 export type RemoteAccessState = {
   provider: "off" | "manual" | "tailscale" | string;
   mode: string;

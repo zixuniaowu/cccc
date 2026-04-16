@@ -7,6 +7,7 @@ import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertI
 import { ScrollFade } from "../../components/ScrollFade";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
+import { VoiceSecretaryComposerControl } from "./VoiceSecretaryComposerControl";
 
 export interface ChatComposerProps {
   isDark: boolean;
@@ -434,7 +435,7 @@ export function ChatComposer({
   return (
     <footer
       className={classNames(
-        "flex-shrink-0 border-t px-3 sm:px-4 py-2.5 sm:py-3 safe-area-bottom-compact transition-colors",
+        "relative z-40 flex-shrink-0 border-t px-3 sm:px-4 py-2.5 sm:py-3 safe-area-bottom-compact transition-colors",
         isDark ? "border-white/5 bg-slate-950/72 backdrop-blur-md" : "border-black/5 bg-white/78 backdrop-blur-md"
       )}
     >
@@ -865,6 +866,19 @@ export function ChatComposer({
               </div>
             )}
           </div>
+
+          <VoiceSecretaryComposerControl
+            isDark={isDark}
+            selectedGroupId={selectedGroupId}
+            busy={busy}
+            buttonClassName={classNames(
+              composerToolButtonClass,
+              "self-end",
+              busy !== "send" && selectedGroupId && "hover:text-[var(--color-text-primary)] active:scale-95"
+            )}
+            buttonSizePx={baseComposerHeight}
+            disabled={!selectedGroupId || busy === "send"}
+          />
 
           {/* Send button - Using icon for modern feel */}
           <button

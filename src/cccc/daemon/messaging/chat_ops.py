@@ -33,6 +33,14 @@ from .delivery import (
     queue_chat_message,
     request_flush_pending_messages,
 )
+from .actor_delivery_planner import (
+    TRANSPORT_CLAUDE_HEADLESS,
+    TRANSPORT_CODEX_HEADLESS,
+    TRANSPORT_PTY,
+    event_with_effective_to,
+    plan_actor_chat_delivery,
+)
+from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 from ..pet.review_scheduler import request_pet_review
 from ..pet.profile_refresh import record_user_chat_message
 
@@ -127,35 +135,24 @@ def _build_headless_delivery_text(
     by: str,
     to: list[str],
     body: str,
+    reply_to: str = "",
     quote_text: str = "",
     source_platform: str = "",
     source_user_name: str = "",
     source_user_id: str = "",
 ) -> str:
-    who = str(by or "user").strip() or "user"
-    targets = ", ".join([str(item).strip() for item in (to or []) if str(item).strip()]) or "@all"
-    source_bits: list[str] = []
-    if source_platform:
-        source_bits.append(str(source_platform).strip())
-    if source_user_name:
-        source_bits.append(str(source_user_name).strip())
-    if source_user_id:
-        source_bits.append(str(source_user_id).strip())
-    if source_bits:
-        who = f"{who}[{' / '.join([bit for bit in source_bits if bit])}]"
-
-    header = f"[cccc] {who} → {targets}"
-    quote = str(quote_text or "").strip()
-    if quote:
-        quote_preview = quote[:80].replace("\n", " ")
-        if len(quote) > 80:
-            quote_preview += "..."
-        header += f'\n> "{quote_preview}"'
-
-    content = str(body or "").rstrip("\n")
-    if not content:
-        return header
-    return f"{header}:\n{content}" if "\n" in content else f"{header}: {content}"
+    return render_actor_inbound_message(
+        ActorInboundEnvelope(
+            by=by,
+            to=to,
+            text=body,
+            reply_to=reply_to,
+            quote_text=quote_text,
+            source_platform=source_platform,
+            source_user_name=source_user_name,
+            source_user_id=source_user_id,
+        )
+    )
 
 
 def _compact_delivery_text(value: Any, *, limit: int) -> str:
@@ -513,28 +510,24 @@ def handle_send(
         )
     )
     actors = list_actors(group)
+    event_for_delivery = event_with_effective_to(event, effective_to)
     skip_headless_notify_actor_ids: set[str] = set()
     logger.debug(f"[SEND] group={group_id} text={text[:30]!r} actors={[a.get('id') for a in actors]} effective_to={effective_to}")
     for actor in actors:
         if not isinstance(actor, dict):
             continue
-        actor_id = str(actor.get("id") or "").strip()
-        if not actor_id or actor_id == "user" or actor_id == by:
-            logger.debug(f"[SEND] skip actor={actor_id} (user/by)")
-            continue
-        event_with_effective_to = dict(event)
-        event_with_effective_to["data"] = dict(event.get("data") or {})
-        event_with_effective_to["data"]["to"] = effective_to
-        if not is_message_for_actor(group, actor_id=actor_id, event=event_with_effective_to):
-            logger.debug(f"[SEND] skip actor={actor_id} (not for actor)")
-            continue
-        runtime = str(actor.get("runtime") or "codex").strip() or "codex"
-        runner_kind = str(actor.get("runner") or "pty").strip()
-        if (
-            runtime == "codex"
-            and effective_runner_kind(runner_kind) == "headless"
-            and codex_app_supervisor.actor_running(group.group_id, actor_id)
-        ):
+        decision = plan_actor_chat_delivery(
+            group=group,
+            actor=actor,
+            event=event,
+            by=by,
+            effective_to=effective_to,
+            effective_runner_kind=effective_runner_kind,
+            codex_headless_running=codex_app_supervisor.actor_running,
+            claude_headless_running=claude_app_supervisor.actor_running,
+        )
+        actor_id = decision.actor_id
+        if decision.transport == TRANSPORT_CODEX_HEADLESS:
             delivered = bool(codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -545,11 +538,7 @@ def handle_send(
             ))
             if delivered:
                 skip_headless_notify_actor_ids.add(actor_id)
-        elif (
-            runtime == "claude"
-            and effective_runner_kind(runner_kind) == "headless"
-            and claude_app_supervisor.actor_running(group.group_id, actor_id)
-        ):
+        elif decision.transport == TRANSPORT_CLAUDE_HEADLESS:
             delivered = bool(claude_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -560,7 +549,7 @@ def handle_send(
             ))
             if delivered:
                 skip_headless_notify_actor_ids.add(actor_id)
-        elif effective_runner_kind(runner_kind) == "pty":
+        elif decision.transport == TRANSPORT_PTY:
             queue_chat_message(
                 group,
                 actor_id=actor_id,
@@ -574,17 +563,16 @@ def handle_send(
                 ts=event_ts,
             )
             request_flush_pending_messages(group, actor_id=actor_id)
+        else:
+            logger.debug(f"[SEND] skip actor={actor_id} ({decision.reason})")
 
-    event_for_headless = dict(event)
-    event_for_headless["data"] = dict(event.get("data") or {})
-    event_for_headless["data"]["to"] = effective_to
     _notify_headless_targets(
         group=group,
         by=by,
         event_id=event_id,
         priority=priority,
         reply_required=reply_required,
-        event=event_for_headless,
+        event=event_for_delivery,
         skip_actor_ids=skip_headless_notify_actor_ids,
     )
 
@@ -758,9 +746,7 @@ def handle_reply(
         ack_event = None
 
     effective_to = to if to else ["@all"]
-    event_with_effective_to = dict(event)
-    event_with_effective_to["data"] = dict(event.get("data") or {})
-    event_with_effective_to["data"]["to"] = effective_to
+    event_for_delivery = event_with_effective_to(event, effective_to)
 
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()
@@ -777,6 +763,7 @@ def handle_reply(
             by=by,
             to=effective_to,
             body=delivery_text,
+            reply_to=target_event_id or reply_to,
             quote_text=quote_text,
         )
     )
@@ -784,18 +771,18 @@ def handle_reply(
     for actor in list_actors(group):
         if not isinstance(actor, dict):
             continue
-        actor_id = str(actor.get("id") or "").strip()
-        if not actor_id or actor_id == "user" or actor_id == by:
-            continue
-        if not is_message_for_actor(group, actor_id=actor_id, event=event_with_effective_to):
-            continue
-        runtime = str(actor.get("runtime") or "codex").strip() or "codex"
-        runner_kind = str(actor.get("runner") or "pty").strip()
-        if (
-            runtime == "codex"
-            and effective_runner_kind(runner_kind) == "headless"
-            and codex_app_supervisor.actor_running(group.group_id, actor_id)
-        ):
+        decision = plan_actor_chat_delivery(
+            group=group,
+            actor=actor,
+            event=event,
+            by=by,
+            effective_to=effective_to,
+            effective_runner_kind=effective_runner_kind,
+            codex_headless_running=codex_app_supervisor.actor_running,
+            claude_headless_running=claude_app_supervisor.actor_running,
+        )
+        actor_id = decision.actor_id
+        if decision.transport == TRANSPORT_CODEX_HEADLESS:
             delivered = bool(codex_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -807,11 +794,7 @@ def handle_reply(
             ))
             if delivered:
                 skip_headless_notify_actor_ids.add(actor_id)
-        elif (
-            runtime == "claude"
-            and effective_runner_kind(runner_kind) == "headless"
-            and claude_app_supervisor.actor_running(group.group_id, actor_id)
-        ):
+        elif decision.transport == TRANSPORT_CLAUDE_HEADLESS:
             delivered = bool(claude_app_supervisor.submit_user_message(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -823,7 +806,7 @@ def handle_reply(
             ))
             if delivered:
                 skip_headless_notify_actor_ids.add(actor_id)
-        elif effective_runner_kind(runner_kind) == "pty":
+        elif decision.transport == TRANSPORT_PTY:
             queue_chat_message(
                 group,
                 actor_id=actor_id,
@@ -843,7 +826,7 @@ def handle_reply(
         event_id=event_id,
         priority=priority,
         reply_required=reply_required,
-        event=event_with_effective_to,
+        event=event_for_delivery,
         skip_actor_ids=skip_headless_notify_actor_ids,
     )
 

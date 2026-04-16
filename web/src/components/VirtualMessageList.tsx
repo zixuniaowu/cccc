@@ -413,14 +413,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
   const shouldAutoScrollNow = useCallback(() => {
     if (shouldForceStickToBottom()) return true;
-    const atBottomNow = checkIsAtBottom();
-    isAtBottomRef.current = atBottomNow;
     return shouldAutoScrollToBottom({
       followMode: followModeRef.current,
-      isAtBottom: atBottomNow,
+      isAtBottom: isAtBottomRef.current,
       forceStickToBottom: false,
     });
-  }, [checkIsAtBottom, shouldForceStickToBottom]);
+  }, [shouldForceStickToBottom]);
 
   const scheduleForceStickToBottom = useCallback(() => {
     forceStickToBottomUntilRef.current = performance.now() + 900;

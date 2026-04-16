@@ -208,7 +208,7 @@ export function createGroupStoreAsyncActions(
         if (!isLatestGroupRequestEpoch(internalActorsRequestEpochByGroup, gid, epoch)) return;
         const nextActors = (resp.result.actors || []).filter((actor) => {
           const internalKind = String(actor.internal_kind || "").trim().toLowerCase();
-          return internalKind === "pet";
+          return internalKind === "pet" || internalKind === "voice_secretary";
         });
         set((state) => ({
           internalRuntimeActorsByGroup: {

@@ -1574,8 +1574,6 @@ export function AppModals({
             onOpenContext={() => openContextModalData(fetchContext, selectedGroupId)}
             onSyncContext={() => syncContextModalData(fetchContext, selectedGroupId)}
             isDark={isDark}
-            settings={groupSettings}
-            onUpdateSettings={handleUpdateSettings}
           />
         </Suspense>
       ) : null}

@@ -101,7 +101,7 @@ interface CCCSEventV1 {
 
 ### 4.4 Event Kind Namespaces
 
-Standard kinds use the `chat.*`, `system.*`, `group.*`, `actor.*`, and `context.*` namespaces.
+Standard kinds use the `chat.*`, `system.*`, `group.*`, `actor.*`, `context.*`, and `assistant.*` namespaces.
 
 Extensions SHOULD use one of:
 - `x.<vendor>.*` (recommended for private/vendor-specific kinds)

@@ -1,0 +1,2019 @@
+import base64
+import json
+import os
+import shutil
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+
+class TestAssistantOps(unittest.TestCase):
+    def _with_home(self):
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        td = td_ctx.__enter__()
+        os.environ["CCCC_HOME"] = td
+
+        def cleanup() -> None:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+            for attempt in range(5):
+                try:
+                    shutil.rmtree(td)
+                    break
+                except FileNotFoundError:
+                    break
+                except OSError:
+                    if attempt >= 4:
+                        raise
+                    time.sleep(0.05)
+
+        return td, cleanup
+
+    def _call(self, op: str, args: dict):
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
+
+    def _create_group(self) -> str:
+        create, _ = self._call("group_create", {"title": "assistants", "topic": "", "by": "user"})
+        self.assertTrue(create.ok, getattr(create, "error", None))
+        group_id = str((create.result or {}).get("group_id") or "").strip()
+        self.assertTrue(group_id)
+        return group_id
+
+    def _add_foreman(self, group_id: str) -> None:
+        add, _ = self._call(
+            "actor_add",
+            {
+                "group_id": group_id,
+                "by": "user",
+                "actor_id": "lead",
+                "title": "Foreman",
+                "runtime": "codex",
+                "runner": "headless",
+                "enabled": True,
+            },
+        )
+        self.assertTrue(add.ok, getattr(add, "error", None))
+
+    def _ensure_foreman(self, group_id: str) -> None:
+        from cccc.kernel.actors import find_actor
+        from cccc.kernel.group import load_group
+
+        group = load_group(group_id)
+        if group is not None and find_actor(group, "lead") is not None:
+            return
+        self._add_foreman(group_id)
+
+    def _attach_scope(self, group_id: str, path: str) -> None:
+        attach, _ = self._call("attach", {"group_id": group_id, "path": path, "by": "user"})
+        self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+    def _enable_voice_secretary(self, group_id: str) -> None:
+        self._ensure_foreman(group_id)
+        from cccc.kernel.group import load_group
+        from cccc.kernel.prompt_files import resolve_active_scope_root
+
+        group = load_group(group_id)
+        if group is not None and resolve_active_scope_root(group) is None:
+            repo = Path(os.environ["CCCC_HOME"]) / f"repo-{group_id}"
+            repo.mkdir(parents=True, exist_ok=True)
+            self._attach_scope(group_id, str(repo))
+        enable, _ = self._call(
+            "assistant_settings_update",
+            {
+                "group_id": group_id,
+                "by": "user",
+                "assistant_id": "voice_secretary",
+                "patch": {"enabled": True},
+            },
+        )
+        self.assertTrue(enable.ok, getattr(enable, "error", None))
+
+    def _enable_voice_secretary_service_asr(self, group_id: str) -> None:
+        self._ensure_foreman(group_id)
+        enable, _ = self._call(
+            "assistant_settings_update",
+            {
+                "group_id": group_id,
+                "by": "user",
+                "assistant_id": "voice_secretary",
+                "patch": {
+                    "enabled": True,
+                    "config": {
+                        "capture_mode": "service",
+                        "recognition_backend": "assistant_service_local_asr",
+                        "retention_ttl_seconds": 120,
+                        "tts_enabled": False,
+                    },
+                },
+            },
+        )
+        self.assertTrue(enable.ok, getattr(enable, "error", None))
+
+    def test_state_exposes_builtin_assistants(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            state, _ = self._call("assistant_state", {"group_id": group_id})
+
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            assistants_by_id = (state.result or {}).get("assistants_by_id") if isinstance(state.result, dict) else {}
+            self.assertIn("pet", assistants_by_id)
+            self.assertIn("voice_secretary", assistants_by_id)
+            self.assertFalse(bool(assistants_by_id["voice_secretary"].get("enabled")))
+            self.assertEqual(assistants_by_id["voice_secretary"].get("lifecycle"), "disabled")
+            self.assertEqual((assistants_by_id["voice_secretary"].get("config") or {}).get("recognition_backend"), "browser_asr")
+        finally:
+            cleanup()
+
+    def test_voice_state_sanitizes_legacy_chunking_config_on_read(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+
+            group_id = self._create_group()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["assistants"] = {
+                "voice_secretary": {
+                    "enabled": False,
+                    "config": {
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "recognition_language": "ja-JP",
+                        "auto_document_quiet_ms": 3000,
+                        "auto_document_max_window_seconds": 15,
+                        "dispatch_mode": "confirm_then_dispatch",
+                        "auto_proposal_enabled": False,
+                    },
+                }
+            }
+            group.save()
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            assistant = (state.result or {}).get("assistant") if isinstance(state.result, dict) else {}
+            config = assistant.get("config") if isinstance(assistant.get("config"), dict) else {}
+            self.assertEqual(config.get("auto_document_quiet_ms"), 5000)
+            self.assertEqual(config.get("auto_document_max_window_seconds"), 120)
+            self.assertNotIn("dispatch_mode", config)
+            self.assertNotIn("auto_proposal_enabled", config)
+
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"recognition_language": "en-US"}},
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+            updated_config = ((update.result or {}).get("assistant") or {}).get("config") or {}
+            self.assertEqual(updated_config.get("recognition_language"), "en-US")
+            self.assertEqual(updated_config.get("auto_document_quiet_ms"), 5000)
+            self.assertEqual(updated_config.get("auto_document_max_window_seconds"), 120)
+            self.assertNotIn("dispatch_mode", updated_config)
+            self.assertNotIn("auto_proposal_enabled", updated_config)
+        finally:
+            cleanup()
+
+    def test_voice_settings_update_enables_group_scoped_assistant(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._add_foreman(group_id)
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {
+                        "enabled": True,
+                        "config": {
+                            "capture_mode": "service",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "retention_ttl_seconds": 120,
+                            "tts_enabled": False,
+                        },
+                    },
+                },
+            )
+
+            self.assertTrue(update.ok, getattr(update, "error", None))
+            assistant = (update.result or {}).get("assistant") if isinstance(update.result, dict) else {}
+            self.assertTrue(bool(assistant.get("enabled")))
+            self.assertEqual((assistant.get("config") or {}).get("retention_ttl_seconds"), 120)
+            service = ((assistant.get("health") or {}).get("service") or {}) if isinstance(assistant.get("health"), dict) else {}
+            self.assertEqual(service.get("status"), "not_started")
+            self.assertFalse(bool(service.get("alive")))
+            event = (update.result or {}).get("event") if isinstance(update.result, dict) else {}
+            self.assertEqual(event.get("kind"), "assistant.settings_update")
+            from cccc.kernel.group import load_group
+            from cccc.kernel.voice_secretary_actor import VOICE_SECRETARY_ACTOR_ID, get_voice_secretary_actor
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = get_voice_secretary_actor(group)
+            self.assertIsInstance(actor, dict)
+            self.assertEqual(actor.get("id"), VOICE_SECRETARY_ACTOR_ID)
+            self.assertEqual(actor.get("internal_kind"), "voice_secretary")
+            self.assertEqual(actor.get("runtime"), "codex")
+            self.assertEqual(actor.get("runner"), "headless")
+            from cccc.kernel.system_prompt import render_system_prompt
+
+            prompt = render_system_prompt(group=group, actor=actor)
+            self.assertIn("Voice Secretary Runtime Actor", prompt)
+            self.assertIn("not the foreman", prompt)
+            self.assertIn("secretary-scope", prompt)
+            self.assertIn("Bootstrap/resume orientation path", prompt)
+            self.assertIn("cccc_context_get", prompt)
+            self.assertNotIn("daemon-provided", prompt)
+            self.assertNotIn("first instruction after cold start or resume", prompt)
+            self.assertNotIn("wait until the first runtime instruction", prompt)
+            self.assertIn("Do not become a normal peer", prompt)
+            self.assertIn("cccc_voice_secretary_document", prompt)
+            self.assertIn("cccc_voice_secretary_request", prompt)
+            self.assertIn("Never copy them into user-facing markdown", prompt)
+            self.assertIn("On every input batch, incrementally organize useful material", prompt)
+            self.assertIn("non-lossy editorial refinement pass", prompt)
+            self.assertIn("evidence-bounded reconstructions", prompt)
+            self.assertIn("Do not fabricate facts", prompt)
+            self.assertIn("professional publishable document", prompt)
+            self.assertIn("Summary does not mean brevity", prompt)
+            self.assertIn("Preserve useful concrete details", prompt)
+            self.assertIn("not a wholesale rewrite", prompt)
+            self.assertIn("Edit repository-backed markdown directly", prompt)
+            self.assertIn("intentionally has no save action", prompt)
+            self.assertNotIn("Save full revised markdown", prompt)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_capability_state_exposes_document_tool(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            state, _ = self._call(
+                "capability_state",
+                {
+                    "group_id": group_id,
+                    "actor_id": "voice-secretary",
+                    "by": "voice-secretary",
+                },
+            )
+
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            visible_tools = set((state.result or {}).get("visible_tools") or [])
+            self.assertIn("cccc_voice_secretary_document", visible_tools)
+            self.assertIn("cccc_voice_secretary_request", visible_tools)
+            self.assertNotIn("cccc_pet_decisions", visible_tools)
+            self.assertNotIn("cccc_message_send", visible_tools)
+            self.assertNotIn("cccc_message_reply", visible_tools)
+        finally:
+            cleanup()
+
+    def test_voice_settings_enable_uses_foreman_profile_private_env(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+
+            profile_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "voice-profile",
+                        "name": "Voice Profile",
+                        "scope": "user",
+                        "owner_id": "user-a",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": ["voice-runtime", "--stdio"],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(profile_upsert.ok, getattr(profile_upsert, "error", None))
+
+            secret_update, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "voice-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "set": {"API_KEY": "voice-secret"},
+                },
+            )
+            self.assertTrue(secret_update.ok, getattr(secret_update, "error", None))
+
+            add_foreman, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "lead",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "profile_id": "voice-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add_foreman.ok, getattr(add_foreman, "error", None))
+
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "assistant_id": "voice_secretary",
+                    "patch": {"enabled": True},
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+
+            from cccc.daemon.actors.private_env_ops import load_actor_private_env
+            from cccc.kernel.group import load_group
+            from cccc.kernel.voice_secretary_actor import VOICE_SECRETARY_ACTOR_ID, get_voice_secretary_actor
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = get_voice_secretary_actor(group)
+            self.assertIsInstance(actor, dict)
+            assert isinstance(actor, dict)
+            self.assertEqual(actor.get("id"), VOICE_SECRETARY_ACTOR_ID)
+            self.assertEqual(actor.get("runtime"), "custom")
+            self.assertEqual(actor.get("runner"), "headless")
+            self.assertEqual(actor.get("command"), ["voice-runtime", "--stdio"])
+            self.assertEqual(actor.get("submit"), "newline")
+            private_env = load_actor_private_env(group_id, VOICE_SECRETARY_ACTOR_ID)
+            self.assertEqual(private_env.get("API_KEY"), "voice-secret")
+        finally:
+            cleanup()
+
+    def test_voice_settings_enable_requires_foreman_runtime_source(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"enabled": True},
+                },
+            )
+
+            self.assertFalse(update.ok)
+            self.assertEqual(update.error.code, "assistant_settings_update_failed")
+            self.assertIn("voice secretary requires an enabled foreman actor", update.error.message)
+        finally:
+            cleanup()
+
+    def test_voice_service_transcribe_reports_missing_backend_explicitly(self) -> None:
+        _, cleanup = self._with_home()
+        old_mock = os.environ.pop("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT", None)
+        old_command = os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary_service_asr(group_id)
+            audio = base64.b64encode(b"fake audio bytes").decode("ascii")
+
+            transcribe, _ = self._call(
+                "assistant_voice_transcribe",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "audio_base64": audio,
+                    "mime_type": "audio/webm",
+                    "language": "en-US",
+                },
+            )
+
+            self.assertFalse(transcribe.ok)
+            self.assertEqual(transcribe.error.code, "asr_backend_unavailable")
+        finally:
+            from cccc.daemon.assistants.voice_service_runtime import stop_voice_service
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id) if "group_id" in locals() else None
+            if group is not None:
+                stop_voice_service(group)
+            if old_mock is not None:
+                os.environ["CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT"] = old_mock
+            else:
+                os.environ.pop("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT", None)
+            if old_command is not None:
+                os.environ["CCCC_VOICE_SECRETARY_ASR_COMMAND"] = old_command
+            else:
+                os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+            cleanup()
+
+    def test_voice_service_transcribe_uses_first_party_service_process(self) -> None:
+        _, cleanup = self._with_home()
+        old_mock = os.environ.get("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT")
+        old_command = os.environ.get("CCCC_VOICE_SECRETARY_ASR_COMMAND")
+        os.environ["CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT"] = "service transcript"
+        os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+        try:
+            from cccc.daemon.assistants.voice_service_runtime import read_voice_service_state, stop_voice_service
+            from cccc.kernel.group import load_group
+
+            group_id = self._create_group()
+            self._enable_voice_secretary_service_asr(group_id)
+            audio = base64.b64encode(b"fake audio bytes").decode("ascii")
+
+            transcribe, _ = self._call(
+                "assistant_voice_transcribe",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "audio_base64": audio,
+                    "mime_type": "audio/webm",
+                    "language": "en-US",
+                },
+            )
+
+            self.assertTrue(transcribe.ok, getattr(transcribe, "error", None))
+            result = transcribe.result or {}
+            self.assertEqual(result.get("transcript"), "service transcript")
+            self.assertEqual(result.get("backend"), "assistant_service_local_asr")
+            service = result.get("service") if isinstance(result.get("service"), dict) else {}
+            self.assertTrue(bool(service.get("pid")))
+            self.assertTrue(bool(service.get("asr_mock_configured")))
+            assistant = result.get("assistant") if isinstance(result.get("assistant"), dict) else {}
+            self.assertEqual(assistant.get("lifecycle"), "idle")
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            state = read_voice_service_state(group)
+            self.assertTrue(bool(state.get("alive")))
+            stop_voice_service(group)
+        finally:
+            if old_mock is not None:
+                os.environ["CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT"] = old_mock
+            else:
+                os.environ.pop("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT", None)
+            if old_command is not None:
+                os.environ["CCCC_VOICE_SECRETARY_ASR_COMMAND"] = old_command
+            else:
+                os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+            if "group" in locals() and group is not None:
+                from cccc.daemon.assistants.voice_service_runtime import stop_voice_service
+
+                stop_voice_service(group)
+            cleanup()
+
+    def test_voice_document_create_requires_attached_repo_scope(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            create, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "title": "Notes",
+                    "create_new": True,
+                },
+            )
+            self.assertFalse(create.ok)
+            self.assertEqual(create.error.code, "assistant_voice_document_save_failed")
+            self.assertIn("attached repository scope", create.error.message)
+        finally:
+            cleanup()
+
+    def test_voice_transcript_append_flush_stores_sidecar_without_legacy_proposal(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            group_id = self._create_group()
+            self._add_foreman(group_id)
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {
+                        "enabled": True,
+                        "config": {
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "recognition_language": "en-US",
+                            "retention_ttl_seconds": 120,
+                            "auto_document_enabled": False,
+                            "tts_enabled": False,
+                        },
+                    },
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+
+            append, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "session-1",
+                    "segment_id": "seg-1",
+                    "text": "please inspect the assistant transcript loop",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "push_to_talk_stop",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "session-1",
+                        "input_device_label": "browser_default",
+                        "language": "en-US",
+                    },
+                },
+            )
+
+            self.assertTrue(append.ok, getattr(append, "error", None))
+            result = append.result or {}
+            self.assertEqual(str(result.get("session_id") or ""), "session-1")
+            segment_path = Path(str(result.get("segment_path") or ""))
+            self.assertTrue(segment_path.exists(), segment_path)
+            self.assertEqual(
+                segment_path,
+                Path(home) / "voice-secretary" / group_id / "session-1" / "transcripts" / "segments.jsonl",
+            )
+            stored_segment = json.loads(segment_path.read_text(encoding="utf-8").splitlines()[-1])
+            self.assertEqual(stored_segment.get("segment_id"), "seg-1")
+            self.assertEqual(stored_segment.get("text"), "please inspect the assistant transcript loop")
+            self.assertEqual(stored_segment.get("language"), "en-US")
+
+            assistant = result.get("assistant") if isinstance(result.get("assistant"), dict) else {}
+            self.assertEqual(assistant.get("lifecycle"), "idle")
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            events = list(iter_events(group.ledger_path))
+            self.assertTrue(any(event.get("kind") == "assistant.settings_update" for event in events))
+        finally:
+            cleanup()
+
+    def test_voice_transcript_append_creates_repo_backed_working_document_by_default(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            append, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "doc-session-1",
+                    "segment_id": "seg-doc-1",
+                    "text": "summarize the billing API migration plan and keep rollout risks visible",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": False,
+                    "trigger": {
+                        "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "doc-session-1",
+                        "input_device_label": "browser_default",
+                        "language": "en-US",
+                    },
+                },
+            )
+
+            self.assertTrue(append.ok, getattr(append, "error", None))
+            result = append.result or {}
+            self.assertFalse(bool(result.get("document_updated")), result)
+            self.assertFalse(bool(result.get("input_event_created")), result)
+
+            segment_path = Path(str(result.get("segment_path") or ""))
+            self.assertEqual(
+                segment_path,
+                Path(home) / "voice-secretary" / group_id / "doc-session-1" / "transcripts" / "segments.jsonl",
+            )
+
+            flush, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "doc-session-1",
+                    "segment_id": "",
+                    "text": "",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "doc-session-1",
+                        "input_device_label": "browser_default",
+                        "language": "en-US",
+                    },
+                },
+            )
+            self.assertTrue(flush.ok, getattr(flush, "error", None))
+            flush_result = flush.result or {}
+            self.assertFalse(bool(flush_result.get("document_updated")), flush_result)
+            self.assertTrue(bool(flush_result.get("input_event_created")), flush_result)
+            self.assertTrue(bool(flush_result.get("input_notify_emitted")), flush_result)
+            document = flush_result.get("document") if isinstance(flush_result.get("document"), dict) else {}
+            input_event = flush_result.get("input_event") if isinstance(flush_result.get("input_event"), dict) else {}
+            self.assertEqual(input_event.get("kind"), "asr_transcript")
+            self.assertEqual(input_event.get("document_path"), document.get("document_path"))
+            self.assertEqual(document.get("storage_kind"), "workspace")
+            original_document_title = str(document.get("title") or "")
+            workspace_path = str(document.get("workspace_path") or "")
+            self.assertTrue(workspace_path.startswith("docs/voice-secretary/"), workspace_path)
+            self.assertTrue(workspace_path.endswith(".md"), workspace_path)
+            document_path = repo / workspace_path
+            self.assertTrue(document_path.exists(), document_path)
+            content = document_path.read_text(encoding="utf-8")
+            self.assertEqual(content, "")
+            self.assertNotIn("Voice Secretary Notes", content)
+            self.assertNotIn("## Working Notes", content)
+            self.assertNotIn("summarize the billing API migration plan", content)
+            sources_path = Path(home) / "voice-secretary" / group_id / "documents" / str(document.get("document_id")) / "sources.jsonl"
+            revisions_path = Path(home) / "voice-secretary" / group_id / "documents" / str(document.get("document_id")) / "revisions.jsonl"
+            self.assertTrue(sources_path.exists(), sources_path)
+            self.assertFalse(revisions_path.exists())
+
+            input_read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(input_read.ok, getattr(input_read, "error", None))
+            input_read_result = input_read.result or {}
+            self.assertEqual(input_read_result.get("item_count"), 1)
+            self.assertNotIn("items", input_read_result)
+            self.assertIn("Secretary input batch", str(input_read_result.get("input_text") or ""))
+            self.assertNotIn("combined_text", input_read_result)
+            self.assertIn("summarize the billing API migration plan", str(input_read_result.get("input_text") or ""))
+            self.assertNotIn("documents_by_path", input_read_result)
+            self.assertIn(workspace_path, {str(item.get("document_path") or "") for item in (input_read_result.get("documents") or []) if isinstance(item, dict)})
+            second_read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(second_read.ok, getattr(second_read, "error", None))
+            self.assertEqual((second_read.result or {}).get("item_count"), 0)
+
+            save_from_input, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "document_path": str(document.get("document_path") or ""),
+                    "title": "Billing API migration notes",
+                    "content": "# Billing API migration notes\n\n## Summary\n\nKeep rollout risks visible.\n",
+                },
+            )
+            self.assertTrue(save_from_input.ok, getattr(save_from_input, "error", None))
+            content = document_path.read_text(encoding="utf-8")
+            self.assertIn("Keep rollout risks visible", content)
+            self.assertTrue(revisions_path.exists(), revisions_path)
+            document = (save_from_input.result or {}).get("document") if isinstance(save_from_input.result, dict) else document
+            self.assertEqual(str(document.get("title") or ""), original_document_title)
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            documents_by_id = (state.result or {}).get("documents_by_id") if isinstance(state.result, dict) else {}
+            self.assertIn(str(document.get("document_id") or ""), documents_by_id)
+            self.assertFalse(bool((state.result or {}).get("new_input_available")))
+
+            archive, _ = self._call(
+                "assistant_voice_document_archive",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "document_path": str(document.get("document_path") or ""),
+                },
+            )
+            self.assertTrue(archive.ok, getattr(archive, "error", None))
+            archived_document = (archive.result or {}).get("document") if isinstance(archive.result, dict) else {}
+            archived_workspace_path = str((archived_document or {}).get("workspace_path") or "")
+            self.assertTrue(archived_workspace_path.startswith("docs/voice-secretary/archive/"), archived_workspace_path)
+            archived_document_path = repo / archived_workspace_path
+            self.assertTrue(archived_document_path.exists(), archived_document_path)
+            self.assertFalse(document_path.exists(), document_path)
+            archived_sources_path = Path(home) / "voice-secretary" / group_id / "documents" / "archive" / str(document.get("document_id")) / "sources.jsonl"
+            archived_revisions_path = Path(home) / "voice-secretary" / group_id / "documents" / "archive" / str(document.get("document_id")) / "revisions.jsonl"
+            self.assertTrue(archived_sources_path.exists(), archived_sources_path)
+            self.assertTrue(archived_revisions_path.exists(), archived_revisions_path)
+
+            stale_save, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "document_path": str(document.get("document_path") or ""),
+                    "title": str(document.get("title") or ""),
+                    "content": "# stale update should not land\n",
+                },
+            )
+            self.assertFalse(stale_save.ok)
+            self.assertEqual(stale_save.error.code, "assistant_voice_document_save_failed")
+
+            append_after_archive, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "doc-session-1",
+                    "segment_id": "seg-doc-2",
+                    "text": "capture the follow-up owner list in a fresh working document",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": False,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "doc-session-1",
+                        "language": "en-US",
+                    },
+                },
+            )
+            self.assertTrue(append_after_archive.ok, getattr(append_after_archive, "error", None))
+            self.assertFalse(bool((append_after_archive.result or {}).get("document_updated")), append_after_archive.result)
+            self.assertFalse(bool((append_after_archive.result or {}).get("input_event_created")), append_after_archive.result)
+            flush_after_archive, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "doc-session-1",
+                    "segment_id": "",
+                    "text": "",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "doc-session-1",
+                        "language": "en-US",
+                    },
+                },
+            )
+            self.assertTrue(flush_after_archive.ok, getattr(flush_after_archive, "error", None))
+            self.assertTrue(bool((flush_after_archive.result or {}).get("input_event_created")), flush_after_archive.result)
+            next_document = (flush_after_archive.result or {}).get("document") if isinstance(flush_after_archive.result, dict) else {}
+            next_input = (flush_after_archive.result or {}).get("input_event") if isinstance(flush_after_archive.result, dict) else {}
+            self.assertIsInstance(next_document, dict)
+            self.assertNotEqual(next_document.get("document_id"), document.get("document_id"))
+            self.assertNotIn(
+                "capture the follow-up owner list",
+                (repo / str(next_document.get("workspace_path") or "")).read_text(encoding="utf-8"),
+            )
+            self.assertIn("capture the follow-up owner list", str(next_input.get("text") or ""))
+            self.assertNotIn("capture the follow-up owner list", archived_document_path.read_text(encoding="utf-8"))
+
+            state_after_archive, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state_after_archive.ok, getattr(state_after_archive, "error", None))
+            state_after_archive_result = state_after_archive.result or {}
+            self.assertEqual(state_after_archive_result.get("active_document_id"), next_document.get("document_id"))
+            documents_after_archive = state_after_archive_result.get("documents_by_id") if isinstance(state_after_archive_result, dict) else {}
+            self.assertIn(str(next_document.get("document_id") or ""), documents_after_archive)
+            self.assertNotIn(str(document.get("document_id") or ""), documents_after_archive)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            events = list(iter_events(group.ledger_path))
+            self.assertTrue(any(event.get("kind") == "assistant.voice.document" for event in events))
+            input_notifies = [
+                event
+                for event in events
+                if event.get("kind") == "system.notify"
+                and ((event.get("data") or {}).get("context") or {}).get("kind") == "voice_secretary_input"
+            ]
+            self.assertTrue(input_notifies)
+            self.assertEqual((input_notifies[-1].get("data") or {}).get("target_actor_id"), "voice-secretary")
+        finally:
+            cleanup()
+
+    def test_voice_transcript_short_flush_and_tiny_filler_filter(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            filler, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "short-flush",
+                    "segment_id": "seg-filler",
+                    "text": "嗯",
+                    "language": "zh-CN",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "short-flush",
+                        "language": "zh-CN",
+                    },
+                },
+            )
+            self.assertTrue(filler.ok, getattr(filler, "error", None))
+            self.assertFalse(bool((filler.result or {}).get("input_event_created")), filler.result)
+
+            short, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "short-flush",
+                    "segment_id": "seg-short",
+                    "text": "查东京天气",
+                    "language": "zh-CN",
+                    "is_final": True,
+                    "flush": False,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "short-flush",
+                        "language": "zh-CN",
+                    },
+                },
+            )
+            self.assertTrue(short.ok, getattr(short, "error", None))
+            self.assertFalse(bool((short.result or {}).get("input_event_created")), short.result)
+
+            quiet_flush, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "short-flush",
+                    "segment_id": "",
+                    "text": "",
+                    "language": "zh-CN",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "short-flush",
+                        "language": "zh-CN",
+                    },
+                },
+            )
+            self.assertTrue(quiet_flush.ok, getattr(quiet_flush, "error", None))
+            result = quiet_flush.result or {}
+            self.assertTrue(bool(result.get("input_event_created")), result)
+            input_event = result.get("input_event") if isinstance(result.get("input_event"), dict) else {}
+            self.assertEqual(input_event.get("kind"), "asr_transcript")
+            self.assertIn("查东京天气", str(input_event.get("text") or ""))
+            self.assertNotIn("嗯", str(input_event.get("text") or ""))
+        finally:
+            cleanup()
+
+    def test_voice_transcript_atomic_text_flush_survives_empty_flush_race(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            early_flush, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "atomic-race",
+                    "segment_id": "",
+                    "text": "",
+                    "language": "zh-CN",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "atomic-race",
+                        "language": "zh-CN",
+                    },
+                },
+            )
+            self.assertTrue(early_flush.ok, getattr(early_flush, "error", None))
+            self.assertFalse(bool((early_flush.result or {}).get("input_event_created")), early_flush.result)
+
+            atomic_flush, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "atomic-race",
+                    "segment_id": "seg-atomic",
+                    "text": "查东京天气",
+                    "language": "zh-CN",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "atomic-race",
+                        "language": "zh-CN",
+                    },
+                },
+            )
+            self.assertTrue(atomic_flush.ok, getattr(atomic_flush, "error", None))
+            result = atomic_flush.result or {}
+            self.assertTrue(bool(result.get("input_event_created")), result)
+            input_event = result.get("input_event") if isinstance(result.get("input_event"), dict) else {}
+            self.assertIn("查东京天气", str(input_event.get("text") or ""))
+        finally:
+            cleanup()
+
+    def test_voice_stale_window_flushes_on_existing_daemon_entrypoint(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import assistant_ops
+            from cccc.kernel.group import load_group
+
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            append, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "stale-window",
+                    "segment_id": "seg-stale",
+                    "text": "这段短语音应该在兜底入口被发送给小秘书",
+                    "language": "zh-CN",
+                    "is_final": True,
+                    "flush": False,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "stale-window",
+                        "language": "zh-CN",
+                    },
+                },
+            )
+            self.assertTrue(append.ok, getattr(append, "error", None))
+            self.assertFalse(bool((append.result or {}).get("input_event_created")), append.result)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            runtime_state = assistant_ops._load_runtime_state(group)
+            session = runtime_state["voice_sessions"]["stale-window"]
+            session["updated_at"] = "2000-01-01T00:00:00+00:00"
+            session["window_started_at"] = "2000-01-01T00:00:00+00:00"
+            assistant_ops._save_runtime_state(group, runtime_state)
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            self.assertTrue(bool((state.result or {}).get("new_input_available")), state.result)
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            input_text = str((read.result or {}).get("input_text") or "")
+            self.assertIn("兜底入口", input_text)
+        finally:
+            cleanup()
+
+    def test_voice_input_notify_is_lightweight_and_read_returns_language_intent_and_policy(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            append, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "intent-session-1",
+                    "segment_id": "seg-intent-1",
+                    "text": "Tell foreman to review the weather plan and create a fresh working document for notes.",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "intent-session-1",
+                        "language": "en-US",
+                    },
+                },
+            )
+
+            self.assertTrue(append.ok, getattr(append, "error", None))
+            result = append.result or {}
+            segment = result.get("segment") if isinstance(result.get("segment"), dict) else {}
+            self.assertEqual(segment.get("intent_hint"), "mixed")
+            self.assertEqual(segment.get("language"), "en-US")
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            events = list(iter_events(group.ledger_path))
+            input_notifies = [
+                event
+                for event in events
+                if event.get("kind") == "system.notify"
+                and ((event.get("data") or {}).get("context") or {}).get("kind") == "voice_secretary_input"
+            ]
+            self.assertTrue(input_notifies)
+            notify_data = input_notifies[-1].get("data") or {}
+            notify_text = f"{notify_data.get('title') or ''}\n{notify_data.get('message') or ''}"
+            self.assertIn("read_new_input", notify_text)
+            self.assertNotIn("Tell foreman", notify_text)
+            context = (notify_data.get("context") or {})
+            self.assertEqual(context.get("reason"), "new_input")
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            read_result = read.result or {}
+            batches = read_result.get("input_batches") if isinstance(read_result, dict) else []
+            self.assertEqual(len(batches), 1)
+            group_item = batches[0] if isinstance(batches[0], dict) else {}
+            self.assertIn("en-US", group_item.get("languages") or [])
+            self.assertIn("mixed", group_item.get("intent_hints") or [])
+            self.assertNotIn("items", read_result)
+            self.assertNotIn("instruction_policy", read_result)
+            self.assertNotIn("client_session_id", read_result)
+        finally:
+            cleanup()
+
+    def test_voice_intent_distinguishes_secretary_scope_from_peer_handoff(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            secretary, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "intent-secretary-session",
+                    "segment_id": "seg-secretary-task",
+                    "text": "Please investigate why the notes are confusing and summarize better options for the user.",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "intent-secretary-session",
+                        "language": "en-US",
+                    },
+                },
+            )
+            self.assertTrue(secretary.ok, getattr(secretary, "error", None))
+            secretary_segment = (secretary.result or {}).get("segment") if isinstance(secretary.result, dict) else {}
+            self.assertEqual(secretary_segment.get("intent_hint"), "secretary_task")
+
+            peer, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "intent-peer-session",
+                    "segment_id": "seg-peer-task",
+                    "text": "Please fix the code and run tests for the runtime bug.",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "intent-peer-session",
+                        "language": "en-US",
+                    },
+                },
+            )
+            self.assertTrue(peer.ok, getattr(peer, "error", None))
+            peer_segment = (peer.result or {}).get("segment") if isinstance(peer.result, dict) else {}
+            self.assertEqual(peer_segment.get("intent_hint"), "peer_task")
+        finally:
+            cleanup()
+
+    def test_voice_fragmented_speech_segments_merge_into_input_stream_batch(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            fragments = [
+                ("seg-282", "日本会議と保守政治の関係について、話者は選択的夫婦別姓制度をめぐる議論を紹介しています。"),
+                ("seg-283", "続いてLGBTの権利や政策パッケージが取り上げられ、家族制度との関係が論点になっています。"),
+                ("seg-284", "発言全体は政治勢力の影響や社会政策の対立軸を扱う評論として聞こえます。"),
+            ]
+            last_result = {}
+            for segment_id, text in fragments:
+                append, _ = self._call(
+                    "assistant_voice_transcript_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "jp-speech-session",
+                        "segment_id": segment_id,
+                        "text": text,
+                        "language": "ja-JP",
+                        "is_final": True,
+                        "flush": False,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "jp-speech-session",
+                            "language": "ja-JP",
+                        },
+                    },
+                )
+                self.assertTrue(append.ok, getattr(append, "error", None))
+                last_result = append.result or {}
+                self.assertFalse(bool(last_result.get("input_event_created")), last_result)
+
+            flush, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "jp-speech-session",
+                    "segment_id": "",
+                    "text": "",
+                    "language": "ja-JP",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "jp-speech-session",
+                        "language": "ja-JP",
+                    },
+                },
+            )
+            self.assertTrue(flush.ok, getattr(flush, "error", None))
+            last_result = flush.result or {}
+
+            self.assertTrue(bool(last_result.get("input_event_created")), last_result)
+            input_event = last_result.get("input_event") if isinstance(last_result.get("input_event"), dict) else {}
+            self.assertEqual(input_event.get("kind"), "asr_transcript")
+            self.assertEqual(input_event.get("language"), "ja-JP")
+            self.assertNotIn("segment_id", input_event)
+            self.assertNotIn("session_id", input_event)
+            self.assertNotIn("trigger", input_event)
+            metadata = input_event.get("metadata") if isinstance(input_event.get("metadata"), dict) else {}
+            self.assertNotIn("source_segment_count", metadata)
+            self.assertNotIn("source_segment_range", metadata)
+            self.assertEqual(metadata.get("capture_continuity"), "continuous")
+            self.assertEqual(metadata.get("suggested_document_mode"), "speech_summary")
+            document = last_result.get("document") if isinstance(last_result.get("document"), dict) else {}
+            self.assertNotIn("last_source_segment_id", document)
+            self.assertNotIn("source_segment_count", document)
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            source_text = str((read.result or {}).get("input_text") or "")
+            self.assertIn("日本会議", source_text)
+            self.assertIn("LGBT", source_text)
+            self.assertIn("政治勢力", source_text)
+            batches = (read.result or {}).get("input_batches") if isinstance(read.result, dict) else []
+            self.assertEqual(len(batches), 1)
+            self.assertEqual((batches[0] or {}).get("item_count"), 1)
+            self.assertNotIn("items", batches[0] or {})
+            self.assertNotIn("segment_id", batches[0] or {})
+            self.assertNotIn("source_segment_range", str(batches[0] or {}))
+            input_text = str((read.result or {}).get("input_text") or "")
+            self.assertIn("Secretary input batch", input_text)
+            self.assertNotIn("--- Item", input_text)
+            self.assertNotIn("source_segment_range", input_text)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            events = list(iter_events(group.ledger_path))
+            input_notifies = [
+                event
+                for event in events
+                if event.get("kind") == "system.notify"
+                and ((event.get("data") or {}).get("context") or {}).get("kind") == "voice_secretary_input"
+            ]
+            self.assertTrue(input_notifies)
+            context = ((input_notifies[-1].get("data") or {}).get("context") or {})
+            self.assertEqual(context.get("kind"), "voice_secretary_input")
+            self.assertNotIn("source_segment_range", context)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_request_uses_targeted_system_notify(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            request, _ = self._call(
+                "assistant_voice_request",
+                {
+                    "group_id": group_id,
+                    "by": "voice-secretary",
+                    "target": "@foreman",
+                    "request_text": "Please review the weather-plan request and decide who should execute it.",
+                    "summary": "Voice Secretary detected a spoken action request.",
+                    "document_path": "docs/voice-secretary/weather-plan.md",
+                    "requires_ack": True,
+                },
+            )
+
+            self.assertTrue(request.ok, getattr(request, "error", None))
+            result = request.result or {}
+            request_payload = result.get("request") if isinstance(result.get("request"), dict) else {}
+            self.assertEqual(request_payload.get("target_actor_id"), "lead")
+            self.assertTrue(bool(request_payload.get("requires_ack")))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            events = list(iter_events(group.ledger_path))
+            request_events = [event for event in events if event.get("kind") == "assistant.voice.request"]
+            self.assertTrue(request_events)
+            notify_events = [
+                event
+                for event in events
+                if event.get("kind") == "system.notify"
+                and ((event.get("data") or {}).get("context") or {}).get("kind") == "voice_secretary_action_request"
+            ]
+            self.assertTrue(notify_events)
+            data = notify_events[-1].get("data") or {}
+            self.assertEqual(data.get("target_actor_id"), "lead")
+            self.assertTrue(bool(data.get("requires_ack")))
+            context = data.get("context") if isinstance(data.get("context"), dict) else {}
+            self.assertEqual(context.get("document_path"), "docs/voice-secretary/weather-plan.md")
+            self.assertNotIn("document_id", context)
+            self.assertNotIn("job_id", context)
+            self.assertIn("weather-plan", str(context.get("request_text") or ""))
+        finally:
+            cleanup()
+
+    def test_voice_secretary_request_requires_explicit_target(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+
+            request, _ = self._call(
+                "assistant_voice_request",
+                {
+                    "group_id": group_id,
+                    "by": "voice-secretary",
+                    "request_text": "Please review the weather-plan request.",
+                },
+            )
+
+            self.assertFalse(request.ok)
+            self.assertEqual(request.error.code, "assistant_voice_request_failed")
+            self.assertIn("target is required", request.error.message)
+        finally:
+            cleanup()
+
+    def test_voice_input_stream_reads_all_unread_without_pending_job_backpressure(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            texts = [
+                "First semantic window covers billing migration risks, staged rollout, owner follow-up, and rollback constraints.",
+                "Second semantic window is a separate follow-up about launch metrics, customer feedback, and escalation thresholds.",
+                "Third semantic window tracks meeting commitments, follow-up dates, and implementation constraints.",
+                "Fourth semantic window should not wait on any job completion state.",
+            ]
+            document_path = ""
+            for idx, text in enumerate(texts, start=1):
+                append, _ = self._call(
+                    "assistant_voice_transcript_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "semantic-stream",
+                        "segment_id": f"seg-stream-{idx}",
+                        "text": text,
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "document_path": document_path,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "semantic-stream",
+                            "language": "en-US",
+                        },
+                    },
+                )
+                self.assertTrue(append.ok, getattr(append, "error", None))
+                result = append.result or {}
+                self.assertTrue(bool(result.get("input_event_created")), result)
+                document = result.get("document") if isinstance(result.get("document"), dict) else {}
+                document_path = str(document.get("document_path") or "")
+                self.assertTrue(document_path)
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            self.assertTrue(bool((state.result or {}).get("new_input_available")))
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            read_result = read.result or {}
+            self.assertEqual(read_result.get("item_count"), len(texts))
+            self.assertNotIn("combined_text", read_result)
+            combined_text = str(read_result.get("input_text") or "")
+            for text in texts:
+                self.assertIn(text, combined_text)
+            input_text = str(read_result.get("input_text") or "")
+            self.assertIn("Secretary input batch", input_text)
+            self.assertNotIn("--- Item", input_text)
+            self.assertEqual(input_text.count("Document:"), 1)
+            batches = read_result.get("input_batches") if isinstance(read_result, dict) else []
+            self.assertEqual(len(batches), 1)
+            self.assertEqual((batches[0] or {}).get("document_path"), document_path)
+            self.assertEqual((batches[0] or {}).get("item_count"), len(texts))
+            self.assertNotIn("items", batches[0] or {})
+
+            second_read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(second_read.ok, getattr(second_read, "error", None))
+            self.assertEqual((second_read.result or {}).get("item_count"), 0)
+        finally:
+            cleanup()
+
+    def test_voice_settings_use_canonical_recognition_backend_names(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+
+            legacy, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"recognition_backend": "remote_asr"}},
+                },
+            )
+            self.assertFalse(legacy.ok)
+            self.assertEqual(legacy.error.code, "assistant_settings_update_failed")
+
+            browser_local, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"recognition_backend": "browser_local_asr"}},
+                },
+            )
+            self.assertFalse(browser_local.ok)
+            self.assertEqual(browser_local.error.code, "assistant_settings_update_failed")
+
+            browser, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"recognition_backend": "browser_asr"}},
+                },
+            )
+            self.assertTrue(browser.ok, getattr(browser, "error", None))
+            assistant = (browser.result or {}).get("assistant") if isinstance(browser.result, dict) else {}
+            self.assertEqual((assistant.get("config") or {}).get("recognition_backend"), "browser_asr")
+
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"config": {"recognition_backend": "external_provider_asr"}},
+                },
+            )
+            self.assertTrue(update.ok, getattr(update, "error", None))
+            assistant = (update.result or {}).get("assistant") if isinstance(update.result, dict) else {}
+            self.assertEqual((assistant.get("config") or {}).get("recognition_backend"), "external_provider_asr")
+        finally:
+            cleanup()
+
+    def test_voice_document_save_create_new_keeps_multiple_documents(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            first, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "title": "Launch Plan",
+                    "create_new": True,
+                },
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            first_doc = (first.result or {}).get("document") if isinstance(first.result, dict) else {}
+            first_id = str((first_doc or {}).get("document_id") or "")
+            self.assertTrue(first_id)
+            self.assertEqual((first_doc or {}).get("title"), "Launch Plan")
+            first_path = repo / str((first_doc or {}).get("workspace_path") or "")
+            first_content = first_path.read_text(encoding="utf-8")
+            self.assertEqual(first_content, "")
+            self.assertNotIn("# Launch Plan", first_content)
+
+            second, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "title": "Weather Follow-up",
+                    "content": "# Weather Follow-up\n\n## Summary\nTokyo and Osaka weather follow-up.\n",
+                    "create_new": True,
+                },
+            )
+            self.assertTrue(second.ok, getattr(second, "error", None))
+            second_doc = (second.result or {}).get("document") if isinstance(second.result, dict) else {}
+            second_id = str((second_doc or {}).get("document_id") or "")
+            self.assertTrue(second_id)
+            self.assertNotEqual(first_id, second_id)
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            self.assertEqual((state.result or {}).get("active_document_id"), second_id)
+            documents_by_id = (state.result or {}).get("documents_by_id") if isinstance(state.result, dict) else {}
+            self.assertIn(first_id, documents_by_id)
+            self.assertIn(second_id, documents_by_id)
+
+            archive, _ = self._call(
+                "assistant_voice_document_archive",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "document_path": str((second_doc or {}).get("document_path") or ""),
+                },
+            )
+            self.assertTrue(archive.ok, getattr(archive, "error", None))
+            archived_doc = (archive.result or {}).get("document") if isinstance(archive.result, dict) else {}
+            self.assertIn("/archive/", f"/{str((archived_doc or {}).get('workspace_path') or '')}")
+
+            state_after, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state_after.ok, getattr(state_after, "error", None))
+            self.assertEqual((state_after.result or {}).get("active_document_id"), first_id)
+        finally:
+            cleanup()
+
+    def test_voice_document_create_new_preserves_localized_title_in_workspace_path(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            created, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "title": "東京会議メモ 測試",
+                    "create_new": True,
+                },
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            document = (created.result or {}).get("document") if isinstance(created.result, dict) else {}
+            workspace_path = str((document or {}).get("workspace_path") or "")
+            self.assertIn("東京会議メモ", workspace_path)
+            self.assertIn("測試", workspace_path)
+            self.assertTrue((repo / workspace_path).exists(), workspace_path)
+        finally:
+            cleanup()
+
+    def test_voice_transcript_append_uses_explicit_document_target(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            first, _ = self._call(
+                "assistant_voice_document_save",
+                {"group_id": group_id, "by": "user", "title": "First Notes", "content": "# First\n", "create_new": True},
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            first_doc = ((first.result or {}).get("document") or {})
+            first_id = str(first_doc.get("document_id") or "")
+            first_path = str(first_doc.get("document_path") or "")
+            second, _ = self._call(
+                "assistant_voice_document_save",
+                {"group_id": group_id, "by": "user", "title": "Second Notes", "content": "# Second\n", "create_new": True},
+            )
+            self.assertTrue(second.ok, getattr(second, "error", None))
+            second_doc = ((second.result or {}).get("document") or {})
+            second_id = str(second_doc.get("document_id") or "")
+            second_path = str(second_doc.get("document_path") or "")
+            self.assertTrue(first_id and second_id and first_id != second_id)
+            self.assertTrue(first_path and second_path and first_path != second_path)
+
+            select, _ = self._call(
+                "assistant_voice_document_select",
+                {"group_id": group_id, "by": "user", "document_path": first_path},
+            )
+            self.assertTrue(select.ok, getattr(select, "error", None))
+
+            append, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "doc-target-session",
+                    "segment_id": "seg-target",
+                    "document_path": second_path,
+                    "text": "put this short note into the explicitly targeted second document",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "doc-target-session",
+                        "language": "en-US",
+                    },
+                },
+            )
+            self.assertTrue(append.ok, getattr(append, "error", None))
+            result = append.result or {}
+            input_event = result.get("input_event") if isinstance(result.get("input_event"), dict) else {}
+            self.assertEqual(input_event.get("document_path"), second_path)
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            self.assertEqual((state.result or {}).get("active_document_id"), second_id)
+            self.assertEqual((state.result or {}).get("active_document_path"), second_path)
+        finally:
+            cleanup()
+
+    def test_voice_document_save_does_not_change_capture_target(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            first, _ = self._call(
+                "assistant_voice_document_save",
+                {"group_id": group_id, "by": "user", "title": "First Notes", "content": "# First\n", "create_new": True},
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            first_doc = ((first.result or {}).get("document") or {})
+            first_id = str(first_doc.get("document_id") or "")
+            first_path = str(first_doc.get("document_path") or "")
+            second, _ = self._call(
+                "assistant_voice_document_save",
+                {"group_id": group_id, "by": "user", "title": "Second Notes", "content": "# Second\n", "create_new": True},
+            )
+            self.assertTrue(second.ok, getattr(second, "error", None))
+            second_doc = ((second.result or {}).get("document") or {})
+            second_id = str(second_doc.get("document_id") or "")
+            second_path = str(second_doc.get("document_path") or "")
+            self.assertTrue(first_id and second_id and first_id != second_id)
+            self.assertTrue(first_path and second_path and first_path != second_path)
+
+            select, _ = self._call(
+                "assistant_voice_document_select",
+                {"group_id": group_id, "by": "user", "document_path": first_path},
+            )
+            self.assertTrue(select.ok, getattr(select, "error", None))
+
+            save_second, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "document_path": second_path,
+                    "title": "Second Notes Updated",
+                    "content": "# Second\n\nUpdated while capture target is first.\n",
+                },
+            )
+            self.assertTrue(save_second.ok, getattr(save_second, "error", None))
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            self.assertEqual((state.result or {}).get("active_document_id"), first_id)
+            self.assertEqual((state.result or {}).get("capture_target_document_id"), first_id)
+            self.assertEqual((state.result or {}).get("active_document_path"), first_path)
+            self.assertEqual((state.result or {}).get("capture_target_document_path"), first_path)
+            documents = (state.result or {}).get("documents") if isinstance(state.result, dict) else []
+            self.assertEqual([str(item.get("document_id") or "") for item in documents if isinstance(item, dict)], [second_id, first_id])
+        finally:
+            cleanup()
+
+    def test_voice_document_save_does_not_rename_existing_document(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            created, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "title": "Original Notes",
+                    "content": "# Original Notes\n\n## Working Notes\n",
+                    "create_new": True,
+                },
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            created_doc = (created.result or {}).get("document") if isinstance(created.result, dict) else {}
+            document_id = str((created_doc or {}).get("document_id") or "")
+            document_path = str((created_doc or {}).get("document_path") or "")
+            self.assertTrue(document_id)
+            self.assertTrue(document_path)
+
+            saved, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "document_path": document_path,
+                    "title": "Renamed Notes",
+                    "content": "# Renamed Notes\n\n## Working Notes\nKeep the original document id.\n",
+                },
+            )
+            self.assertTrue(saved.ok, getattr(saved, "error", None))
+            saved_doc = (saved.result or {}).get("document") if isinstance(saved.result, dict) else {}
+            self.assertEqual(str((saved_doc or {}).get("document_id") or ""), document_id)
+            self.assertEqual(str((saved_doc or {}).get("title") or ""), "Original Notes")
+            self.assertEqual(str((saved_doc or {}).get("workspace_path") or ""), str((created_doc or {}).get("workspace_path") or ""))
+
+            stale, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "document_path": "docs/voice-secretary/does-not-exist.md",
+                    "title": "Should Not Exist",
+                    "content": "# Should Not Exist\n",
+                },
+            )
+            self.assertFalse(stale.ok)
+            self.assertEqual(stale.error.code, "assistant_voice_document_save_failed")
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            documents_by_id = (state.result or {}).get("documents_by_id") if isinstance(state.result, dict) else {}
+            self.assertEqual(list(documents_by_id.keys()), [document_id])
+        finally:
+            cleanup()
+
+    def test_voice_document_instruction_appends_input_and_notifies_actor(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            created, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "title": "Launch Notes",
+                    "content": "# Launch Notes\n\n## Working Notes\nExisting summary.\n",
+                    "create_new": True,
+                },
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            document = (created.result or {}).get("document") if isinstance(created.result, dict) else {}
+            document_id = str((document or {}).get("document_id") or "")
+            document_path = str((document or {}).get("document_path") or "")
+            self.assertTrue(document_id)
+            self.assertTrue(document_path)
+
+            instruction, _ = self._call(
+                "assistant_voice_document_instruction",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "document_path": document_path,
+                    "instruction": "Rewrite this into a concise launch-risk summary.",
+                    "trigger": {
+                        "trigger_kind": "user_instruction",
+                        "mode": "meeting",
+                        "recognition_backend": "browser_asr",
+                        "language": "en-US",
+                    },
+                },
+            )
+            self.assertTrue(instruction.ok, getattr(instruction, "error", None))
+            result = instruction.result or {}
+            input_event = result.get("input_event") if isinstance(result, dict) else {}
+            self.assertEqual(input_event.get("kind"), "user_instruction")
+            self.assertEqual(input_event.get("document_path"), document_path)
+            self.assertTrue(bool(result.get("input_notify_emitted")), result)
+            self.assertIn("Existing summary.", str(((result.get("document") or {}).get("content")) or ""))
+            self.assertNotIn("Rewrite this into", str(((result.get("document") or {}).get("content")) or ""))
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            self.assertIn("User instruction:", str((read.result or {}).get("input_text") or ""))
+            self.assertIn("concise launch-risk summary", str((read.result or {}).get("input_text") or ""))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            events = list(iter_events(group.ledger_path))
+            input_notifies = [
+                event
+                for event in events
+                if event.get("kind") == "system.notify"
+                and ((event.get("data") or {}).get("context") or {}).get("kind") == "voice_secretary_input"
+            ]
+            self.assertTrue(input_notifies)
+            self.assertEqual(((input_notifies[-1].get("data") or {}).get("context") or {}).get("reason"), "new_input")
+        finally:
+            cleanup()
+
+    def test_voice_idle_review_follows_input_stream_stop_and_count_triggers(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import assistant_ops
+
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            old_threshold = assistant_ops._VOICE_IDLE_REVIEW_FLUSH_THRESHOLD
+            old_cooldown = assistant_ops._VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS
+            assistant_ops._VOICE_IDLE_REVIEW_FLUSH_THRESHOLD = 2
+            assistant_ops._VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS = 0
+            try:
+                first, _ = self._call(
+                    "assistant_voice_transcript_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "idle-review-session",
+                        "segment_id": "seg-idle-review-1",
+                        "text": "summarize the onboarding risks and keep the follow-up owner visible",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "idle-review-session",
+                            "language": "en-US",
+                        },
+                    },
+                )
+                self.assertTrue(first.ok, getattr(first, "error", None))
+                self.assertTrue(((first.result or {}).get("input_event") or {}).get("text"))
+
+                second, _ = self._call(
+                    "assistant_voice_transcript_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "idle-review-session",
+                        "segment_id": "seg-idle-review-2",
+                        "text": "capture the launch-blocker list and turn the raw notes into a polished brief",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "idle-review-session",
+                            "language": "en-US",
+                        },
+                    },
+                )
+                self.assertTrue(second.ok, getattr(second, "error", None))
+
+                batch, _ = self._call(
+                    "assistant_voice_document_input_read",
+                    {"group_id": group_id, "by": "assistant:voice_secretary"},
+                )
+                self.assertTrue(batch.ok, getattr(batch, "error", None))
+                self.assertEqual((batch.result or {}).get("item_count"), 3, batch.result)
+                idle_text = str((batch.result or {}).get("input_text") or "")
+                self.assertIn("Publishable document refinement request", idle_text)
+                self.assertIn("evidence-bounded reconstruction", idle_text)
+                self.assertIn("Correct likely ASR term errors", idle_text)
+                self.assertIn("without lossy compression", idle_text)
+                self.assertIn("Preserve useful concrete details", idle_text)
+                self.assertIn("Do not replace detail-rich material with a short executive summary", idle_text)
+                self.assertIn("Never include transcript segment ids", idle_text)
+                self.assertNotIn("items", batch.result or {})
+
+                third, _ = self._call(
+                    "assistant_voice_transcript_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "idle-review-session",
+                        "segment_id": "seg-idle-review-3",
+                        "text": "one more short note before the user stops recording",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "idle-review-session",
+                            "language": "en-US",
+                        },
+                    },
+                )
+                self.assertTrue(third.ok, getattr(third, "error", None))
+
+                stop, _ = self._call(
+                    "assistant_voice_transcript_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "idle-review-session",
+                        "segment_id": "",
+                        "text": "",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "push_to_talk_stop",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "idle-review-session",
+                            "language": "en-US",
+                        },
+                    },
+                )
+                self.assertTrue(stop.ok, getattr(stop, "error", None))
+
+                stop_batch, _ = self._call(
+                    "assistant_voice_document_input_read",
+                    {"group_id": group_id, "by": "assistant:voice_secretary"},
+                )
+                self.assertTrue(stop_batch.ok, getattr(stop_batch, "error", None))
+                self.assertEqual((stop_batch.result or {}).get("item_count"), 2, stop_batch.result)
+                stop_text = str((stop_batch.result or {}).get("input_text") or "")
+                self.assertIn("one more short note", stop_text)
+                self.assertIn("Publishable document refinement request", stop_text)
+                self.assertIn("coherent publishable artifact", stop_text)
+                self.assertIn("detail-rich", stop_text)
+            finally:
+                assistant_ops._VOICE_IDLE_REVIEW_FLUSH_THRESHOLD = old_threshold
+                assistant_ops._VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS = old_cooldown
+        finally:
+            cleanup()
+
+    def test_pet_settings_are_read_only_in_assistant_seam(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            update, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "pet",
+                    "patch": {"enabled": True},
+                },
+            )
+
+            self.assertFalse(update.ok)
+            self.assertEqual(update.error.code, "assistant_settings_read_only")
+        finally:
+            cleanup()
+
+if __name__ == "__main__":
+    unittest.main()

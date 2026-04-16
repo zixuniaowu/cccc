@@ -128,6 +128,10 @@ Default: `CCCC_HOME=~/.cccc`
 | `chat.read` / `chat.ack` | Read and acknowledgement events |
 | `chat.reaction` | Chat reaction |
 | `system.notify` / `system.notify_ack` | System notifications and acknowledgement |
+| `assistant.settings_update` | Update built-in assistant settings |
+| `assistant.status_update` | Update built-in assistant lifecycle/health |
+| `assistant.voice.document` | Voice Secretary working document save/update/archive/input marker |
+| `assistant.voice.request` | Voice Secretary structured action request marker |
 | `presentation.publish` | Publish a presentation rail card |
 | `presentation.clear` | Clear presentation rail card(s) |
 

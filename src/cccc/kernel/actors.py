@@ -29,6 +29,7 @@ _RESERVED_IDS = frozenset({
 })
 
 INTERNAL_KIND_PET = "pet"
+INTERNAL_KIND_VOICE_SECRETARY = "voice_secretary"
 
 
 def _normalize_capability_id_list(raw: Any) -> List[str]:
@@ -124,6 +125,10 @@ def is_internal_actor(actor: Dict[str, Any]) -> bool:
 
 def is_pet_actor(actor: Dict[str, Any]) -> bool:
     return str(actor.get("internal_kind") or "").strip() == INTERNAL_KIND_PET
+
+
+def is_voice_secretary_actor(actor: Dict[str, Any]) -> bool:
+    return str(actor.get("internal_kind") or "").strip() == INTERNAL_KIND_VOICE_SECRETARY
 
 
 def list_visible_actors(group: Group) -> List[Dict[str, Any]]:

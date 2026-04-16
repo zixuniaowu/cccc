@@ -161,6 +161,41 @@ MCP_TOOLS = [
         ),
     },
     {
+        "name": "cccc_voice_secretary_document",
+        "description": "Voice Secretary-only input and document registry surface. On input notify, call action=read_new_input and work from input_text. Use list/create/archive for document orientation and lifecycle only. Edit repository-backed markdown directly at document_path with native file editing tools; this MCP tool intentionally has no save action.",
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_ACTOR,
+                "action": {"type": "string", "enum": ["list", "create", "read_new_input", "archive"], "default": "list"},
+                "document_path": {"type": "string", "description": "Repository-relative markdown path returned by list/create/read_new_input."},
+                "title": {"type": "string"},
+                "include_archived": {"type": "boolean", "default": False},
+            }
+        ),
+    },
+    {
+        "name": "cccc_voice_secretary_request",
+        "description": (
+            "Voice Secretary-only handoff surface. Use it only when a task is outside secretary scope and must go to foreman "
+            "or one concrete actor through system.notify; do not use it for work the secretary can safely handle itself."
+        ),
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_ACTOR,
+                "target": {"type": "string", "description": "Required explicit handoff target: @foreman or one concrete actor id. Do not omit it."},
+                "request_text": {"type": "string", "description": "Short actionable handoff request. Do not include raw transcript dumps or secretary-scope work."},
+                "summary": {"type": "string", "description": "Optional one-line context summary."},
+                "document_path": {"type": "string"},
+                "source_event_id": {"type": "string"},
+                "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
+                "requires_ack": {"type": "boolean", "default": True},
+            },
+            required=["target", "request_text"],
+        ),
+    },
+    {
         "name": "cccc_file",
         "description": "File operations: action=send(path,text,...) or action=blob_path(rel_path).",
         "inputSchema": _obj(

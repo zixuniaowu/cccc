@@ -14,17 +14,13 @@ import {
   apiJson,
   contextSync,
   deleteCoordinationTask,
-  fetchGroupPrompts,
   updateCoordinationBrief,
   updateCoordinationTask,
-  updateGroupPrompt,
-  type GroupPromptInfo,
   type ApiResponse,
 } from "../../services/api";
 import { reloadContextAfterWrite } from "../../features/contextModal/contextWriteback";
 import type {
   GroupContext,
-  GroupSettings,
   ProjectMdInfo,
   Task,
 } from "../../types";
@@ -37,13 +33,11 @@ import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { ModalFrame } from "../modals/ModalFrame";
 import { settingsDialogBodyClass, settingsDialogPanelClass } from "../modals/settings/types";
-import { parseHelpMarkdown, updatePetHelpNote } from "../../utils/helpMarkdown";
 import { AgentsView } from "./agents/AgentsView";
 import { ProjectPanel } from "./coordination/ProjectPanel";
 import { SteeringPanel } from "./coordination/SteeringPanel";
 import { TaskBoard } from "./coordination/TaskBoard";
 import { TaskEditorPanel } from "./coordination/TaskEditorPanel";
-import { DesktopPetView } from "./desktopPet/DesktopPetView";
 import { CapabilitiesTab } from "../modals/settings/CapabilitiesTab";
 import {
   briefDraftMatches,
@@ -55,9 +49,7 @@ import {
   getTaskDeleteInfo,
   parseChecklist,
   parseLineList,
-  resolvePetPersonaDraft,
   isVisibleContextAgent,
-  petPersonaDraftDirty,
   taskDisplaySummary,
   taskDraftDirty,
   taskDraftMatches,
@@ -81,8 +73,6 @@ interface ContextModalProps {
   onOpenContext: () => Promise<void>;
   onSyncContext: () => Promise<void>;
   isDark: boolean;
-  settings?: GroupSettings | null;
-  onUpdateSettings?: (settings: Partial<GroupSettings>) => Promise<boolean | void>;
 }
 
 export function ContextModal({
@@ -93,8 +83,6 @@ export function ContextModal({
   onOpenContext,
   onSyncContext,
   isDark,
-  settings,
-  onUpdateSettings,
 }: ContextModalProps) {
   const { t } = useTranslation("modals");
   const tr = useCallback((key: string, fallback: string, vars?: Record<string, unknown>) =>
@@ -117,7 +105,6 @@ export function ContextModal({
   const [pendingTaskReadback, setPendingTaskReadback] = useState<{ taskId: string; previousUpdatedAt: string } | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState("");
-  const [viewBusy, setViewBusy] = useState(false);
 
   const [projectMd, setProjectMd] = useState<ProjectMdInfo | null>(null);
   const [projectBusy, setProjectBusy] = useState(false);
@@ -129,12 +116,6 @@ export function ContextModal({
   const [notifyAgents, setNotifyAgents] = useState(false);
   const [notifyError, setNotifyError] = useState("");
 
-  const [petHelpPrompt, setPetHelpPrompt] = useState<GroupPromptInfo | null>(null);
-  const [petPersonaDraft, setPetPersonaDraft] = useState("");
-  const [petPersonaBusy, setPetPersonaBusy] = useState(false);
-  const [petPersonaError, setPetPersonaError] = useState("");
-  const [petPersonaNotice, setPetPersonaNotice] = useState("");
-
   const [decisionDraft, setDecisionDraft] = useState<NoteDraft>(emptyNoteDraft());
   const [handoffDraft, setHandoffDraft] = useState<NoteDraft>(emptyNoteDraft());
   const [activityBusyKind, setActivityBusyKind] = useState<"decision" | "handoff" | null>(null);
@@ -142,7 +123,6 @@ export function ContextModal({
   const lastOpenedGroupRef = useRef("");
 
   const brief = context?.coordination?.brief || null;
-  const desktopPetEnabled = Boolean(settings?.desktop_pet_enabled);
   const tasks = useMemo(() => (Array.isArray(context?.coordination?.tasks) ? context.coordination.tasks : []), [context]);
   const agents = useMemo(
     () => (Array.isArray(context?.agent_states) ? context.agent_states.filter((agent) => isVisibleContextAgent(agent)) : []),
@@ -237,15 +217,7 @@ export function ContextModal({
     () => editingProject && projectText !== String(projectMd?.content || ""),
     [editingProject, projectMd?.content, projectText]
   );
-  const savedPetPersona = useMemo(
-    () => (petHelpPrompt ? parseHelpMarkdown(String(petHelpPrompt.content || "")).pet : ""),
-    [petHelpPrompt]
-  );
-  const hasPetPersonaUnsaved = useMemo(
-    () => petPersonaDraftDirty(savedPetPersona, petPersonaDraft, { loaded: petHelpPrompt !== null }),
-    [petHelpPrompt, petPersonaDraft, savedPetPersona]
-  );
-  const hasSteeringUnsaved = hasBriefUnsaved || hasProjectUnsaved || hasPetPersonaUnsaved;
+  const hasSteeringUnsaved = hasBriefUnsaved || hasProjectUnsaved;
   const hasTaskUnsaved = useMemo(() => {
     if (!taskDraft || taskEditorMode === "none") return false;
     if (taskEditorMode === "create") return taskDraftDirty(taskDraft);
@@ -273,33 +245,6 @@ export function ContextModal({
     }
   }, [groupId, projectMd, tr]);
 
-  const loadPetPersona = useCallback(async (force: boolean = false): Promise<GroupPromptInfo | null> => {
-    if (!groupId) return null;
-    if (!force && petHelpPrompt !== null) return petHelpPrompt;
-    setPetPersonaBusy(true);
-    setPetPersonaError("");
-    try {
-      const resp = await fetchGroupPrompts(groupId);
-      if (!resp.ok) {
-        setPetHelpPrompt(null);
-        setPetPersonaError(resp.error?.message || tr("context.failedToLoadPetPersona", "Failed to load pet persona"));
-        return null;
-      }
-      const nextHelp = resp.result?.help ?? null;
-      if (!nextHelp) {
-        setPetHelpPrompt(null);
-        setPetPersonaError(tr("context.failedToLoadPetPersona", "Failed to load pet persona"));
-        return null;
-      }
-      setPetHelpPrompt(nextHelp);
-      const parsedPet = parseHelpMarkdown(String(nextHelp.content || "")).pet;
-      setPetPersonaDraft(resolvePetPersonaDraft(parsedPet));
-      return nextHelp;
-    } finally {
-      setPetPersonaBusy(false);
-    }
-  }, [groupId, petHelpPrompt, tr]);
-
   useEffect(() => {
     if (!isOpen || !groupId) return;
 
@@ -323,11 +268,6 @@ export function ContextModal({
     setEditingProject(false);
     setProjectText("");
     setProjectExpanded(false);
-    setPetHelpPrompt(null);
-    setPetPersonaDraft("");
-    setPetPersonaBusy(false);
-    setPetPersonaError("");
-    setPetPersonaNotice("");
     setNotifyError("");
     setNotifyAgents(false);
     setDecisionDraft(emptyNoteDraft());
@@ -358,13 +298,6 @@ export function ContextModal({
       void loadProjectMd();
     }
   }, [editingProject, groupId, isOpen, loadProjectMd, projectBusy, projectMd, steeringTab]);
-
-  useEffect(() => {
-    if (!isOpen || !groupId || activeView !== "desktop_pet") return;
-    if (petHelpPrompt === null && !petPersonaBusy) {
-      void loadPetPersona();
-    }
-  }, [activeView, groupId, isOpen, loadPetPersona, petHelpPrompt, petPersonaBusy]);
 
   const taskMatches = useCallback(
     (task: Task): boolean => {
@@ -642,48 +575,6 @@ export function ContextModal({
   const closeProjectExpanded = useCallback(() => setProjectExpanded(false), []);
   const { modalRef: projectExpandedRef } = useModalA11y(projectExpanded, closeProjectExpanded);
 
-  const handleToggleDesktopPet = useCallback(async (enabled: boolean) => {
-    if (!onUpdateSettings) return;
-    setViewBusy(true);
-    try {
-      await onUpdateSettings({ desktop_pet_enabled: enabled });
-    } finally {
-      setViewBusy(false);
-    }
-  }, [onUpdateSettings]);
-
-  const handleSavePetPersona = useCallback(async () => {
-    if (!groupId) return;
-    setPetPersonaBusy(true);
-    setPetPersonaError("");
-    setPetPersonaNotice("");
-    try {
-      const currentHelp = petHelpPrompt ?? await loadPetPersona();
-      if (!currentHelp) return;
-      const actorOrder = Object.keys(parseHelpMarkdown(String(currentHelp.content || "")).actorNotes);
-      const nextContent = updatePetHelpNote(String(currentHelp.content || ""), petPersonaDraft, actorOrder);
-      const resp = await updateGroupPrompt(groupId, "help", nextContent, {
-        editorMode: "structured",
-        changedBlocks: ["pet"],
-      });
-      if (!resp.ok) {
-        setPetPersonaError(resp.error?.message || tr("context.failedToSavePetPersona", "Failed to save pet persona"));
-        return;
-      }
-      setPetHelpPrompt(resp.result);
-      setPetPersonaDraft(resolvePetPersonaDraft(parseHelpMarkdown(String(resp.result.content || "")).pet));
-      setPetPersonaNotice(tr("context.petPersonaSaved", "Pet persona saved."));
-    } finally {
-      setPetPersonaBusy(false);
-    }
-  }, [groupId, loadPetPersona, petHelpPrompt, petPersonaDraft, tr]);
-
-  const handleDiscardPetPersona = useCallback(() => {
-    setPetPersonaDraft(resolvePetPersonaDraft(savedPetPersona));
-    setPetPersonaError("");
-    setPetPersonaNotice("");
-  }, [savedPetPersona]);
-
   const handleSaveBrief = useCallback(async () => {
     if (!groupId) return;
     setSyncBusy(true);
@@ -922,12 +813,6 @@ export function ContextModal({
     }
   }, [applyContextWriteback, decisionDraft, groupId, handoffDraft, tr]);
 
-  const handlePetPersonaChange = useCallback((value: string) => {
-    setPetPersonaDraft(value);
-    setPetPersonaError("");
-    setPetPersonaNotice("");
-  }, []);
-
   const startBriefEdit = useCallback(() => {
     openSteeringTab("summary");
     setEditingBrief(true);
@@ -995,7 +880,6 @@ export function ContextModal({
                 <button type="button" onClick={() => handleSwitchActiveView("coordination")} className={viewButtonClass(activeView === "coordination")}>{tr("context.coordination", "Coordination")}</button>
                 <button type="button" onClick={() => handleSwitchActiveView("agents")} className={viewButtonClass(activeView === "agents")}>{tr("context.agents", "Agents")}</button>
                 <button type="button" onClick={() => handleSwitchActiveView("self_evolving_skills")} className={viewButtonClass(activeView === "self_evolving_skills")}>{tr("context.selfEvolvingSkillsTab", "Self-Evolving Skills")}</button>
-                <button type="button" onClick={() => handleSwitchActiveView("desktop_pet")} className={viewButtonClass(activeView === "desktop_pet")}>{tr("context.desktopPetTab", "Web Pet")}<span className="ml-1.5 rounded-md bg-cyan-500/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-cyan-400">Beta</span></button>
               </div>
             </div>
 
@@ -1069,31 +953,12 @@ export function ContextModal({
               </div>
             ) : activeView === "agents" ? (
               <AgentsView agents={agents} tr={tr} ui={ui} />
-            ) : activeView === "self_evolving_skills" ? (
+            ) : (
               <CapabilitiesTab
                 isDark={isDark}
                 isActive={isOpen && activeView === "self_evolving_skills"}
                 groupId={groupId}
                 surface="selfEvolving"
-              />
-            ) : (
-              <DesktopPetView
-                tr={tr}
-                ui={ui}
-                onUpdateSettings={onUpdateSettings}
-                desktopPetEnabled={desktopPetEnabled}
-                viewBusy={viewBusy}
-                petHelpPrompt={petHelpPrompt}
-                petPersonaBusy={petPersonaBusy}
-                petPersonaError={petPersonaError}
-                petPersonaNotice={petPersonaNotice}
-                petPersonaDraft={petPersonaDraft}
-                hasPetPersonaUnsaved={hasPetPersonaUnsaved}
-                onToggleDesktopPet={(enabled) => void handleToggleDesktopPet(enabled)}
-                onLoadPetPersona={loadPetPersona}
-                onSavePetPersona={() => void handleSavePetPersona()}
-                onDiscardPetPersona={handleDiscardPetPersona}
-                onPetPersonaChange={handlePetPersonaChange}
               />
             )}
           </div>

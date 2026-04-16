@@ -18,13 +18,14 @@ import {
 type PromptKind = "preamble" | "help";
 type PromptInfo = api.GroupPromptInfo;
 type HelpViewMode = "structured" | "raw";
-type HelpScopeId = "common" | "role:foreman" | "role:peer" | "pet" | `actor:${string}`;
+type HelpScopeId = "common" | "role:foreman" | "role:peer" | `actor:${string}`;
 
 const EMPTY_HELP: ParsedHelpMarkdown = {
   common: "",
   foreman: "",
   peer: "",
   pet: "",
+  voiceSecretary: "",
   actorNotes: {},
   extraTaggedBlocks: [],
   usedLegacyRoleNotes: false,
@@ -141,6 +142,7 @@ export function GuidanceTab({ isDark, groupId }: {
       foreman: next.foreman,
       peer: next.peer,
       pet: next.pet,
+      voiceSecretary: next.voiceSecretary,
       actorNotes: next.actorNotes,
       actorOrder: actorIds,
       extraTaggedBlocks: next.extraTaggedBlocks,
@@ -168,10 +170,6 @@ export function GuidanceTab({ isDark, groupId }: {
     const nextActorNotes = { ...helpStructured.actorNotes, [actorId]: value };
     if (!String(value || "").trim()) delete nextActorNotes[actorId];
     applyStructuredHelp({ ...helpStructured, actorNotes: nextActorNotes }, `actor:${actorId}`);
-  };
-
-  const updatePet = (value: string) => {
-    applyStructuredHelp({ ...helpStructured, pet: value }, "pet");
   };
 
   const savePrompt = async (kind: PromptKind) => {
@@ -383,16 +381,6 @@ export function GuidanceTab({ isDark, groupId }: {
     isOrphan: false,
   };
 
-  const petScope = {
-    id: "pet" as HelpScopeId,
-    title: t("guidance.petPersonaTitle", "Pet Persona"),
-    hint: t("guidance.petPersonaHint", "Local persona block for the Web Pet shadow-peer. Use it for stable routing style, not temporary suggestions."),
-    placeholder: t("guidance.petPersonaPlaceholder", "Describe how the Web Pet should behave as a low-noise coordination helper..."),
-    value: helpStructured.pet,
-    roleLabel: t("guidance.petPersonaBadge", "Web Pet"),
-    isOrphan: false,
-  };
-
   const actorScopes = actors.map((actor) => {
     const actorId = String(actor.id || "").trim();
     const note = String(helpStructured.actorNotes[actorId] || "");
@@ -421,7 +409,7 @@ export function GuidanceTab({ isDark, groupId }: {
     };
   });
 
-  const selectedHelpScopeItem = [commonScope, foremanScope, peerScope, petScope, ...actorScopes, ...orphanActorScopes].find(
+  const selectedHelpScopeItem = [commonScope, foremanScope, peerScope, ...actorScopes, ...orphanActorScopes].find(
     (item) => item.id === selectedHelpScope
   ) || commonScope;
 
@@ -436,10 +424,6 @@ export function GuidanceTab({ isDark, groupId }: {
     }
     if (selectedHelpScopeItem.id === "role:peer") {
       updateRole("peer", value);
-      return;
-    }
-    if (selectedHelpScopeItem.id === "pet") {
-      updatePet(value);
       return;
     }
     updateActorNote(selectedHelpScopeItem.id.slice("actor:".length), value);
@@ -558,7 +542,6 @@ export function GuidanceTab({ isDark, groupId }: {
                   {renderHelpScopeButton(commonScope)}
                   {renderHelpScopeButton(foremanScope)}
                   {renderHelpScopeButton(peerScope)}
-                  {renderHelpScopeButton(petScope)}
                 </div>
 
                 <div className={`pt-1 border-t ${isDark ? "border-slate-800" : "border-gray-200"}`}>

@@ -212,6 +212,56 @@ class GroupSettingsRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class AssistantSettingsUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    config: Optional[Dict[str, Any]] = None
+    by: str = Field(default="user")
+
+
+class AssistantStatusUpdateRequest(BaseModel):
+    assistant_id: Optional[str] = None
+    lifecycle: Literal["disabled", "idle", "running", "working", "waiting", "failed"]
+    health: Dict[str, Any] = Field(default_factory=dict)
+    by: str = Field(default="user")
+
+
+class AssistantVoiceTranscriptionRequest(BaseModel):
+    audio_base64: str = Field(default="")
+    mime_type: str = Field(default="application/octet-stream")
+    language: str = Field(default="")
+    by: str = Field(default="user")
+
+
+class AssistantVoiceTranscriptSegmentRequest(BaseModel):
+    session_id: str = Field(default="")
+    segment_id: str = Field(default="")
+    document_path: str = Field(default="")
+    text: str = Field(default="")
+    language: str = Field(default="")
+    is_final: bool = Field(default=True)
+    flush: bool = Field(default=False)
+    trigger: Dict[str, Any] = Field(default_factory=dict)
+    by: str = Field(default="user")
+
+
+class AssistantVoiceDocumentSaveRequest(BaseModel):
+    document_path: str = Field(default="")
+    workspace_path: str = Field(default="")
+    title: str = Field(default="")
+    content: Optional[str] = None
+    status: str = Field(default="")
+    create_new: bool = Field(default=False)
+    by: str = Field(default="user")
+
+
+class AssistantVoiceDocumentInstructionRequest(BaseModel):
+    document_path: str = Field(default="")
+    instruction: str = Field(default="")
+    source_text: str = Field(default="")
+    trigger: Dict[str, Any] = Field(default_factory=dict)
+    by: str = Field(default="user")
+
+
 class PetDecisionOutcomeRequest(BaseModel):
     fingerprint: str
     outcome: Literal["executed", "dismissed"]

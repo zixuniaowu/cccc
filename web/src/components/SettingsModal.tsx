@@ -21,6 +21,7 @@ const MessagingTab = lazy(() => import("./modals/settings/MessagingTab").then((m
 const IMBridgeTab = lazy(() => import("./modals/settings/IMBridgeTab").then((module) => ({ default: module.IMBridgeTab })));
 const TranscriptTab = lazy(() => import("./modals/settings/TranscriptTab").then((module) => ({ default: module.TranscriptTab })));
 const GuidanceTab = lazy(() => import("./modals/settings/GuidanceTab").then((module) => ({ default: module.GuidanceTab })));
+const AssistantsTab = lazy(() => import("./modals/settings/AssistantsTab").then((module) => ({ default: module.AssistantsTab })));
 const GroupSpaceTab = lazy(() => import("./modals/settings/GroupSpaceTab").then((module) => ({ default: module.GroupSpaceTab })));
 const BlueprintTab = lazy(() => import("./modals/settings/BlueprintTab").then((module) => ({ default: module.BlueprintTab })));
 const CapabilitiesTab = lazy(() => import("./modals/settings/CapabilitiesTab").then((module) => ({ default: module.CapabilitiesTab })));
@@ -951,6 +952,7 @@ export function SettingsModal({
 
   const groupTabs: { id: GroupTabId; label: string }[] = [
     { id: "guidance", label: t("tabs.guidance") },
+    { id: "assistants", label: t("tabs.assistants") },
     { id: "automation", label: t("tabs.automation") },
     { id: "delivery", label: t("tabs.delivery") },
     { id: "space", label: t("tabs.space") },
@@ -1162,6 +1164,17 @@ export function SettingsModal({
               )}
 
               {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} />}
+
+              {activeTab === "assistants" && (
+                <AssistantsTab
+                  isDark={isDark}
+                  groupId={groupId}
+                  isActive={scope === "group" && activeTab === "assistants"}
+                  petEnabled={Boolean(settings?.desktop_pet_enabled)}
+                  busy={busy}
+                  onUpdatePetEnabled={(enabled) => onUpdateSettings({ desktop_pet_enabled: enabled })}
+                />
+              )}
 
               {activeTab === "space" && (
                 <GroupSpaceTab

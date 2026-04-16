@@ -1338,6 +1338,409 @@ Result:
 { group_id: string; settings: Record<string, unknown>; event: CCCSEventV1 }
 ```
 
+#### `assistant_state`
+
+Read the group-scoped state for first-party built-in assistants. Voice
+Secretary service-local ASR runs in a daemon-managed first-party service
+process; heavy ASR runtimes remain behind an explicit local command adapter.
+
+Args:
+```ts
+{ group_id: string; assistant_id?: "pet" | "voice_secretary" }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  assistants?: Array<Record<string, unknown>>
+  assistants_by_id?: Record<string, unknown>
+  assistant?: Record<string, unknown>
+  proposals?: Array<Record<string, unknown>>
+  proposals_by_id?: Record<string, unknown>
+  documents?: Array<Record<string, unknown>>
+  documents_by_path?: Record<string, unknown>
+  active_document_path?: string
+  capture_target_document_path?: string
+  documents_by_id?: Record<string, unknown>      // daemon sidecar/internal compatibility only
+  active_document_id?: string                    // daemon sidecar/internal compatibility only
+  capture_target_document_id?: string            // daemon sidecar/internal compatibility only
+  new_input_available?: boolean
+}
+```
+
+#### `assistant_settings_update`
+
+Update group-scoped built-in assistant settings. `pet` is read-only in M0 and
+mirrors `group_settings_update.patch.desktop_pet_enabled`.
+
+When `voice_secretary.enabled=true`, the daemon also materializes a hidden
+internal actor with `internal_kind="voice_secretary"` and `actor_id="voice-secretary"`.
+That actor is a distinct assistant identity, not the foreman and not a normal
+peer. Its startup runtime config (`runtime`, `runner`, `command`, env/secrets,
+scope, submit behavior) is copied from the current enabled foreman so the user
+does not configure a second runtime profile. If no enabled foreman exists,
+enabling Voice Secretary fails. If the group is already running, the daemon
+starts or restarts this assistant actor as needed; disabling Voice Secretary
+stops/removes the actor and its private env.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  assistant_id: "voice_secretary"
+  patch: {
+    enabled?: boolean
+    config?: {
+      capture_mode?: "browser" | "service"
+      recognition_backend?: "mock" | "assistant_service_local_asr" | "browser_asr" | "external_provider_asr"
+      recognition_language?: "auto" | string
+      retention_ttl_seconds?: number
+      auto_document_enabled?: boolean
+      document_default_dir?: string
+      auto_document_quiet_ms?: number
+      auto_document_min_chars?: number
+      auto_document_max_window_seconds?: number
+      tts_enabled?: boolean
+    }
+  }
+}
+```
+
+`browser_asr` means browser-managed speech recognition and does not guarantee
+browser-device-local model execution. `assistant_service_local_asr` means ASR
+runs on the daemon host through the first-party Voice Secretary service and
+requires `CCCC_VOICE_SECRETARY_ASR_COMMAND` unless an explicit test/mock env is
+configured. The returned assistant health may include `health.service` with
+`status`, `alive`, `asr_command_configured`, `asr_mock_configured`, and
+`last_error` so Web can show whether service-local ASR is actually usable.
+`recognition_language="auto"` means the browser/client chooses the best language
+hint; otherwise callers should pass a BCP-47-like tag such as `zh-CN`, `en-US`,
+or `ja-JP`. `auto_document_enabled=true` is the default path: stable transcript
+segments are compacted into the Voice Secretary input stream, then the
+`voice-secretary` runtime actor pulls unread input and edits the working markdown
+document directly in the repository. `auto_document_quiet_ms` is the client
+silence window before flushing speech into that semantic lane;
+`auto_document_min_chars` and `auto_document_max_window_seconds` are daemon-side
+guardrails that keep long continuous speech from waiting forever for a pause.
+The runtime actor should treat transcript as source material for
+evidence-bounded reconstruction: it may use transcript, group context, existing
+documents, common knowledge, and verified lightweight research to produce a
+coherent artifact, but must not fabricate facts and should compactly mark
+low-confidence entities, numbers, quotations, or dates.
+The document loop should be incremental and non-lossy: each unread input batch
+should be organized into the best current document structure while preserving
+useful concrete details, and idle review should refine/reorganize/enrich rather
+than replace detail-rich material with a short executive summary.
+The daemon does not track per-job completion: it stores an input cursor, nudges
+the actor when unread input exists, and sends idle-review nudges only on
+recording stop or after enough new transcript input plus the group cooldown
+(default: stop flush immediately, otherwise 8 new transcript input flushes and
+at least 5 minutes since the previous idle review).
+If the group has an active workspace scope,
+`document_default_dir` (default `docs/voice-secretary`) is
+resolved under that workspace; otherwise the daemon falls back to CCCC_HOME.
+Raw transcript/source/input sidecars stay in CCCC_HOME.
+`external_provider_asr` must remain explicit opt-in.
+
+Result:
+```ts
+{ group_id: string; assistant: Record<string, unknown>; event: CCCSEventV1 }
+```
+
+#### `assistant_voice_transcribe`
+
+Transcribe a push-to-talk audio payload through the daemon-managed first-party
+Voice Secretary service. This endpoint only returns transcript text and service
+health; it does not create a chat message, proposal, or working document by
+itself. Call `assistant_voice_transcript_append` after transcription so the
+daemon can append stable transcript source material and update the current
+working document.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  audio_base64: string
+  mime_type?: string
+  language?: string
+}
+```
+
+Preconditions:
+- `voice_secretary` is enabled for the group.
+- `recognition_backend` is `assistant_service_local_asr`.
+- The daemon host has `CCCC_VOICE_SECRETARY_ASR_COMMAND` configured. The command
+  receives the audio path as the final argument unless it includes
+  `{audio_path}` / `{input_path}` / `{input}`. It may also use
+  `CCCC_VOICE_AUDIO_PATH`, `CCCC_VOICE_MIME_TYPE`, and
+  `CCCC_VOICE_LANGUAGE`.
+
+Result:
+```ts
+{
+  group_id: string
+  assistant: Record<string, unknown>
+  transcript: string
+  mime_type: string
+  language?: string
+  bytes?: number
+  backend: "assistant_service_local_asr"
+  service: Record<string, unknown>
+  asr?: Record<string, unknown>
+}
+```
+
+#### `assistant_voice_transcript_append`
+
+Append a stable transcript segment for Voice Secretary. Web/browser ASR and
+service-local ASR converge here. The daemon writes stable segments to
+`$CCCC_HOME/voice-secretary/<group_id>/<session_id>/transcripts/segments.jsonl`,
+keeps a short in-memory/session window in group assistant runtime state, and
+by default appends a semantic input event for the current Voice Secretary
+markdown working document. The working document is a user-facing repo artifact;
+raw transcript/source/revision sidecars remain in CCCC_HOME. When new input is
+available, the daemon emits a targeted `system.notify` to `voice-secretary` with
+`context.kind="voice_secretary_input"`. The notify is only a lightweight pointer;
+the runtime actor pulls unread text through
+`assistant_voice_document_input_read` /
+`cccc_voice_secretary_document(action="read_new_input")`.
+
+The public document identity for Voice Secretary APIs is `document_path`, a
+repository-relative markdown path. `document_id` may exist in daemon sidecar
+state as an implementation detail, but runtime actors and Web clients should
+route by `document_path`.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  session_id: string
+  segment_id?: string
+  text?: string
+  language?: string
+  document_path?: string
+  is_final?: boolean
+  flush?: boolean
+  trigger?: {
+    trigger_kind?: "push_to_talk_stop" | "service_transcript" | "meeting_window"
+    mode?: "dictation" | "meeting"
+    capture_mode?: "browser" | "service" | string
+    recognition_backend?: string
+    client_session_id?: string
+    input_device_label?: string
+    language?: string
+  }
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  assistant: Record<string, unknown>
+  session_id: string
+  segment?: Record<string, unknown>
+  segment_path?: string
+  document?: Record<string, unknown>
+  document_updated: boolean
+  input_event?: Record<string, unknown>
+  input_event_created: boolean
+  input_notify_emitted: boolean
+}
+```
+
+#### `assistant_voice_document_list`
+
+List active Voice Secretary working documents for the group. Archived documents
+are excluded unless `include_archived=true`.
+
+Args:
+```ts
+{ group_id: string; include_archived?: boolean }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  documents: Array<Record<string, unknown>>
+  documents_by_id: Record<string, unknown>
+  documents_by_path: Record<string, unknown>
+  active_document_id?: string
+  capture_target_document_id?: string
+  active_document_path?: string
+  capture_target_document_path?: string
+}
+```
+
+#### `assistant_voice_document_input_read`
+
+Read all unread Voice Secretary input events since the actor's last successful
+read. Reading advances the daemon-managed cursor immediately; the actor does not
+see or manage cursor/sequence values. This intentionally avoids a separate
+job-completion protocol. If the actor crashes after reading, the raw input log
+remains in CCCC_HOME for debugging/replay, but the normal live cursor has moved.
+
+Args:
+```ts
+{ group_id: string; by?: "voice-secretary" | "assistant:voice_secretary" }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  item_count: number
+  document_count: number
+  input_text: string
+  input_batches: Array<{
+    document_path: string
+    filename?: string
+    title?: string
+    item_count: number
+    kinds?: string[]
+    intent_hints?: string[]
+    languages?: string[]
+    sources?: string[]
+  }>
+  documents: Array<Record<string, unknown>>
+  has_new_input: boolean
+}
+```
+
+#### `assistant_voice_document_save`
+
+Save or create a Voice Secretary working markdown document. This is the daemon
+path used by Web when the user edits the document surface. The `voice-secretary`
+actor should normally edit repository-backed markdown directly at
+`document_path`; the MCP document tool intentionally has no save action.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  document_path?: string
+  workspace_path?: string
+  title?: string
+  content?: string
+  status?: "active" | "archived"
+  create_new?: boolean
+}
+```
+
+Result:
+```ts
+{ group_id: string; document: Record<string, unknown>; event: CCCSEventV1 }
+```
+
+#### `assistant_voice_document_instruction`
+
+Append a user instruction into the same Voice Secretary input stream used for
+ASR transcript. The daemon emits a targeted `voice_secretary_input` notify; the
+runtime actor pulls it with `read_new_input` and saves the full revised markdown.
+The daemon does not directly append the instruction to the document. Cross-peer
+handoff is intentionally handled only by `assistant_voice_request`, and only when
+the Voice Secretary decides the work belongs to foreman or one concrete peer.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  document_path: string
+  instruction?: string
+  source_text?: string
+  trigger?: Record<string, unknown>
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  assistant?: Record<string, unknown>
+  document: Record<string, unknown>
+  input_event?: Record<string, unknown>
+  input_event_created?: boolean
+  input_notify_emitted?: boolean
+  event?: CCCSEventV1
+}
+```
+
+#### `assistant_voice_request`
+
+Send a structured Voice Secretary action request to `@foreman` or one concrete
+actor without exposing normal `chat.message` send tools to the
+`voice-secretary` runtime actor. The daemon records an `assistant.voice.request`
+event and delivers a targeted `system.notify` with
+`context.kind="voice_secretary_action_request"`. This is the default path for
+spoken "please do X / ask Y to do X" content; ordinary memo/document updates
+MUST stay in the Voice Secretary document surface.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: "voice-secretary" | "assistant:voice_secretary"
+  target?: "@foreman" | string   // one concrete actor id; no @all/user broadcast
+  request_text: string           // concise actionable handoff, not raw transcript
+  summary?: string
+  document_path?: string
+  source_event_id?: string
+  priority?: "low" | "normal" | "high" | "urgent"
+  requires_ack?: boolean
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  assistant: Record<string, unknown>
+  request: Record<string, unknown>
+  notify_event: CCCSEventV1
+  event: CCCSEventV1
+}
+```
+
+#### `assistant_voice_document_archive`
+
+Archive a Voice Secretary working document. The markdown file is left in place;
+the assistant index hides it from the active document list, and later transcript
+ingress without an explicit `document_path` creates or selects another active
+document instead of appending to the archived one.
+
+Args:
+```ts
+{ group_id: string; by?: string; document_path: string }
+```
+
+Result:
+```ts
+{ group_id: string; document: Record<string, unknown>; event: CCCSEventV1 }
+```
+
+#### `assistant_status_update`
+
+Update lifecycle/health for a built-in assistant service. The assistant principal
+(`assistant:<assistant_id>`) may update its own status; users/foremen may also
+update it for control-plane repair.
+
+Args:
+```ts
+{ group_id: string; by?: string; assistant_id: "voice_secretary" | "pet"; lifecycle: "disabled" | "idle" | "running" | "working" | "waiting" | "failed"; health?: Record<string, unknown> }
+```
+
+Result:
+```ts
+{ group_id: string; assistant: Record<string, unknown>; event: CCCSEventV1 }
+```
+
 #### `group_automation_update`
 
 Replace group automation rules + snippets (scheduled `system.notify`).
