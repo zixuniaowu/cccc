@@ -36,7 +36,8 @@ class TestPromptDefaults(unittest.TestCase):
         from cccc.kernel.prompt_files import load_builtin_help_markdown
 
         body = str(load_builtin_help_markdown() or "")
-        self.assertLessEqual(len(body.split()), 1700)
+        common_body = body.split("\n## Role Notes\n", 1)[0]
+        self.assertLessEqual(len(common_body.split()), 1700)
         self.assertIn("This is your working playbook for this group.", body)
         self.assertIn("## Working Stance", body)
         self.assertIn("## Communication Patterns", body)

@@ -58,6 +58,10 @@ VOICE_SECRETARY_CORE_TOOLS: Tuple[str, ...] = PET_CORE_TOOLS + (
     "cccc_voice_secretary_request",
 )
 
+SPECIALIZED_CORE_TOOL_NAMES: Tuple[str, ...] = tuple(
+    sorted((set(PET_CORE_TOOLS) | set(VOICE_SECRETARY_CORE_TOOLS)) - set(CORE_TOOL_NAMES))
+)
+
 
 BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
     "pack:group-runtime": {
