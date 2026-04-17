@@ -41,6 +41,14 @@ def _is_closed_stream_logging_error(exc: BaseException) -> bool:
     return "i/o operation on closed file" in message or "closed stream" in message
 
 
+def _is_codex_request_timeout(exc: BaseException, *, method: str = "") -> bool:
+    message = str(exc or "").strip().lower()
+    if "codex request timed out:" not in message:
+        return False
+    target = str(method or "").strip().lower()
+    return not target or message.endswith(target)
+
+
 def _safe_logger_call(method: str, message: str, *args: Any, **kwargs: Any) -> None:
     log_method = getattr(logger, method, None)
     if not callable(log_method):
@@ -671,6 +679,8 @@ class CodexAppSession:
                             timeout=30.0,
                         )
                     except Exception as retry_exc:
+                        if _is_codex_request_timeout(retry_exc, method="turn/start"):
+                            self.stop()
                         logger.warning("codex turn start failed: group=%s actor=%s err=%s", self.group_id, self.actor_id, retry_exc)
                         with self._lock:
                             self._session_state.status = "idle"
@@ -690,6 +700,8 @@ class CodexAppSession:
                         )
                         continue
                 else:
+                    if _is_codex_request_timeout(exc, method="turn/start"):
+                        self.stop()
                     logger.warning("codex turn start failed: group=%s actor=%s err=%s", self.group_id, self.actor_id, exc)
                     with self._lock:
                         self._session_state.status = "idle"

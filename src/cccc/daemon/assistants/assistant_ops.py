@@ -2024,7 +2024,20 @@ def _append_voice_segment_jsonl(group: Group, *, session_id: str, segment: Dict[
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(segment, ensure_ascii=False, sort_keys=True) + "\n")
-    return str(path)
+    return _display_voice_path(path)
+
+
+def _display_voice_path(path: Path) -> str:
+    resolved = Path(path).expanduser().resolve()
+    raw_home = str(os.environ.get("CCCC_HOME") or "").strip()
+    if raw_home:
+        raw_home_path = Path(raw_home).expanduser()
+        try:
+            relative = resolved.relative_to(raw_home_path.resolve())
+        except ValueError:
+            return str(resolved)
+        return str(raw_home_path / relative)
+    return str(resolved)
 
 
 def _append_voice_window_text(previous: Any, next_text: str) -> str:
