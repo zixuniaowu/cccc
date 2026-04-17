@@ -60,8 +60,8 @@ _DEFAULT_AUTO_DOCUMENT_QUIET_MS = 5_000
 _DEFAULT_AUTO_DOCUMENT_MIN_CHARS = 700
 _DEFAULT_AUTO_DOCUMENT_FAST_MIN_CHARS = 120
 _DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_SECONDS = 120
-_MIN_AUTO_DOCUMENT_QUIET_MS = 5_000
-_MIN_AUTO_DOCUMENT_MAX_WINDOW_SECONDS = 120
+_MIN_AUTO_DOCUMENT_QUIET_MS = 1_000
+_MIN_AUTO_DOCUMENT_MAX_WINDOW_SECONDS = 10
 _DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_CHARS = 12_000
 _DEFAULT_AUTO_DOCUMENT_MIN_WINDOW_SEGMENTS = 3
 _DEFAULT_VOICE_DOCUMENT_DIR = "docs/voice-secretary"
@@ -1443,7 +1443,15 @@ def _voice_capture_continuity(*, segment_count: int, trigger: Dict[str, Any]) ->
     if int(segment_count or 0) <= 1:
         return "single_segment"
     trigger_kind = str(trigger.get("trigger_kind") or "").strip().lower()
-    if trigger_kind in {"meeting_window", "speech_end", "result_idle_fallback", "max_window", "service_transcript", "push_to_talk_stop"}:
+    if trigger_kind in {
+        "meeting_window",
+        "speech_end",
+        "result_idle",
+        "result_idle_fallback",
+        "max_window",
+        "service_transcript",
+        "push_to_talk_stop",
+    }:
         return "continuous"
     return "fragmented"
 

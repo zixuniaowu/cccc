@@ -90,7 +90,7 @@
   "voiceSecretaryMediaRecorderUnavailable": "このブラウザは MediaRecorder の音声キャプチャに対応していません。Browser ASR または MediaRecorder 対応ブラウザを使ってください。",
   "voiceSecretaryRecognitionBackendUnsupported": "Assistants 設定で対応している認識バックエンドを選んでください。",
   "voiceSecretaryLanguage": "言語",
-  "voiceSecretaryLanguageAuto": "自動",
+  "voiceSecretaryLanguageAuto": "システム既定",
   "voiceSecretaryLanguageChinese": "中国語",
   "voiceSecretaryLanguageEnglish": "英語",
   "voiceSecretaryLanguageJapanese": "日本語",

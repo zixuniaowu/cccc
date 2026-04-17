@@ -31,17 +31,14 @@ const VOICE_BACKENDS = [
   "assistant_service_local_asr",
   "external_provider_asr",
 ];
+const VOICE_AVAILABLE_BACKENDS = new Set(["browser_asr"]);
 
-const VOICE_LANGUAGE_OPTIONS = [
-  "auto",
-  "zh-CN",
-  "en-US",
-  "ja-JP",
-  "ko-KR",
-  "fr-FR",
-  "de-DE",
-  "es-ES",
-];
+const VOICE_RECOMMENDED_QUIET_SECONDS = 5;
+const VOICE_MIN_QUIET_SECONDS = 1;
+const VOICE_MAX_QUIET_SECONDS = 60;
+const VOICE_RECOMMENDED_MAX_WINDOW_SECONDS = 120;
+const VOICE_MIN_MAX_WINDOW_SECONDS = 10;
+const VOICE_MAX_MAX_WINDOW_SECONDS = 300;
 
 const DEFAULT_VOICE_SECRETARY_GUIDANCE = [
   "- Keep working documents useful: synthesize decisions, action items, requirements, risks, and open questions; do not dump raw transcript.",
@@ -63,6 +60,17 @@ function findAssistant(state: AssistantStateResult | null, assistantId: string):
 function readStringConfig(assistant: BuiltinAssistant | null, key: string, fallback: string): string {
   const value = assistant?.config?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(Math.max(value, min), max);
+}
+
+function readNumberConfig(assistant: BuiltinAssistant | null, key: string, fallback: number, min: number, max: number): number {
+  const raw = assistant?.config?.[key];
+  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : fallback;
+  return clampNumber(value, min, max);
 }
 
 function recordFromUnknown(value: unknown): Record<string, unknown> {
@@ -285,7 +293,8 @@ export function AssistantsTab({
 
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [recognitionBackend, setRecognitionBackend] = useState("browser_asr");
-  const [recognitionLanguage, setRecognitionLanguage] = useState("auto");
+  const [voiceQuietWindowSeconds, setVoiceQuietWindowSeconds] = useState(VOICE_RECOMMENDED_QUIET_SECONDS);
+  const [voiceMaxWindowSeconds, setVoiceMaxWindowSeconds] = useState(VOICE_RECOMMENDED_MAX_WINDOW_SECONDS);
 
   const [assistantHelpPrompt, setAssistantHelpPrompt] = useState<GroupPromptInfo | null>(null);
   const [petPersonaDraft, setPetPersonaDraft] = useState("");
@@ -311,7 +320,20 @@ export function AssistantsTab({
     const backend = readStringConfig(voice, "recognition_backend", "browser_asr");
     setVoiceEnabled(Boolean(voice?.enabled));
     setRecognitionBackend(backend || "browser_asr");
-    setRecognitionLanguage(readStringConfig(voice, "recognition_language", "auto"));
+    setVoiceQuietWindowSeconds(readNumberConfig(
+      voice,
+      "auto_document_quiet_ms",
+      VOICE_RECOMMENDED_QUIET_SECONDS * 1000,
+      VOICE_MIN_QUIET_SECONDS * 1000,
+      VOICE_MAX_QUIET_SECONDS * 1000,
+    ) / 1000);
+    setVoiceMaxWindowSeconds(readNumberConfig(
+      voice,
+      "auto_document_max_window_seconds",
+      VOICE_RECOMMENDED_MAX_WINDOW_SECONDS,
+      VOICE_MIN_MAX_WINDOW_SECONDS,
+      VOICE_MAX_MAX_WINDOW_SECONDS,
+    ));
   }, []);
 
   const loadAssistants = useCallback(async (opts?: { quiet?: boolean }) => {
@@ -387,7 +409,12 @@ export function AssistantsTab({
     void loadAssistantGuidance();
   }, [isActive, loadAssistants, loadAssistantGuidance]);
 
-  const saveVoiceSettings = async (overrides?: { enabled?: boolean; backend?: string; language?: string }) => {
+  const saveVoiceSettings = async (overrides?: {
+    enabled?: boolean;
+    backend?: string;
+    quietSeconds?: number;
+    maxWindowSeconds?: number;
+  }) => {
     const gid = String(groupId || "").trim();
     if (!gid) return false;
     setVoiceSaveBusy(true);
@@ -396,14 +423,24 @@ export function AssistantsTab({
     try {
       const nextEnabled = typeof overrides?.enabled === "boolean" ? overrides.enabled : voiceEnabled;
       const nextBackend = String((overrides?.backend ?? recognitionBackend) || "browser_asr").trim() || "browser_asr";
-      const language = String((overrides?.language ?? recognitionLanguage) || "auto").trim() || "auto";
+      const quietSeconds = clampNumber(
+        Number(overrides?.quietSeconds ?? voiceQuietWindowSeconds),
+        VOICE_MIN_QUIET_SECONDS,
+        VOICE_MAX_QUIET_SECONDS,
+      );
+      const maxWindowSeconds = clampNumber(
+        Number(overrides?.maxWindowSeconds ?? voiceMaxWindowSeconds),
+        VOICE_MIN_MAX_WINDOW_SECONDS,
+        VOICE_MAX_MAX_WINDOW_SECONDS,
+      );
       const resp = await api.updateAssistantSettings(gid, "voice_secretary", {
         enabled: nextEnabled,
         config: {
           capture_mode: nextBackend === "assistant_service_local_asr" ? "service" : "browser",
           recognition_backend: nextBackend,
-          recognition_language: language,
           auto_document_enabled: true,
+          auto_document_quiet_ms: Math.round(quietSeconds * 1000),
+          auto_document_max_window_seconds: Math.round(maxWindowSeconds),
           document_default_dir: "docs/voice-secretary",
           tts_enabled: false,
         },
@@ -415,7 +452,8 @@ export function AssistantsTab({
       }
       setVoiceEnabled(nextEnabled);
       setRecognitionBackend(nextBackend);
-      setRecognitionLanguage(language);
+      setVoiceQuietWindowSeconds(quietSeconds);
+      setVoiceMaxWindowSeconds(maxWindowSeconds);
       setNotice(t("assistants.voiceSaved"));
       await loadAssistants({ quiet: true });
       return true;
@@ -424,6 +462,21 @@ export function AssistantsTab({
       return false;
     } finally {
       setVoiceSaveBusy(false);
+    }
+  };
+
+  const resetVoiceBatching = async () => {
+    const previousQuiet = voiceQuietWindowSeconds;
+    const previousMaxWindow = voiceMaxWindowSeconds;
+    setVoiceQuietWindowSeconds(VOICE_RECOMMENDED_QUIET_SECONDS);
+    setVoiceMaxWindowSeconds(VOICE_RECOMMENDED_MAX_WINDOW_SECONDS);
+    const ok = await saveVoiceSettings({
+      quietSeconds: VOICE_RECOMMENDED_QUIET_SECONDS,
+      maxWindowSeconds: VOICE_RECOMMENDED_MAX_WINDOW_SECONDS,
+    });
+    if (!ok) {
+      setVoiceQuietWindowSeconds(previousQuiet);
+      setVoiceMaxWindowSeconds(previousMaxWindow);
     }
   };
 
@@ -515,11 +568,9 @@ export function AssistantsTab({
   const backendOptions = VOICE_BACKENDS.includes(recognitionBackend)
     ? VOICE_BACKENDS
     : [recognitionBackend, ...VOICE_BACKENDS];
-  const languageOptions = VOICE_LANGUAGE_OPTIONS.includes(recognitionLanguage)
-    ? VOICE_LANGUAGE_OPTIONS
-    : [recognitionLanguage, ...VOICE_LANGUAGE_OPTIONS];
   const backendLabel = (backend: string) => t(`assistants.backends.${backend}`, { defaultValue: backend });
-  const languageLabel = (language: string) => t(`assistants.languages.${language}`, { defaultValue: language });
+  const backendSelectable = (backend: string) => VOICE_AVAILABLE_BACKENDS.has(backend);
+  const currentBackendUnavailable = !backendSelectable(recognitionBackend);
 
   if (!groupId) {
     return (
@@ -547,7 +598,9 @@ export function AssistantsTab({
         : "off"
     : "info";
   const showServiceAsrDiagnostic =
-    recognitionBackend === "assistant_service_local_asr" && (!asrCommandConfigured || Boolean(serviceLastErrorMessage));
+    backendSelectable(recognitionBackend)
+    && recognitionBackend === "assistant_service_local_asr"
+    && (!asrCommandConfigured || Boolean(serviceLastErrorMessage));
   const parsedHelp = assistantHelpPrompt ? parseHelpMarkdown(String(assistantHelpPrompt.content || "")) : null;
   const savedPetPersona = parsedHelp?.pet || "";
   const savedVoiceSecretaryGuidance = parsedHelp?.voiceSecretary || "";
@@ -675,7 +728,7 @@ export function AssistantsTab({
         </div>
 
         <SettingsBlock title={t("assistants.voiceRecognitionTitle")} hint={t("assistants.voiceRecognitionHint")}>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-1">
             <div>
               <label className={labelClass(isDark)}>{t("assistants.recognitionBackend")}</label>
               <select
@@ -684,28 +737,89 @@ export function AssistantsTab({
                 className={`${inputClass(isDark)} cursor-pointer`}
               >
                 {backendOptions.map((backend) => (
-                  <option key={backend} value={backend}>{backendLabel(backend)}</option>
+                  <option key={backend} value={backend} disabled={!backendSelectable(backend)}>
+                    {backendLabel(backend)}
+                  </option>
                 ))}
               </select>
+              {currentBackendUnavailable ? (
+                <p className="mt-1 text-[11px] leading-5 text-amber-700 dark:text-amber-300">
+                  {t("assistants.recognitionBackendUnavailable")}
+                </p>
+              ) : null}
               <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
                 {t("assistants.recognitionBackendHint")}
               </p>
             </div>
 
-            <div>
-              <label className={labelClass(isDark)}>{t("assistants.recognitionLanguage")}</label>
-              <select
-                value={recognitionLanguage}
-                onChange={(event) => setRecognitionLanguage(event.target.value)}
-                className={`${inputClass(isDark)} cursor-pointer`}
+          </div>
+
+          <div className="mt-4 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-[var(--color-text-primary)]">
+                  {t("assistants.transcriptBatchingTitle")}
+                </div>
+                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  {t("assistants.transcriptBatchingHint")}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void resetVoiceBatching()}
+                disabled={busy || voiceSaveBusy}
+                className={secondaryButtonClass("sm")}
               >
-                {languageOptions.map((language) => (
-                  <option key={language} value={language}>{languageLabel(language)}</option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                {t("assistants.recognitionLanguageHint")}
-              </p>
+                {t("assistants.resetTranscriptBatching")}
+              </button>
+            </div>
+            <div className="mt-3 grid gap-4 md:grid-cols-2">
+              <div>
+                <label className={labelClass(isDark)}>{t("assistants.transcriptQuietWindow")}</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={VOICE_MIN_QUIET_SECONDS}
+                    max={VOICE_MAX_QUIET_SECONDS}
+                    step={1}
+                    value={voiceQuietWindowSeconds}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value)) setVoiceQuietWindowSeconds(value);
+                    }}
+                    className={inputClass(isDark)}
+                  />
+                  <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
+                    {t("assistants.secondsUnit")}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  {t("assistants.transcriptQuietWindowHint")}
+                </p>
+              </div>
+              <div>
+                <label className={labelClass(isDark)}>{t("assistants.transcriptMaxWindow")}</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={VOICE_MIN_MAX_WINDOW_SECONDS}
+                    max={VOICE_MAX_MAX_WINDOW_SECONDS}
+                    step={1}
+                    value={voiceMaxWindowSeconds}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value)) setVoiceMaxWindowSeconds(value);
+                    }}
+                    className={inputClass(isDark)}
+                  />
+                  <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
+                    {t("assistants.secondsUnit")}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  {t("assistants.transcriptMaxWindowHint")}
+                </p>
+              </div>
             </div>
           </div>
 

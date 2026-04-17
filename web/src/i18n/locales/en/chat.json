@@ -90,7 +90,7 @@
   "voiceSecretaryMediaRecorderUnavailable": "This browser does not support MediaRecorder audio capture. Use Browser ASR or a browser with MediaRecorder support.",
   "voiceSecretaryRecognitionBackendUnsupported": "Select a supported recognition backend in Assistants settings.",
   "voiceSecretaryLanguage": "Language",
-  "voiceSecretaryLanguageAuto": "Auto",
+  "voiceSecretaryLanguageAuto": "System default",
   "voiceSecretaryLanguageChinese": "Chinese",
   "voiceSecretaryLanguageEnglish": "English",
   "voiceSecretaryLanguageJapanese": "Japanese",

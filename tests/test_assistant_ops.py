@@ -116,6 +116,18 @@ class TestAssistantOps(unittest.TestCase):
         )
         self.assertTrue(enable.ok, getattr(enable, "error", None))
 
+    def test_voice_capture_result_idle_counts_as_continuous(self) -> None:
+        from cccc.daemon.assistants.assistant_ops import _voice_capture_continuity
+
+        self.assertEqual(
+            _voice_capture_continuity(segment_count=2, trigger={"trigger_kind": "result_idle"}),
+            "continuous",
+        )
+        self.assertEqual(
+            _voice_capture_continuity(segment_count=2, trigger={"trigger_kind": "unknown"}),
+            "fragmented",
+        )
+
     def test_state_exposes_builtin_assistants(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -148,8 +160,8 @@ class TestAssistantOps(unittest.TestCase):
                         "capture_mode": "browser",
                         "recognition_backend": "browser_asr",
                         "recognition_language": "ja-JP",
-                        "auto_document_quiet_ms": 3000,
-                        "auto_document_max_window_seconds": 15,
+                        "auto_document_quiet_ms": 300,
+                        "auto_document_max_window_seconds": 5,
                         "dispatch_mode": "confirm_then_dispatch",
                         "auto_proposal_enabled": False,
                     },
@@ -162,8 +174,8 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(state.ok, getattr(state, "error", None))
             assistant = (state.result or {}).get("assistant") if isinstance(state.result, dict) else {}
             config = assistant.get("config") if isinstance(assistant.get("config"), dict) else {}
-            self.assertEqual(config.get("auto_document_quiet_ms"), 5000)
-            self.assertEqual(config.get("auto_document_max_window_seconds"), 120)
+            self.assertEqual(config.get("auto_document_quiet_ms"), 1000)
+            self.assertEqual(config.get("auto_document_max_window_seconds"), 10)
             self.assertNotIn("dispatch_mode", config)
             self.assertNotIn("auto_proposal_enabled", config)
 
@@ -179,8 +191,8 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(update.ok, getattr(update, "error", None))
             updated_config = ((update.result or {}).get("assistant") or {}).get("config") or {}
             self.assertEqual(updated_config.get("recognition_language"), "en-US")
-            self.assertEqual(updated_config.get("auto_document_quiet_ms"), 5000)
-            self.assertEqual(updated_config.get("auto_document_max_window_seconds"), 120)
+            self.assertEqual(updated_config.get("auto_document_quiet_ms"), 1000)
+            self.assertEqual(updated_config.get("auto_document_max_window_seconds"), 10)
             self.assertNotIn("dispatch_mode", updated_config)
             self.assertNotIn("auto_proposal_enabled", updated_config)
         finally:
