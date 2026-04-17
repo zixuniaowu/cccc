@@ -105,9 +105,9 @@ const BROWSER_SPEECH_MIN_QUIET_MS = 1_000;
 const BROWSER_SPEECH_MAX_WINDOW_FALLBACK_MS = 120_000;
 const BROWSER_SPEECH_MIN_MAX_WINDOW_MS = 10_000;
 const VOICE_TRANSCRIPT_DISPLAY_LIMIT = 8;
-const BROWSER_SPEECH_INITIAL_CAPTURE_GRACE_MS = 2500;
 const BROWSER_SPEECH_RESTART_BASE_MS = 500;
 const BROWSER_SPEECH_RESTART_MAX_MS = 8000;
+const BROWSER_SPEECH_MAX_TRANSIENT_ERRORS = 8;
 const BROWSER_SPEECH_RECOVERABLE_ERRORS = new Set(["no-speech", "aborted", "network", "audio-capture"]);
 const BROWSER_SPEECH_FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed"]);
 const VOICE_LANGUAGE_OPTION_VALUES = ["auto", "zh-CN", "en-US", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES"] as const;
@@ -407,8 +407,6 @@ export function VoiceSecretaryComposerControl({
   const browserSpeechStopFinalizeTimerRef = useRef<number | null>(null);
   const browserSpeechMediaCleanupRef = useRef<(() => void) | null>(null);
   const browserSpeechTransientErrorCountRef = useRef(0);
-  const browserSpeechCycleCountRef = useRef(0);
-  const browserSpeechCycleStartedAtRef = useRef(0);
   const activeDocumentIdRef = useRef("");
   const captureTargetDocumentIdRef = useRef("");
   const documentBaseTitleRef = useRef("");
@@ -759,8 +757,6 @@ export function VoiceSecretaryComposerControl({
     abortBrowserSpeechRecognition(recognition);
     browserSpeechStopRequestedRef.current = true;
     browserSpeechTransientErrorCountRef.current = 0;
-    browserSpeechCycleCountRef.current = 0;
-    browserSpeechCycleStartedAtRef.current = 0;
     const recorder = mediaRecorderRef.current;
     mediaRecorderRef.current = null;
     if (recorder && recorder.state !== "inactive") {
@@ -1027,8 +1023,6 @@ export function VoiceSecretaryComposerControl({
   const stopBrowserSpeech = useCallback(() => {
     browserSpeechStopRequestedRef.current = true;
     browserSpeechTransientErrorCountRef.current = 0;
-    browserSpeechCycleCountRef.current = 0;
-    browserSpeechCycleStartedAtRef.current = 0;
     clearBrowserSpeechRestartTimer();
     clearBrowserSpeechStopFinalizeTimer();
     const finalizeStoppedSpeech = (recognition: BrowserSpeechRecognition | null) => {
@@ -1109,8 +1103,6 @@ export function VoiceSecretaryComposerControl({
     abortBrowserSpeechRecognition(recognition);
     browserSpeechStopRequestedRef.current = true;
     browserSpeechTransientErrorCountRef.current = 0;
-    browserSpeechCycleCountRef.current = 0;
-    browserSpeechCycleStartedAtRef.current = 0;
     clearBrowserSpeechRestartTimer();
     clearBrowserSpeechStopFinalizeTimer();
     clearTranscriptFlushTimer();
@@ -1174,8 +1166,6 @@ export function VoiceSecretaryComposerControl({
     browserSpeechHadErrorRef.current = false;
     browserSpeechStopRequestedRef.current = false;
     browserSpeechTransientErrorCountRef.current = 0;
-    browserSpeechCycleCountRef.current = 0;
-    browserSpeechCycleStartedAtRef.current = 0;
 
     let stream: MediaStream;
     try {
@@ -1199,7 +1189,11 @@ export function VoiceSecretaryComposerControl({
       return;
     }
 
-    mediaStreamRef.current = stream;
+    // Browser SpeechRecognition owns its own capture lifecycle. Keep getUserMedia
+    // as a permission/device probe only; using its track "ended" as truth makes
+    // Edge/Chrome stop valid dictation sessions when the auxiliary stream closes.
+    stopMediaStream(stream);
+    mediaStreamRef.current = null;
     setRecording(true);
     setInterimTranscript("");
     setSpeechError("");
@@ -1225,28 +1219,10 @@ export function VoiceSecretaryComposerControl({
       if (showToast) showError(message);
     };
 
-    const handleBrowserMicEnded = () => {
-      if (browserSpeechStopRequestedRef.current) return;
-      const message = t("voiceSecretaryMicDisconnected", {
-        defaultValue: "Microphone capture ended. Check the input device, then start recording again.",
-      });
-      stopAfterFatalSpeechFailure(recognitionRef.current, message);
-    };
-    const audioTracks = stream.getAudioTracks();
-    audioTracks.forEach((track) => {
-      track.addEventListener("ended", handleBrowserMicEnded);
-    });
-    browserSpeechMediaCleanupRef.current = () => {
-      audioTracks.forEach((track) => {
-        track.removeEventListener("ended", handleBrowserMicEnded);
-      });
-    };
-
     function startRecognitionCycle(delayMs = 0): void {
       const runCycle = () => {
         browserSpeechRestartTimerRef.current = null;
-        const captureAlive = mediaStreamHasLiveAudio(mediaStreamRef.current);
-        if (browserSpeechStopRequestedRef.current || !assistantEnabled || !browserSpeechReady || !captureAlive) {
+        if (browserSpeechStopRequestedRef.current || !assistantEnabled || !browserSpeechReady) {
           recognitionRef.current = null;
           clearBrowserSpeechMediaHandlers();
           stopMediaStream(mediaStreamRef.current);
@@ -1259,8 +1235,6 @@ export function VoiceSecretaryComposerControl({
         }
 
         const recognition = new SpeechRecognitionCtor();
-        browserSpeechCycleCountRef.current += 1;
-        browserSpeechCycleStartedAtRef.current = Date.now();
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = effectiveRecognitionLanguage;
@@ -1285,6 +1259,8 @@ export function VoiceSecretaryComposerControl({
           const hasFinalText = Boolean(finalText.trim());
           const cleanInterimText = interimText.replace(/\s+/g, " ").trim();
           if (hasFinalText || cleanInterimText) {
+            browserSpeechHadErrorRef.current = false;
+            browserSpeechTransientErrorCountRef.current = 0;
             clearTranscriptFlushTimer();
           }
           if (hasFinalText) {
@@ -1297,18 +1273,27 @@ export function VoiceSecretaryComposerControl({
         };
         recognition.onerror = (event) => {
           const code = String(event.error || "").trim();
-          const cycleElapsedMs = Date.now() - browserSpeechCycleStartedAtRef.current;
-          const initialAudioCaptureFailure = code === "audio-capture"
-            && browserSpeechCycleCountRef.current <= 1
-            && !browserSpeechReceivedFinalRef.current
-            && cycleElapsedMs <= BROWSER_SPEECH_INITIAL_CAPTURE_GRACE_MS
-            && !mediaStreamHasLiveAudio(mediaStreamRef.current);
-          const fatal = BROWSER_SPEECH_FATAL_ERRORS.has(code) || initialAudioCaptureFailure;
+          const fatal = BROWSER_SPEECH_FATAL_ERRORS.has(code);
           const recoverable = !fatal && (BROWSER_SPEECH_RECOVERABLE_ERRORS.has(code) || !code);
           if (recoverable) {
             browserSpeechHadErrorRef.current = true;
-            browserSpeechTransientErrorCountRef.current += code === "no-speech" ? 0 : 1;
+            const countsAsTransientFailure = code !== "no-speech" && code !== "aborted";
+            if (countsAsTransientFailure) browserSpeechTransientErrorCountRef.current += 1;
             setInterimTranscript("");
+            if (
+              countsAsTransientFailure
+              && browserSpeechTransientErrorCountRef.current >= BROWSER_SPEECH_MAX_TRANSIENT_ERRORS
+            ) {
+              const message = code === "audio-capture"
+                ? t("voiceSecretaryMicNotFound", {
+                    defaultValue: "No microphone was found or the selected microphone is unavailable.",
+                  })
+                : code
+                  ? t("voiceSecretarySpeechError", { code, defaultValue: "Speech recognition error: {{code}}" })
+                  : t("voiceSecretarySpeechErrorGeneric", { defaultValue: "Speech recognition stopped unexpectedly." });
+              stopAfterFatalSpeechFailure(recognition, message, code !== "no-speech" && code !== "aborted");
+              return;
+            }
             if (code && code !== "no-speech" && code !== "aborted") {
               setSpeechError(t("voiceSecretarySpeechRecovering", {
                 code,
@@ -1334,8 +1319,7 @@ export function VoiceSecretaryComposerControl({
         recognition.onend = () => {
           clearBrowserSpeechStopFinalizeTimer();
           const stoppedByUser = browserSpeechStopRequestedRef.current;
-          const captureAlive = mediaStreamHasLiveAudio(mediaStreamRef.current);
-          const shouldRestart = !stoppedByUser && captureAlive && assistantEnabled && browserSpeechReady;
+          const shouldRestart = !stoppedByUser && assistantEnabled && browserSpeechReady;
           const restartDelay = browserSpeechHadErrorRef.current
             ? browserSpeechRestartDelayMs(browserSpeechTransientErrorCountRef.current)
             : 250;
@@ -1370,7 +1354,6 @@ export function VoiceSecretaryComposerControl({
           refreshVoiceCaptureLock(voiceCaptureOwnerIdRef.current, gid);
           browserSpeechHadErrorRef.current = false;
           recognition.start();
-          browserSpeechTransientErrorCountRef.current = 0;
           setSpeechError("");
         } catch {
           if (recognitionRef.current === recognition) recognitionRef.current = null;
@@ -1380,7 +1363,12 @@ export function VoiceSecretaryComposerControl({
             code: "start-failed",
             defaultValue: "Browser speech recognition is reconnecting after a temporary {{code}} event. Recording is still on.",
           }));
-          if (mediaStreamHasLiveAudio(mediaStreamRef.current) && !browserSpeechStopRequestedRef.current) {
+          if (
+            browserSpeechTransientErrorCountRef.current < BROWSER_SPEECH_MAX_TRANSIENT_ERRORS
+            && !browserSpeechStopRequestedRef.current
+            && assistantEnabled
+            && browserSpeechReady
+          ) {
             startRecognitionCycle(browserSpeechRestartDelayMs(browserSpeechTransientErrorCountRef.current));
             return;
           }

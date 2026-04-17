@@ -1200,6 +1200,21 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         # and causes the browser to see code 1006 instead of our intended close code.
         await websocket.accept()
 
+        async def _safe_send_json(payload: Dict[str, Any]) -> bool:
+            try:
+                await websocket.send_json(payload)
+                return True
+            except (WebSocketDisconnect, RuntimeError):
+                return False
+            except Exception:
+                return False
+
+        async def _safe_close(code: int) -> None:
+            try:
+                await websocket.close(code=code)
+            except Exception:
+                pass
+
         principal = resolve_websocket_principal(websocket)
         websocket.state.principal = principal
 
@@ -1213,48 +1228,36 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             has_cookie_token = False
         has_query_token = bool(str(websocket.query_params.get("token") or "").strip())
         if (has_header_token or has_cookie_token or has_query_token) and str(getattr(principal, "kind", "anonymous") or "anonymous") != "user" and websocket_tokens_active():
-            try:
-                await websocket.send_json({"ok": False, "error": {"code": "auth_required", "message": "Invalid or missing authentication token"}})
-            except Exception:
-                pass
-            await websocket.close(code=4401)
+            await _safe_send_json({"ok": False, "error": {"code": "auth_required", "message": "Invalid or missing authentication token"}})
+            await _safe_close(4401)
             return
 
         try:
             check_group(websocket, group_id)
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, dict) else {"code": "permission_denied", "message": str(exc.detail or "permission denied")}
-            try:
-                await websocket.send_json({"ok": False, "error": detail})
-            except Exception:
-                pass
-            await websocket.close(code=1008)
+            await _safe_send_json({"ok": False, "error": detail})
+            await _safe_close(1008)
             return
 
         if ctx.read_only and not ctx.exhibit_allow_terminal:
-            try:
-                await websocket.send_json(
-                    {
-                        "ok": False,
-                        "error": {
-                            "code": "read_only_terminal",
-                            "message": "Terminal is disabled in read-only (exhibit) mode.",
-                            "details": {},
-                        },
-                    }
-                )
-            except Exception:
-                pass
-            try:
-                await websocket.close(code=1000)
-            except Exception:
-                pass
+            await _safe_send_json(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "read_only_terminal",
+                        "message": "Terminal is disabled in read-only (exhibit) mode.",
+                        "details": {},
+                    },
+                }
+            )
+            await _safe_close(1000)
             return
 
         group = load_group(group_id)
         if group is None:
-            await websocket.send_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
-            await websocket.close(code=1008)
+            await _safe_send_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+            await _safe_close(1008)
             return
 
         try:
@@ -1269,8 +1272,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 path = str(ep.get("path") or sock_path)
                 reader, writer = await asyncio.open_unix_connection(path)
         except Exception:
-            await websocket.send_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
-            await websocket.close(code=1011)
+            await _safe_send_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
+            await _safe_close(1011)
             return
 
         try:
@@ -1284,8 +1287,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 resp = {}
             if not isinstance(resp, dict) or not resp.get("ok"):
                 err = resp.get("error") if isinstance(resp.get("error"), dict) else {"code": "term_attach_failed", "message": "term attach failed"}
-                await websocket.send_json({"ok": False, "error": err})
-                await websocket.close(code=1008)
+                await _safe_send_json({"ok": False, "error": err})
+                await _safe_close(1008)
                 return
 
             async def _pump_out() -> None:

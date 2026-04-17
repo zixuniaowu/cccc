@@ -633,6 +633,126 @@ def _voice_document_path(record: Dict[str, Any]) -> str:
     return ""
 
 
+def _voice_document_workspace_dir(group: Group, config: Optional[Dict[str, Any]] = None) -> tuple[str, Path, Path] | None:
+    root = resolve_active_scope_root(group)
+    if root is None:
+        return None
+    rel_dir_text = _safe_voice_document_rel_dir((config or {}).get("document_default_dir") or _DEFAULT_VOICE_DOCUMENT_DIR)
+    rel_dir = PurePosixPath(rel_dir_text)
+    path = (root / Path(*rel_dir.parts)).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return rel_dir.as_posix(), path, root
+
+
+def _voice_document_title_from_markdown(path: Path, *, fallback: str) -> str:
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")[:8192]
+    except Exception:
+        return fallback
+    lines = content.splitlines()
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:80]:
+            stripped = line.strip()
+            if stripped in {"---", "..."}:
+                break
+            match = re.match(r"title\s*:\s*(.+)", stripped, flags=re.IGNORECASE)
+            if match:
+                title = match.group(1).strip().strip("'\"").strip()
+                if title:
+                    return title[:160]
+    for line in lines[:120]:
+        match = re.match(r"^#\s+(.+)", line.strip())
+        if match:
+            title = match.group(1).strip()
+            if title:
+                return title[:160]
+    return fallback
+
+
+def _voice_document_id_for_workspace_path(workspace_path: str) -> str:
+    digest = hashlib.sha1(str(workspace_path or "").encode("utf-8")).hexdigest()[:24]
+    return _safe_voice_document_id(f"voice-doc-{digest}")
+
+
+def _voice_workspace_document_record(group: Group, *, workspace_path: str, path: Path) -> Dict[str, Any]:
+    try:
+        stat = path.stat()
+        updated_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+    except Exception:
+        updated_at = utc_now_iso()
+    fallback_title = PurePosixPath(workspace_path).stem or "Untitled document"
+    title = _voice_document_title_from_markdown(path, fallback=fallback_title)
+    return {
+        "schema": 1,
+        "document_id": _voice_document_id_for_workspace_path(workspace_path),
+        "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+        "title": title,
+        "status": "active",
+        "storage_kind": "workspace",
+        "workspace_path": workspace_path,
+        "created_at": updated_at,
+        "updated_at": updated_at,
+        "created_by": "workspace_import",
+        "revision_count": 0,
+        "source_segment_count": 0,
+        "last_source_segment_id": "",
+        "discovered": True,
+    }
+
+
+def _discover_workspace_voice_documents(group: Group, *, config: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:
+    workspace = _voice_document_workspace_dir(group, config)
+    if workspace is None:
+        return {}
+    _rel_dir, directory, root = workspace
+    if not directory.exists() or not directory.is_dir():
+        return {}
+    candidates: list[tuple[float, str, Path]] = []
+    for path in directory.rglob("*.md"):
+        if not path.is_file():
+            continue
+        try:
+            relative_to_voice_dir = PurePosixPath(path.relative_to(directory).as_posix())
+            if "archive" in relative_to_voice_dir.parts[:-1]:
+                continue
+            workspace_path = _safe_voice_document_rel_path(path.relative_to(root).as_posix())
+            stat = path.stat()
+        except Exception:
+            continue
+        candidates.append((float(stat.st_mtime), workspace_path, path))
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    records: Dict[str, Dict[str, Any]] = {}
+    for _mtime, workspace_path, path in candidates[:_MAX_VOICE_DOCUMENTS]:
+        records[workspace_path] = _voice_workspace_document_record(group, workspace_path=workspace_path, path=path)
+    return records
+
+
+def _workspace_voice_document_missing(group: Group, record: Dict[str, Any]) -> bool:
+    if str(record.get("storage_kind") or "").strip() != "workspace":
+        return False
+    try:
+        path = _resolve_voice_document_storage_path(group, record)
+    except Exception:
+        return True
+    return not path.exists() or not path.is_file()
+
+
+def _active_voice_document_from_index(group: Group, index: Dict[str, Any]) -> tuple[str, Optional[Dict[str, Any]]]:
+    documents = index.get("documents") if isinstance(index.get("documents"), dict) else {}
+    active_id = str(index.get("active_document_id") or "").strip()
+    record = documents.get(active_id) if active_id and isinstance(documents.get(active_id), dict) else None
+    if not isinstance(record, dict):
+        return "", None
+    if str(record.get("status") or "active").strip().lower() != "active":
+        return "", None
+    if _workspace_voice_document_missing(group, record):
+        return "", None
+    return active_id, dict(record)
+
+
 def _find_voice_document_by_path(
     group: Group,
     *,
@@ -659,6 +779,16 @@ def _find_voice_document_by_path(
             continue
         if _voice_document_path(raw_record) == wanted:
             return index, dict(raw_record)
+    if wanted:
+        assistant = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
+        assistant_config = config or (assistant.get("config") if isinstance(assistant.get("config"), dict) else {})
+        discovered = _discover_workspace_voice_documents(group, config=assistant_config)
+        record = discovered.get(wanted)
+        if record is not None:
+            doc_id = str(record.get("document_id") or "").strip()
+            if doc_id:
+                documents[doc_id] = dict(record)
+            return index, dict(record)
     if create and not raw_path:
         return _get_voice_document(group, create=True, config=config)
     raise ValueError("voice secretary document not found")
@@ -1052,19 +1182,35 @@ def _maybe_emit_voice_input_retry_notify(group: Group) -> None:
 def _retained_voice_documents(group: Group, *, include_archived: bool = False, include_content: bool = True) -> list[Dict[str, Any]]:
     index = _load_voice_documents_index(group)
     documents = index.get("documents") if isinstance(index.get("documents"), dict) else {}
-    out = []
+    assistant = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
+    assistant_config = assistant.get("config") if isinstance(assistant.get("config"), dict) else {}
+    out_by_path: Dict[str, Dict[str, Any]] = {}
+    suppressed_paths: set[str] = set()
     for record in documents.values():
         if not isinstance(record, dict):
             continue
         status = str(record.get("status") or "active").strip() or "active"
+        document_path = _voice_document_path(record)
         if status == "deleted":
+            if document_path:
+                suppressed_paths.add(document_path)
             continue
         if status == "archived" and not include_archived:
+            if document_path:
+                suppressed_paths.add(document_path)
+            continue
+        if status == "active" and _workspace_voice_document_missing(group, record):
             continue
         public_record = _voice_document_public_record(group, record, include_content=include_content)
-        out.append(public_record)
+        document_path = str(public_record.get("document_path") or "").strip()
+        if document_path:
+            out_by_path[document_path] = public_record
+    for document_path, record in _discover_workspace_voice_documents(group, config=assistant_config).items():
+        if document_path in out_by_path or document_path in suppressed_paths:
+            continue
+        out_by_path[document_path] = _voice_document_public_record(group, record, include_content=include_content)
     return sorted(
-        out,
+        out_by_path.values(),
         key=lambda item: (
             str(item.get("created_at") or ""),
             str(item.get("document_id") or ""),
@@ -1170,7 +1316,7 @@ def _get_voice_document(
     record = documents.get(wanted) if wanted and isinstance(documents.get(wanted), dict) else None
     if record is not None and not document_id:
         status = str(record.get("status") or "active").strip().lower() or "active"
-        if status != "active":
+        if status != "active" or _workspace_voice_document_missing(group, record):
             record = None
             wanted = ""
     if record is None and create and not document_id:
@@ -1960,7 +2106,11 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
         assistant = _effective_assistant(group, assistant_id, runtime_state=runtime_state)
         documents = _retained_voice_documents(group) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else []
         document_index = _load_voice_documents_index(group) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else {}
-        active_record = (document_index.get("documents") or {}).get(str(document_index.get("active_document_id") or "")) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else None
+        active_document_id, active_record = (
+            _active_voice_document_from_index(group, document_index)
+            if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
+            else ("", None)
+        )
         active_document_path = _voice_document_path(active_record) if isinstance(active_record, dict) else ""
         input_state = _load_voice_input_state(group) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else {}
         return DaemonResponse(
@@ -1971,12 +2121,8 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
                 "documents": documents,
                 "documents_by_id": {str(item.get("document_id")): item for item in documents},
                 "documents_by_path": {str(item.get("document_path")): item for item in documents if str(item.get("document_path") or "").strip()},
-                "active_document_id": str(_load_voice_documents_index(group).get("active_document_id") or "")
-                if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
-                else "",
-                "capture_target_document_id": str(_load_voice_documents_index(group).get("active_document_id") or "")
-                if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
-                else "",
+                "active_document_id": active_document_id,
+                "capture_target_document_id": active_document_id,
                 "active_document_path": active_document_path,
                 "capture_target_document_path": active_document_path,
                 "new_input_available": int(input_state.get("latest_seq") or 0) > int(input_state.get("secretary_read_cursor") or 0),
@@ -1988,7 +2134,7 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     ]
     documents = _retained_voice_documents(group)
     document_index = _load_voice_documents_index(group)
-    active_record = (document_index.get("documents") or {}).get(str(document_index.get("active_document_id") or ""))
+    active_document_id, active_record = _active_voice_document_from_index(group, document_index)
     active_document_path = _voice_document_path(active_record) if isinstance(active_record, dict) else ""
     input_state = _load_voice_input_state(group)
     return DaemonResponse(
@@ -2000,8 +2146,8 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             "documents": documents,
             "documents_by_id": {str(item.get("document_id")): item for item in documents},
             "documents_by_path": {str(item.get("document_path")): item for item in documents if str(item.get("document_path") or "").strip()},
-            "active_document_id": str(_load_voice_documents_index(group).get("active_document_id") or ""),
-            "capture_target_document_id": str(_load_voice_documents_index(group).get("active_document_id") or ""),
+            "active_document_id": active_document_id,
+            "capture_target_document_id": active_document_id,
             "active_document_path": active_document_path,
             "capture_target_document_path": active_document_path,
             "new_input_available": int(input_state.get("latest_seq") or 0) > int(input_state.get("secretary_read_cursor") or 0),
@@ -2695,14 +2841,14 @@ def handle_assistant_voice_document_list(args: Dict[str, Any]) -> DaemonResponse
             wanted = requested_document_path
         documents = [item for item in documents if str(item.get("document_path") or "").strip() == wanted]
     index = _load_voice_documents_index(group)
-    active_record = (index.get("documents") or {}).get(str(index.get("active_document_id") or ""))
+    active_document_id, active_record = _active_voice_document_from_index(group, index)
     active_document_path = _voice_document_path(active_record) if isinstance(active_record, dict) else ""
     input_state = _load_voice_input_state(group)
     result = {
         "group_id": group.group_id,
         "documents": documents,
-        "active_document_id": str(index.get("active_document_id") or ""),
-        "capture_target_document_id": str(index.get("active_document_id") or ""),
+        "active_document_id": active_document_id,
+        "capture_target_document_id": active_document_id,
         "active_document_path": active_document_path,
         "capture_target_document_path": active_document_path,
         "new_input_available": int(input_state.get("latest_seq") or 0) > int(input_state.get("secretary_read_cursor") or 0),

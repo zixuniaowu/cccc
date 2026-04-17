@@ -518,6 +518,129 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_document_list_discovers_repo_markdown_documents(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            docs_dir = repo / "docs" / "voice-secretary"
+            docs_dir.mkdir(parents=True)
+            imported_path = docs_dir / "imported-memo.md"
+            imported_path.write_text(
+                "---\ntitle: Imported Memo\n---\n\n# Ignored Heading\n\nExternal document body.\n",
+                encoding="utf-8",
+            )
+            archive_dir = docs_dir / "archive"
+            archive_dir.mkdir()
+            (archive_dir / "old-memo.md").write_text("# Old Memo\n\nArchived by filename location.\n", encoding="utf-8")
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            documents_by_path = (state.result or {}).get("documents_by_path") if isinstance(state.result, dict) else {}
+            imported_rel = "docs/voice-secretary/imported-memo.md"
+            archived_rel = "docs/voice-secretary/archive/old-memo.md"
+            self.assertIn(imported_rel, documents_by_path)
+            self.assertNotIn(archived_rel, documents_by_path)
+            imported = documents_by_path[imported_rel]
+            self.assertEqual(imported.get("title"), "Imported Memo")
+            self.assertEqual(imported.get("storage_kind"), "workspace")
+            self.assertIn("External document body.", str(imported.get("content") or ""))
+
+            select, _ = self._call(
+                "assistant_voice_document_select",
+                {"group_id": group_id, "by": "user", "document_path": imported_rel},
+            )
+            self.assertTrue(select.ok, getattr(select, "error", None))
+            selected_doc = (select.result or {}).get("document") if isinstance(select.result, dict) else {}
+            self.assertEqual(selected_doc.get("document_path"), imported_rel)
+
+            after_select, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(after_select.ok, getattr(after_select, "error", None))
+            self.assertEqual((after_select.result or {}).get("active_document_path"), imported_rel)
+
+            save, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "document_path": imported_rel,
+                    "content": "# Imported Memo\n\nUpdated through the Voice Secretary panel.\n",
+                },
+            )
+            self.assertTrue(save.ok, getattr(save, "error", None))
+            self.assertIn("Updated through", imported_path.read_text(encoding="utf-8"))
+
+            archive, _ = self._call(
+                "assistant_voice_document_archive",
+                {"group_id": group_id, "by": "user", "document_path": imported_rel},
+            )
+            self.assertTrue(archive.ok, getattr(archive, "error", None))
+            self.assertFalse(imported_path.exists())
+            archived_doc = (archive.result or {}).get("document") if isinstance(archive.result, dict) else {}
+            self.assertIn("docs/voice-secretary/archive/", str(archived_doc.get("workspace_path") or ""))
+
+            after_archive, _ = self._call("assistant_voice_document_list", {"group_id": group_id})
+            self.assertTrue(after_archive.ok, getattr(after_archive, "error", None))
+            paths_after_archive = {
+                str(item.get("document_path") or "")
+                for item in ((after_archive.result or {}).get("documents") or [])
+                if isinstance(item, dict)
+            }
+            self.assertNotIn(imported_rel, paths_after_archive)
+            self.assertNotIn(archived_rel, paths_after_archive)
+        finally:
+            cleanup()
+
+    def test_voice_document_active_target_ignores_deleted_workspace_file(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            created, _ = self._call(
+                "assistant_voice_document_save",
+                {"group_id": group_id, "by": "user", "title": "Temporary Notes", "create_new": True},
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            document = (created.result or {}).get("document") if isinstance(created.result, dict) else {}
+            document_path = str(document.get("document_path") or "")
+            self.assertTrue(document_path)
+            absolute_path = repo / document_path
+            self.assertTrue(absolute_path.exists())
+
+            absolute_path.unlink()
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            self.assertEqual((state.result or {}).get("active_document_id"), "")
+            self.assertEqual((state.result or {}).get("active_document_path"), "")
+            documents_by_path = (state.result or {}).get("documents_by_path") if isinstance(state.result, dict) else {}
+            self.assertNotIn(document_path, documents_by_path)
+
+            appended, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "session_id": "s1",
+                    "text": "new note after external deletion",
+                    "is_final": True,
+                    "flush": True,
+                    "flush_reason": "result_idle",
+                    "trigger": {"trigger_kind": "push_to_talk_stop"},
+                },
+            )
+            self.assertTrue(appended.ok, getattr(appended, "error", None))
+            self.assertFalse(absolute_path.exists())
+            next_document = (appended.result or {}).get("document") if isinstance(appended.result, dict) else {}
+            self.assertNotEqual(str(next_document.get("document_path") or ""), document_path)
+        finally:
+            cleanup()
+
     def test_voice_transcript_append_flush_stores_sidecar_without_legacy_proposal(self) -> None:
         home, cleanup = self._with_home()
         try:
