@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { IMStatus, IMPlatform, WeixinLoginStatus } from "../../../types";
 import * as api from "../../../services/api";
 import { inputClass, labelClass, primaryButtonClass, cardClass } from "./types";
+import { copyTextToClipboard } from "../../../utils/copy";
 
 const IM_PENDING_AUTO_REFRESH_MS = 12000;
 
@@ -264,14 +265,14 @@ export function IMBridgeTab({
 
   const onCopyWeixinQrLink = useCallback(async () => {
     const link = String(weixinLoginStatus?.qrcode_url || "").trim();
-    if (!link || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    if (!link) {
       setWeixinQrCopyState("failed");
       return;
     }
-    try {
-      await navigator.clipboard.writeText(link);
+    const ok = await copyTextToClipboard(link);
+    if (ok) {
       setWeixinQrCopyState("done");
-    } catch {
+    } else {
       setWeixinQrCopyState("failed");
     }
   }, [weixinLoginStatus?.qrcode_url]);
@@ -887,8 +888,8 @@ export function IMBridgeTab({
                   setAuthError("");
                   setPendingError("");
                   try {
-                    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-                      await navigator.clipboard.writeText("/subscribe");
+                    const ok = await copyTextToClipboard("/subscribe");
+                    if (ok) {
                       setAuthInfo(t("imBridge.requestCopied", "Copied /subscribe. Send it in your IM chat to request a key, then approve it from Pending Requests (or bind by key)."));
                     } else {
                       setAuthInfo(t("imBridge.requestHint", "Step 1: In your IM chat, send /subscribe to request a temporary key. Step 2: the request will appear below in Pending Requests; click Approve (or paste the key in Bind). If foreman is online, you can forward the key and ask foreman to bind it for you."));

@@ -36,15 +36,15 @@ export const dangerButtonClass = (size: "sm" | "md" = "md") =>
 export const settingsDialogPanelClass = (size: "lg" | "xl" = "lg") =>
   `glass-modal absolute inset-0 sm:inset-auto sm:left-1/2 sm:top-1/2 ${
     size === "xl"
-      ? "sm:w-[min(980px,calc(100vw-2rem))] sm:h-[min(88vh,860px)]"
-      : "sm:w-[min(920px,calc(100vw-2rem))] sm:h-[min(86vh,820px)]"
+      ? "sm:w-[min(1200px,calc(100vw-2rem))] sm:h-[min(90dvh,920px)]"
+      : "sm:w-[min(1040px,calc(100vw-2rem))] sm:h-[min(88dvh,860px)]"
   } sm:-translate-x-1/2 sm:-translate-y-1/2 rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden`;
 
 export const settingsDialogHeaderClass =
   `flex shrink-0 items-start gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5 sm:py-4`;
 
 export const settingsDialogBodyClass =
-  `min-h-0 flex-1 overflow-y-auto scrollbar-subtle p-4 sm:p-5 [scrollbar-gutter:stable]`;
+  `min-h-0 flex-1 overflow-y-auto scrollbar-subtle p-4 sm:p-6 lg:p-7 [scrollbar-gutter:stable]`;
 
 export const settingsDialogFooterClass =
   `flex shrink-0 items-center justify-end gap-2 border-t border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5 sm:py-4 safe-area-bottom-compact`;

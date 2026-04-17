@@ -14,6 +14,7 @@ import { ModalFrame } from "./modals/ModalFrame";
 import { SettingsNavigation } from "./modals/settings/SettingsNavigation";
 import { IMConfigDraft, saveAndStartIMBridge, saveIMConfigDraft } from "./modals/settings/imBridgeConfig";
 import { useModalA11y } from "../hooks/useModalA11y";
+import { copyTextToClipboard } from "../utils/copy";
 
 const AutomationTab = lazy(() => import("./modals/settings/AutomationTab").then((module) => ({ default: module.AutomationTab })));
 const DeliveryTab = lazy(() => import("./modals/settings/DeliveryTab").then((module) => ({ default: module.DeliveryTab })));
@@ -496,31 +497,8 @@ export function SettingsModal({
       window.setTimeout(() => setTailCopyInfo(""), 1200);
     };
 
-    try {
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        await navigator.clipboard.writeText(payload);
-        setToast(t("automation.copiedLines", { n }));
-        return;
-      }
-    } catch {
-      // fallback
-    }
-
-    try {
-      const el = document.createElement("textarea");
-      el.value = payload;
-      el.style.position = "fixed";
-      el.style.left = "-9999px";
-      el.style.top = "0";
-      document.body.appendChild(el);
-      el.focus();
-      el.select();
-      const ok = document.execCommand("copy");
-      document.body.removeChild(el);
-      setToast(ok ? t("automation.copiedLines", { n }) : t("common:copyFailed"));
-    } catch {
-      setToast(t("common:copyFailed"));
-    }
+    const ok = await copyTextToClipboard(payload);
+    setToast(ok ? t("automation.copiedLines", { n }) : t("common:copyFailed"));
   };
 
   const loadTerminalTail = async () => {
@@ -996,7 +974,7 @@ export function SettingsModal({
       titleId="settings-modal-title"
       title={`⚙️ ${t("title")}`}
       closeAriaLabel={t("closeAriaLabel")}
-      panelClassName="w-full h-full sm:h-[640px] sm:max-w-4xl sm:max-h-[85vh]"
+      panelClassName="w-full h-full sm:h-[min(90dvh,920px)] sm:max-w-[min(1280px,calc(100vw-2rem))] sm:max-h-[90dvh]"
       modalRef={modalRef}
     >
       <div className="min-h-0 flex-1 flex flex-col sm:flex-row overflow-hidden">
@@ -1017,7 +995,7 @@ export function SettingsModal({
           ref={contentScrollRef}
           className="min-h-0 flex-1 overflow-y-auto scrollbar-subtle flex flex-col [scrollbar-gutter:stable]"
         >
-          <div className="p-5 pb-8 sm:p-8 sm:pb-10 space-y-6">
+          <div className="p-5 pb-8 sm:p-8 lg:p-10 sm:pb-10 space-y-6 lg:space-y-7">
             {scope === "global" && !globalSettingsEnabled && !currentBrowserSignedIn ? (
               <div className={`rounded-xl border p-6 ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
                 <div className="text-sm font-semibold">{t("navigation.globalLockedTitle")}</div>

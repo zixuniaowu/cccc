@@ -1,6 +1,7 @@
 import { useMemo, useEffect, useRef } from 'react';
 import MarkdownIt from 'markdown-it';
 import { classNames } from '../utils/classNames';
+import { copyTextToClipboard } from '../utils/copy';
 
 interface MarkdownRendererProps {
     content: string;
@@ -66,22 +67,8 @@ export function MarkdownRenderer({ content, isDark, className, invertText }: Mar
                 return;
             }
             try {
-                // 使用 Clipboard API，如果不可用则使用 execCommand 回退
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    await navigator.clipboard.writeText(code);
-                } else {
-                    // Fallback for environments without clipboard API (PWA/HTTP)
-                    const textArea = document.createElement('textarea');
-                    textArea.value = code;
-                    textArea.style.position = 'fixed';
-                    textArea.style.left = '-9999px';
-                    textArea.style.top = '0';
-                    document.body.appendChild(textArea);
-                    textArea.focus();
-                    textArea.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(textArea);
-                }
+                const copied = await copyTextToClipboard(code);
+                if (!copied) throw new Error('copy failed');
                 // 使用 CSS 类切换显示状态，避免修改 innerHTML 导致 React DOM 同步错误
                 button.classList.add('copied', 'pointer-events-none');
                 const copyIcon = button.querySelector('.copy-icon');

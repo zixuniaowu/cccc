@@ -2,6 +2,7 @@ import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 
 import type { CSSProperties } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
+import { useCopyFeedback } from "../hooks/useCopyFeedback";
 import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
@@ -55,24 +56,6 @@ function PlainMessageText({
             {text}
         </div>
     );
-}
-
-async function copyText(value: string): Promise<boolean> {
-    const text = String(value || "");
-    if (!text.trim()) return false;
-    try {
-        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-        }
-    } catch {
-        // Fall through to the prompt fallback below.
-    }
-    if (typeof window !== "undefined" && typeof window.prompt === "function") {
-        window.prompt("Copy to clipboard:", text);
-        return true;
-    }
-    return false;
 }
 
 function buildMessageCopyText({
@@ -489,6 +472,7 @@ export const MessageBubble = memo(function MessageBubble({
     }, [ev.by, isUserMessage]);
 
     const { t } = useTranslation('chat');
+    const copyWithFeedback = useCopyFeedback();
 
     const agentStateText = String(agentState?.hot?.focus || "").trim();
     const agentStateDisplay = agentStateText || t('noAgentStateYet');
@@ -662,11 +646,13 @@ export const MessageBubble = memo(function MessageBubble({
     }, [copiedMessageText]);
 
     const handleCopyMessageText = useCallback(async () => {
-        const ok = await copyText(copyableMessageText);
+        const ok = await copyWithFeedback(copyableMessageText, {
+            errorMessage: t("common:copyFailed", { defaultValue: "Copy failed" }),
+        });
         if (ok) {
             setCopiedMessageText(true);
         }
-    }, [copyableMessageText]);
+    }, [copyWithFeedback, copyableMessageText, t]);
 
     return (
         <div

@@ -4,6 +4,7 @@ import { apiJson } from "../services/api";
 import { Actor, LedgerEvent } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
+import { useCopyFeedback } from "../hooks/useCopyFeedback";
 import { useModalA11y } from "../hooks/useModalA11y";
 
 type KindFilter = "all" | "chat" | "notify";
@@ -66,24 +67,8 @@ function highlightText(text: string, query: string, _isDark?: boolean): ReactNod
   return out;
 }
 
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // ignore
-  }
-  try {
-    window.prompt("Copy to clipboard:", text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply, onJumpToMessage }: SearchModalProps) {
+  const copyWithFeedback = useCopyFeedback();
   const { modalRef } = useModalA11y(isOpen, onClose);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
@@ -398,7 +383,12 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                           "text-[10px] px-2 py-1 rounded border border-[var(--glass-border-subtle)] min-h-[36px] transition-colors",
                           "glass-btn text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                         )}
-                        onClick={() => void copyToClipboard(evId)}
+                        onClick={() => {
+                          void copyWithFeedback(evId, {
+                            successMessage: t("common:copied"),
+                            errorMessage: t("common:copyFailed"),
+                          });
+                        }}
                         aria-label={t('copyEventId')}
                         title={t('copyEventId')}
                       >

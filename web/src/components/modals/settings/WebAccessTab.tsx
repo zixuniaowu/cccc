@@ -17,6 +17,7 @@ import {
   settingsDialogHeaderClass,
 } from "./types";
 import { useModalA11y } from "../../../hooks/useModalA11y";
+import { copyTextToClipboard } from "../../../utils/copy";
 
 interface WebAccessTabProps {
   isDark: boolean;
@@ -49,24 +50,6 @@ function statusChipClass(_isDark: boolean, tone: "neutral" | "good" | "warn") {
     return "border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400";
   }
   return "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]";
-}
-
-async function copyText(value: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch {
-    const el = document.createElement("textarea");
-    el.value = value;
-    el.style.position = "fixed";
-    el.style.left = "-9999px";
-    document.body.appendChild(el);
-    el.focus();
-    el.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(el);
-    return ok;
-  }
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -791,10 +774,12 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         setError(resp.error?.message || t("webAccess.revealFailed"));
         return;
       }
-      const ok = await copyText(resp.result.token);
+      const ok = await copyTextToClipboard(resp.result.token);
       if (ok) {
         setCopiedTokenId(tokenId);
         window.setTimeout(() => setCopiedTokenId(null), 1500);
+      } else {
+        setError(t("common:copyFailed"));
       }
     } catch {
       setError(t("webAccess.revealFailed"));
@@ -803,10 +788,12 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
 
   const copyNewToken = async () => {
     if (!newToken) return;
-    const ok = await copyText(newToken);
+    const ok = await copyTextToClipboard(newToken);
     if (ok) {
       setCopiedNewToken(true);
       window.setTimeout(() => setCopiedNewToken(false), 1500);
+    } else {
+      setError(t("common:copyFailed"));
     }
   };
 
@@ -1021,7 +1008,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
                   <button
                     type="button"
                     onClick={async () => {
-                      const ok = await copyText(restartDialog.restartCommand);
+                      const ok = await copyTextToClipboard(restartDialog.restartCommand);
                       if (ok) pushHint(t("webAccess.copied"));
                     }}
                     className={`${secondaryButtonClass("sm")} mt-2`}
@@ -1035,7 +1022,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
                   <button
                     type="button"
                     onClick={async () => {
-                      const ok = await copyText(restartDialog.standaloneCommand);
+                      const ok = await copyTextToClipboard(restartDialog.standaloneCommand);
                       if (ok) pushHint(t("webAccess.copied"));
                     }}
                     className={`${secondaryButtonClass("sm")} mt-2`}
@@ -1054,7 +1041,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
             <button
               type="button"
               onClick={async () => {
-                const ok = await copyText(restartDialog.remoteUrl || "");
+                const ok = await copyTextToClipboard(restartDialog.remoteUrl || "");
                 if (ok) pushHint(t("webAccess.copied"));
               }}
               className={secondaryButtonClass()}
@@ -1528,7 +1515,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
                 <button
                   type="button"
                   onClick={async () => {
-                    const ok = await copyText(remoteState.endpoint || "");
+                const ok = await copyTextToClipboard(remoteState.endpoint || "");
                     if (ok) pushHint(t("webAccess.copied"));
                   }}
                   className={secondaryButtonClass()}

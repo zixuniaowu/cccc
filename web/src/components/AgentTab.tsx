@@ -17,6 +17,7 @@ import { ScrollFade } from "./ScrollFade";
 import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { getEffectiveActorRunner, supportsStandardWebHeadlessRuntime } from "../utils/headlessRuntimeSupport";
+import { copyTextToClipboard } from "../utils/copy";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
@@ -29,6 +30,7 @@ const TERMINAL_SHOW_DELAY_MS = 150;
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+const copyToClipboard = copyTextToClipboard;
 
 interface AgentTabProps {
   actor: Actor;
@@ -158,25 +160,6 @@ export function AgentTab({
     if (!activated || observabilityLoaded) return;
     void loadObservability();
   }, [activated, loadObservability, observabilityLoaded]);
-
-  const copyToClipboard = async (text: string): Promise<boolean> => {
-    const t = (text || "").toString();
-    if (!t) return false;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(t);
-        return true;
-      }
-    } catch {
-      // ignore
-    }
-    try {
-      window.prompt("Copy to clipboard:", t);
-      return true;
-    } catch {
-      return false;
-    }
-  };
 
   const color = getRuntimeColor(actor.runtime, isDark);
   const rtInfo = (actor.runtime && RUNTIME_INFO[actor.runtime]) ? RUNTIME_INFO[actor.runtime] : RUNTIME_INFO.codex;

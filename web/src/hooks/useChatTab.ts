@@ -17,6 +17,7 @@ import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxSto
 import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment } from "../types";
 import * as api from "../services/api";
 import { buildReplyComposerState } from "../utils/chatReply";
+import { copyTextToClipboard } from "../utils/copy";
 import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
 
 type ChatTFunction = (key: string, options?: Record<string, unknown>) => string;
@@ -1376,25 +1377,7 @@ export function useChatTab({
       url.searchParams.set("tab", "chat");
 
       const text = url.toString();
-      let ok = false;
-      try {
-        await navigator.clipboard.writeText(text);
-        ok = true;
-      } catch {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = text;
-          ta.style.position = "fixed";
-          ta.style.left = "-9999px";
-          ta.style.top = "0";
-          document.body.appendChild(ta);
-          ta.select();
-          ok = document.execCommand("copy");
-          document.body.removeChild(ta);
-        } catch {
-          ok = false;
-        }
-      }
+      const ok = await copyTextToClipboard(text);
       if (ok) {
         showNotice({ message: "Link copied" });
       } else {
@@ -1411,25 +1394,7 @@ export function useChatTab({
       const text = String(data?.text || "");
       if (!text.trim()) return;
 
-      let ok = false;
-      try {
-        await navigator.clipboard.writeText(text);
-        ok = true;
-      } catch {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = text;
-          ta.style.position = "fixed";
-          ta.style.left = "-9999px";
-          ta.style.top = "0";
-          document.body.appendChild(ta);
-          ta.select();
-          ok = document.execCommand("copy");
-          document.body.removeChild(ta);
-        } catch {
-          ok = false;
-        }
-      }
+      const ok = await copyTextToClipboard(text);
 
       if (ok) {
         showNotice({ message: t("chat:contentCopied", { defaultValue: "Content copied" }) });

@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-
 import {
-  getMessageBubbleMotionClass,
-  mayContainMarkdown,
+  getMessageBubbleMotionClass as getMotionClass,
+  mayContainMarkdown as mayRenderMarkdown,
 } from "../../src/components/messageBubble/helpers";
 
 describe("getMessageBubbleMotionClass", () => {
   it("animates commentary bubbles with the transient commentary class", () => {
-    expect(getMessageBubbleMotionClass({
+    expect(getMotionClass({
       isStreaming: true,
       isOptimistic: false,
       streamPhase: "commentary",
@@ -15,7 +14,7 @@ describe("getMessageBubbleMotionClass", () => {
   });
 
   it("animates optimistic bubbles with the base transient class", () => {
-    expect(getMessageBubbleMotionClass({
+    expect(getMotionClass({
       isStreaming: false,
       isOptimistic: true,
       streamPhase: "",
@@ -23,7 +22,7 @@ describe("getMessageBubbleMotionClass", () => {
   });
 
   it("keeps stable final bubbles animation-free", () => {
-    expect(getMessageBubbleMotionClass({
+    expect(getMotionClass({
       isStreaming: false,
       isOptimistic: false,
       streamPhase: "final_answer",
@@ -33,7 +32,7 @@ describe("getMessageBubbleMotionClass", () => {
 
 describe("mayContainMarkdown", () => {
   it("detects GitHub-style tables so completed chat bubbles render markdown tables", () => {
-    expect(mayContainMarkdown([
+    expect(mayRenderMarkdown([
       "本周天气如下：",
       "",
       "| 日期 | 天气 | 温度 |",
@@ -44,6 +43,6 @@ describe("mayContainMarkdown", () => {
   });
 
   it("keeps internal attachment manifests as plain text", () => {
-    expect(mayContainMarkdown("[cccc] Attachments:\n- file.txt")).toBe(false);
+    expect(mayRenderMarkdown("[cccc] Attachments:\n- file.txt")).toBe(false);
   });
 });

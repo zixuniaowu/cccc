@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useUIStore } from "../../stores";
 import { MarkdownDocumentSurface } from "../document/MarkdownDocumentSurface";
 import { CloseIcon, CopyIcon, EditIcon, RefreshIcon, SplitViewIcon, TrashIcon, WindowViewIcon } from "../Icons";
 import { ModalFrame } from "../modals/ModalFrame";
@@ -12,6 +13,7 @@ import {
   uploadPresentationReferenceSnapshot,
 } from "../../services/api";
 import { classNames } from "../../utils/classNames";
+import { copyTextToClipboard } from "../../utils/copy";
 import { findPresentationSlot, shouldPreferPresentationLiveBrowser } from "../../utils/presentation";
 import {
   canRestorePresentationRefInViewer,
@@ -77,34 +79,6 @@ async function dataUrlToFile(dataUrl: string, filename: string): Promise<File | 
     return new File([blob], filename, { type: blob.type || "image/jpeg" });
   } catch {
     return null;
-  }
-}
-
-async function copyText(value: string): Promise<boolean> {
-  const text = String(value || "");
-  if (!text) return false;
-  try {
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // Fall through to textarea copy.
-  }
-  try {
-    if (typeof document === "undefined") return false;
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "true");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    return !!ok;
-  } catch {
-    return false;
   }
 }
 
@@ -178,6 +152,7 @@ function PresentationViewer({
   onClose,
 }: PresentationViewerProps) {
   const { t, i18n } = useTranslation("chat");
+  const showError = useUIStore((state) => state.showError);
   const isModal = variant === "modal";
   const { modalRef } = useModalA11y(isModal && isOpen, onClose);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -509,8 +484,11 @@ function PresentationViewer({
 
   const handleCopyReference = async () => {
     if (!copyReferenceValue) return;
-    const ok = await copyText(copyReferenceValue);
-    if (!ok) return;
+    const ok = await copyTextToClipboard(copyReferenceValue);
+    if (!ok) {
+      showError(t("common:copyFailed", { defaultValue: "Copy failed" }));
+      return;
+    }
     setCopiedReference(true);
     if (copyResetTimerRef.current !== null) {
       window.clearTimeout(copyResetTimerRef.current);

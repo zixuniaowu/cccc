@@ -256,7 +256,7 @@ function AssistantPromptEditor({
         disabled={busy}
         placeholder={placeholder}
         className={`${inputClass(isDark)} mt-3 resize-y font-mono text-[12px] leading-6 ${
-          expanded ? "min-h-[440px] flex-1" : "min-h-[22rem]"
+          expanded ? "min-h-[560px] flex-1" : "min-h-[28rem] lg:min-h-[32rem]"
         }`}
         spellCheck={false}
       />

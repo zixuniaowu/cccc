@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { useCopyFeedback } from "../../hooks/useCopyFeedback";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { useIMEComposition } from "../../hooks/useIMEComposition";
 
@@ -32,6 +33,7 @@ export function GroupEditModal({
   onDelete,
 }: GroupEditModalProps) {
   const { t } = useTranslation("modals");
+  const copyWithFeedback = useCopyFeedback();
   const { modalRef } = useModalA11y(isOpen, onCancel);
   const imeTitle = useIMEComposition({ value: title, onChange: onChangeTitle });
   const imeTopic = useIMEComposition({ value: topic, onChange: onChangeTopic });
@@ -42,25 +44,6 @@ export function GroupEditModal({
   const groupDataDir = homeRoot && gid ? `${homeRoot}/groups/${gid}` : "";
   const groupConfigFile = groupDataDir ? `${groupDataDir}/group.yaml` : "";
   const groupLedgerFile = groupDataDir ? `${groupDataDir}/ledger.jsonl` : "";
-
-  async function copyToClipboard(text: string): Promise<boolean> {
-    const val = String(text || "").trim();
-    if (!val) return false;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(val);
-        return true;
-      }
-    } catch {
-      // ignore
-    }
-    try {
-      window.prompt("Copy to clipboard:", val);
-      return true;
-    } catch {
-      return false;
-    }
-  }
 
   return (
     <div
@@ -74,18 +57,18 @@ export function GroupEditModal({
     >
       <div
         ref={modalRef}
-        className="w-full h-full sm:h-auto sm:max-w-md sm:mt-16 shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl glass-modal"
+        className="w-full h-full sm:h-auto sm:max-w-2xl sm:mt-12 sm:max-h-[calc(100dvh-6rem)] shadow-2xl animate-scale-in flex flex-col overflow-hidden rounded-none sm:rounded-2xl glass-modal"
       >
-        <div className="px-6 py-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)]">
-          <div id="group-edit-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
+        <div className="px-6 py-5 sm:px-8 border-b safe-area-inset-top border-[var(--glass-border-subtle)]">
+          <div id="group-edit-title" className="text-xl font-semibold text-[var(--color-text-primary)]">
             {t("groupEdit.title")}
           </div>
         </div>
-        <div className="p-6 space-y-4 flex-1 overflow-y-auto">
+        <div className="p-6 sm:p-8 space-y-5 flex-1 overflow-y-auto">
           <div>
-            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("groupEdit.nameLabel")}</label>
+            <label className="block text-sm font-medium mb-2.5 text-[var(--color-text-muted)]">{t("groupEdit.nameLabel")}</label>
             <input
-              className="w-full rounded-xl px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
+              className="w-full rounded-xl px-4 py-3 text-base min-h-[52px] transition-colors glass-input text-[var(--color-text-primary)]"
               value={imeTitle.value}
               onChange={imeTitle.onChange}
               onCompositionStart={imeTitle.onCompositionStart}
@@ -94,9 +77,9 @@ export function GroupEditModal({
             />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("groupEdit.descriptionLabel")}</label>
+            <label className="block text-sm font-medium mb-2.5 text-[var(--color-text-muted)]">{t("groupEdit.descriptionLabel")}</label>
             <input
-              className="w-full rounded-xl px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
+              className="w-full rounded-xl px-4 py-3 text-base min-h-[52px] transition-colors glass-input text-[var(--color-text-primary)]"
               value={imeTopic.value}
               onChange={imeTopic.onChange}
               onCompositionStart={imeTopic.onCompositionStart}
@@ -104,17 +87,20 @@ export function GroupEditModal({
               placeholder={t("groupEdit.descriptionPlaceholder")}
             />
           </div>
-          <div className="rounded-xl p-4 glass-panel">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.groupId")}</div>
-                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
+          <div className="rounded-2xl p-5 sm:p-6 glass-panel">
+            <div className="space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <div className="text-sm text-[var(--color-text-secondary)] sm:w-28 sm:shrink-0">{t("groupEdit.groupId")}</div>
+                <div className="min-w-0 flex-1 font-mono text-sm truncate text-[var(--color-text-primary)]">
                   {groupId || "—"}
                 </div>
                 <button
-                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
+                  className="self-start px-3 py-1.5 rounded-xl text-sm transition-colors glass-btn text-[var(--color-text-secondary)] sm:self-auto"
                   onClick={async () => {
-                    const ok = await copyToClipboard(groupId);
+                    const ok = await copyWithFeedback(groupId, {
+                      successMessage: t("common:copied"),
+                      errorMessage: t("common:copyFailed"),
+                    });
                     if (!ok) return;
                   }}
                   disabled={!groupId}
@@ -124,15 +110,18 @@ export function GroupEditModal({
                   {t("common:copy")}
                 </button>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.projectRoot")}</div>
-                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <div className="text-sm text-[var(--color-text-secondary)] sm:w-28 sm:shrink-0">{t("groupEdit.projectRoot")}</div>
+                <div className="min-w-0 flex-1 font-mono text-sm truncate text-[var(--color-text-primary)]">
                   {projectRoot || t("groupEdit.noScopeAttached")}
                 </div>
                 <button
-                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
+                  className="self-start px-3 py-1.5 rounded-xl text-sm transition-colors glass-btn text-[var(--color-text-secondary)] sm:self-auto"
                   onClick={async () => {
-                    const ok = await copyToClipboard(projectRoot);
+                    const ok = await copyWithFeedback(projectRoot, {
+                      successMessage: t("common:copied"),
+                      errorMessage: t("common:copyFailed"),
+                    });
                     if (!ok) return;
                   }}
                   disabled={!projectRoot}
@@ -142,15 +131,18 @@ export function GroupEditModal({
                   {t("common:copy")}
                 </button>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.groupDataDirectory")}</div>
-                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <div className="text-sm text-[var(--color-text-secondary)] sm:w-28 sm:shrink-0">{t("groupEdit.groupDataDirectory")}</div>
+                <div className="min-w-0 flex-1 font-mono text-sm truncate text-[var(--color-text-primary)]">
                   {groupDataDir || "—"}
                 </div>
                 <button
-                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
+                  className="self-start px-3 py-1.5 rounded-xl text-sm transition-colors glass-btn text-[var(--color-text-secondary)] sm:self-auto"
                   onClick={async () => {
-                    const ok = await copyToClipboard(groupDataDir);
+                    const ok = await copyWithFeedback(groupDataDir, {
+                      successMessage: t("common:copied"),
+                      errorMessage: t("common:copyFailed"),
+                    });
                     if (!ok) return;
                   }}
                   disabled={!groupDataDir}
@@ -160,15 +152,18 @@ export function GroupEditModal({
                   {t("common:copy")}
                 </button>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.groupConfigFile")}</div>
-                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <div className="text-sm text-[var(--color-text-secondary)] sm:w-28 sm:shrink-0">{t("groupEdit.groupConfigFile")}</div>
+                <div className="min-w-0 flex-1 font-mono text-sm truncate text-[var(--color-text-primary)]">
                   {groupConfigFile || "—"}
                 </div>
                 <button
-                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
+                  className="self-start px-3 py-1.5 rounded-xl text-sm transition-colors glass-btn text-[var(--color-text-secondary)] sm:self-auto"
                   onClick={async () => {
-                    const ok = await copyToClipboard(groupConfigFile);
+                    const ok = await copyWithFeedback(groupConfigFile, {
+                      successMessage: t("common:copied"),
+                      errorMessage: t("common:copyFailed"),
+                    });
                     if (!ok) return;
                   }}
                   disabled={!groupConfigFile}
@@ -178,15 +173,18 @@ export function GroupEditModal({
                   {t("common:copy")}
                 </button>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.groupLedgerFile")}</div>
-                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <div className="text-sm text-[var(--color-text-secondary)] sm:w-28 sm:shrink-0">{t("groupEdit.groupLedgerFile")}</div>
+                <div className="min-w-0 flex-1 font-mono text-sm truncate text-[var(--color-text-primary)]">
                   {groupLedgerFile || "—"}
                 </div>
                 <button
-                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
+                  className="self-start px-3 py-1.5 rounded-xl text-sm transition-colors glass-btn text-[var(--color-text-secondary)] sm:self-auto"
                   onClick={async () => {
-                    const ok = await copyToClipboard(groupLedgerFile);
+                    const ok = await copyWithFeedback(groupLedgerFile, {
+                      successMessage: t("common:copied"),
+                      errorMessage: t("common:copyFailed"),
+                    });
                     if (!ok) return;
                   }}
                   disabled={!groupLedgerFile}
@@ -198,22 +196,22 @@ export function GroupEditModal({
               </div>
             </div>
           </div>
-          <div className="flex gap-3 pt-3 flex-wrap">
+          <div className="flex gap-3 pt-4 flex-wrap">
             <button
-              className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 text-sm font-semibold shadow-lg disabled:opacity-50 transition-all min-h-[44px]"
+              className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 text-base font-semibold shadow-lg disabled:opacity-50 transition-all min-h-[52px]"
               onClick={onSave}
               disabled={!title.trim() || busy === "group-update"}
             >
               {t("common:save")}
             </button>
             <button
-              className="px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] glass-btn text-[var(--color-text-secondary)]"
+              className="px-5 py-3 rounded-xl text-base font-medium transition-colors min-h-[52px] glass-btn text-[var(--color-text-secondary)]"
               onClick={onCancel}
             >
               {t("common:cancel")}
             </button>
             <button
-              className="px-4 py-2.5 rounded-xl border text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/25"
+              className="px-5 py-3 rounded-xl border text-base font-medium disabled:opacity-50 transition-colors min-h-[52px] bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/25"
               onClick={() => {
                 onCancel();
                 onDelete();

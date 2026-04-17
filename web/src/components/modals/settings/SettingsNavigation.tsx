@@ -37,9 +37,9 @@ export function SettingsNavigation({
   const globalScopeContent = globalEnabled ? t("navigation.globalScopeContent") : t("navigation.globalLockedContent");
   return (
     <>
-      <aside className="hidden sm:flex sm:flex-col w-48 border-r flex-shrink-0 bg-[var(--glass-panel-bg)] border-[var(--glass-border-subtle)]">
-        <div className="p-3 space-y-3">
-          <div className="px-3 text-[10px] font-bold uppercase tracking-wider opacity-30 text-[var(--color-text-tertiary)]">
+      <aside className="hidden sm:flex sm:w-56 lg:w-64 sm:flex-col border-r flex-shrink-0 bg-[var(--glass-panel-bg)] border-[var(--glass-border-subtle)]">
+        <div className="p-4 space-y-3">
+          <div className="px-3 text-[11px] font-bold uppercase tracking-[0.16em] opacity-30 text-[var(--color-text-tertiary)]">
             {t("navigation.targetScope")}
           </div>
           <div className="flex flex-col gap-1">
@@ -47,7 +47,7 @@ export function SettingsNavigation({
               type="button"
               onClick={() => onScopeChange("group")}
               disabled={!groupId}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-left font-semibold transition-colors ${
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm text-left font-semibold transition-colors ${
                 scope === "group"
                   ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30"
                   : "hover:bg-[var(--glass-tab-bg-hover)] text-[var(--color-text-tertiary)]"
@@ -81,7 +81,7 @@ export function SettingsNavigation({
               type="button"
               onClick={() => onScopeChange("global")}
               disabled={!globalEnabled}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-left font-semibold transition-colors ${
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm text-left font-semibold transition-colors ${
                 scope === "global"
                   ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30"
                   : "hover:bg-[var(--glass-tab-bg-hover)] text-[var(--color-text-tertiary)]"
@@ -109,14 +109,14 @@ export function SettingsNavigation({
           </div>
         </div>
 
-        <div className="mx-3 border-b border-[var(--glass-border-subtle)]" />
+        <div className="mx-4 border-b border-[var(--glass-border-subtle)]" />
 
-        <nav className="flex-1 overflow-y-auto scrollbar-subtle p-3 pb-4 space-y-1 [scrollbar-gutter:stable]">
+        <nav className="flex-1 overflow-y-auto scrollbar-subtle p-4 pb-5 space-y-1.5 [scrollbar-gutter:stable]">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`w-full flex items-center px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+              className={`w-full flex items-center px-3.5 py-2.5 text-sm font-medium rounded-xl transition-colors ${
                 activeTab === tab.id
                   ? "glass-tab-active text-emerald-600 dark:text-emerald-400"
                   : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
