@@ -158,6 +158,8 @@ class TestSystemNotifyOps(unittest.TestCase):
         )
 
         self.assertIn("read_new_input", text)
+        self.assertIn("Do not bootstrap", text)
+        self.assertIn("cccc_voice_secretary_composer", text)
         self.assertNotIn("alpha beta transcript", text)
         self.assertIn("cccc_voice_secretary_document", text)
         self.assertNotIn("source_chars", text)

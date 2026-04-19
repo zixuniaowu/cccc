@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="screenshots/logo.png" width="160" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="web/public/logo-dark.svg">
+  <img src="web/public/logo.svg" width="160" alt="CCCC logo" />
+</picture>
 
 # CCCC
 

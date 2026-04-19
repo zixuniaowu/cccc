@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
@@ -25,10 +25,10 @@ import {
     getMessageBubbleMotionClass,
     mayContainMarkdown,
 } from "./messageBubble/helpers";
+import { LazyMarkdownRenderer } from "./LazyMarkdownRenderer";
 
-const LazyMarkdownRenderer = lazy(() =>
-    import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
-);
+const ANIMATED_MESSAGE_BUBBLE_KEYS = new Set<string>();
+const NEW_MESSAGE_ANIMATION_WINDOW_MS = 12000;
 
 function buildSenderAvatarUrl(groupId: string, senderAvatarPath?: string): string {
     const gid = String(groupId || "").trim();
@@ -37,6 +37,25 @@ function buildSenderAvatarUrl(groupId: string, senderAvatarPath?: string): strin
     const blobName = relPath.split("/").pop() || "";
     if (!blobName) return "";
     return withAuthToken(`/api/v1/groups/${encodeURIComponent(gid)}/blobs/${encodeURIComponent(blobName)}`);
+}
+
+function shouldAnimateIncomingBubble(messageKey: string, eventTs?: string): boolean {
+    const stableKey = String(messageKey || "").trim();
+    if (!stableKey || ANIMATED_MESSAGE_BUBBLE_KEYS.has(stableKey)) return false;
+
+    const parsedTs = Date.parse(String(eventTs || "").trim());
+    if (!Number.isFinite(parsedTs)) {
+        ANIMATED_MESSAGE_BUBBLE_KEYS.add(stableKey);
+        return false;
+    }
+
+    if (Math.abs(Date.now() - parsedTs) > NEW_MESSAGE_ANIMATION_WINDOW_MS) {
+        ANIMATED_MESSAGE_BUBBLE_KEYS.add(stableKey);
+        return false;
+    }
+
+    ANIMATED_MESSAGE_BUBBLE_KEYS.add(stableKey);
+    return true;
 }
 
 function PlainMessageText({
@@ -105,6 +124,7 @@ function MessageBubbleBody({
     isUserMessage,
     isDark,
     groupLabelById,
+    toLabel,
     hasSource,
     srcGroupId,
     srcEventId,
@@ -128,6 +148,7 @@ function MessageBubbleBody({
     isUserMessage: boolean;
     isDark: boolean;
     groupLabelById: Record<string, string>;
+    toLabel: string;
     hasSource: boolean;
     srcGroupId: string;
     srcEventId: string;
@@ -157,49 +178,64 @@ function MessageBubbleBody({
     const { t } = useTranslation("chat");
     const canJumpToReplyTarget = !!(replyToEventId && onOpenReplyTarget);
     const quoteClassName = classNames(
-        "mb-2 text-xs border-l-2 pl-2 italic truncate opacity-80",
-        isUserMessage ? "border-blue-400" : "border-[var(--glass-border-subtle)]"
+        "rounded-2xl border px-3 py-2 text-[12px] leading-5",
+        "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
+    );
+    const metaChipClass = classNames(
+        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
+        "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
+    );
+    const normalizedToLabel = String(toLabel || "").trim();
+    const supportingSectionClass = classNames(
+        "mt-3 border-t pt-3",
+        "border-[var(--glass-border-subtle)]"
     );
 
     return (
         <>
-            {hasSource ? (
-                <button
-                    type="button"
-                    className={classNames(
-                        "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
-                        relayChipClass,
-                        onOpenSource ? "cursor-pointer" : "cursor-default"
-                    )}
-                    onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
-                    disabled={!onOpenSource}
-                    title={t("openOriginalMessage")}
-                >
-                    <span className="opacity-70">↗</span>
-                    <span className="truncate">
-                        {t("relayedFrom", { groupId: srcGroupId, eventId: srcEventId.slice(0, 8) })}
-                    </span>
-                </button>
-            ) : null}
-
-            {hasDestination ? (() => {
-                const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
-                const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
-                return (
-                    <div
-                        className={classNames(
-                            "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
-                            relayChipClass
-                        )}
-                        title={t("sentTo", { label: dstGroupId, to: dstToLabel })}
-                    >
-                        <span className="opacity-70">↗</span>
-                        <span className="truncate">
-                            {t("sentTo", { label: dstLabel, to: dstToLabel })}
+            {(normalizedToLabel || hasSource || hasDestination) ? (
+                <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                    {normalizedToLabel ? (
+                        <span className={metaChipClass} title={normalizedToLabel}>
+                            <span className="opacity-55">{t("to")}</span>
+                            <span className="truncate">{normalizedToLabel}</span>
                         </span>
-                    </div>
-                );
-            })() : null}
+                    ) : null}
+                    {hasSource ? (
+                        <button
+                            type="button"
+                            className={classNames(
+                                metaChipClass,
+                                relayChipClass,
+                                onOpenSource ? "cursor-pointer transition-colors hover:opacity-100" : "cursor-default"
+                            )}
+                            onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
+                            disabled={!onOpenSource}
+                            title={t("openOriginalMessage")}
+                        >
+                            <span className="opacity-65">↗</span>
+                            <span className="truncate">
+                                {t("relayedFrom", { groupId: srcGroupId, eventId: srcEventId.slice(0, 8) })}
+                            </span>
+                        </button>
+                    ) : null}
+                    {hasDestination ? (() => {
+                        const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
+                        const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
+                        return (
+                            <div
+                                className={classNames(metaChipClass, relayChipClass)}
+                                title={t("sentTo", { label: dstGroupId, to: dstToLabel })}
+                            >
+                                <span className="opacity-65">↗</span>
+                                <span className="truncate">
+                                    {t("sentTo", { label: dstLabel, to: dstToLabel })}
+                                </span>
+                            </div>
+                        );
+                    })() : null}
+                </div>
+            ) : null}
 
             {quoteText ? (
                 canJumpToReplyTarget ? (
@@ -207,7 +243,7 @@ function MessageBubbleBody({
                         type="button"
                         className={classNames(
                             quoteClassName,
-                            "block w-full cursor-pointer appearance-none rounded-sm bg-transparent text-left text-inherit transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+                            "mb-3 block w-full cursor-pointer appearance-none bg-transparent text-left text-inherit transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(35,36,37)]/20 dark:focus-visible:ring-white/25"
                         )}
                         onClick={(mouseEvent) => {
                             mouseEvent.stopPropagation();
@@ -216,17 +252,27 @@ function MessageBubbleBody({
                         title={t("jumpToRepliedMessage")}
                         aria-label={t("jumpToRepliedMessage")}
                     >
-                        "{quoteText}"
+                        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.14em] opacity-55">
+                            {t("reply")}
+                        </span>
+                        <span className="block">"{quoteText}"</span>
                     </button>
                 ) : (
-                    <div className={quoteClassName}>
-                        "{quoteText}"
+                    <div className={classNames(quoteClassName, "mb-3")}>
+                        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.14em] opacity-55">
+                            {t("reply")}
+                        </span>
+                        <span className="block">"{quoteText}"</span>
                     </div>
                 )
             ) : null}
 
             {presentationRefs.length > 0 ? (
-                <div className="mb-2 flex flex-wrap gap-1.5">
+                <div className={supportingSectionClass}>
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-50">
+                        {t("presentation")}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
                     {presentationRefs.map((ref, index) => (
                         <button
                             key={`${String(event.id || "message")}:presentation-ref:${index}:${String(ref.slot_id || "")}`}
@@ -234,15 +280,14 @@ function MessageBubbleBody({
                             onClick={() => onOpenPresentationRef?.(ref, event)}
                             className={classNames(
                                 "inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                                isUserMessage
-                                    ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
-                                    : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                                "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
                             )}
                             title={getPresentationRefChipLabel(ref)}
                         >
                             <span className="truncate">{getPresentationRefChipLabel(ref)}</span>
                         </button>
                     ))}
+                    </div>
                 </div>
             ) : null}
 
@@ -260,6 +305,7 @@ function MessageBubbleBody({
                 isDark={isDark}
                 attachmentKeyPrefix={stableMessageAttachmentKey}
                 downloadTitle={(name) => t("download", { name })}
+                sectionClassName={supportingSectionClass}
             />
         </>
     );
@@ -278,21 +324,18 @@ function MessageContent({
 }) {
     if (shouldRenderMarkdown) {
         return (
-            <Suspense
+            <LazyMarkdownRenderer
+                content={fallbackText}
+                isDark={isDark}
+                invertText={isUserMessage}
+                className="break-words [overflow-wrap:anywhere] max-w-full"
                 fallback={
                     <PlainMessageText
                         text={fallbackText}
                         className="max-w-full"
                     />
                 }
-            >
-                <LazyMarkdownRenderer
-                    content={fallbackText}
-                    isDark={isDark}
-                    invertText={isUserMessage}
-                    className="break-words [overflow-wrap:anywhere] max-w-full"
-                />
-            </Suspense>
+            />
         );
     }
 
@@ -523,17 +566,22 @@ export const MessageBubble = memo(function MessageBubble({
     const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
     const shouldRenderMarkdown = useMemo(() => !isStreaming && mayContainMarkdown(displayMessageText), [displayMessageText, isStreaming]);
     const streamPhase = String((msgData as { stream_phase?: unknown } | undefined)?.stream_phase || "").trim().toLowerCase();
-    const bubbleMotionClass = useMemo(() => getMessageBubbleMotionClass({
-        isStreaming,
-        isOptimistic,
-        streamPhase,
-    }), [isOptimistic, isStreaming, streamPhase]);
     const stableMessageAttachmentKey = useMemo(() => {
         const clientId = typeof msgData?.client_id === "string" ? String(msgData.client_id || "").trim() : "";
         if (clientId) return `client:${clientId}`;
         const eventId = typeof ev.id === "string" ? String(ev.id || "").trim() : "";
         return eventId || `row:${String(ev.ts || "")}:${String(ev.by || "")}`;
     }, [ev.id, ev.ts, ev.by, msgData]);
+    const shouldAnimateBubbleOnEnter = useMemo(() => {
+        return shouldAnimateIncomingBubble(stableMessageAttachmentKey, String(ev.ts || ""));
+    }, [ev.ts, stableMessageAttachmentKey]);
+    const bubbleMotionClass = useMemo(() => getMessageBubbleMotionClass({
+        isStreaming,
+        isOptimistic,
+        isNewlyArrived: shouldAnimateBubbleOnEnter,
+        isUserMessage,
+        streamPhase,
+    }), [isOptimistic, isStreaming, isUserMessage, shouldAnimateBubbleOnEnter, streamPhase]);
     const copyableMessageText = useMemo(
         () =>
             buildMessageCopyText({
@@ -633,9 +681,7 @@ export const MessageBubble = memo(function MessageBubble({
 
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
-    const relayChipClass = isUserMessage
-        ? "border-white/14 bg-white/8 text-blue-100 shadow-none hover:bg-white/12"
-        : "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]";
+    const relayChipClass = "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] shadow-none hover:bg-[var(--glass-tab-bg-hover)]";
 
     useEffect(() => {
         if (!copiedMessageText) return undefined;
@@ -710,7 +756,8 @@ export const MessageBubble = memo(function MessageBubble({
             {/* Message Content */}
             <div
                 className={classNames(
-                    "flex min-w-0 flex-col w-full md:w-auto md:max-w-[82%] xl:max-w-[75%]",
+                    "flex min-w-0 flex-col w-full md:w-auto",
+                    isUserMessage ? "md:max-w-[min(42rem,78%)] xl:max-w-[min(44rem,72%)]" : "md:max-w-[min(48rem,86%)] xl:max-w-[min(52rem,80%)]",
                     isUserMessage ? "items-end" : "items-start"
                 )}
             >
@@ -724,7 +771,6 @@ export const MessageBubble = memo(function MessageBubble({
                             senderDisplayName={senderDisplayName}
                             messageTimestamp={messageTimestamp}
                             fullMessageTimestamp={fullMessageTimestamp}
-                            toLabel={toLabel}
                             senderAvatarUrl={senderAvatarUrl || undefined}
                             senderRuntime={senderRuntime || undefined}
                             avatarRingClassName={senderAccent?.ring}
@@ -737,7 +783,6 @@ export const MessageBubble = memo(function MessageBubble({
                             senderDisplayName={senderDisplayName}
                             messageTimestamp={messageTimestamp}
                             fullMessageTimestamp={fullMessageTimestamp}
-                            toLabel={toLabel}
                         />
                     </>
                 ) : null}
@@ -763,16 +808,16 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 <div
                     className={classNames(
-                        "inline-flex max-w-full flex-col px-4 py-2.5 text-sm leading-relaxed transition-[opacity,transform,box-shadow,background-color] duration-200 ease-out",
+                        "inline-flex max-w-full flex-col px-4 py-3 text-sm leading-relaxed transition-[opacity,transform,box-shadow,background-color,border-color] duration-200 ease-out",
                         isStreaming ? "opacity-95 translate-y-0" : "opacity-100 translate-y-0",
                         bubbleMotionClass,
                         isUserMessage
-                            ? "bg-blue-600 text-white rounded-2xl rounded-tr-none shadow-sm"
-                            : "glass-bubble rounded-2xl rounded-tl-none text-[var(--color-text-primary)]"
+                            ? "glass-bubble w-auto min-w-[min(18rem,70vw)] rounded-[22px] rounded-tr-md text-[var(--color-text-primary)]"
+                            : "w-full rounded-[22px] rounded-tl-md border border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-[0_10px_28px_rgba(15,23,42,0.06)]"
                         ,
                         isAttention ? "ring-1 ring-amber-400/40 dark:ring-amber-500/40" : ""
                         ,
-                        isHighlighted ? "outline outline-2 outline-sky-500/30 outline-offset-2" : ""
+                        isHighlighted ? "outline outline-2 outline-[rgb(35,36,37)]/16 outline-offset-2 dark:outline-white/18" : ""
                     )}
                 >
 
@@ -781,6 +826,7 @@ export const MessageBubble = memo(function MessageBubble({
                         isUserMessage={isUserMessage}
                         isDark={isDark}
                         groupLabelById={groupLabelById}
+                        toLabel={toLabel}
                         hasSource={hasSource}
                         srcGroupId={srcGroupId}
                         srcEventId={srcEventId}

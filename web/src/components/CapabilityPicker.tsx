@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import * as api from "../services/api";
 import { CapabilityOverviewItem } from "../types";
 import { normalizeCapabilityIdList } from "../utils/capabilityAutoload";
+import { Input } from "./ui/input";
+import { Surface } from "./ui/surface";
 
 interface CapabilityPickerProps {
   isDark: boolean;
@@ -149,17 +151,20 @@ export function CapabilityPicker({
         )}
       </div>
 
-      <input
+      <Input
         type="text"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         disabled={disabled}
         placeholder={t("capabilities.searchPlaceholder")}
-        className="w-full rounded-lg border px-3 py-2 text-sm min-h-[40px] glass-input text-[var(--color-text-primary)]"
+        className="rounded-lg px-3 py-2 min-h-[40px]"
       />
 
-      <div
-        className="mt-2 rounded-lg border max-h-56 overflow-auto border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]"
+      <Surface
+        variant="subtle"
+        padding="none"
+        radius="md"
+        className="mt-2 max-h-56 overflow-auto border-[var(--glass-border-subtle)]"
       >
         {loading ? (
           <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">{t("capabilities.loading")}</div>
@@ -226,7 +231,7 @@ export function CapabilityPicker({
             );
           })
         )}
-      </div>
+      </Surface>
 
       {hint ? <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">{hint}</div> : null}
     </div>

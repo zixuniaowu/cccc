@@ -7,6 +7,7 @@ import { GroupSidebarItem } from "./GroupSidebarItem";
 import { GroupSidebarSortableList } from "./GroupSidebarSortableList";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../../stores/useUIStore";
 import { useBrandingStore } from "../../stores";
+import { resolveThemeAwareLogoUrl } from "../../utils/branding";
 
 export interface GroupSidebarProps {
   orderedGroups: GroupMeta[];
@@ -49,6 +50,7 @@ export function GroupSidebar({
 }: GroupSidebarProps) {
   const { t } = useTranslation('layout');
   const branding = useBrandingStore((s) => s.branding);
+  const logoSrc = resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark);
   const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const archivedSet = useMemo(() => new Set(archivedGroupIds), [archivedGroupIds]);
@@ -185,46 +187,50 @@ export function GroupSidebar({
           "h-full min-h-0 flex flex-col glass-sidebar",
           "fixed inset-y-0 left-0 md:relative md:inset-auto z-40",
           isResizing ? "transition-none" : "transition-[width,transform] duration-300 ease-out",
-          isCollapsed ? "w-[60px]" : "w-[280px] md:w-[var(--sidebar-width)]",
+          isCollapsed ? "w-[60px]" : "w-[248px] md:w-[var(--sidebar-width)]",
           isOpen ? "translate-x-0" : "-translate-x-full",
           "md:translate-x-0"
         )}
       >
         {/* Header */}
-        <div className="px-3 py-4 pb-2">
+        <div className="px-3 pt-3 pb-1.5">
           <div
             className={classNames(
               "flex items-center",
               isCollapsed ? "justify-center" : "justify-between"
             )}
           >
-            <div className={classNames("flex items-center", isCollapsed ? "" : "gap-2")}>
+            <div className={classNames("flex items-center", isCollapsed ? "" : "gap-3")}>
               <div className={classNames(
-                "rounded-xl flex items-center justify-center overflow-hidden glass-btn",
-                "w-11 h-11",
-                "text-cyan-600 dark:text-cyan-400"
+                "flex items-center justify-center overflow-hidden rounded-xl bg-transparent",
+                "w-10 h-10",
+                "text-[rgb(35,36,37)] dark:text-white"
               )}>
                 <img
-                  src={branding.logo_icon_url || "/ui/logo.svg"}
+                  src={logoSrc}
                   alt={`${branding.product_name} logo`}
                   className={classNames(
                     "object-contain",
-                    isCollapsed ? "w-6 h-6" : "h-6 w-6"
+                    isCollapsed ? "w-6 h-6" : "h-8 w-8"
                   )}
                 />
               </div>
               {!isCollapsed && (
-                <span className="text-lg font-bold tracking-tight text-[var(--color-text-primary)]">{branding.product_name}</span>
+                <div className="min-w-0">
+                  <div className="text-[15px] font-semibold tracking-[-0.035em] text-[var(--color-text-primary)] truncate">
+                    {branding.product_name}
+                  </div>
+                </div>
               )}
             </div>
 
             {!isCollapsed && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 {!readOnly && onCreateGroup && (
                   <button
                     className={classNames(
-                    "text-xs px-3 py-2 rounded-xl font-medium transition-all min-h-[36px] glass-btn-accent",
-                        isDark ? "text-slate-100" : "text-gray-800"
+                      "text-sm px-4 py-2.5 rounded-2xl font-medium transition-all min-h-[40px] glass-btn-accent border-0 shadow-none before:hidden",
+                      isDark ? "text-white" : "text-[rgb(35,36,37)]"
                     )}
                     onClick={onCreateGroup}
                     title={t('createNewGroup')}
@@ -236,9 +242,8 @@ export function GroupSidebar({
                 {/* Collapse button - desktop only */}
                 <button
                   className={classNames(
-                    "hidden md:flex p-2 min-w-[36px] min-h-[36px] items-center justify-center rounded-xl transition-all glass-btn",
-                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
-                                isDark ? "hover:bg-[var(--glass-tab-bg-hover)]" : "hover:bg-black/5"
+                    "hidden md:flex h-10 w-10 items-center justify-center rounded-2xl border border-transparent bg-transparent transition-all duration-150",
+                    "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)]"
                   )}
                   onClick={onToggleCollapse}
                   aria-label={t('collapseSidebar')}
@@ -250,7 +255,7 @@ export function GroupSidebar({
                 <button
                   className={classNames(
                     "md:hidden p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl transition-all glass-btn",
-                    "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                    "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)]"
                   )}
                   onClick={onClose}
                   aria-label={t('closeSidebar')}
@@ -268,7 +273,7 @@ export function GroupSidebar({
             <button
               className={classNames(
                 "w-11 h-11 rounded-xl flex items-center justify-center transition-all glass-btn",
-                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)]"
               )}
               onClick={onToggleCollapse}
               aria-label={t('expandSidebar')}
@@ -280,7 +285,7 @@ export function GroupSidebar({
               <button
                 className={classNames(
                   "w-11 h-11 rounded-xl flex items-center justify-center transition-all glass-btn-accent",
-                  "text-cyan-700 dark:text-cyan-300"
+                  "text-[rgb(35,36,37)] dark:text-white"
                 )}
                 onClick={onCreateGroup}
                 aria-label={t('createNewGroup')}
@@ -298,8 +303,10 @@ export function GroupSidebar({
           isCollapsed ? "p-2" : "p-3"
         )}>
           {!isCollapsed && (
-            <div className="text-[10px] font-semibold uppercase tracking-[0.15em] mb-3 px-2 text-[var(--color-text-tertiary)]">
-              {t('workingGroups')}
+            <div className="px-2 pb-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">
+                {t('workingGroups')}
+              </div>
             </div>
           )}
 
@@ -311,7 +318,7 @@ export function GroupSidebar({
                 type="button"
                 className={classNames(
                   "w-full flex items-center justify-between rounded-xl px-2 py-2 transition-colors",
-                  "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                  "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
                 )}
                 onClick={() => setArchivedOpen((prev) => !prev)}
                 aria-expanded={archivedPanelOpen}
@@ -354,7 +361,7 @@ export function GroupSidebar({
                 <button
                   className={classNames(
                     "text-sm px-5 py-2.5 rounded-xl font-medium min-h-[44px] transition-all glass-btn-accent",
-                    "text-cyan-700 dark:text-cyan-300"
+                    "text-[rgb(35,36,37)] dark:text-white"
                   )}
                   onClick={onCreateGroup}
                 >
@@ -380,8 +387,8 @@ export function GroupSidebar({
               className={classNames(
                 "h-14 w-[3px] rounded-full transition-all",
                 isResizing
-                  ? "bg-cyan-500 shadow-[0_0_0_4px_rgba(6,182,212,0.12)]"
-                  : "bg-black/10 hover:bg-cyan-500/70 dark:bg-white/10 dark:hover:bg-cyan-400/75"
+                  ? "bg-[rgb(35,36,37)] shadow-[0_0_0_4px_rgba(17,24,39,0.08)] dark:bg-white dark:shadow-[0_0_0_4px_rgba(255,255,255,0.08)]"
+                  : "bg-black/10 hover:bg-black/30 dark:bg-white/10 dark:hover:bg-white/30"
               )}
             />
           </div>

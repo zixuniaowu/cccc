@@ -4,7 +4,18 @@ import { useTranslation, Trans } from "react-i18next";
 import QRCode from "qrcode";
 import { IMStatus, IMPlatform, WeixinLoginStatus } from "../../../types";
 import * as api from "../../../services/api";
-import { inputClass, labelClass, primaryButtonClass, cardClass } from "./types";
+import {
+  dangerButtonClass,
+  inputClass,
+  labelClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+  settingsWorkspaceBodyClass,
+  settingsWorkspaceHeaderClass,
+  settingsWorkspacePanelClass,
+  settingsWorkspaceShellClass,
+  settingsWorkspaceSoftPanelClass,
+} from "./types";
 import { copyTextToClipboard } from "../../../utils/copy";
 
 const IM_PENDING_AUTO_REFRESH_MS = 12000;
@@ -158,6 +169,10 @@ export function IMBridgeTab({
 }: IMBridgeTabProps) {
   const { t } = useTranslation("settings");
   const [weixinQrCopyState, setWeixinQrCopyState] = useState<"idle" | "done" | "failed">("idle");
+  const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
+  const sectionHintClass = "mt-1 text-xs text-[var(--color-text-tertiary)]";
+  const compactSecondaryButtonClass = secondaryButtonClass("sm");
+  const compactDangerButtonClass = dangerButtonClass("sm");
   const weixinStatus = String(weixinLoginStatus?.status || "").trim().toLowerCase();
   const weixinErrorText = String(weixinLoginStatus?.error || "").trim();
   const weixinLoggedIn = !!weixinLoginStatus?.logged_in;
@@ -417,20 +432,21 @@ export function IMBridgeTab({
   };
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("imBridge.title")}</h3>
-        <p className="text-xs mt-1 text-[var(--color-text-muted)]">
-          {t("imBridge.description")}
-        </p>
-      </div>
+    <div className="space-y-5">
+      <section className={settingsWorkspaceShellClass(_isDark)}>
+        <div className={settingsWorkspaceHeaderClass(_isDark)}>
+          <div>
+            <h3 className={sectionTitleClass}>{t("imBridge.title")}</h3>
+            <p className="mt-1 max-w-3xl text-xs text-[var(--color-text-muted)]">{t("imBridge.description")}</p>
+          </div>
+        </div>
 
-      {/* Status */}
+        <div className={settingsWorkspaceBodyClass}>
       {imStatus && (
-        <div className={cardClass()}>
+        <div className={settingsWorkspacePanelClass(_isDark)}>
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${imStatus.running ? "bg-emerald-500" : "bg-gray-400"}`} />
-            <span className="text-sm text-[var(--color-text-secondary)]">
+            <span className="text-sm text-[var(--color-text-primary)]">
               {imStatus.running ? t("imBridge.running") : t("imBridge.stopped")}
             </span>
             {imStatus.running && imStatus.pid && (
@@ -448,7 +464,12 @@ export function IMBridgeTab({
       )}
 
       {/* Configuration */}
-      <div className="space-y-3">
+      <div className={settingsWorkspacePanelClass(_isDark)}>
+        <div>
+          <div className={sectionTitleClass}>{t("imBridge.platform")}</div>
+          <div className={sectionHintClass}>{t("imBridge.description")}</div>
+        </div>
+        <div className="mt-4 space-y-3">
         <div>
           <label className={labelClass()}>{t("imBridge.platform")}</label>
           <select
@@ -633,10 +654,10 @@ export function IMBridgeTab({
 
         {imPlatform === "weixin" && (
           <>
-            <div className={cardClass()}>
+            <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-medium text-[var(--color-text-secondary)]">
+                  <div className="text-sm font-medium text-[var(--color-text-primary)]">
                     {t("imBridge.weixinLoginTitle")}
                   </div>
                   <div className="mt-2 inline-flex rounded-full border border-emerald-500/15 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)]">
@@ -652,14 +673,14 @@ export function IMBridgeTab({
                   <button
                     onClick={onStartWeixinLogin}
                     disabled={imBusy || !!weixinLoginStatus?.running}
-                    className="px-3 py-2 text-sm rounded-lg min-h-[40px] transition-colors font-medium bg-blue-500/15 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400 disabled:opacity-50"
+                    className={primaryButtonClass(imBusy)}
                   >
                     {weixinLoggedIn ? t("imBridge.weixinRefreshQr") : t("imBridge.weixinStartLogin")}
                   </button>
                   <button
                     onClick={onLogoutWeixin}
                     disabled={imBusy || !weixinLoggedIn}
-                    className="px-3 py-2 text-sm rounded-lg min-h-[40px] transition-colors font-medium border border-red-500/15 bg-red-500/5 text-red-600 hover:bg-red-500/10 disabled:opacity-50 disabled:text-[var(--color-text-muted)]"
+                    className={dangerButtonClass()}
                   >
                     {t("imBridge.weixinLogout")}
                   </button>
@@ -687,7 +708,7 @@ export function IMBridgeTab({
                     <button
                       type="button"
                       onClick={onCopyWeixinQrLink}
-                      className="rounded-md border border-black/10 bg-black/5 px-2 py-1 text-[var(--color-text-secondary)] transition-colors hover:bg-black/10"
+                      className={compactSecondaryButtonClass}
                     >
                       {t("imBridge.weixinCopyQrLink")}
                     </button>
@@ -698,8 +719,8 @@ export function IMBridgeTab({
                       <span className="text-red-500">{t("imBridge.weixinCopyFailed")}</span>
                     )}
                   </div>
-                  <details className="w-full rounded-lg border border-black/10 bg-black/5 px-3 py-2">
-                    <summary className="cursor-pointer text-xs text-[var(--color-text-secondary)]">
+                  <details className={`w-full ${settingsWorkspaceSoftPanelClass(_isDark)} px-3 py-2`}>
+                    <summary className="cursor-pointer text-xs text-[var(--color-text-primary)]">
                       {t("imBridge.weixinQrLinkLabel")}
                     </summary>
                     <p className="mt-2 break-all text-xs text-[var(--color-text-muted)]">
@@ -717,8 +738,8 @@ export function IMBridgeTab({
                 {getWeixinHint()}
               </p>
               {weixinLoggedIn && (
-                <div className="mt-3 rounded-lg border border-blue-500/15 bg-blue-500/5 p-3 text-xs text-[var(--color-text-muted)]">
-                  <div className="font-medium text-[var(--color-text-secondary)]">
+                <div className={`mt-3 ${settingsWorkspaceSoftPanelClass(_isDark)} text-xs text-[var(--color-text-muted)]`}>
+                  <div className="font-medium text-[var(--color-text-primary)]">
                     {t("imBridge.weixinSubscribeTitle")}
                   </div>
                   <p className="mt-1 leading-relaxed">
@@ -734,8 +755,8 @@ export function IMBridgeTab({
                 </div>
               )}
             </div>
-            <details className={cardClass()} open={weixinHasCustomAdvanced}>
-              <summary className="cursor-pointer text-sm font-medium text-[var(--color-text-secondary)]">
+            <details className={settingsWorkspaceSoftPanelClass(_isDark)} open={weixinHasCustomAdvanced}>
+              <summary className="cursor-pointer text-sm font-medium text-[var(--color-text-primary)]">
                 {t("imBridge.weixinAdvanced")}
               </summary>
               <div className="mt-3 space-y-3">
@@ -759,10 +780,13 @@ export function IMBridgeTab({
             </details>
           </>
         )}
+        </div>
       </div>
 
       {/* Actions */}
-      <div className="flex flex-wrap gap-2">
+      <div className={settingsWorkspacePanelClass(_isDark)}>
+        <div className={sectionTitleClass}>{t("common:actions", { defaultValue: "Actions" })}</div>
+        <div className="mt-4 flex flex-wrap gap-2">
         <button
           onClick={onSaveConfig}
           disabled={imBusy || !canSaveIM()}
@@ -777,7 +801,7 @@ export function IMBridgeTab({
               <button
                 onClick={onStopBridge}
                 disabled={imBusy}
-                className="px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium bg-red-500/15 hover:bg-red-500/25 text-red-600 dark:text-red-400 disabled:opacity-50"
+                className={dangerButtonClass()}
               >
                 {t("imBridge.stopBridge")}
               </button>
@@ -785,7 +809,7 @@ export function IMBridgeTab({
               <button
                 onClick={onStartBridge}
                 disabled={imBusy}
-                className="px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium bg-blue-500/15 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400 disabled:opacity-50"
+                className={primaryButtonClass(imBusy)}
               >
                 {t("imBridge.startBridge")}
               </button>
@@ -794,26 +818,27 @@ export function IMBridgeTab({
             <button
               onClick={onRemoveConfig}
               disabled={imBusy}
-              className="glass-btn px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium text-[var(--color-text-secondary)] disabled:opacity-50"
+              className={secondaryButtonClass()}
             >
               {t("imBridge.removeConfig")}
             </button>
           </>
         )}
       </div>
+      </div>
 
       {/* Pending Requests */}
       {imStatus?.configured && (
-        <div className="space-y-2">
+        <div className={settingsWorkspacePanelClass(_isDark)}>
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">
+            <h3 className={sectionTitleClass}>
               {t("imBridge.pendingRequests", "Pending Requests")}
             </h3>
             <div className="flex items-center gap-1">
               <button
                 onClick={loadIMAuthState}
                 disabled={pendingLoading || authLoading}
-                className="glass-btn text-xs px-2 py-1 rounded transition-colors text-[var(--color-text-tertiary)] disabled:opacity-50"
+                className={compactSecondaryButtonClass}
               >
                 {pendingLoading || authLoading ? "..." : "↻"}
               </button>
@@ -831,7 +856,7 @@ export function IMBridgeTab({
           )}
 
           {pendingRequests.length > 0 && (
-            <div className={`${cardClass()} space-y-0 divide-y divide-[var(--glass-border-subtle)]`}>
+            <div className={`${settingsWorkspaceSoftPanelClass(_isDark)} mt-3 space-y-0 divide-y divide-[var(--glass-border-subtle)]`}>
               {pendingRequests.map((request) => {
                 const approveKey = `approve:${request.key}`;
                 const rejectKey = `reject:${request.key}`;
@@ -855,14 +880,14 @@ export function IMBridgeTab({
                       <button
                         onClick={() => handleApprovePending(request)}
                         disabled={actionBusy}
-                        className="px-3 py-1 text-xs rounded-lg transition-colors font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 disabled:opacity-50"
+                        className="inline-flex items-center justify-center rounded-lg border border-emerald-500/25 bg-emerald-500/12 px-3 py-1.5 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-500/18 dark:text-emerald-300 disabled:opacity-50"
                       >
                         {pendingActionKey === approveKey ? "..." : t("imBridge.approve", "Approve")}
                       </button>
                       <button
                         onClick={() => handleRejectPending(request)}
                         disabled={actionBusy}
-                        className="px-3 py-1 text-xs rounded-lg transition-colors font-medium bg-red-500/15 hover:bg-red-500/25 text-red-600 dark:text-red-400 disabled:opacity-50"
+                        className={compactDangerButtonClass}
                       >
                         {pendingActionKey === rejectKey ? "..." : t("imBridge.rejectPending", "Reject")}
                       </button>
@@ -877,9 +902,9 @@ export function IMBridgeTab({
 
       {/* Authorized Chats */}
       {imStatus?.configured && (
-        <div className="space-y-2">
+        <div className={settingsWorkspacePanelClass(_isDark)}>
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">
+            <h3 className={sectionTitleClass}>
               {t("imBridge.authorizedChats", "Authorized Chats")}
             </h3>
             <div className="flex items-center gap-1">
@@ -898,20 +923,20 @@ export function IMBridgeTab({
                     setAuthInfo(t("imBridge.requestHint", "Step 1: In your IM chat, send /subscribe to request a temporary key. Step 2: the request will appear below in Pending Requests; click Approve (or paste the key in Bind). If foreman is online, you can forward the key and ask foreman to bind it for you."));
                   }
                 }}
-                className="glass-btn text-xs px-2 py-1 rounded transition-colors text-[var(--color-text-tertiary)]"
+                className={compactSecondaryButtonClass}
               >
                 {t("imBridge.requestKey", "Request Key")}
               </button>
               <button
                 onClick={() => { setShowBindInput(v => !v); setBindKey(""); setAuthError(""); setAuthInfo(""); }}
-                className="glass-btn text-xs px-2 py-1 rounded transition-colors text-[var(--color-text-tertiary)]"
+                className={compactSecondaryButtonClass}
               >
                 + {t("imBridge.bind", "Bind")}
               </button>
               <button
                 onClick={loadIMAuthState}
                 disabled={authLoading}
-                className="glass-btn text-xs px-2 py-1 rounded transition-colors text-[var(--color-text-tertiary)] disabled:opacity-50"
+                className={compactSecondaryButtonClass}
               >
                 {authLoading ? "..." : "↻"}
               </button>
@@ -919,7 +944,7 @@ export function IMBridgeTab({
           </div>
 
           {showBindInput && (
-            <div className="flex items-center gap-2">
+            <div className={`${settingsWorkspaceSoftPanelClass(_isDark)} mt-3 flex items-center gap-2`}>
               <span className="text-xs shrink-0 text-[var(--color-text-tertiary)]">
                 {t("imBridge.bindKey", "Key")}:
               </span>
@@ -959,13 +984,13 @@ export function IMBridgeTab({
                   }
                 }}
                 disabled={binding || !bindKey.trim()}
-                className="px-3 py-1 text-xs rounded-lg transition-colors font-medium shrink-0 bg-blue-500/15 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400 disabled:opacity-50"
+                className={`${primaryButtonClass(binding)} min-h-[36px] px-3 py-1 text-xs`}
               >
                 {binding ? "..." : t("imBridge.bind", "Bind")}
               </button>
               <button
                 onClick={() => { setShowBindInput(false); setBindKey(""); setAuthError(""); setAuthInfo(""); }}
-                className="glass-btn text-xs px-1 py-1 rounded transition-colors text-[var(--color-text-tertiary)]"
+                className={compactSecondaryButtonClass}
               >
                 ✕
               </button>
@@ -986,7 +1011,7 @@ export function IMBridgeTab({
           )}
 
           {authChats.length > 0 && (
-            <div className={`${cardClass()} space-y-0 divide-y divide-[var(--glass-border-subtle)]`}>
+            <div className={`${settingsWorkspaceSoftPanelClass(_isDark)} mt-3 space-y-0 divide-y divide-[var(--glass-border-subtle)]`}>
               {authChats.map((chat) => {
                 const key = `${chat.chat_id}:${chat.thread_id}`;
                 const isRevoking = revoking === key;
@@ -1010,7 +1035,7 @@ export function IMBridgeTab({
                           : t("imBridge.verboseOffHint", "Receiving user-only messages. Click to receive all messages.")}
                         className={`px-2.5 py-1 text-xs rounded-lg transition-colors font-medium ${
                           chat.verbose
-                            ? "bg-blue-500/15 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400"
+                            ? "border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg-active)] text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
                             : "bg-[var(--glass-tab-bg)] hover:bg-[var(--glass-tab-bg-hover)] text-[var(--color-text-tertiary)]"
                         }`}
                       >
@@ -1021,7 +1046,7 @@ export function IMBridgeTab({
                       <button
                         onClick={() => handleRevoke(chat.chat_id, chat.thread_id)}
                         disabled={isRevoking}
-                        className="px-3 py-1 text-xs rounded-lg transition-colors font-medium bg-red-500/15 hover:bg-red-500/25 text-red-600 dark:text-red-400 disabled:opacity-50"
+                        className={compactDangerButtonClass}
                       >
                         {isRevoking ? "..." : t("imBridge.revoke", "Revoke")}
                       </button>
@@ -1035,7 +1060,9 @@ export function IMBridgeTab({
       )}
 
       {/* Help */}
-      <div className="text-xs space-y-1 text-[var(--color-text-muted)]">
+      <div className={settingsWorkspacePanelClass(_isDark)}>
+        <div className={sectionTitleClass}>{t("common:help", { defaultValue: "Help" })}</div>
+        <div className="mt-3 text-xs space-y-1 text-[var(--color-text-muted)]">
         <p>{t("imBridge.setupGuide")}</p>
         <ol className="list-decimal list-inside space-y-0.5 ml-2">
           <li>{t("imBridge.setupStep1")}</li>
@@ -1044,6 +1071,9 @@ export function IMBridgeTab({
           <li>{t("imBridge.setupStep4")}</li>
         </ol>
       </div>
+      </div>
+        </div>
+      </section>
     </div>
   );
 }

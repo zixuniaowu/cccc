@@ -99,8 +99,7 @@ function buildMessageEntry(args: {
 }): RuntimeDockTickerEntry | null {
   const text = normalizeTickerText(args.block.text);
   if (!text) return null;
-  const blockId = String(args.block.id || args.block.streamId || args.sessionKey || "").trim();
-  const sourceId = ["message", args.item.actorId, args.sessionKey, blockId].join(":");
+  const sourceId = ["message", args.item.actorId, args.sessionKey].join(":");
   const updatedAt = String(args.block.updatedAt || args.session.updatedAt || "").trim();
   return {
     id: sourceId,
@@ -112,6 +111,24 @@ function buildMessageEntry(args: {
     sourceId,
     completed: Boolean(args.block.completed),
   };
+}
+
+function getLatestTranscriptBlock(session: HeadlessPreviewSession): HeadlessPreviewBlock | null {
+  const blocks = Array.isArray(session.transcriptBlocks) ? session.transcriptBlocks : [];
+  let latest: HeadlessPreviewBlock | null = null;
+  for (const block of blocks) {
+    if (!normalizeTickerText(block?.text)) continue;
+    if (!latest) {
+      latest = block;
+      continue;
+    }
+    const latestTs = String(latest.updatedAt || "").trim();
+    const currentTs = String(block.updatedAt || "").trim();
+    if (currentTs && (!latestTs || currentTs >= latestTs)) {
+      latest = block;
+    }
+  }
+  return latest;
 }
 
 function buildActivityEntry(args: {
@@ -157,11 +174,11 @@ export function buildRuntimeDockTickerEntries(
     const includeActivities = isLiveWorkCardActive(card);
     for (const session of previewSessions) {
       const sessionKey = getPreviewSessionKey(session, card.pendingEventId || card.streamId || item.actorId);
-      for (const block of Array.isArray(session.transcriptBlocks) ? session.transcriptBlocks : []) {
-        const entry = buildMessageEntry({ item, session, block, sessionKey });
-        if (!entry || seen.has(entry.id)) continue;
-        seen.add(entry.id);
-        entries.push(entry);
+      const latestBlock = getLatestTranscriptBlock(session);
+      const messageEntry = latestBlock ? buildMessageEntry({ item, session, block: latestBlock, sessionKey }) : null;
+      if (messageEntry && !seen.has(messageEntry.id)) {
+        seen.add(messageEntry.id);
+        entries.push(messageEntry);
       }
 
       if (!includeActivities) continue;

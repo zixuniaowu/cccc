@@ -12,6 +12,7 @@ export function MessageAttachments({
   isDark,
   attachmentKeyPrefix,
   downloadTitle,
+  sectionClassName,
 }: {
   attachments: MessageAttachment[];
   blobGroupId: string;
@@ -19,16 +20,25 @@ export function MessageAttachments({
   isDark: boolean;
   attachmentKeyPrefix: string;
   downloadTitle: (name: string) => string;
+  sectionClassName?: string;
 }) {
   const imageAttachments = attachments.filter((attachment) => isImageAttachment(attachment));
   const fileAttachments = attachments.filter((attachment) => !isImageAttachment(attachment));
+  const useImageGrid = imageAttachments.length > 1;
 
   if (attachments.length <= 0 || !blobGroupId) return null;
 
   return (
-    <>
+    <div className={sectionClassName || "mt-3"}>
       {imageAttachments.length > 0 && (
-        <div className="mt-3 flex max-w-full flex-wrap items-start gap-2">
+        <div
+          className={classNames(
+            "max-w-full items-start gap-2",
+            useImageGrid
+              ? "grid w-fit grid-cols-2"
+              : "flex max-w-[min(30rem,82vw)] flex-col gap-3",
+          )}
+        >
           {imageAttachments.map((attachment, index) => {
             const parts = String(attachment.path || "").split("/");
             const blobName = parts[parts.length - 1] || "";
@@ -39,7 +49,10 @@ export function MessageAttachments({
             return (
               <div
                 key={`img:${attachmentKeyPrefix}:${index}`}
-                className="flex max-w-[min(22rem,70vw)] flex-col gap-1 sm:max-w-[min(30rem,60vw)]"
+                className={classNames(
+                  "flex flex-col",
+                  useImageGrid ? "w-[10rem] sm:w-[11rem]" : "w-full max-w-[min(30rem,82vw)]",
+                )}
               >
                 <ImagePreview
                   href={href}
@@ -47,23 +60,15 @@ export function MessageAttachments({
                   isSvg={isSvgAttachment(attachment)}
                   isUserMessage={isUserMessage}
                   isDark={isDark}
+                  layout={useImageGrid ? "grid" : "hero"}
                 />
-                <span
-                  className={classNames(
-                    "truncate px-1 text-[11px]",
-                    isUserMessage ? "text-blue-100/90" : "text-[var(--color-text-secondary)]",
-                  )}
-                  title={label}
-                >
-                  {label}
-                </span>
               </div>
             );
           })}
         </div>
       )}
       {fileAttachments.length > 0 && (
-        <div className="mt-3 flex max-w-full flex-wrap items-start gap-2">
+        <div className={classNames("flex max-w-full flex-wrap items-start gap-2", imageAttachments.length > 0 && "mt-3")}>
           {fileAttachments.map((attachment, index) => {
             const parts = String(attachment.path || "").split("/");
             const blobName = parts[parts.length - 1] || "";
@@ -76,21 +81,19 @@ export function MessageAttachments({
                 key={`file:${attachmentKeyPrefix}:${index}`}
                 href={href}
                 className={classNames(
-                  "inline-flex max-w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors",
-                  isUserMessage
-                    ? "bg-blue-700/50 hover:bg-blue-700 text-white border border-blue-500"
-                    : "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]",
+                  "inline-flex max-w-full items-center gap-2 rounded-full px-2.5 py-1.5 text-[11px] transition-colors",
+                  "border border-[var(--glass-border-subtle)] bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)]",
                 )}
                 title={downloadTitle(label)}
                 download
               >
-                <FileIcon size={14} className="opacity-70 flex-shrink-0" />
+                <FileIcon size={13} className="opacity-60 flex-shrink-0" />
                 <span className="truncate">{label}</span>
               </a>
             );
           })}
         </div>
       )}
-    </>
+    </div>
   );
 }

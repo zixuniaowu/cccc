@@ -1,12 +1,13 @@
 import type { LedgerEvent, MessageAttachment } from "../../types";
+import { isImageAttachment } from "../../utils/messageAttachments";
 
 const DEFAULT_MESSAGE_HEIGHT = 72;
 const DEFAULT_STREAMING_HEIGHT = 108;
 const DEFAULT_QUEUED_PLACEHOLDER_HEIGHT = 84;
 const DEFAULT_REPLY_CONTEXT_HEIGHT = 60;
-const DEFAULT_IMAGE_ATTACHMENT_HEIGHT = 200;
-const DEFAULT_IMAGE_ATTACHMENT_LABEL_HEIGHT = 20;
-const DEFAULT_FILE_ATTACHMENT_HEIGHT = 48;
+const DEFAULT_SINGLE_IMAGE_ATTACHMENT_HEIGHT = 224;
+const DEFAULT_GRID_IMAGE_ATTACHMENT_HEIGHT = 188;
+const DEFAULT_FILE_ATTACHMENT_HEIGHT = 40;
 const DEFAULT_CODE_BLOCK_HEIGHT = 80;
 const AVG_CHARS_PER_LINE = 40;
 const MAX_TEXT_HEIGHT = 400;
@@ -20,13 +21,19 @@ function getEstimatedTextHeight(text: string): number {
 }
 
 function getEstimatedAttachmentHeight(attachments: MessageAttachment[]): number {
+  const imageCount = attachments.filter((attachment) => isImageAttachment(attachment)).length;
+  const fileCount = attachments.length - imageCount;
+
   let total = 0;
-  for (const attachment of attachments) {
-    const mime = String(attachment?.mime_type || "");
-    total += mime.startsWith("image/")
-      ? DEFAULT_IMAGE_ATTACHMENT_HEIGHT + DEFAULT_IMAGE_ATTACHMENT_LABEL_HEIGHT
-      : DEFAULT_FILE_ATTACHMENT_HEIGHT;
+  if (imageCount === 1) {
+    total += DEFAULT_SINGLE_IMAGE_ATTACHMENT_HEIGHT;
+  } else if (imageCount > 1) {
+    total += Math.ceil(imageCount / 2) * DEFAULT_GRID_IMAGE_ATTACHMENT_HEIGHT;
   }
+  if (imageCount > 0 && fileCount > 0) {
+    total += 12;
+  }
+  total += fileCount * DEFAULT_FILE_ATTACHMENT_HEIGHT;
   return total;
 }
 

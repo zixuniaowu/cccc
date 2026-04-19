@@ -3,6 +3,7 @@ import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { LedgerEvent, Actor, AgentState, PresentationMessageRef } from "../types";
+import { ArrowDownIcon, MessageSquareTextIcon } from "./Icons";
 import { MessageBubble } from "./MessageBubble";
 import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
 import {
@@ -937,7 +938,15 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center pb-20 opacity-50">
-            <div className="text-4xl mb-4 grayscale">💬</div>
+            <div
+              className={`mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border ${
+                isDark
+                  ? "border-white/10 bg-white/[0.04] text-white/55"
+                  : "border-black/8 bg-white/80 text-[rgb(35,36,37)]/55"
+              }`}
+            >
+              <MessageSquareTextIcon size={28} />
+            </div>
             <p className={`text-sm font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>
               No messages yet
             </p>
@@ -1077,9 +1086,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               }}
               aria-label="Scroll to bottom"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-              </svg>
+              <ArrowDownIcon className="w-5 h-5" aria-hidden="true" />
               {chatUnreadCount > 0 && (
                 <span className="absolute -top-1 -right-1 flex h-4 w-4">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-60"></span>

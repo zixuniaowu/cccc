@@ -595,7 +595,12 @@ def _render_system_notify_message_for_delivery(*, notify: SystemNotifyData) -> s
         blocks.append("Action: handle the request from your inbox; acknowledge or reply according to the requested work.")
         return "\n\n".join(blocks).strip()
     if context_kind == "voice_secretary_input":
-        return "Secretary input is ready. Call cccc_voice_secretary_document(action=\"read_new_input\")."
+        return (
+            "Secretary input is ready.\n"
+            "First action: call cccc_voice_secretary_document(action=\"read_new_input\").\n"
+            "Do not bootstrap, list resources, or research how to respond before that read.\n"
+            "If the batch target is composer, submit the refined prompt through cccc_voice_secretary_composer immediately after reading."
+        )
     return message
 
 

@@ -2,6 +2,7 @@ import type { WebBranding } from "../types";
 
 export const DEFAULT_PRODUCT_NAME = "CCCC";
 export const DEFAULT_LOGO_ICON_URL = "/ui/logo.svg";
+export const DEFAULT_DARK_LOGO_ICON_URL = "/ui/logo-dark.svg";
 export const DEFAULT_FAVICON_URL = "/ui/logo.svg";
 export const DEFAULT_DOCUMENT_TITLE = "CCCC - AI Agent Collaboration";
 
@@ -33,6 +34,27 @@ export function resolveDocumentTitle(productName: string): string {
   return normalized === DEFAULT_PRODUCT_NAME ? DEFAULT_DOCUMENT_TITLE : normalized;
 }
 
+function normalizeAssetUrl(url: string | null | undefined): string {
+  return String(url || "").trim();
+}
+
+function isDefaultLogoAsset(url: string | null | undefined): boolean {
+  const normalized = normalizeAssetUrl(url);
+  return normalized === DEFAULT_LOGO_ICON_URL || normalized === DEFAULT_DARK_LOGO_ICON_URL;
+}
+
+export function resolveThemeAwareLogoUrl(url: string | null | undefined, isDark: boolean): string {
+  const normalized = normalizeAssetUrl(url) || DEFAULT_LOGO_ICON_URL;
+  if (!isDefaultLogoAsset(normalized)) return normalized;
+  return isDark ? DEFAULT_DARK_LOGO_ICON_URL : DEFAULT_LOGO_ICON_URL;
+}
+
+export function resolveThemeAwareFaviconUrl(url: string | null | undefined, isDark: boolean): string {
+  const normalized = normalizeAssetUrl(url) || DEFAULT_FAVICON_URL;
+  if (!isDefaultLogoAsset(normalized) && normalized !== DEFAULT_FAVICON_URL) return normalized;
+  return isDark ? DEFAULT_DARK_LOGO_ICON_URL : DEFAULT_FAVICON_URL;
+}
+
 function ensureLink(rel: string): HTMLLinkElement {
   let el = document.querySelector(`link[rel="${rel}"]`) as HTMLLinkElement | null;
   if (!el) {
@@ -46,9 +68,21 @@ function ensureLink(rel: string): HTMLLinkElement {
 export function applyBrandingToDocument(value: Partial<WebBranding> | null | undefined): WebBranding {
   const branding = normalizeWebBranding(value);
   document.title = resolveDocumentTitle(branding.product_name);
-  const iconHref = String(branding.favicon_url || "").trim() || DEFAULT_FAVICON_URL;
+  const isDark = document.documentElement.classList.contains("dark");
+  const iconHref = resolveThemeAwareFaviconUrl(branding.favicon_url, isDark);
   ensureLink("icon").href = iconHref;
   ensureLink("apple-touch-icon").href = iconHref;
   return branding;
 }
 
+export function syncDocumentBrandingTheme(): void {
+  const icon = document.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
+  const apple = document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement | null;
+  const isDark = document.documentElement.classList.contains("dark");
+  if (icon) {
+    icon.href = resolveThemeAwareFaviconUrl(icon.getAttribute("href"), isDark);
+  }
+  if (apple) {
+    apple.href = resolveThemeAwareFaviconUrl(apple.getAttribute("href"), isDark);
+  }
+}

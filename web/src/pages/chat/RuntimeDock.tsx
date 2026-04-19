@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ActorAvatar } from "../../components/ActorAvatar";
 import { PlusIcon } from "../../components/Icons";
 import { useActorDisplayState } from "../../hooks/useActorDisplayState";
+import { ShineBorder } from "@/registry/magicui/shine-border";
 import type { Actor } from "../../types";
 import { classNames } from "../../utils/classNames";
 import type { LiveWorkCard } from "./liveWorkCards";
@@ -20,24 +21,9 @@ import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone"
 type RuntimeRingPresentation = {
   ringClassName: string;
   ringStyle: CSSProperties;
-  haloClassName?: string;
-  haloStyle?: CSSProperties;
-  secondaryRingClassName?: string;
-  secondaryRingStyle?: CSSProperties;
   unreadBadgeClassName: string;
+  customRing?: ReactNode;
 };
-
-const RING_MASK_STYLE: CSSProperties = {
-  WebkitMask: "radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))",
-  mask: "radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))",
-};
-
-function buildMaskedRing(background: string): CSSProperties {
-  return {
-    ...RING_MASK_STYLE,
-    background,
-  };
-}
 
 function getRuntimeStatusLabel(
   isRunning: boolean,
@@ -69,67 +55,44 @@ function getLiveWorkBadgeLabel(card: LiveWorkCard, t: (key: string, options?: Re
 
 function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): RuntimeRingPresentation {
   switch (tone) {
-    case "queued":
-      return {
-        ringClassName: "absolute -inset-[2px] rounded-full animate-[spin_10s_linear_infinite] motion-reduce:animate-none",
-        ringStyle: buildMaskedRing(
-          "conic-gradient(from 90deg, transparent 0deg 40deg, rgba(245,158,11,0.96) 40deg 126deg, transparent 126deg 190deg, rgba(251,191,36,0.72) 190deg 260deg, transparent 260deg 360deg)"
-        ),
-        haloClassName: classNames(
-          "absolute -inset-[4px] rounded-full blur-md",
-          isDark ? "bg-amber-300/[0.14]" : "bg-amber-400/[0.18]"
-        ),
-        unreadBadgeClassName: isDark ? "bg-amber-300/[0.18] text-amber-50" : "bg-amber-500/[0.14] text-amber-700",
-      };
     case "active":
       return {
-        ringClassName: "absolute -inset-[2px] rounded-full animate-[spin_5s_linear_infinite] motion-reduce:animate-none",
-        ringStyle: buildMaskedRing(
-          "conic-gradient(from 120deg, rgba(16,185,129,0.18) 0deg, rgba(16,185,129,0.98) 148deg, rgba(45,212,191,0.85) 246deg, rgba(16,185,129,0.22) 360deg)"
-        ),
-        haloClassName: classNames(
-          "absolute -inset-[5px] rounded-full blur-md animate-pulse motion-reduce:animate-none",
-          isDark ? "bg-emerald-300/[0.18]" : "bg-emerald-400/20"
+        ringClassName: "hidden",
+        ringStyle: {},
+        customRing: (
+          <ShineBorder
+            className="absolute -inset-[1px] rounded-full"
+            borderWidth={1}
+            duration={6.2}
+            shineColor={["#A07CFE", "#FE8FB5", "#FFBE7B"]}
+            topGlow={true}
+          />
         ),
         unreadBadgeClassName: isDark ? "bg-emerald-300/[0.18] text-emerald-50" : "bg-emerald-500/[0.14] text-emerald-700",
       };
     case "attention":
       return {
-        ringClassName: "absolute -inset-[2px] rounded-full",
-        ringStyle: buildMaskedRing(
-          "conic-gradient(from 190deg, transparent 0deg 38deg, rgba(248,113,113,0.96) 38deg 122deg, transparent 122deg 196deg, rgba(239,68,68,0.92) 196deg 258deg, transparent 258deg 360deg)"
-        ),
-        haloClassName: classNames(
-          "absolute -inset-[4px] rounded-full blur-md animate-pulse motion-reduce:animate-none",
-          isDark ? "bg-rose-300/[0.14]" : "bg-rose-400/[0.16]"
+        ringClassName: "hidden",
+        ringStyle: {},
+        customRing: (
+          <ShineBorder
+            className="absolute -inset-[1px] rounded-full"
+            borderWidth={1}
+            duration={5.4}
+            shineColor={["#fb7185", "#ef4444", "#fda4af"]}
+            topGlow={true}
+          />
         ),
         unreadBadgeClassName: isDark ? "bg-rose-300/[0.18] text-rose-50" : "bg-rose-500/[0.14] text-rose-700",
-      };
-    case "ready":
-      return {
-        ringClassName: "absolute -inset-[2px] rounded-full",
-        ringStyle: buildMaskedRing(
-          "conic-gradient(from 180deg, rgba(34,197,94,0.16) 0deg, rgba(34,197,94,0.84) 180deg, rgba(34,197,94,0.18) 360deg)"
-        ),
-        unreadBadgeClassName: isDark ? "bg-white/10 text-slate-100" : "bg-black/[0.08] text-gray-800",
       };
     case "stopped":
     default:
       return {
-        ringClassName: "absolute -inset-[2px] rounded-full",
-        ringStyle: buildMaskedRing(
-          isDark
-            ? "conic-gradient(from 180deg, rgba(148,163,184,0.28) 0deg, rgba(148,163,184,0.56) 180deg, rgba(148,163,184,0.22) 360deg)"
-            : "conic-gradient(from 180deg, rgba(148,163,184,0.18) 0deg, rgba(148,163,184,0.48) 180deg, rgba(148,163,184,0.16) 360deg)"
-        ),
+        ringClassName: "hidden",
+        ringStyle: {},
         unreadBadgeClassName: isDark ? "bg-white/10 text-slate-100" : "bg-black/[0.08] text-gray-800",
       };
   }
-}
-
-function isLiveWorkCardActive(card: LiveWorkCard | null | undefined): boolean {
-  if (!card) return false;
-  return card.phase === "pending" || card.phase === "streaming";
 }
 
 function RuntimeDockTicker({
@@ -162,7 +125,7 @@ function RuntimeDockTicker({
   return (
     <div
       className={classNames(
-        "pointer-events-none absolute bottom-[calc(100%+1.5rem)] left-1/2 z-20 h-[5.75rem] w-[min(92vw,560px)] -translate-x-1/2 overflow-hidden transition-opacity duration-200 ease-out",
+        "pointer-events-none absolute bottom-[calc(100%+0.8rem)] left-1/2 z-20 h-[5.25rem] w-[min(92vw,560px)] -translate-x-1/2 overflow-hidden transition-opacity duration-200 ease-out",
         suppressed ? "invisible opacity-0" : "visible opacity-100"
       )}
       style={{
@@ -191,11 +154,11 @@ function RuntimeDockTicker({
                       ? "opacity-[0.38]"
                       : "opacity-[0.2]",
                 isDark
-                  ? "border-cyan-300/[0.14] bg-slate-950/70 text-slate-200"
-                  : "border-cyan-500/[0.14] bg-white/[0.78] text-gray-700"
+                  ? "border-white/[0.08] bg-slate-950/70 text-slate-200"
+                  : "border-black/[0.08] bg-white/[0.78] text-gray-700"
               )}
             >
-              <span className={classNames("font-semibold", isDark ? "text-cyan-100" : "text-cyan-700")}>
+              <span className={classNames("font-semibold", isDark ? "text-white" : "text-[rgb(35,36,37)]")}>
                 {entry.actorLabel}
               </span>
               <span className={isDark ? "text-slate-500" : "text-gray-400"}>: </span>
@@ -239,7 +202,9 @@ function RuntimeDockActorButton({
   const statusLabel = item.liveWorkCard
     ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
     : getRuntimeStatusLabel(isRunning, workingState, (key, options) => t(`actors:${key}`, options));
-  const hasLiveIndicator = isLiveWorkCardActive(item.liveWorkCard);
+  const ringFrameClassName = isSmallScreen
+    ? "pointer-events-none absolute left-1/2 top-1/2 h-[35px] w-[35px] -translate-x-1/2 -translate-y-1/2"
+    : "pointer-events-none absolute left-1/2 top-1/2 h-[39px] w-[39px] -translate-x-1/2 -translate-y-1/2";
 
   const handleOpenInspector = () => {
     onOpenInspector(item.actorId);
@@ -249,11 +214,11 @@ function RuntimeDockActorButton({
     <div className="relative flex items-end">
       <span
         className={classNames(
-          "pointer-events-none absolute -top-[1.05rem] left-1/2 z-30 hidden max-w-[3.75rem] -translate-x-1/2 truncate text-center text-[9px] font-medium leading-none tracking-[0.01em] opacity-0 transition-opacity delay-[3000ms] duration-150 group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0 sm:block",
+          "pointer-events-none absolute -top-[0.72rem] left-1/2 z-30 hidden max-w-[3.75rem] -translate-x-1/2 truncate text-center text-[9px] font-medium leading-[1.2] tracking-[0.01em] opacity-0 transition-opacity delay-[3000ms] duration-150 group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0 sm:block",
           "runtime-dock-actor-label",
           isDark
-            ? "text-slate-200 [text-shadow:0_1px_8px_rgba(2,6,23,0.85)]"
-            : "text-gray-700 [text-shadow:0_1px_7px_rgba(255,255,255,0.9)]"
+            ? "text-white [text-shadow:0_1px_8px_rgba(2,6,23,0.85)]"
+            : "text-[rgb(35,36,37)] [text-shadow:0_1px_7px_rgba(255,255,255,0.9)]"
         )}
         aria-hidden="true"
       >
@@ -263,20 +228,19 @@ function RuntimeDockActorButton({
         type="button"
         onClick={handleOpenInspector}
         className={classNames(
-          "group relative flex h-[52px] w-[52px] items-center justify-center rounded-full border shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] backdrop-blur-xl transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/[0.55] focus-visible:ring-offset-0",
+          "group relative flex h-[50px] w-[50px] items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/40 focus-visible:ring-offset-0",
           item.runner === "headless"
             ? isDark
-              ? "border-cyan-300/10 bg-slate-950/70 hover:border-cyan-300/25 hover:bg-slate-950/90"
-              : "border-cyan-500/10 bg-white/75 hover:border-cyan-500/25 hover:bg-white/95"
+              ? "bg-transparent"
+              : "bg-transparent"
             : isDark
-              ? "border-white/10 bg-slate-950/60 hover:border-white/20 hover:bg-slate-950/90"
-              : "border-black/10 bg-white/70 hover:border-black/20 hover:bg-white/95",
+              ? "bg-transparent"
+              : "bg-transparent",
           isInspectorOpen
             ? classNames(
-                "scale-[1.05] shadow-[0_18px_40px_-28px_rgba(14,165,233,0.65)]",
-                isDark ? "bg-slate-950/95" : "bg-white/95"
+                "scale-[1.04] shadow-[0_18px_40px_-28px_rgba(62,80,103,0.32)]"
               )
-            : "hover:scale-[1.03]",
+            : "hover:scale-[1.02]",
         )}
         aria-label={item.runner === "headless"
           ? t("chat:runtimeDockOpenLiveWork", {
@@ -289,22 +253,19 @@ function RuntimeDockActorButton({
             })}
         aria-describedby={`runtime-dock-status-${item.actorId}`}
       >
-        {ringPresentation.haloClassName ? (
-          <span className={classNames("pointer-events-none", ringPresentation.haloClassName)} style={ringPresentation.haloStyle} />
-        ) : null}
-        <span className={classNames("pointer-events-none", ringPresentation.ringClassName)} style={ringPresentation.ringStyle} />
-        {ringPresentation.secondaryRingClassName ? (
-          <span className={classNames("pointer-events-none", ringPresentation.secondaryRingClassName)} style={ringPresentation.secondaryRingStyle} />
-        ) : null}
+        <span className={ringFrameClassName}>
+          <span className={classNames("pointer-events-none", ringPresentation.ringClassName)} style={ringPresentation.ringStyle} />
+          {ringPresentation.customRing ? ringPresentation.customRing : null}
+        </span>
 
         <ActorAvatar
-          avatarUrl={item.actor.avatar_url || undefined}
-          runtime={item.runtime}
-          title={item.actorLabel}
-          isDark={isDark}
-          sizeClassName={isSmallScreen ? "h-9 w-9" : "h-10 w-10"}
-          className={classNames(
-            "relative z-10 shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
+            avatarUrl={item.actor.avatar_url || undefined}
+            runtime={item.runtime}
+            title={item.actorLabel}
+            isDark={isDark}
+            sizeClassName={isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]"}
+            className={classNames(
+              "relative z-10 border-transparent shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
             item.runner === "headless"
               ? isDark
                 ? "bg-slate-900"
@@ -314,21 +275,6 @@ function RuntimeDockActorButton({
           accentRingClassName={isInspectorOpen ? (isDark ? "ring-white/10" : "ring-black/10") : null}
         />
 
-        {item.unreadCount > 0 ? (
-          <span className={classNames("absolute -right-1 -top-1 z-20 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold shadow-sm", ringPresentation.unreadBadgeClassName)}>
-            {item.unreadCount}
-          </span>
-        ) : null}
-
-        {hasLiveIndicator ? (
-          <span className={classNames(
-            "absolute -bottom-1 left-1/2 z-20 inline-flex -translate-x-1/2 whitespace-nowrap items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] shadow-sm",
-            isDark ? "border-cyan-300/20 bg-slate-950/90 text-cyan-100" : "border-cyan-500/20 bg-white text-cyan-700"
-          )}>
-            <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse motion-reduce:animate-none" />
-            {t("chat:liveWorkDockIndicator", { defaultValue: "Live" })}
-          </span>
-        ) : null}
       </button>
       <span id={`runtime-dock-status-${item.actorId}`} className="sr-only">
         {item.actorLabel} · {item.runtime} · {statusLabel}
@@ -372,7 +318,7 @@ export function RuntimeDock({
   if (items.length <= 0) return null;
 
   return (
-    <div className="pointer-events-none relative z-30 px-3 sm:px-4">
+    <div className="pointer-events-none relative z-30 px-3 pt-2 sm:px-4 sm:pt-2.5">
       <div className="mx-auto flex w-full max-w-[1400px] justify-center">
         <div
           className={classNames(
@@ -383,10 +329,10 @@ export function RuntimeDock({
           <div
             className={classNames(
               "flex items-end opacity-[0.72] transition-opacity delay-[3000ms] duration-200 ease-out group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0",
-              isSmallScreen ? "max-w-[calc(100vw-2.5rem)] gap-2.5 overflow-x-auto pb-1 scrollbar-hide" : "gap-3.5",
+              isSmallScreen ? "max-w-[calc(100vw-2.5rem)] gap-2 overflow-x-auto pb-1 scrollbar-hide" : "gap-2.5",
             )}
           >
-            <div className={classNames("relative flex items-end", isSmallScreen ? "gap-2.5" : "gap-3.5")}>
+            <div className={classNames("relative flex items-end", isSmallScreen ? "gap-2" : "gap-2.5")}>
               <RuntimeDockTicker
                 key={groupId}
                 entries={tickerEntries}
@@ -413,15 +359,23 @@ export function RuntimeDock({
                 type="button"
                 onClick={onAddAgent}
                 className={classNames(
-                  "relative flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full border shadow-[0_12px_30px_-28px_rgba(15,23,42,0.54)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/[0.45]",
-                  isDark
-                    ? "border-white/10 bg-slate-950/60 text-slate-100 hover:border-white/20 hover:bg-slate-950/90"
-                    : "border-black/10 bg-white/70 text-gray-900 hover:border-black/20 hover:bg-white/95",
+                  "group/add-agent relative flex h-[50px] w-[50px] flex-shrink-0 items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35 active:scale-[0.97]",
+                  "bg-transparent hover:scale-[1.02]",
                 )}
                 aria-label={t("addAgent", { defaultValue: "Add an agent" })}
                 title={t("addAgent", { defaultValue: "Add an agent" })}
               >
-                <PlusIcon size={18} />
+                <span
+                  aria-hidden="true"
+                  className={classNames(
+                    "relative z-[1] flex items-center justify-center rounded-full border shadow-[0_18px_34px_-22px_rgba(15,23,42,0.4)] transition-[transform,box-shadow,border-color,background-color,color] duration-200",
+                    isDark
+                      ? "h-[37px] w-[37px] border-white/10 bg-slate-900 text-slate-100 group-hover/add-agent:border-white/16 group-hover/add-agent:bg-slate-950"
+                      : "h-[37px] w-[37px] border-black/10 bg-white text-[rgb(35,36,37)] group-hover/add-agent:border-black/14 group-hover/add-agent:bg-white/96",
+                  )}
+                >
+                  <PlusIcon size={18} strokeWidth={2.1} />
+                </span>
               </button>
             ) : null}
           </div>

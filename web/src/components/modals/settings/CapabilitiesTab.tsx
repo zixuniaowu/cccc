@@ -14,7 +14,16 @@ import {
   GroupMeta,
 } from "../../../types";
 import { useModalA11y } from "../../../hooks/useModalA11y";
-import { cardClass } from "./types";
+import {
+  inputClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+  settingsWorkspaceBodyClass,
+  settingsWorkspaceHeaderClass,
+  settingsWorkspacePanelClass,
+  settingsWorkspaceShellClass,
+  settingsWorkspaceSoftPanelClass,
+} from "./types";
 
 interface CapabilitiesTabProps {
   isDark: boolean;
@@ -1067,48 +1076,50 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {!selfEvolvingSurface ? (
-      <div className={cardClass()}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.title")}</div>
-            <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.subtitle")}</div>
+        <section className={settingsWorkspaceShellClass(_isDark)}>
+          <div className={settingsWorkspaceHeaderClass(_isDark)}>
+            <div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.title")}</div>
+              <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.subtitle")}</div>
+            </div>
+            <button
+              type="button"
+              className={secondaryButtonClass("sm")}
+              onClick={() => void load()}
+              disabled={loading}
+            >
+              {loading ? t("common:loading") : t("capabilities.refresh")}
+            </button>
           </div>
-          <button
-            type="button"
-            className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[40px] text-[var(--color-text-secondary)]"
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            {loading ? t("common:loading") : t("capabilities.refresh")}
-          </button>
-        </div>
-        <div className="text-xs mt-3 text-[var(--color-text-tertiary)]">{t("capabilities.pageGuide")}</div>
-        {err ? (
-          <div className="mt-3 text-xs text-rose-600 dark:text-rose-400" role="alert">{err}</div>
-        ) : null}
-      </div>
+          <div className={settingsWorkspaceBodyClass}>
+            <div className="text-xs text-[var(--color-text-tertiary)]">{t("capabilities.pageGuide")}</div>
+            {err ? (
+              <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400" role="alert">{err}</div>
+            ) : null}
+          </div>
+        </section>
       ) : err ? (
         <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
           {err}
         </div>
       ) : null}
 
-      <div className={cardClass()}>
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <section className={settingsWorkspaceShellClass(_isDark)}>
+        <div className={settingsWorkspaceHeaderClass(_isDark)}>
           <div>
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">
               {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupTitle" : "capabilities.selfProposedTitle")}
             </div>
-            <div className="text-xs mt-1 text-[var(--color-text-muted)]">
+            <div className="mt-1 text-xs text-[var(--color-text-muted)]">
               {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupHint" : "capabilities.selfProposedHint")}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="glass-btn px-3 py-2 rounded-lg text-xs min-h-[38px] text-[var(--color-text-secondary)]"
+              className={secondaryButtonClass("sm")}
               onClick={() => void load()}
               disabled={loading}
             >
@@ -1116,29 +1127,30 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             </button>
           </div>
         </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
-          <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
-            <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-              {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupCount" : "capabilities.selfProposedGenerated")}
+        <div className={settingsWorkspaceBodyClass}>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className={settingsWorkspacePanelClass(_isDark)}>
+              <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupCount" : "capabilities.selfProposedGenerated")}
+              </div>
+              <div className="mt-1 text-lg font-semibold text-[var(--color-text-primary)]">{selfProposedCandidates.length}</div>
             </div>
-            <div className="text-lg mt-1 font-semibold text-[var(--color-text-primary)]">{selfProposedCandidates.length}</div>
+            <div className={settingsWorkspacePanelClass(_isDark)}>
+              <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                {t(selfEvolvingSurface ? "capabilities.selfProposedSource" : "capabilities.selfProposedGroups")}
+              </div>
+              <div className={`${selfEvolvingSurface ? "text-sm font-mono" : "text-lg font-semibold"} mt-1 text-[var(--color-text-primary)]`}>
+                {selfEvolvingSurface ? SELF_PROPOSED_SOURCE_ID : selfProposedGroupSections.length}
+              </div>
+            </div>
           </div>
-          <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
-            <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-              {t(selfEvolvingSurface ? "capabilities.selfProposedSource" : "capabilities.selfProposedGroups")}
-            </div>
-            <div className={`${selfEvolvingSurface ? "text-sm font-mono" : "text-lg font-semibold"} mt-1 text-[var(--color-text-primary)]`}>
-              {selfEvolvingSurface ? SELF_PROPOSED_SOURCE_ID : selfProposedGroupSections.length}
-            </div>
-          </div>
-        </div>
         {selfEvolvingSurface ? (
-          <div className="mt-3 space-y-2">
+          <div className="space-y-3">
             {selfProposedCandidates.map((row) => {
               const capId = String(row.capability_id || "");
               const isBlocked = String(row.qualification_status || "").trim().toLowerCase() === "blocked";
               return (
-                <div key={capId} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+                <div key={capId} className={settingsWorkspacePanelClass(_isDark)}>
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-xs font-medium text-[var(--color-text-primary)]">{String(row.name || capId)}</span>
                     {isBlocked ? (
@@ -1147,14 +1159,14 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                       </span>
                     ) : null}
                   </div>
-                  <div className="text-[11px] mt-0.5 truncate text-[var(--color-text-tertiary)]">{capId}</div>
+                  <div className="mt-0.5 text-[11px] truncate text-[var(--color-text-tertiary)]">{capId}</div>
                   {String(row.description_short || "").trim() ? (
-                    <div className="text-[11px] mt-1 text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
+                    <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
                   ) : null}
-                  <div className="mt-2">
+                  <div className="mt-3">
                     <button
                       type="button"
-                      className="glass-btn px-2.5 py-1.5 rounded text-xs min-h-[32px] text-[var(--color-text-secondary)]"
+                      className={secondaryButtonClass("sm")}
                       onClick={() => openSelfProposedManager(row)}
                     >
                       {t("capabilities.selfProposedManage")}
@@ -1170,9 +1182,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             ) : null}
           </div>
         ) : (
-          <div className="mt-4 space-y-3">
+          <div className="space-y-3">
             {selfProposedGroupSections.map((section) => (
-              <div key={section.key} className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+              <div key={section.key} className={settingsWorkspacePanelClass(_isDark)}>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{section.label}</div>
@@ -1187,7 +1199,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                     const capId = String(row.capability_id || "");
                     const isBlocked = String(row.qualification_status || "").trim().toLowerCase() === "blocked";
                     return (
-                      <div key={capId} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
+                      <div key={capId} className={settingsWorkspaceSoftPanelClass(_isDark)}>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-xs font-medium text-[var(--color-text-primary)]">{String(row.name || capId)}</span>
                           {isBlocked ? (
@@ -1196,14 +1208,14 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                             </span>
                           ) : null}
                         </div>
-                        <div className="text-[11px] mt-0.5 truncate text-[var(--color-text-tertiary)]">{capId}</div>
+                        <div className="mt-0.5 text-[11px] truncate text-[var(--color-text-tertiary)]">{capId}</div>
                         {String(row.description_short || "").trim() ? (
-                          <div className="text-[11px] mt-1 text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
+                          <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
                         ) : null}
-                        <div className="mt-2">
+                        <div className="mt-3">
                           <button
                             type="button"
-                            className="glass-btn px-2.5 py-1.5 rounded text-xs min-h-[32px] text-[var(--color-text-secondary)]"
+                            className={secondaryButtonClass("sm")}
                             onClick={() => openSelfProposedManager(row)}
                           >
                             {t("capabilities.selfProposedManage")}
@@ -1222,20 +1234,22 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             ) : null}
           </div>
         )}
-      </div>
+        </div>
+      </section>
 
       {!selfEvolvingSurface ? (
-      <div className={cardClass()}>
-        <div className="flex items-start justify-between gap-3">
+      <section className={settingsWorkspaceShellClass(_isDark)}>
+        <div className={settingsWorkspaceHeaderClass(_isDark)}>
           <div>
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.safetyModeTitle")}</div>
-            <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.safetyModeHint")}</div>
+            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.safetyModeHint")}</div>
           </div>
           <div className="text-[11px] text-[var(--color-text-tertiary)]">
             {t("capabilities.safetyModeCurrent", { mode: t(`capabilities.safetyMode.${externalSafetyMode}.label`) })}
           </div>
         </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <div className={settingsWorkspaceBodyClass}>
+        <div className="grid gap-2 md:grid-cols-2">
           {(["normal", "conservative"] as ExternalCapabilitySafetyMode[]).map((mode) => {
             const selected = externalSafetyMode === mode;
             return (
@@ -1257,25 +1271,31 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         <div className="text-[11px] mt-2 text-[var(--color-text-muted)]">
           {t("capabilities.safetyModeCurrentRule", { mode: t(`capabilities.safetyMode.${externalSafetyMode}.label`) })}
         </div>
-      </div>
+        </div>
+      </section>
       ) : null}
 
       {!selfEvolvingSurface ? (
-      <div className={cardClass()}>
-        <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.sourcesTitle")}</div>
-        <div className="text-xs mt-1 mb-2 text-[var(--color-text-muted)]">{t("capabilities.sourcesHint")}</div>
+      <section className={settingsWorkspaceShellClass(_isDark)}>
+        <div className={settingsWorkspaceHeaderClass(_isDark)}>
+          <div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.sourcesTitle")}</div>
+            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.sourcesHint")}</div>
+          </div>
+        </div>
+        <div className={settingsWorkspaceBodyClass}>
         <div className="text-[11px] text-[var(--color-text-muted)]">
           {t("capabilities.sourcesSummary", sourceSummary)}
         </div>
-        <div className="text-[11px] mt-0.5 text-[var(--color-text-muted)]">
+        <div className="text-[11px] text-[var(--color-text-muted)]">
           {t("capabilities.levelDistribution", levelDistribution)}
         </div>
-        <div className="mt-2 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-2 items-center">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
           <input
             value={sourceQuery}
             onChange={(e) => setSourceQuery(e.target.value)}
             placeholder={t("capabilities.sourceSearchPlaceholder")}
-            className="glass-input w-full rounded-lg px-3 py-2 text-sm min-h-[40px] text-[var(--color-text-primary)]"
+            className={inputClass()}
           />
           <div className="inline-flex rounded-lg border border-[var(--glass-border-subtle)] overflow-hidden">
             <button type="button" onClick={() => setSourceVisibility("all")} className={`px-2.5 py-2 text-xs min-h-[40px] ${sourceVisibility === "all" ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]" : "bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"}`}>{t("capabilities.sourcesVisibilityAll")}</button>
@@ -1283,7 +1303,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             <button type="button" onClick={() => setSourceVisibility("disabled")} className={`px-2.5 py-2 text-xs min-h-[40px] border-l border-[var(--glass-border-subtle)] ${sourceVisibility === "disabled" ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]" : "bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"}`}>{t("capabilities.sourcesVisibilityDisabled")}</button>
           </div>
         </div>
-        <div className="mt-3 space-y-2">
+        <div className="space-y-2">
           {sourceRowsVisible.map((row) => {
             const sid = String(row.source_id || "");
             const enabled = Boolean(row.enabled);
@@ -1291,7 +1311,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             const syncState = String(row.sync_state || "never");
             const count = Number(row.record_count || 0);
             return (
-              <div key={sid} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+              <div key={sid} className={settingsWorkspacePanelClass(_isDark)}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate text-[var(--color-text-primary)]">{sid}</div>
@@ -1319,39 +1339,45 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             </button>
           ) : null}
         </div>
-      </div>
+        </div>
+      </section>
       ) : null}
 
       {!selfEvolvingSurface ? (
-      <div className={cardClass()}>
-        <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.libraryTitle")}</div>
-        <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.libraryHint")}</div>
+      <section className={settingsWorkspaceShellClass(_isDark)}>
+        <div className={settingsWorkspaceHeaderClass(_isDark)}>
+          <div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.libraryTitle")}</div>
+            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.libraryHint")}</div>
+          </div>
+        </div>
+        <div className={settingsWorkspaceBodyClass}>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t("capabilities.searchPlaceholder")}
-          className="glass-input w-full mt-2 rounded-lg px-3 py-2 text-sm min-h-[40px] text-[var(--color-text-primary)]"
+          className={inputClass()}
         />
-        <div className="mt-2 grid grid-cols-1 md:grid-cols-4 gap-2">
-          <select value={registryKind} onChange={(e) => setRegistryKind(e.target.value as RegistryKindFilter)} className="glass-input rounded-lg px-2 py-2 text-xs min-h-[40px] text-[var(--color-text-primary)]">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+          <select value={registryKind} onChange={(e) => setRegistryKind(e.target.value as RegistryKindFilter)} className={inputClass()}>
             <option value="all">{t("capabilities.filterKindAll")}</option>
             <option value="pack">{t("capabilities.filterKindPack")}</option>
             <option value="mcp">{t("capabilities.filterKindMcp")}</option>
             <option value="skill">{t("capabilities.filterKindSkill")}</option>
           </select>
-          <select value={registryPolicy} onChange={(e) => setRegistryPolicy(e.target.value as RegistryPolicyFilter)} className="glass-input rounded-lg px-2 py-2 text-xs min-h-[40px] text-[var(--color-text-primary)]">
+          <select value={registryPolicy} onChange={(e) => setRegistryPolicy(e.target.value as RegistryPolicyFilter)} className={inputClass()}>
             <option value="all">{t("capabilities.filterPolicyAll")}</option>
             <option value="actionable">{t("capabilities.filterPolicyActionable")}</option>
             <option value="blocked">{t("capabilities.filterPolicyBlocked")}</option>
             <option value="indexed">{t("capabilities.filterPolicyIndexed")}</option>
           </select>
-          <select value={registrySource} onChange={(e) => setRegistrySource(e.target.value)} className="glass-input rounded-lg px-2 py-2 text-xs min-h-[40px] text-[var(--color-text-primary)]">
+          <select value={registrySource} onChange={(e) => setRegistrySource(e.target.value)} className={inputClass()}>
             <option value="all">{t("capabilities.filterSourceAll")}</option>
             {registrySourceOptions.map((sid) => (<option key={sid} value={sid}>{sid}</option>))}
           </select>
           <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2 items-center">
             <label className="text-xs text-[var(--color-text-tertiary)]">{t("capabilities.pageSize")}</label>
-            <select value={registryPageSize} onChange={(e) => setRegistryPageSize(Number(e.target.value) || 40)} className="glass-input rounded-lg px-2 py-2 text-xs min-h-[40px] text-[var(--color-text-primary)]">
+            <select value={registryPageSize} onChange={(e) => setRegistryPageSize(Number(e.target.value) || 40)} className={inputClass()}>
               {REGISTRY_PAGE_SIZE_OPTIONS.map((size) => (<option key={size} value={size}>{size}</option>))}
             </select>
           </div>
@@ -1359,7 +1385,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
           {t("capabilities.resultsSummary", { count: registryTotalCount })} · {t("capabilities.showingRange", { from: registryRange.from, to: registryRange.to })}
         </div>
-        <div ref={registryListRef} className="mt-2 max-h-[420px] overflow-auto space-y-2">
+        <div ref={registryListRef} className="max-h-[420px] overflow-auto space-y-2">
           {items.map((row) => {
             const capId = String(row.capability_id || "");
             const blockedNow = Boolean(row.blocked_global);
@@ -1375,7 +1401,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               { label: t("capabilities.avoidWhen"), value: firstRecommendationLine(row.avoid_when) },
             ].filter((entry) => entry.value);
             return (
-              <div key={capId} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+              <div key={capId} className={settingsWorkspacePanelClass(_isDark)}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate text-[var(--color-text-primary)]">{String(row.name || capId)}</div>
@@ -1406,7 +1432,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                     {isSelfProposed ? (
                       <button
                         type="button"
-                        className="glass-btn px-2.5 py-1.5 rounded text-xs min-h-[32px] text-[var(--color-text-secondary)]"
+                        className={secondaryButtonClass("sm")}
                         onClick={() => openSelfProposedManager(row)}
                       >
                         {t("capabilities.selfProposedManage")}
@@ -1441,7 +1467,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
           {registryHasMore ? (
             <button
               type="button"
-              className="glass-btn px-3 py-1.5 rounded text-xs min-h-[34px] text-[var(--color-text-secondary)] disabled:opacity-50"
+              className={secondaryButtonClass("sm")}
               disabled={loading}
               onClick={() => void load({ append: true })}
             >
@@ -1449,21 +1475,27 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             </button>
           ) : null}
         </div>
-      </div>
+        </div>
+      </section>
       ) : null}
 
       {!selfEvolvingSurface ? (
-      <div className={cardClass()}>
-        <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.blockedListTitle")}</div>
-        <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.blockedListHint")}</div>
-        <div className="mt-2 space-y-2">
+      <section className={settingsWorkspaceShellClass(_isDark)}>
+        <div className={settingsWorkspaceHeaderClass(_isDark)}>
+          <div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.blockedListTitle")}</div>
+            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.blockedListHint")}</div>
+          </div>
+        </div>
+        <div className={settingsWorkspaceBodyClass}>
+        <div className="space-y-2">
           {blocked.length === 0 ? (
             <div className="text-xs text-[var(--color-text-muted)]">{t("capabilities.noBlocked")}</div>
           ) : (
             blocked.map((row) => {
               const capId = String(row.capability_id || "");
               return (
-                <div key={capId} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+                <div key={capId} className={settingsWorkspacePanelClass(_isDark)}>
                   <div className="flex items-center justify-between gap-2">
                     <code className="text-xs">{capId}</code>
                     <button
@@ -1481,7 +1513,8 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             })
           )}
         </div>
-      </div>
+        </div>
+      </section>
       ) : null}
 
       {managingCandidate && typeof document !== "undefined" ? createPortal(
@@ -1506,7 +1539,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               </div>
               <button
                 type="button"
-                className="glass-btn shrink-0 rounded-lg px-3 py-2 text-xs min-h-[36px] text-[var(--color-text-secondary)]"
+                className={secondaryButtonClass("sm")}
                 onClick={closeSelfProposedManager}
               >
                 {t("capabilities.manageClose")}
@@ -1559,12 +1592,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                 </div>
               ) : null}
 
-              <div className="mt-4 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+              <div className={`mt-4 ${settingsWorkspacePanelClass(_isDark)}`}>
                 <div className="text-xs font-medium text-[var(--color-text-primary)]">{t("capabilities.manageProvenanceTitle")}</div>
                 <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("capabilities.manageProvenanceHint")}</div>
                 <dl className="mt-3 grid gap-2 sm:grid-cols-2">
                   {manageProvenanceRows.map((row) => (
-                    <div key={row.label} className="rounded-lg bg-[var(--color-bg-elevated)] px-2.5 py-2">
+                    <div key={row.label} className={settingsWorkspaceSoftPanelClass(_isDark)}>
                       <dt className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{row.label}</dt>
                       <dd className="mt-1 break-words font-mono text-[11px] text-[var(--color-text-secondary)]">{row.value}</dd>
                     </div>
@@ -1578,7 +1611,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                   <input
                     value={manageName}
                     onChange={(e) => setManageName(e.target.value)}
-                    className="glass-input mt-1 w-full rounded-lg px-3 py-2 text-sm min-h-[40px] text-[var(--color-text-primary)]"
+                    className={`mt-1 ${inputClass()}`}
                   />
                 </label>
                 <label className="block">
@@ -1586,7 +1619,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                   <input
                     value={manageDescription}
                     onChange={(e) => setManageDescription(e.target.value)}
-                    className="glass-input mt-1 w-full rounded-lg px-3 py-2 text-sm min-h-[40px] text-[var(--color-text-primary)]"
+                    className={`mt-1 ${inputClass()}`}
                   />
                 </label>
               </div>
@@ -1599,7 +1632,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                     onChange={(e) => setManageCapsuleText(e.target.value)}
                     maxLength={SELF_PROPOSED_CAPSULE_TEXT_MAX}
                     rows={16}
-                    className="glass-input mt-1 w-full resize-y rounded-lg px-3 py-2 font-mono text-xs leading-5 text-[var(--color-text-primary)]"
+                    className={`mt-1 ${inputClass()} resize-y font-mono text-xs leading-5`}
                   />
                   <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
                     {t("capabilities.manageCapsuleLimit", { count: manageCapsuleText.length, max: SELF_PROPOSED_CAPSULE_TEXT_MAX })}
@@ -1610,7 +1643,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  className="glass-btn rounded-lg px-3 py-2 text-xs min-h-[38px] text-[var(--color-text-primary)] disabled:opacity-60"
+                  className={primaryButtonClass(false)}
                   disabled={busyKey === `manage:${manageCapabilityId}`}
                   onClick={() => void saveManagedSelfProposed()}
                 >
@@ -1625,44 +1658,44 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               ) : null}
 
               <div className="mt-4">
-                <div className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+                <div className={settingsWorkspacePanelClass(_isDark)}>
                   <div className="text-sm font-medium text-[var(--color-text-primary)]">{t("capabilities.manageRuntimeTitle")}</div>
                   <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.manageAutoloadHint")}</div>
-                  <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
+                  <div className={`mt-3 ${settingsWorkspaceSoftPanelClass(_isDark)}`}>
                     <div className="text-xs font-medium text-[var(--color-text-primary)]">{t("capabilities.manageCurrentUseTitle")}</div>
                     <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("capabilities.manageCurrentUseHint")}</div>
                     {manageUsageLoading ? (
                       <div className="mt-2 text-[11px] text-[var(--color-text-tertiary)]">{t("capabilities.manageUsageLoading")}</div>
                     ) : manageUsage?.used ? (
                       <div className="mt-2 space-y-1.5">
-                        <div className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+                        <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
                           {t("capabilities.manageUsageSummary", {
                             active: Number(manageUsage.active_actor_count || 0),
                             startup: Number(manageUsage.startup_autoload_actor_count || 0),
                           })}
                         </div>
                         {manageUsage.group_enabled ? (
-                          <div className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                          <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
                             {t("capabilities.manageUsageGroup", { count: Number(manageUsage.group_actor_count || 0) })}
                           </div>
                         ) : null}
                         {(manageUsage.session_enabled || []).map((row) => (
-                          <div key={`session:${row.actor_id}:${row.expires_at || ""}`} className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                          <div key={`session:${row.actor_id}:${row.expires_at || ""}`} className={settingsWorkspaceSoftPanelClass(_isDark)}>
                             {t("capabilities.manageUsageSession", { actor: capabilityUsageActorLabel(row), ttl: manageUsageTtlLabel(row.ttl_seconds) })}
                           </div>
                         ))}
                         {(manageUsage.actor_enabled || []).map((row) => (
-                          <div key={`actor:${row.actor_id}`} className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                          <div key={`actor:${row.actor_id}`} className={settingsWorkspaceSoftPanelClass(_isDark)}>
                             {t("capabilities.manageUsageActor", { actor: capabilityUsageActorLabel(row) })}
                           </div>
                         ))}
                         {(manageUsage.actor_autoload || []).map((row) => (
-                          <div key={`autoload:${row.actor_id}`} className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                          <div key={`autoload:${row.actor_id}`} className={settingsWorkspaceSoftPanelClass(_isDark)}>
                             {t("capabilities.manageUsageActorAutoload", { actor: capabilityUsageActorLabel(row) })}
                           </div>
                         ))}
                         {(manageUsage.profile_autoload || []).map((row) => (
-                          <div key={`profile:${row.actor_id}:${row.profile_id || ""}`} className="rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                          <div key={`profile:${row.actor_id}:${row.profile_id || ""}`} className={settingsWorkspaceSoftPanelClass(_isDark)}>
                             {t("capabilities.manageUsageProfileAutoload", {
                               actor: capabilityUsageActorLabel(row),
                               profile: String(row.profile_name || row.profile_id || "").trim() || t("capabilities.manageUsageUnknownProfile"),
@@ -1676,7 +1709,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                         ) : null}
                       </div>
                     ) : (
-                      <div className="mt-2 rounded-md bg-[var(--glass-tab-bg)] px-2 py-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+                      <div className={`mt-2 ${settingsWorkspaceSoftPanelClass(_isDark)} text-[11px] text-[var(--color-text-tertiary)]`}>
                         {t("capabilities.manageNoCurrentUse")}
                       </div>
                     )}
@@ -1696,7 +1729,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                         const actorScopeActive = manageActorScopeIdSet.has(actorId);
                         const runtimeLabel = [actor.runtime, actor.runner_effective || actor.runner].filter(Boolean).join(" / ");
                         return (
-                          <label key={actorId} className="flex items-start gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
+                          <label key={actorId} className={`flex items-start gap-2 ${settingsWorkspaceSoftPanelClass(_isDark)}`}>
                             <input
                               type="checkbox"
                               className="mt-0.5"
@@ -1717,12 +1750,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                                   </span>
                                 ) : null}
                                 {temporaryActive ? (
-                                  <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
+                                  <span className="rounded border border-black/10 bg-[rgb(245,245,245)] px-1.5 py-0.5 text-[10px] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
                                     {t("capabilities.manageActorAssignmentTemporaryBadge")}
                                   </span>
                                 ) : null}
                                 {actorScopeActive ? (
-                                  <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
+                                  <span className="rounded border border-black/10 bg-[rgb(245,245,245)] px-1.5 py-0.5 text-[10px] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
                                     {t("capabilities.manageActorAssignmentActorScopeBadge")}
                                   </span>
                                 ) : null}
@@ -1732,7 +1765,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                         );
                       })}
                     {manageActors.length === 0 ? (
-                      <div className="rounded-lg bg-[var(--glass-tab-bg)] px-3 py-2 text-[11px] text-[var(--color-text-tertiary)]">
+                      <div className={`${settingsWorkspaceSoftPanelClass(_isDark)} text-[11px] text-[var(--color-text-tertiary)]`}>
                         {t("capabilities.manageNoActors")}
                       </div>
                     ) : null}
@@ -1740,7 +1773,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                   <div className="mt-3 flex justify-end">
                     <button
                       type="button"
-                      className="glass-btn rounded-lg px-3 py-2 text-xs min-h-[38px] text-[var(--color-text-primary)] disabled:opacity-60"
+                      className={secondaryButtonClass()}
                       disabled={busyKey === `manage-use:${manageCapabilityId}`}
                       onClick={() => void saveManagedActorAssignments()}
                     >
@@ -1750,7 +1783,7 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
                 </div>
               </div>
 
-              <div className="mt-4 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+              <div className={`mt-4 ${settingsWorkspacePanelClass(_isDark)}`}>
                 <div className="text-sm font-medium text-[var(--color-text-primary)]">{t("capabilities.manageOtherActionsTitle")}</div>
                 <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.manageOtherActionsHint")}</div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

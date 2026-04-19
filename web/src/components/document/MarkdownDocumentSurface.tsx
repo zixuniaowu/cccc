@@ -1,4 +1,4 @@
-import { MarkdownRenderer } from "../MarkdownRenderer";
+import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
 import { classNames } from "../../utils/classNames";
 
 type MarkdownDocumentSurfaceProps = {
@@ -58,10 +58,11 @@ export function MarkdownDocumentSurface({
           )}
         />
       ) : hasContent ? (
-        <MarkdownRenderer
+        <LazyMarkdownRenderer
           content={value}
           isDark={isDark}
           className={classNames("break-words [overflow-wrap:anywhere]", previewClassName)}
+          fallback={<div className={classNames("whitespace-pre-wrap break-words", previewClassName)}>{value}</div>}
         />
       ) : (
         <div className={classNames("flex h-full items-center justify-center text-sm", isDark ? "text-slate-500" : "text-gray-500")}>

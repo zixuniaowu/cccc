@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Actor, GroupDoc, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
@@ -14,7 +15,7 @@ import {
   SunIcon,
   MoonIcon,
   EditIcon,
-  RocketIcon,
+  PlayIcon,
   StopIcon,
   PauseIcon,
   CloseIcon,
@@ -65,6 +66,8 @@ export function MobileMenuSheet({
 }: MobileMenuSheetProps) {
   const { modalRef } = useModalA11y(isOpen, onClose);
   const { t } = useTranslation('layout');
+  const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
+  const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
   const selectedStatus = selectedGroupId ? getGroupStatusFromSource({
     running: selectedGroupRunning,
     state: groupDoc?.state,
@@ -88,6 +91,12 @@ export function MobileMenuSheet({
     statusKey: selectedStatusKey,
     busy,
   });
+  const isPauseAction = selectedStatusKey === "run";
+  const toggleControl = isPauseAction ? pauseControl : launchControl;
+  const toggleDisabled = (isPauseAction ? pauseDisabled : launchDisabled) || pendingToggleAction !== null;
+  const toggleHardUnavailable = isPauseAction ? pauseHardUnavailable : launchHardUnavailable;
+  const toggleLabel = isPauseAction ? t('pauseState') : t('runState');
+  const isGroupBusy = busy.startsWith("group-");
   const themeLabel = theme === "system" ? t('themeSystem') : theme === "dark" ? t('themeDark') : t('themeLight');
   const ThemeIcon = theme === "system" ? MonitorIcon : theme === "dark" ? MoonIcon : SunIcon;
   const nextTheme: Theme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
@@ -102,8 +111,46 @@ export function MobileMenuSheet({
   const sectionTitleClass = "px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]";
   const rowButtonClass = "w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-sm transition-all text-[var(--color-text-primary)] hover:bg-black/5 disabled:opacity-45 dark:hover:bg-white/6";
 
+  useEffect(() => {
+    if (!pendingToggleAction) return;
+    let timerId: number | null = null;
+    const resetPendingState = () => {
+      timerId = window.setTimeout(() => {
+        setPendingToggleAction(null);
+        setHasObservedGroupBusy(false);
+      }, 0);
+    };
+
+    if (selectedGroupId.trim() === "") {
+      resetPendingState();
+      return () => {
+        if (timerId !== null) window.clearTimeout(timerId);
+      };
+    }
+    if (isGroupBusy) {
+      if (!hasObservedGroupBusy) {
+        timerId = window.setTimeout(() => {
+          setHasObservedGroupBusy(true);
+        }, 0);
+      }
+      return () => {
+        if (timerId !== null) window.clearTimeout(timerId);
+      };
+    }
+    const launchSettled = pendingToggleAction === "launch" && (selectedStatusKey === "run" || selectedStatusKey === "idle");
+    const pauseSettled = pendingToggleAction === "pause" && selectedStatusKey === "paused";
+    if (launchSettled || pauseSettled || hasObservedGroupBusy) {
+      resetPendingState();
+    }
+    return () => {
+      if (timerId !== null) window.clearTimeout(timerId);
+    };
+  }, [pendingToggleAction, hasObservedGroupBusy, isGroupBusy, selectedGroupId, selectedStatusKey]);
+
   const handleLaunchClick = () => {
     if (launchDisabled || selectedStatusKey === "run") return;
+    setPendingToggleAction("launch");
+    setHasObservedGroupBusy(false);
     onClose();
     if (launchMode === "activate") {
       void onSetGroupState("active");
@@ -114,6 +161,8 @@ export function MobileMenuSheet({
 
   const handlePauseClick = () => {
     if (pauseDisabled || selectedStatusKey === "paused") return;
+    setPendingToggleAction("pause");
+    setHasObservedGroupBusy(false);
     onClose();
     void onSetGroupState("paused");
   };
@@ -122,6 +171,14 @@ export function MobileMenuSheet({
     if (stopDisabled || selectedStatusKey === "stop") return;
     onClose();
     onStopGroup();
+  };
+
+  const handleToggleClick = () => {
+    if (isPauseAction) {
+      handlePauseClick();
+      return;
+    }
+    handleLaunchClick();
   };
   if (!isOpen) return null;
 
@@ -272,28 +329,15 @@ export function MobileMenuSheet({
               <button
                 className={classNames(
                   "flex-1 flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-medium transition-all min-h-[48px]",
-                  launchControl.className,
-                  launchHardUnavailable && "opacity-45"
+                  toggleControl.className,
+                  toggleHardUnavailable && "opacity-45"
                 )}
-                onClick={handleLaunchClick}
-                disabled={launchDisabled}
-                aria-pressed={launchControl.active}
+                onClick={handleToggleClick}
+                disabled={toggleDisabled}
+                aria-pressed={toggleControl.active}
               >
-                <RocketIcon size={18} />
-                <span>{t('runState')}</span>
-              </button>
-              <button
-                className={classNames(
-                  "flex-1 flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-medium transition-all min-h-[48px]",
-                  pauseControl.className,
-                  pauseHardUnavailable && "opacity-45"
-                )}
-                onClick={handlePauseClick}
-                disabled={pauseDisabled}
-                aria-pressed={pauseControl.active}
-              >
-                <PauseIcon size={18} />
-                <span>{t('pauseState')}</span>
+                {isPauseAction ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+                <span>{toggleLabel}</span>
               </button>
               <button
                 className={classNames(

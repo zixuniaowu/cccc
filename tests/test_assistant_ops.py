@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -250,6 +251,9 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("secretary-scope", prompt)
             self.assertIn("Bootstrap/resume orientation path", prompt)
             self.assertIn("cccc_context_get", prompt)
+            self.assertIn("your first action must be cccc_voice_secretary_document(action=\"read_new_input\")", prompt)
+            self.assertIn("do not call cccc_bootstrap, cccc_help, cccc_context_get, cccc_project_info", prompt)
+            self.assertIn("avoid exploration loops", prompt)
             self.assertNotIn("daemon-provided", prompt)
             self.assertNotIn("first instruction after cold start or resume", prompt)
             self.assertNotIn("wait until the first runtime instruction", prompt)
@@ -1524,7 +1528,6 @@ class TestAssistantOps(unittest.TestCase):
                 },
             )
             self.assertTrue(first.ok, getattr(first, "error", None))
-
             read_first, _ = self._call(
                 "assistant_voice_document_input_read",
                 {"group_id": group_id, "by": "assistant:voice_secretary"},
@@ -1544,6 +1547,7 @@ class TestAssistantOps(unittest.TestCase):
                 },
             )
             self.assertTrue(submit_first.ok, getattr(submit_first, "error", None))
+
             state_with_first_draft, _ = self._call(
                 "assistant_state",
                 {
@@ -1590,6 +1594,109 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("Request id: voice-prompt-merge", merged_text)
             self.assertIn("先强调风险", merged_text)
             self.assertIn("再补充验证步骤", merged_text)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_input_append_auto_wakes_actor_when_group_not_running(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
+            from cccc.kernel.group import load_group
+
+            started: list[dict] = []
+
+            def fake_start_actor_process(group, actor_id, **kwargs):
+                started.append({"group_id": group.group_id, "actor_id": actor_id, **kwargs})
+                return {"success": True}
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            with patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False):
+                resp = handle_assistant_voice_input_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "prompt_refine",
+                        "request_id": "voice-prompt-wake",
+                        "composer_text": "请帮我润色这个提示词",
+                        "voice_transcript": "语气更直接，结论先行。",
+                        "language": "zh-CN",
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=fake_start_actor_process,
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual(len(started), 1)
+            self.assertEqual(started[0]["group_id"], group_id)
+            self.assertEqual(started[0]["actor_id"], "voice-secretary")
+        finally:
+            cleanup()
+
+    def test_voice_secretary_input_append_re_emits_notify_after_wake_with_existing_unread(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
+
+            first = handle_assistant_voice_input_append(
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "prompt_refine",
+                    "request_id": "voice-prompt-old",
+                    "composer_text": "",
+                    "voice_transcript": "old request",
+                    "language": "en",
+                },
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+
+            started: list[dict] = []
+            notify_reasons: list[str] = []
+
+            def fake_start_actor_process(group, actor_id, **kwargs):
+                started.append({"group_id": group.group_id, "actor_id": actor_id, **kwargs})
+                return {"success": True}
+
+            def fake_emit(group, *, reason):
+                notify_reasons.append(str(reason))
+
+            with (
+                patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False),
+                patch("cccc.daemon.assistants.assistant_ops._emit_voice_input_notify", side_effect=fake_emit),
+            ):
+                second = handle_assistant_voice_input_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "prompt_refine",
+                        "request_id": "voice-prompt-new",
+                        "composer_text": "",
+                        "voice_transcript": "new request",
+                        "language": "en",
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=fake_start_actor_process,
+                )
+
+            self.assertTrue(second.ok, getattr(second, "error", None))
+            self.assertEqual(len(started), 1)
+            self.assertEqual(notify_reasons, ["new_input"])
         finally:
             cleanup()
 

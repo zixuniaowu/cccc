@@ -972,9 +972,35 @@ export function SettingsModal({
       isDark={isDark}
       onClose={onClose}
       titleId="settings-modal-title"
-      title={`⚙️ ${t("title")}`}
+      title={(
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+            Workspace Settings
+          </div>
+          <h2 className="mt-1 truncate text-[1.15rem] font-semibold text-[var(--color-text-primary)]">
+            {t("title")}
+          </h2>
+          <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
+            {scope === "group"
+              ? t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId || "—" })
+              : (globalScopeEnabled ? t("navigation.globalScopeContent") : t("navigation.globalLockedContent"))}
+          </div>
+        </div>
+      )}
       closeAriaLabel={t("closeAriaLabel")}
       panelClassName="w-full h-full sm:h-[min(90dvh,920px)] sm:max-w-[min(1280px,calc(100vw-2rem))] sm:max-h-[90dvh]"
+      headerActions={(
+        <div className="hidden sm:flex items-center gap-2">
+          <span className="rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-1 text-[11px] font-medium text-[var(--color-text-secondary)]">
+            {scope === "group" ? t("navigation.thisGroup") : t("navigation.global")}
+          </span>
+          {groupDoc?.title && scope === "group" ? (
+            <span className="max-w-[18rem] truncate rounded-full border border-[var(--glass-border-subtle)] bg-transparent px-3 py-1 text-[11px] font-medium text-[var(--color-text-tertiary)]">
+              {groupDoc.title}
+            </span>
+          ) : null}
+        </div>
+      )}
       modalRef={modalRef}
     >
       <div className="min-h-0 flex-1 flex flex-col sm:flex-row overflow-hidden">
@@ -993,9 +1019,13 @@ export function SettingsModal({
         {/* Main Content Area */}
         <div
           ref={contentScrollRef}
-          className="min-h-0 flex-1 overflow-y-auto scrollbar-subtle flex flex-col [scrollbar-gutter:stable]"
+          className={`min-h-0 flex-1 overflow-y-auto scrollbar-subtle flex flex-col [scrollbar-gutter:stable] ${
+            isDark
+              ? "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_32%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))]"
+              : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.94),rgba(255,255,255,0)_32%),linear-gradient(180deg,rgb(252,252,251),rgb(246,247,248))]"
+          }`}
         >
-          <div className="p-5 pb-8 sm:p-8 lg:p-10 sm:pb-10 space-y-6 lg:space-y-7">
+          <div className="p-4 pb-6 sm:p-5 lg:p-6 sm:pb-7 space-y-4 lg:space-y-5">
             {scope === "global" && !globalSettingsEnabled && !currentBrowserSignedIn ? (
               <div className={`rounded-xl border p-6 ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
                 <div className="text-sm font-semibold">{t("navigation.globalLockedTitle")}</div>

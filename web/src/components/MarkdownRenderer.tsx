@@ -1,7 +1,12 @@
 import { useMemo, useEffect, useRef } from 'react';
 import MarkdownIt from 'markdown-it';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { CheckIcon, CopyIcon } from './Icons';
 import { classNames } from '../utils/classNames';
 import { copyTextToClipboard } from '../utils/copy';
+
+const copyIconMarkup = renderToStaticMarkup(<CopyIcon className="w-3.5 h-3.5" strokeWidth={2} aria-hidden="true" />);
+const copiedIconMarkup = renderToStaticMarkup(<CheckIcon className="w-3.5 h-3.5" strokeWidth={2} aria-hidden="true" />);
 
 interface MarkdownRendererProps {
     content: string;
@@ -31,9 +36,9 @@ export function MarkdownRenderer({ content, isDark, className, invertText }: Mar
                     '<div class="code-block-header flex items-center justify-between">' +
                     '<span class="uppercase">' + finalLang + '</span>' +
                     '<button class="copy-button flex items-center gap-1 select-none" data-code="' + encodeURIComponent(str) + '">' +
-                    '<span class="copy-icon pointer-events-none"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"></path></svg></span>' +
+                    '<span class="copy-icon pointer-events-none">' + copyIconMarkup + '</span>' +
                     '<span class="copy-text pointer-events-none">Copy</span>' +
-                    '<span class="copied-icon pointer-events-none hidden text-green-500 dark:text-emerald-400"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg></span>' +
+                    '<span class="copied-icon pointer-events-none hidden text-green-500 dark:text-emerald-400">' + copiedIconMarkup + '</span>' +
                     '<span class="copied-text pointer-events-none hidden text-green-500 dark:text-emerald-400">Copied!</span>' +
                     '</button>' +
                     '</div>' +

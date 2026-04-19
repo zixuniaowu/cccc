@@ -306,7 +306,7 @@ export function AppShell({
                 isDark={isDark}
                 onClose={() => onTabChange("chat")}
                 titleId={`runtime-inspector-${actorId}`}
-                title={t("runtimeInspectorTitle", { defaultValue: "Runtime inspector" })}
+                title=""
                 closeAriaLabel={t("runtimeInspectorClose", { defaultValue: "Close runtime inspector" })}
                 panelClassName="h-full w-full max-w-none overflow-hidden sm:h-[92vh] sm:w-[min(1480px,98vw)] sm:max-w-[98vw]"
               >

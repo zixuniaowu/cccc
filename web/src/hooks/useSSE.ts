@@ -37,6 +37,7 @@ import { getPresentationMessageRefs, getPresentationRefStatus } from "../utils/p
 import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
 import { isHeadlessActorRunner } from "../utils/headlessRuntimeSupport";
+import { emitVoiceSecretaryPromptDraftEvent } from "../utils/voiceSecretaryEvents";
 
 // Re-export for backward compatibility
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
@@ -892,6 +893,20 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         initializeObligationStatus(nextEvent, actorsRef.current);
 
         appendEvent(nextEvent, groupId);
+        if (String(nextEvent.kind || "").trim() === "assistant.voice.prompt_draft") {
+          const data = nextEvent.data && typeof nextEvent.data === "object"
+            ? nextEvent.data as { request_id?: unknown; status?: unknown; action?: unknown }
+            : null;
+          const requestId = String(data?.request_id || "").trim();
+          if (requestId) {
+            emitVoiceSecretaryPromptDraftEvent({
+              groupId,
+              requestId,
+              status: String(data?.status || "").trim(),
+              action: String(data?.action || "").trim(),
+            });
+          }
+        }
         if (isChatMessageEvent(nextEvent)) {
           const msgData = nextEvent.data && typeof nextEvent.data === "object"
             ? (nextEvent.data as { stream_id?: unknown })

@@ -12,7 +12,7 @@ from unittest.mock import patch
 class TestCapabilityOps(unittest.TestCase):
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
-        td_ctx = tempfile.TemporaryDirectory()
+        td_ctx = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         td = td_ctx.__enter__()
         os.environ["CCCC_HOME"] = td
 

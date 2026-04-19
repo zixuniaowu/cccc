@@ -4,7 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useTranslation } from "react-i18next";
-import { Actor, AgentState, HeadlessPreviewSession, StreamingActivity, getRuntimeColor, RUNTIME_INFO } from "../types";
+import { Actor, AgentState, HeadlessPreviewSession, StreamingActivity, RUNTIME_INFO } from "../types";
 import { useActorDisplayState } from "../hooks/useActorDisplayState";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
@@ -161,7 +161,6 @@ export function AgentTab({
     void loadObservability();
   }, [activated, loadObservability, observabilityLoaded]);
 
-  const color = getRuntimeColor(actor.runtime, isDark);
   const rtInfo = (actor.runtime && RUNTIME_INFO[actor.runtime]) ? RUNTIME_INFO[actor.runtime] : RUNTIME_INFO.codex;
   const unreadCount = actor.unread_count ?? 0;
   const statusClamp2Style: CSSProperties = {
@@ -207,6 +206,12 @@ export function AgentTab({
   const latestHeadlessPreview = headlessPreviewSessions.length > 0
     ? headlessPreviewSessions[headlessPreviewSessions.length - 1]
     : null;
+  const primaryActionButtonClass =
+    "inline-flex items-center gap-1.5 rounded-xl border border-[rgb(35,36,37)] bg-[rgb(35,36,37)] px-3.5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white/92";
+  const secondaryActionButtonClass =
+    "inline-flex items-center gap-1.5 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3.5 py-2.5 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--glass-tab-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed";
+  const ghostActionButtonClass =
+    "inline-flex items-center gap-1.5 rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-[var(--color-text-tertiary)] transition-colors hover:border-[var(--glass-border-subtle)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed";
 
   // Send interrupt (Ctrl+C)
   const sendInterrupt = () => {
@@ -701,111 +706,122 @@ export function AgentTab({
     <div className="flex flex-col h-full">
       {/* Agent Header */}
       <div className={classNames(
-        "flex items-center gap-4 px-4 py-3 border-b",
-        color.border, color.bg
+        "border-b px-4 py-3 sm:px-5",
+        isDark
+          ? "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))]"
+          : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.88))]"
       )}>
-        <span
-          className={classNames(
-            "relative inline-flex w-2.5 h-2.5 rounded-full flex-shrink-0 transition-all",
-            statusTone.dotClass
-          )}
-        >
-          {statusTone.pulse && (
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-4">
             <span
               className={classNames(
-                "absolute inset-[-3px] rounded-full motion-reduce:animate-none",
-                statusTone.strongPulse
-                  ? "animate-ping bg-emerald-300/35"
-                  : "animate-pulse bg-current/20"
+                "relative mt-[0.42rem] inline-flex h-2.5 w-2.5 flex-shrink-0 rounded-full transition-all",
+                statusTone.dotClass
               )}
-            />
-          )}
-          {statusTone.strongPulse && (
-            <span className="absolute inset-[-7px] rounded-full border border-emerald-300/35 animate-ping motion-reduce:animate-none [animation-duration:1.6s]" />
-          )}
-        </span>
-
-        <div className="flex items-start gap-3 min-w-0">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className={classNames("font-semibold truncate min-w-0", color.text)}>{actor.title || actor.id}</span>
-              {actor.role === "foreman" && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 font-medium">
-                  {t('foreman')}
-                </span>
-              )}
-            </div>
-            <div className={classNames("mt-0.5 text-xs truncate", "text-[var(--color-text-tertiary)]")}>
-              {rtInfo?.label || t('custom')} • {runtimeStatusText}
-              {isHeadless && ` • ${t('headless')}`}
-            </div>
-            {/* Mobile-only: condensed single-line agent state */}
-            <div
-              className={classNames(
-                "sm:hidden mt-1 text-[11px] truncate leading-tight",
-                stateHeadline !== t('noAgentStateYet')
-                  ? "text-[var(--color-text-secondary)]"
-                  : "text-[var(--color-text-muted)] italic"
-              )}
-              title={stateHeadline}
             >
-              {stateHeadline}
-            </div>
-          </div>
-
-          <div
-            className={classNames(
-              "hidden sm:flex flex-col gap-1 flex-shrink-0 px-3 py-2 rounded-xl border shadow-sm backdrop-blur-sm max-w-[min(460px,40vw)]",
-              "glass-panel rounded-lg"
-            )}
-            aria-label={t('agentState')}
-          >
-            <div
-              className={classNames(
-                "text-xs font-medium leading-snug min-w-0",
-                stateHeadline !== t('noAgentStateYet')
-                  ? "text-[var(--color-text-primary)]"
-                  : isDark
-                    ? "text-slate-500 italic"
-                    : "text-gray-500 italic"
+              {statusTone.pulse && (
+                <span
+                  className={classNames(
+                    "absolute inset-[-3px] rounded-full motion-reduce:animate-none",
+                    statusTone.strongPulse
+                      ? "animate-ping bg-emerald-300/35"
+                      : "animate-pulse bg-current/20"
+                  )}
+                />
               )}
-              style={statusClamp2Style}
-              title={
-                agentState?.updated_at
-                  ? `${stateHeadline}\nUpdated: ${formatFullTime(agentState.updated_at)}`
-                  : stateHeadline
-              }
-            >
-              <span>{stateHeadline}</span>
-              {agentState?.updated_at ? (
-                <span className={classNames("ml-2 text-[11px] tabular-nums font-normal", "text-[var(--color-text-tertiary)]")}>
-                  · {formatTime(agentState.updated_at)}
-                </span>
-              ) : null}
-            </div>
-            {(stateTask || blockerCount > 0 || stateNext) ? (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {stateTask ? (
-                  <span className={classNames("text-[11px] px-2 py-0.5 rounded", "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]")}>
-                    {t("taskShort", { id: stateTask })}
-                  </span>
-                ) : null}
-                {blockerCount > 0 ? (
-                  <span className={classNames("text-[11px] px-2 py-0.5 rounded", "bg-rose-500/15 text-rose-600 dark:text-rose-300")}>
-                    {t("blockersShort", { count: blockerCount })}
-                  </span>
-                ) : null}
-                {stateNext ? (
-                  <span
-                    className={classNames("text-[11px] truncate", "text-[var(--color-text-tertiary)]")}
-                    title={stateNext}
+              {statusTone.strongPulse && (
+                <span className="absolute inset-[-7px] rounded-full border border-emerald-300/35 animate-ping motion-reduce:animate-none [animation-duration:1.6s]" />
+              )}
+            </span>
+
+            <div className="flex min-w-0 items-start gap-4">
+              <div className="min-w-0 shrink-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="min-w-0 truncate font-semibold text-[var(--color-text-primary)]">{actor.title || actor.id}</span>
+                  {actor.role === "foreman" && (
+                    <span className="rounded-md border border-amber-500/25 bg-amber-500/12 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                      {t('foreman')}
+                    </span>
+                  )}
+                </div>
+                <div className={classNames("mt-0.5 text-xs truncate", "text-[var(--color-text-tertiary)]")}>
+                  {rtInfo?.label || t('custom')} • {runtimeStatusText}
+                  {isHeadless && ` • ${t('headless')}`}
+                </div>
+                {/* Mobile-only: condensed single-line agent state */}
+                <div
+                  className={classNames(
+                    "sm:hidden mt-1 text-[11px] truncate leading-tight",
+                    stateHeadline !== t('noAgentStateYet')
+                      ? "text-[var(--color-text-secondary)]"
+                      : "text-[var(--color-text-muted)] italic"
+                  )}
+                  title={stateHeadline}
+                >
+                  {stateHeadline}
+                </div>
+              </div>
+
+              <div
+                className={classNames(
+                  "hidden sm:flex min-w-0 flex-1 items-start gap-3 rounded-2xl border px-4 py-3 shadow-sm backdrop-blur-sm",
+                  isDark
+                    ? "max-w-[min(760px,58vw)] border-white/10 bg-white/[0.04]"
+                    : "max-w-[min(760px,58vw)] border-black/8 bg-white/90"
+                )}
+                aria-label={t('agentState')}
+              >
+                <div className="min-w-0 flex-1">
+                  <div
+                    className={classNames(
+                      "min-w-0 text-sm font-medium leading-6",
+                      stateHeadline !== t('noAgentStateYet')
+                        ? "text-[var(--color-text-primary)]"
+                        : isDark
+                          ? "text-slate-500 italic"
+                          : "text-gray-500 italic"
+                    )}
+                    style={statusClamp2Style}
+                    title={
+                      agentState?.updated_at
+                        ? `${stateHeadline}\nUpdated: ${formatFullTime(agentState.updated_at)}`
+                        : stateHeadline
+                    }
                   >
-                    {t("nextShort", { value: stateNext })}
-                  </span>
+                    <span>{stateHeadline}</span>
+                  </div>
+                  {(stateTask || blockerCount > 0 || stateNext) ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {stateTask ? (
+                        <span className={classNames("rounded-full bg-[var(--glass-tab-bg)] px-2.5 py-1 text-[11px] text-[var(--color-text-secondary)]")}>
+                          {t("taskShort", { id: stateTask })}
+                        </span>
+                      ) : null}
+                      {blockerCount > 0 ? (
+                        <span className={classNames("rounded-full bg-rose-500/15 px-2.5 py-1 text-[11px] text-rose-600 dark:text-rose-300")}>
+                          {t("blockersShort", { count: blockerCount })}
+                        </span>
+                      ) : null}
+                      {stateNext ? (
+                        <span
+                          className={classNames("truncate text-[11px]", "text-[var(--color-text-tertiary)]")}
+                          title={stateNext}
+                        >
+                          {t("nextShort", { value: stateNext })}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                {agentState?.updated_at ? (
+                  <div className="shrink-0 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-2.5 py-1 text-[10px] font-medium text-[var(--color-text-tertiary)]">
+                    {formatTime(agentState.updated_at)}
+                  </div>
                 ) : null}
               </div>
-            ) : null}
+            </div>
           </div>
+
         </div>
       </div>
 
@@ -813,20 +829,9 @@ export function AgentTab({
       {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}
       <div className={classNames("flex-1 min-h-0 relative", "bg-[var(--color-bg-secondary)]")} style={{ contain: 'layout', overflow: 'hidden' }}>
         {isHeadless ? (
-          <div className={classNames("flex h-full min-h-0 flex-col items-center p-8", "text-[var(--color-text-tertiary)]")}>
-            <div className="mb-4"><RocketIcon size={48} /></div>
-            <div className="text-lg font-medium mb-2">{t('headlessAgent')}</div>
-            <div className="text-sm text-center max-w-md">
-              {supportsStandardWebHeadlessRuntime(String(actor.runtime || "").trim())
-                ? t('headlessStreamDescription', { defaultValue: '该智能体以无终端模式运行。过程输出会显示在 runtime dock ticker 和 inspect 面板里；正式回复必须通过 message 工具发送。' })
-                : t('headlessDescription')}
-            </div>
-            {isRunning && (
-              <div className={classNames("mt-4 px-3 py-1.5 rounded text-sm", statusTone.badgeClass)}>
-                {t("statusWithValue", { value: runtimeStatusText })}
-              </div>
-            )}
-            <div className="mt-6 flex w-full max-w-3xl min-h-0 flex-1 flex-col">
+          <div className="flex h-full min-h-0 flex-col px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3">
+            <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 min-h-0 flex-1">
+              <div className="min-h-0 flex-1">
               <HeadlessLiveTrace
                 previewSessions={headlessPreviewSessions}
                 fallbackText={latestHeadlessText}
@@ -841,10 +846,10 @@ export function AgentTab({
                 isDark={isDark}
                 density="expanded"
                 className={classNames(
-                  "min-h-[220px] flex-1 overflow-y-auto rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-3.5 py-3 text-left",
-                  "text-[var(--color-text-secondary)]"
+                  "h-full min-h-[420px] overflow-y-auto text-left text-[var(--color-text-secondary)]"
                 )}
               />
+              </div>
             </div>
           </div>
         ) : isRunning ? (
@@ -923,7 +928,7 @@ export function AgentTab({
             "border-t select-none",
             "glass-header"
           )}
-          innerClassName="flex items-center gap-2 px-4 py-3"
+          innerClassName="flex items-center gap-2 px-4 py-3 sm:px-5"
           fadeWidth={20}
         >
           {isRunning ? (
@@ -931,10 +936,7 @@ export function AgentTab({
               <button
                 onClick={onQuit}
                 disabled={isBusy}
-                className={classNames(
-                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
-                )}
+                className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 aria-label={t('quitAgent')}
               >
                 <StopIcon size={16} />
@@ -943,10 +945,7 @@ export function AgentTab({
               <button
                 onClick={sendInterrupt}
                 disabled={connectionStatus !== 'connected'}
-                className={classNames(
-                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
-                )}
+                className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 title={t('sendInterruptTitle')}
                 aria-label={t('sendInterruptLabel')}
               >
@@ -955,10 +954,7 @@ export function AgentTab({
               <button
                 onClick={onRelaunch}
                 disabled={isBusy}
-                className={classNames(
-                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
-                )}
+                className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 aria-label={t('relaunchAgent')}
               >
                 <RefreshIcon size={16} />
@@ -967,10 +963,7 @@ export function AgentTab({
               <button
                 onClick={onEdit}
                 disabled={isBusy}
-                className={classNames(
-                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
-                )}
+                className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 aria-label={t('editAgentConfig')}
               >
                 <EditIcon size={16} />
@@ -982,7 +975,7 @@ export function AgentTab({
               <button
                 onClick={onLaunch}
                 disabled={isBusy}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap"
+                className={`${primaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 aria-label={t('launchAgentLabel')}
               >
                 <PlayIcon size={16} />
@@ -991,10 +984,7 @@ export function AgentTab({
               <button
                 onClick={onEdit}
                 disabled={isBusy}
-                className={classNames(
-                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors",
-                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
-                )}
+                className={ghostActionButtonClass}
                 aria-label={t('editAgentConfig')}
               >
                 <EditIcon size={16} /> {t('common:edit')}
@@ -1004,14 +994,14 @@ export function AgentTab({
           <button
             onClick={onInbox}
             className={classNames(
-              "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
+              "ml-auto flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap border",
               unreadCount > 0
                 ? isDark
-                  ? "bg-indigo-500/10 text-indigo-200 border border-indigo-500/20 hover:bg-indigo-500/15"
-                  : "bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                  ? "border-white/12 bg-white/[0.08] text-white hover:bg-white/[0.12]"
+                  : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] hover:bg-white"
                 : isDark
-                  ? "bg-slate-800 hover:bg-slate-700 text-slate-200"
-                  : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                  ? "border-white/10 bg-white/[0.06] hover:bg-white/[0.1] text-white"
+                  : "border-black/10 bg-white hover:bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"
             )}
             aria-label={`${t('openInbox')}${unreadCount > 0 ? t('unreadMessages', { count: unreadCount }) : ""}`}
           >
@@ -1020,8 +1010,8 @@ export function AgentTab({
             {unreadCount > 0 && (
               <span
                 className={classNames(
-                  "text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold tracking-tight shadow-sm",
-                  "bg-indigo-500"
+                  "text-[10px] px-1.5 py-0.5 rounded-full font-semibold tracking-tight shadow-sm",
+                  isDark ? "bg-white text-[rgb(20,20,22)]" : "bg-[rgb(35,36,37)] text-white"
                 )}
                 aria-hidden="true"
               >
@@ -1033,8 +1023,8 @@ export function AgentTab({
             onClick={onRemove}
             disabled={isBusy || isRunning}
             className={classNames(
-              "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-              "hover:bg-rose-500/10 text-rose-600 dark:text-rose-400"
+              "flex items-center gap-1.5 rounded-xl px-3 py-2.5 text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
+              "text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
             )}
             title={isRunning ? t('stopBeforeRemoving') : t('removeAgent')}
             aria-label={t('removeAgent')}

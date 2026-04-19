@@ -856,8 +856,8 @@ export function ContextModal({
   const viewButtonClass = (active: boolean) => classNames(
     "rounded-xl px-3 py-2 text-sm font-medium transition-colors",
     active
-      ? "bg-[var(--glass-accent-bg)] text-[var(--color-accent-primary)]"
-      : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+      ? "border border-black/10 bg-[rgb(35,36,37)] text-white shadow-[0_10px_24px_-20px_rgba(15,23,42,0.34)] dark:border-white/12 dark:bg-white dark:text-[rgb(20,20,22)]"
+      : "text-[var(--color-text-secondary)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
   );
 
   return (
@@ -871,12 +871,26 @@ export function ContextModal({
         panelClassName="h-full w-full overflow-hidden rounded-none sm:h-[94vh] sm:max-w-[96vw]"
         modalRef={modalRef}
       >
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          className={classNames(
+            "min-h-0 flex-1 overflow-y-auto",
+            isDark
+              ? "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_34%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))]"
+              : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_30%),linear-gradient(180deg,rgb(251,250,247),rgb(245,244,241))]"
+          )}
+        >
           <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
             {syncError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{syncError}</div> : null}
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className={classNames("inline-flex w-fit rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
+              <div
+                className={classNames(
+                  "inline-flex w-fit rounded-[22px] border p-1.5 shadow-[0_14px_40px_-28px_rgba(15,23,42,0.18)]",
+                  isDark
+                    ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.92),rgba(14,15,19,0.96))]"
+                    : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,246,242,0.94))]"
+                )}
+              >
                 <button type="button" onClick={() => handleSwitchActiveView("coordination")} className={viewButtonClass(activeView === "coordination")}>{tr("context.coordination", "Coordination")}</button>
                 <button type="button" onClick={() => handleSwitchActiveView("agents")} className={viewButtonClass(activeView === "agents")}>{tr("context.agents", "Agents")}</button>
                 <button type="button" onClick={() => handleSwitchActiveView("self_evolving_skills")} className={viewButtonClass(activeView === "self_evolving_skills")}>{tr("context.selfEvolvingSkillsTab", "Self-Evolving Skills")}</button>
@@ -976,35 +990,37 @@ export function ContextModal({
               <div className="absolute inset-0 glass-overlay" onPointerDown={closeTaskEditor} />
               <div className="absolute inset-y-0 right-0 flex w-full justify-end">
                 <div className="h-full w-full sm:w-[min(860px,calc(100vw-1.5rem))]">
-                  <div className="h-full overflow-y-auto border-l border-[var(--glass-border-subtle)] shadow-2xl glass-modal">
+                  <div className="flex h-full flex-col border-l border-[var(--glass-border-subtle)] shadow-2xl glass-modal">
                     <div className="sr-only" id="context-task-drawer-title">
                       {taskEditorMode === "create" ? tr("context.newTask", "New task") : tr("context.taskDetails", "Task editor")}
                     </div>
-                    <TaskEditorPanel
-                      tr={tr}
-                      ui={ui}
-                      taskEditorMode={taskEditorMode}
-                      taskDraft={taskDraft}
-                      hasTaskUnsaved={hasTaskUnsaved}
-                      syncBusy={syncBusy}
-                      selectedTask={selectedTask}
-                      selectedTaskDeleteInfo={selectedTaskDeleteInfo}
-                      selectedTaskDeleteHint={selectedTaskDeleteHint}
-                      taskWorkflowCoverage={taskWorkflowCoverage}
-                      taskTypeId={taskDraft?.taskType || "standard"}
-                      selectedTaskType={selectedTaskType}
-                      setTaskDraft={setTaskDraft}
-                      onTaskTypeChange={(nextTaskTypeId) => setTaskDraft((prev) => (prev ? {
-                        ...prev,
-                        taskType: nextTaskTypeId,
-                      } : prev))}
-                      onResetTask={handleResetTask}
-                      onClose={closeTaskEditor}
-                      onDeleteSelectedTask={() => {
-                        if (selectedTask) void handleDeleteTask(selectedTask);
-                      }}
-                      onSaveTask={() => void handleSaveTask()}
-                    />
+                    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+                      <TaskEditorPanel
+                        tr={tr}
+                        ui={ui}
+                        taskEditorMode={taskEditorMode}
+                        taskDraft={taskDraft}
+                        hasTaskUnsaved={hasTaskUnsaved}
+                        syncBusy={syncBusy}
+                        selectedTask={selectedTask}
+                        selectedTaskDeleteInfo={selectedTaskDeleteInfo}
+                        selectedTaskDeleteHint={selectedTaskDeleteHint}
+                        taskWorkflowCoverage={taskWorkflowCoverage}
+                        taskTypeId={taskDraft?.taskType || "standard"}
+                        selectedTaskType={selectedTaskType}
+                        setTaskDraft={setTaskDraft}
+                        onTaskTypeChange={(nextTaskTypeId) => setTaskDraft((prev) => (prev ? {
+                          ...prev,
+                          taskType: nextTaskTypeId,
+                        } : prev))}
+                        onResetTask={handleResetTask}
+                        onClose={closeTaskEditor}
+                        onDeleteSelectedTask={() => {
+                          if (selectedTask) void handleDeleteTask(selectedTask);
+                        }}
+                        onSaveTask={() => void handleSaveTask()}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

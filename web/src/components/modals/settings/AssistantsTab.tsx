@@ -8,13 +8,18 @@ import type { AssistantStateResult, BuiltinAssistant } from "../../../types";
 import { parseHelpMarkdown, updatePetHelpNote, updateVoiceSecretaryHelpNote } from "../../../utils/helpMarkdown";
 import { getDefaultPetPersonaSeed } from "../../../utils/rolePresets";
 import {
-  cardClass,
   inputClass,
   labelClass,
   primaryButtonClass,
   secondaryButtonClass,
   settingsDialogBodyClass,
   settingsDialogPanelClass,
+  settingsWorkspaceActionBarClass,
+  settingsWorkspaceBodyClass,
+  settingsWorkspaceHeaderClass,
+  settingsWorkspacePanelClass,
+  settingsWorkspaceShellClass,
+  settingsWorkspaceSoftPanelClass,
 } from "./types";
 
 interface AssistantsTabProps {
@@ -99,7 +104,7 @@ function StatusPill({ children, tone }: { children: React.ReactNode; tone: "on" 
       ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
       : tone === "off"
         ? "bg-slate-500/12 text-[var(--color-text-muted)]"
-        : "bg-blue-500/12 text-blue-700 dark:text-blue-300";
+        : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white";
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ${classes}`}>
       {children}
@@ -153,16 +158,18 @@ function AssistantSwitch({
 }
 
 function SettingsBlock({
+  isDark,
   title,
   hint,
   children,
 }: {
+  isDark: boolean;
   title: string;
   hint?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-4">
+    <section className={settingsWorkspacePanelClass(isDark)}>
       <div>
         <div className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</div>
         {hint ? <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">{hint}</p> : null}
@@ -216,15 +223,13 @@ function AssistantPromptEditor({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className={`rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3 ${
-      expanded ? "flex h-full min-h-0 flex-col" : ""
-    }`}>
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <div className={`${expanded ? "flex h-full min-h-0 flex-col" : settingsWorkspaceShellClass(isDark)}`}>
+      <div className={expanded ? "flex flex-wrap items-start justify-between gap-2" : settingsWorkspaceHeaderClass(isDark)}>
         <div className="min-w-0">
           <div className="text-sm font-medium text-[var(--color-text-primary)]">{title}</div>
           <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">{hint}</p>
           {path ? (
-            <p className="mt-1 break-all font-mono text-[11px] leading-5 text-[var(--color-text-muted)]">{path}</p>
+            <p className="mt-2 break-all font-mono text-[11px] leading-5 text-[var(--color-text-muted)]">{path}</p>
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -239,28 +244,35 @@ function AssistantPromptEditor({
         </div>
       </div>
 
-      {error ? (
-        <div className="mt-3 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-          {error}
-        </div>
-      ) : null}
-      {notice ? (
-        <div className="mt-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
-          {notice}
-        </div>
-      ) : null}
+      <div className={`${expanded ? "mt-3 min-h-0 flex flex-1 flex-col" : settingsWorkspaceBodyClass}`}>
+        {error ? (
+          <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+            {error}
+          </div>
+        ) : null}
+        {notice ? (
+          <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
+            {notice}
+          </div>
+        ) : null}
 
-      <textarea
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={busy}
-        placeholder={placeholder}
-        className={`${inputClass(isDark)} mt-3 resize-y font-mono text-[12px] leading-6 ${
-          expanded ? "min-h-[560px] flex-1" : "min-h-[28rem] lg:min-h-[32rem]"
-        }`}
-        spellCheck={false}
-      />
-      <div className="mt-3 flex flex-wrap justify-end gap-2">
+        <div className={`${settingsWorkspaceSoftPanelClass(isDark)} ${
+          expanded ? "min-h-0 flex flex-1 flex-col" : ""
+        }`}>
+          <textarea
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            disabled={busy}
+            placeholder={placeholder}
+            className={`${inputClass(isDark)} resize-y font-mono text-[12px] leading-6 ${
+              expanded ? "min-h-[560px] flex-1" : "min-h-[28rem] lg:min-h-[32rem]"
+            }`}
+            spellCheck={false}
+          />
+        </div>
+      </div>
+
+      <div className={expanded ? "mt-3 flex flex-wrap justify-end gap-2" : settingsWorkspaceActionBarClass(isDark)}>
         <button type="button" onClick={onDiscard} disabled={busy || !hasUnsaved} className={secondaryButtonClass("sm")}>
           {discardLabel}
         </button>
@@ -677,210 +689,219 @@ export function AssistantsTab({
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("assistants.title")}</h3>
-          <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--color-text-muted)]">
-            {t("assistants.description")}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            void loadAssistants();
-            void loadAssistantGuidance({ force: true });
-          }}
-          disabled={loadBusy || assistantPromptBusy}
-          className={secondaryButtonClass("sm")}
-        >
-          {loadBusy || assistantPromptBusy ? t("assistants.refreshing") : t("assistants.refresh")}
-        </button>
-      </div>
-
-      {error ? (
-        <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-          {error}
-        </div>
-      ) : null}
-      {notice ? (
-        <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
-          {notice}
-        </div>
-      ) : null}
-
-      <div className={`${cardClass(isDark)} space-y-5`}>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("assistants.voiceTitle")}</h4>
-              <StatusPill tone={voiceEnabledTone}>{voiceEnabled ? t("assistants.enabled") : t("assistants.disabled")}</StatusPill>
-            </div>
+      <div className={settingsWorkspaceShellClass(isDark)}>
+        <div className={settingsWorkspaceHeaderClass(isDark)}>
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("assistants.title")}</h3>
             <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--color-text-muted)]">
-              {t("assistants.voiceDescription")}
+              {t("assistants.description")}
             </p>
           </div>
-          <AssistantSwitch
-            checked={voiceEnabled}
-            disabled={busy || voiceSaveBusy}
-            label={t("assistants.groupSwitch")}
-            onChange={(checked) => void toggleVoiceEnabled(checked)}
-          />
+          <button
+            type="button"
+            onClick={() => {
+              void loadAssistants();
+              void loadAssistantGuidance({ force: true });
+            }}
+            disabled={loadBusy || assistantPromptBusy}
+            className={secondaryButtonClass("sm")}
+          >
+            {loadBusy || assistantPromptBusy ? t("assistants.refreshing") : t("assistants.refresh")}
+          </button>
         </div>
 
-        <SettingsBlock title={t("assistants.voiceRecognitionTitle")} hint={t("assistants.voiceRecognitionHint")}>
-          <div className="grid gap-4 md:grid-cols-1">
-            <div>
-              <label className={labelClass(isDark)}>{t("assistants.recognitionBackend")}</label>
-              <select
-                value={recognitionBackend}
-                onChange={(event) => setRecognitionBackend(event.target.value)}
-                className={`${inputClass(isDark)} cursor-pointer`}
-              >
-                {backendOptions.map((backend) => (
-                  <option key={backend} value={backend} disabled={!backendSelectable(backend)}>
-                    {backendLabel(backend)}
-                  </option>
-                ))}
-              </select>
-              {currentBackendUnavailable ? (
-                <p className="mt-1 text-[11px] leading-5 text-amber-700 dark:text-amber-300">
-                  {t("assistants.recognitionBackendUnavailable")}
-                </p>
-              ) : null}
-              <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                {t("assistants.recognitionBackendHint")}
-              </p>
+        <div className={settingsWorkspaceBodyClass}>
+          {error ? (
+            <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+              {error}
             </div>
-
-          </div>
-
-          <div className="mt-4 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] p-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-[var(--color-text-primary)]">
-                  {t("assistants.transcriptBatchingTitle")}
-                </div>
-                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  {t("assistants.transcriptBatchingHint")}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void resetVoiceBatching()}
-                disabled={busy || voiceSaveBusy}
-                className={secondaryButtonClass("sm")}
-              >
-                {t("assistants.resetTranscriptBatching")}
-              </button>
-            </div>
-            <div className="mt-3 grid gap-4 md:grid-cols-2">
-              <div>
-                <label className={labelClass(isDark)}>{t("assistants.transcriptQuietWindow")}</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={VOICE_MIN_QUIET_SECONDS}
-                    max={VOICE_MAX_QUIET_SECONDS}
-                    step={1}
-                    value={voiceQuietWindowSeconds}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      if (Number.isFinite(value)) setVoiceQuietWindowSeconds(value);
-                    }}
-                    className={inputClass(isDark)}
-                  />
-                  <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
-                    {t("assistants.secondsUnit")}
-                  </span>
-                </div>
-                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  {t("assistants.transcriptQuietWindowHint")}
-                </p>
-              </div>
-              <div>
-                <label className={labelClass(isDark)}>{t("assistants.transcriptMaxWindow")}</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={VOICE_MIN_MAX_WINDOW_SECONDS}
-                    max={VOICE_MAX_MAX_WINDOW_SECONDS}
-                    step={1}
-                    value={voiceMaxWindowSeconds}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      if (Number.isFinite(value)) setVoiceMaxWindowSeconds(value);
-                    }}
-                    className={inputClass(isDark)}
-                  />
-                  <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
-                    {t("assistants.secondsUnit")}
-                  </span>
-                </div>
-                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  {t("assistants.transcriptMaxWindowHint")}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {showServiceAsrDiagnostic ? (
-            <div className="mt-4 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--color-text-muted)]">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-medium text-[var(--color-text-secondary)]">{t("assistants.serviceAsrStatus")}</div>
-                <StatusPill tone={serviceTone}>
-                  {t("assistants.serviceAsrStatusValue", { status: serviceStatus || "not_started" })}
-                </StatusPill>
-              </div>
-              <div className="mt-1">
-                {asrCommandConfigured
-                  ? t("assistants.serviceAsrConfigured")
-                  : t("assistants.serviceAsrMissingCommand")}
-              </div>
-              {serviceLastErrorMessage ? (
-                <div className="mt-1 text-rose-700 dark:text-rose-300">
-                  {t("assistants.serviceAsrLastError", { message: serviceLastErrorMessage })}
-                </div>
-              ) : null}
+          ) : null}
+          {notice ? (
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
+              {notice}
             </div>
           ) : null}
 
-          <div className="mt-4 flex justify-end">
-            <button
-              type="button"
-              onClick={() => void saveVoiceSettings()}
-              disabled={busy || voiceSaveBusy}
-              className={primaryButtonClass(voiceSaveBusy)}
-            >
-              {voiceSaveBusy ? t("common:saving") : t("assistants.saveVoiceRecognition")}
-            </button>
-          </div>
-        </SettingsBlock>
+          <div className="space-y-5">
+            <div className={settingsWorkspacePanelClass(isDark)}>
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("assistants.voiceTitle")}</h4>
+                    <StatusPill tone={voiceEnabledTone}>{voiceEnabled ? t("assistants.enabled") : t("assistants.disabled")}</StatusPill>
+                  </div>
+                  <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--color-text-muted)]">
+                    {t("assistants.voiceDescription")}
+                  </p>
+                </div>
+                <AssistantSwitch
+                  checked={voiceEnabled}
+                  disabled={busy || voiceSaveBusy}
+                  label={t("assistants.groupSwitch")}
+                  onChange={(checked) => void toggleVoiceEnabled(checked)}
+                />
+              </div>
 
-        {renderVoiceGuidanceEditor()}
-      </div>
+              <div className="mt-5 space-y-5">
+                <SettingsBlock isDark={isDark} title={t("assistants.voiceRecognitionTitle")} hint={t("assistants.voiceRecognitionHint")}>
+                  <div className="grid gap-4 md:grid-cols-1">
+                    <div>
+                      <label className={labelClass(isDark)}>{t("assistants.recognitionBackend")}</label>
+                      <select
+                        value={recognitionBackend}
+                        onChange={(event) => setRecognitionBackend(event.target.value)}
+                        className={`${inputClass(isDark)} cursor-pointer`}
+                      >
+                        {backendOptions.map((backend) => (
+                          <option key={backend} value={backend} disabled={!backendSelectable(backend)}>
+                            {backendLabel(backend)}
+                          </option>
+                        ))}
+                      </select>
+                      {currentBackendUnavailable ? (
+                        <p className="mt-1 text-[11px] leading-5 text-amber-700 dark:text-amber-300">
+                          {t("assistants.recognitionBackendUnavailable")}
+                        </p>
+                      ) : null}
+                      <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                        {t("assistants.recognitionBackendHint")}
+                      </p>
+                    </div>
+                  </div>
 
-      <div className={`${cardClass(isDark)} space-y-5`}>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("assistants.petTitle")}</h4>
-              <StatusPill tone={effectivePetEnabled ? "on" : "off"}>
-                {effectivePetEnabled ? t("assistants.enabled") : t("assistants.disabled")}
-              </StatusPill>
+                  <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-[var(--color-text-primary)]">
+                          {t("assistants.transcriptBatchingTitle")}
+                        </div>
+                        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                          {t("assistants.transcriptBatchingHint")}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void resetVoiceBatching()}
+                        disabled={busy || voiceSaveBusy}
+                        className={secondaryButtonClass("sm")}
+                      >
+                        {t("assistants.resetTranscriptBatching")}
+                      </button>
+                    </div>
+                    <div className="mt-3 grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className={labelClass(isDark)}>{t("assistants.transcriptQuietWindow")}</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={VOICE_MIN_QUIET_SECONDS}
+                            max={VOICE_MAX_QUIET_SECONDS}
+                            step={1}
+                            value={voiceQuietWindowSeconds}
+                            onChange={(event) => {
+                              const value = Number(event.target.value);
+                              if (Number.isFinite(value)) setVoiceQuietWindowSeconds(value);
+                            }}
+                            className={inputClass(isDark)}
+                          />
+                          <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
+                            {t("assistants.secondsUnit")}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                          {t("assistants.transcriptQuietWindowHint")}
+                        </p>
+                      </div>
+                      <div>
+                        <label className={labelClass(isDark)}>{t("assistants.transcriptMaxWindow")}</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={VOICE_MIN_MAX_WINDOW_SECONDS}
+                            max={VOICE_MAX_MAX_WINDOW_SECONDS}
+                            step={1}
+                            value={voiceMaxWindowSeconds}
+                            onChange={(event) => {
+                              const value = Number(event.target.value);
+                              if (Number.isFinite(value)) setVoiceMaxWindowSeconds(value);
+                            }}
+                            className={inputClass(isDark)}
+                          />
+                          <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
+                            {t("assistants.secondsUnit")}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                          {t("assistants.transcriptMaxWindowHint")}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {showServiceAsrDiagnostic ? (
+                    <div className="mt-4 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-medium text-[var(--color-text-secondary)]">{t("assistants.serviceAsrStatus")}</div>
+                        <StatusPill tone={serviceTone}>
+                          {t("assistants.serviceAsrStatusValue", { status: serviceStatus || "not_started" })}
+                        </StatusPill>
+                      </div>
+                      <div className="mt-1">
+                        {asrCommandConfigured
+                          ? t("assistants.serviceAsrConfigured")
+                          : t("assistants.serviceAsrMissingCommand")}
+                      </div>
+                      {serviceLastErrorMessage ? (
+                        <div className="mt-1 text-rose-700 dark:text-rose-300">
+                          {t("assistants.serviceAsrLastError", { message: serviceLastErrorMessage })}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => void saveVoiceSettings()}
+                      disabled={busy || voiceSaveBusy}
+                      className={primaryButtonClass(voiceSaveBusy)}
+                    >
+                      {voiceSaveBusy ? t("common:saving") : t("assistants.saveVoiceRecognition")}
+                    </button>
+                  </div>
+                </SettingsBlock>
+
+                {renderVoiceGuidanceEditor()}
+              </div>
             </div>
-            <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--color-text-muted)]">
-              {t("assistants.petDescription")}
-            </p>
-          </div>
-          <AssistantSwitch
-            checked={effectivePetEnabled}
-            disabled={busy || petSaveBusy || !onUpdatePetEnabled}
-            label={t("assistants.groupSwitch")}
-            onChange={(checked) => void togglePet(checked)}
-          />
-        </div>
 
-        {renderPetPersonaEditor()}
+            <div className={settingsWorkspacePanelClass(isDark)}>
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("assistants.petTitle")}</h4>
+                    <StatusPill tone={effectivePetEnabled ? "on" : "off"}>
+                      {effectivePetEnabled ? t("assistants.enabled") : t("assistants.disabled")}
+                    </StatusPill>
+                  </div>
+                  <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--color-text-muted)]">
+                    {t("assistants.petDescription")}
+                  </p>
+                </div>
+                <AssistantSwitch
+                  checked={effectivePetEnabled}
+                  disabled={busy || petSaveBusy || !onUpdatePetEnabled}
+                  label={t("assistants.groupSwitch")}
+                  onChange={(checked) => void togglePet(checked)}
+                />
+              </div>
+
+              <div className="mt-5">
+                {renderPetPersonaEditor()}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {expandedPromptBlock && typeof document !== "undefined"

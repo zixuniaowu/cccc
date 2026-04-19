@@ -252,7 +252,6 @@ describe("runtimeDockItems", () => {
       ["activity", "Reviewer", "Preparing response"],
       ["message", "Coder", "I found the ticker data source issue."],
       ["activity", "Coder", "Inspected RuntimeDock"],
-      ["message", "Coder", "Reading the current dock implementation."],
     ]);
     expect(buildRuntimeDockTickerEntries(items, 2).map((entry) => [entry.actorLabel, entry.text])).toEqual([
       ["Reviewer", "Preparing response"],
@@ -392,8 +391,43 @@ describe("runtimeDockItems", () => {
     expect(entries[0]).toMatchObject({
       kind: "message",
       text: longText,
-      sourceId: "message:active:pending-active:long",
+      sourceId: "message:active:pending-active",
     });
+  });
+
+  it("keeps only the newest transcript block for one preview session", () => {
+    const items: RuntimeDockItem[] = [
+      makeRuntimeDockItem({
+        actorId: "active",
+        actorLabel: "Active",
+        liveWorkCard: makeLiveWorkCard({
+          actorId: "active",
+          actorLabel: "Active",
+          phase: "streaming",
+          previewBlocks: [
+            makeMessageBlock({
+              id: "fragment-1",
+              text: "项目总监：，",
+              updatedAt: "2025-01-02T12:00:00Z",
+            }),
+            makeMessageBlock({
+              id: "fragment-2",
+              text: "项目总监：不能把整段历史消息都做字符级动画。",
+              updatedAt: "2025-01-02T12:00:01Z",
+            }),
+          ],
+        }),
+      }),
+    ];
+
+    expect(buildRuntimeDockTickerEntries(items)).toMatchObject([
+      {
+        kind: "message",
+        actorId: "active",
+        text: "项目总监：不能把整段历史消息都做字符级动画。",
+        sourceId: "message:active:pending-active",
+      },
+    ]);
   });
 
   it("splits long streaming message deltas without summarizing them", () => {
@@ -684,7 +718,7 @@ describe("runtimeDockItems", () => {
     ]);
   });
 
-  it("maps runtime dock ring tone from coarse actor state for both headless and PTY actors", () => {
+  it("maps runtime dock ring tone from the collapsed active/stopped/attention contract", () => {
     const failedItem = makeRuntimeDockItem({
       actorId: "failed",
       actorLabel: "Failed",
@@ -732,13 +766,13 @@ describe("runtimeDockItems", () => {
 
     expect(getRuntimeRingTone(failedItem, false, "idle")).toBe("attention");
     expect(getRuntimeRingTone(pendingItem, false, "idle")).toBe("stopped");
-    expect(getRuntimeRingTone(pendingItem, true, "idle")).toBe("queued");
+    expect(getRuntimeRingTone(pendingItem, true, "idle")).toBe("stopped");
     expect(getRuntimeRingTone(streamingFinalAnswerItem, true, "working")).toBe("active");
-    expect(getRuntimeRingTone(completedFinalAnswerItem, true, "idle")).toBe("ready");
+    expect(getRuntimeRingTone(completedFinalAnswerItem, true, "idle")).toBe("stopped");
     expect(getRuntimeRingTone(ptyItem, true, "working")).toBe("active");
     expect(getRuntimeRingTone(ptyItem, true, "waiting")).toBe("active");
     expect(getRuntimeRingTone(ptyItem, true, "stuck")).toBe("attention");
-    expect(getRuntimeRingTone(ptyItem, true, "idle")).toBe("ready");
+    expect(getRuntimeRingTone(ptyItem, true, "idle")).toBe("stopped");
     expect(getRuntimeRingTone(ptyItem, false, "working")).toBe("stopped");
   });
 });

@@ -38,6 +38,7 @@ from .voice_secretary_runtime_ops import (
     sync_voice_secretary_actor_from_foreman,
     voice_secretary_runtime_changed,
 )
+from .voice_prompt_refine import build_voice_prompt_refine_input_text
 from .voice_service_runtime import (
     VoiceServiceRuntimeError,
     read_voice_service_state,
@@ -3244,62 +3245,44 @@ def handle_assistant_voice_document_save(args: Dict[str, Any]) -> DaemonResponse
         return _error("assistant_voice_document_save_failed", str(exc))
 
 
-def _voice_composer_context_lines(value: Any) -> list[str]:
-    context = value if isinstance(value, dict) else {}
-    lines: list[str] = []
-    recipients = context.get("recipients")
-    if isinstance(recipients, list):
-        clean_recipients = [str(item).strip() for item in recipients if str(item).strip()]
-        if clean_recipients:
-            lines.append(f"Recipients: {', '.join(clean_recipients[:12])}")
-    else:
-        recipient_text = str(context.get("recipients") or "").strip()
-        if recipient_text:
-            lines.append(f"Recipients: {recipient_text[:240]}")
-    for label, key in (
-        ("Message mode", "message_mode"),
-        ("Priority", "priority"),
-        ("Reply required", "reply_required"),
-        ("Reply target", "reply_target"),
-        ("Quoted reference", "quoted_reference"),
-    ):
-        raw = context.get(key)
-        if raw in (None, "", []):
-            continue
-        lines.append(f"{label}: {str(raw)[:240]}")
-    return lines
-
-
-def _voice_prompt_refine_input_text(
+def _wake_voice_secretary_actor_if_needed(
+    group: Group,
     *,
-    composer_text: str,
-    voice_transcript: str,
-    operation: str,
-    composer_context: Any,
-) -> str:
-    parts = [
-        "Task: refine the user's chat composer prompt.",
-        f"Operation: {operation or 'replace_with_refined_prompt'}",
-    ]
-    context_lines = _voice_composer_context_lines(composer_context)
-    if context_lines:
-        parts.extend(["", "Composer context:", *context_lines])
-    parts.extend(
-        [
-            "",
-            "Current composer draft:",
-            composer_text or "(empty)",
-            "",
-            "Spoken input:",
-            voice_transcript,
-            "",
-            "Return a ready-to-send prompt. Preserve the user's intent, make it clear and actionable, and do not send it as chat.",
-        ]
+    by: str,
+    args: Dict[str, Any],
+    effective_runner_kind: Optional[Callable[[str], str]],
+    start_actor_process: Optional[Callable[..., dict[str, Any]]],
+) -> bool:
+    if effective_runner_kind is None or start_actor_process is None:
+        return False
+    actor = get_voice_secretary_actor(group)
+    if not isinstance(actor, dict):
+        return False
+    if is_voice_secretary_actor_running(group, actor=actor, effective_runner_kind=effective_runner_kind):
+        return False
+    start_result = start_actor_process(
+        group,
+        VOICE_SECRETARY_ACTOR_ID,
+        command=list(actor.get("command") or []),
+        env=dict(actor.get("env") or {}),
+        runner=str(actor.get("runner") or "pty"),
+        runtime=str(actor.get("runtime") or "codex"),
+        by=by,
+        caller_id=str(args.get("caller_id") or "").strip(),
+        is_admin=coerce_bool(args.get("is_admin"), default=False),
     )
-    return _clean_multiline_text("\n".join(parts), max_len=_MAX_PROMPT_REFINE_CHARS)
+    if not bool(start_result.get("success")):
+        start_error = str(start_result.get("error") or "").strip()
+        raise RuntimeError(f"failed to start voice secretary actor: {start_error or 'unknown error'}")
+    return True
 
 
-def handle_assistant_voice_input_append(args: Dict[str, Any]) -> DaemonResponse:
+def handle_assistant_voice_input_append(
+    args: Dict[str, Any],
+    *,
+    effective_runner_kind: Optional[Callable[[str], str]] = None,
+    start_actor_process: Optional[Callable[..., dict[str, Any]]] = None,
+) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "user").strip()
     input_kind = str(args.get("kind") or args.get("input_kind") or "").strip().lower()
@@ -3368,11 +3351,14 @@ def handle_assistant_voice_input_append(args: Dict[str, Any]) -> DaemonResponse:
             for item in (prompt_request.get("voice_transcripts") if isinstance(prompt_request.get("voice_transcripts"), list) else [])
             if str(item).strip()
         )
-        text = _voice_prompt_refine_input_text(
+        text = _clean_multiline_text(
+            build_voice_prompt_refine_input_text(
             composer_text=str(prompt_request.get("composer_text") or composer_text),
             voice_transcript=merged_voice_transcript or voice_transcript,
             operation=operation,
             composer_context=prompt_request.get("composer_context") if isinstance(prompt_request.get("composer_context"), dict) else composer_context,
+            ),
+            max_len=_MAX_PROMPT_REFINE_CHARS,
         )
         raw_trigger.setdefault("trigger_kind", "prompt_refine")
         raw_trigger.setdefault("mode", "prompt")
@@ -3410,6 +3396,13 @@ def handle_assistant_voice_input_append(args: Dict[str, Any]) -> DaemonResponse:
     raw_trigger.setdefault("language", language)
     raw_trigger.setdefault("instruction_policy", _voice_instruction_policy())
     try:
+        actor_woken = _wake_voice_secretary_actor_if_needed(
+            group,
+            by=by,
+            args=args,
+            effective_runner_kind=effective_runner_kind,
+            start_actor_process=start_actor_process,
+        )
         input_event = _append_voice_input_event(
             group,
             kind=event_kind,
@@ -3424,6 +3417,8 @@ def handle_assistant_voice_input_append(args: Dict[str, Any]) -> DaemonResponse:
             trigger=raw_trigger,
             metadata=metadata,
         )
+        if actor_woken:
+            _emit_voice_input_notify(group, reason="new_input")
         event = append_event(
             group.ledger_path,
             kind="assistant.voice.input",
@@ -3918,7 +3913,11 @@ def try_handle_assistant_op(
     if op == "assistant_voice_document_save":
         return handle_assistant_voice_document_save(args)
     if op == "assistant_voice_input_append":
-        return handle_assistant_voice_input_append(args)
+        return handle_assistant_voice_input_append(
+            args,
+            effective_runner_kind=effective_runner_kind,
+            start_actor_process=start_actor_process,
+        )
     if op == "assistant_voice_document_instruction":
         return handle_assistant_voice_document_instruction(args)
     if op == "assistant_voice_document_archive":

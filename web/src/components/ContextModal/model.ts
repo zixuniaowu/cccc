@@ -429,7 +429,7 @@ export function buildBoard(tasks: Task[], board: GroupContext["board"] | null | 
 
 export function statusTone(status: string): string {
   if (status === "active") return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30";
-  if (status === "done") return "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30";
+  if (status === "done") return "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white";
   if (status === "archived") return "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border-[var(--glass-border-subtle)]";
   return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30";
 }

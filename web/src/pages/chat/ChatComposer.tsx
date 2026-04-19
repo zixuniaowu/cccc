@@ -3,13 +3,12 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Actor, GroupMeta, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, PetIcon } from "../../components/Icons";
+import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
 import { VoiceSecretaryComposerControl, type VoiceSecretaryCaptureMode } from "./VoiceSecretaryComposerControl";
-import { updateSettings } from "../../services/api";
-import { useBuiltInAssistantStore, useGroupStore, useUIStore } from "../../stores";
+import { GroupCombobox } from "../../components/GroupCombobox";
 
 export interface ChatComposerProps {
   isDark: boolean;
@@ -61,134 +60,6 @@ export interface ChatComposerProps {
   onAppendRecipientToken: (token: string) => void;
 }
 
-function BuiltInAssistantsComposerPanel({
-  isDark,
-  selectedGroupId,
-  busy,
-  voiceCaptureMode,
-  onVoiceCaptureModeChange,
-  composerText,
-  composerContext,
-  onPromptDraft,
-}: {
-  isDark: boolean;
-  selectedGroupId: string;
-  busy: string;
-  voiceCaptureMode: VoiceSecretaryCaptureMode;
-  onVoiceCaptureModeChange: (mode: VoiceSecretaryCaptureMode) => void;
-  composerText: string;
-  composerContext: Record<string, unknown>;
-  onPromptDraft: (text: string, opts?: { mode?: "replace" | "append" }) => void;
-}) {
-  const { t } = useTranslation("chat");
-  const groupSettings = useGroupStore((state) => state.groupSettings);
-  const refreshSettings = useGroupStore((state) => state.refreshSettings);
-  const refreshInternalRuntimeActors = useGroupStore((state) => state.refreshInternalRuntimeActors);
-  const showError = useUIStore((state) => state.showError);
-  const showNotice = useUIStore((state) => state.showNotice);
-  const requestAssistantOpen = useBuiltInAssistantStore((state) => state.requestOpen);
-  const [petBusy, setPetBusy] = useState(false);
-  const petEnabled = Boolean(groupSettings?.desktop_pet_enabled);
-  const panelDisabled = !selectedGroupId || busy === "send";
-
-  useEffect(() => {
-    if (!selectedGroupId || groupSettings) return;
-    void refreshSettings(selectedGroupId);
-  }, [groupSettings, refreshSettings, selectedGroupId]);
-
-  const activatePet = useCallback(async () => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid || panelDisabled || petBusy) return;
-    if (petEnabled) {
-      requestAssistantOpen(gid, "pet");
-      return;
-    }
-    setPetBusy(true);
-    try {
-      const resp = await updateSettings(gid, { desktop_pet_enabled: true });
-      if (!resp.ok) {
-        showError(resp.error.message);
-        return;
-      }
-      await refreshSettings(gid);
-      await refreshInternalRuntimeActors(gid);
-      showNotice({
-        message: t("builtInAssistantPetEnabled", { defaultValue: "PET enabled for this group." }),
-      });
-      requestAssistantOpen(gid, "pet");
-    } catch {
-      showError(t("builtInAssistantPetToggleFailed", { defaultValue: "Failed to update PET." }));
-    } finally {
-      setPetBusy(false);
-    }
-  }, [
-    panelDisabled,
-    petBusy,
-    petEnabled,
-    refreshInternalRuntimeActors,
-    refreshSettings,
-    requestAssistantOpen,
-    selectedGroupId,
-    showError,
-    showNotice,
-    t,
-  ]);
-
-  const dotClass = (active: boolean) => classNames(
-    "h-1.5 w-1.5 rounded-full shrink-0 transition-colors",
-    active ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]" : isDark ? "bg-white/20" : "bg-gray-300",
-  );
-
-  const petLabel = t("builtInAssistantPetTitle", { defaultValue: "PET" });
-  const petButtonLabel = petEnabled
-    ? t("builtInAssistantPetOpen", { defaultValue: "Open PET" })
-    : t("builtInAssistantPetTurnOn", { defaultValue: "Turn PET on" });
-
-  return (
-    <aside
-      className={classNames(
-        "flex w-full items-center gap-1 px-2 pb-1.5 pt-0.5",
-      )}
-      aria-label={t("builtInAssistantsArea", { defaultValue: "Built-in assistants" })}
-    >
-      <button
-        type="button"
-        onClick={() => void activatePet()}
-        disabled={panelDisabled || petBusy}
-        className={classNames(
-          "relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-[background-color,border-color,color,box-shadow,transform] disabled:cursor-not-allowed disabled:opacity-50",
-          petEnabled
-            ? isDark
-              ? "border-amber-300/25 bg-amber-300/12 text-amber-100 hover:bg-amber-300/18"
-              : "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
-            : isDark
-              ? "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/[0.08] hover:text-slate-100"
-              : "border-black/10 bg-white text-gray-600 shadow-sm hover:bg-gray-50 hover:text-gray-900",
-          !panelDisabled && !petBusy && "active:scale-[0.97]",
-        )}
-        title={petButtonLabel}
-        aria-label={petButtonLabel}
-      >
-        <span className="sr-only">{petLabel}</span>
-        <PetIcon size={15} />
-        <span className={classNames("absolute right-1 top-1", dotClass(petEnabled))} aria-hidden="true" />
-      </button>
-
-      <VoiceSecretaryComposerControl
-        isDark={isDark}
-        selectedGroupId={selectedGroupId}
-        busy={busy}
-        disabled={panelDisabled}
-        variant="assistantRow"
-        captureMode={voiceCaptureMode}
-        onCaptureModeChange={onVoiceCaptureModeChange}
-        composerText={composerText}
-        composerContext={composerContext}
-        onPromptDraft={onPromptDraft}
-      />
-    </aside>
-  );
-}
 
 export function ChatComposer({
   isDark,
@@ -232,7 +103,7 @@ export function ChatComposer({
   const composerHeightRef = useRef(0);
   const isUserInputRef = useRef(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
-  const [voiceCaptureMode, setVoiceCaptureMode] = useState<VoiceSecretaryCaptureMode>("document");
+  const [voiceCaptureMode, setVoiceCaptureMode] = useState<VoiceSecretaryCaptureMode>("prompt");
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation('chat');
 
@@ -316,7 +187,12 @@ export function ChatComposer({
   }, [showModeMenu]);
 
   const chipBaseClass =
-    "flex-shrink-0 whitespace-nowrap text-[10px] sm:text-[11px] px-2.5 sm:px-3 rounded-full border transition-all flex items-center justify-center font-medium";
+    "flex h-6 flex-shrink-0 items-center justify-center whitespace-nowrap rounded-lg border px-2 text-[10px] font-medium leading-none transition-all sm:px-2.5 sm:text-[11px]";
+  const chipActiveClass =
+    "border-[var(--glass-tab-border-active)] bg-[var(--glass-tab-bg-active)] text-[var(--color-text-primary)] shadow-[var(--glass-tab-shadow-active)]";
+  const chipInactiveClass = isDark
+    ? "bg-white/[0.06] text-[var(--color-text-secondary)] border-white/[0.08] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
+    : "bg-black/[0.04] text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800";
 
   // Get display name for reply target
   const replyByDisplayName = useMemo(() => {
@@ -567,11 +443,16 @@ export function ChatComposer({
       return aId.localeCompare(bId);
     });
     return sorted.map((g) => {
-      const gid = String(g.group_id || "").trim();
+      const value = String(g.group_id || "").trim();
       const title = String(g.title || "").trim();
       const topic = String(g.topic || "").trim();
       const label = title || topic || t('untitledGroup');
-      return { gid, label };
+      return {
+        value,
+        label,
+        description: label !== value ? value : undefined,
+        keywords: [value, title, topic].filter(Boolean),
+      };
     });
   }, [groups, selectedGroupId, t]);
 
@@ -582,21 +463,10 @@ export function ChatComposer({
         : "bg-white text-gray-400 border-gray-200";
     }
     if (isCrossGroup) {
-      return isDark
-        ? "bg-blue-600/20 text-blue-100 border-blue-500/40 hover:border-blue-400/60"
-        : "bg-blue-50 text-blue-700 border-blue-200 hover:border-blue-300";
+      return chipActiveClass;
     }
-    // Match the neutral look of recipient buttons
-    return isDark
-      ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16]"
-      : "bg-black/5 text-gray-800 border-transparent hover:border-black/5";
-  }, [canChooseDestGroup, groupOptions.length, isCrossGroup, isDark]);
-
-  const groupCaretClass = useMemo(() => {
-    if (!canChooseDestGroup || groupOptions.length === 0) return isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-400";
-    if (isCrossGroup) return isDark ? "text-blue-200" : "text-blue-700";
-    return isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500";
-  }, [canChooseDestGroup, groupOptions.length, isCrossGroup, isDark]);
+    return chipInactiveClass;
+  }, [canChooseDestGroup, chipActiveClass, chipInactiveClass, groupOptions.length, isCrossGroup, isDark]);
 
   return (
     <footer
@@ -608,21 +478,27 @@ export function ChatComposer({
         {/* Reply indicator */}
         {replyTarget && (
           <div className={classNames(
-            "mb-3 flex items-center gap-2 text-xs rounded-xl px-3 py-1.5",
-            isDark ? "text-[var(--color-text-tertiary)] bg-white/[0.08] border border-white/[0.08]" : "text-gray-500 bg-black/5"
+            "mb-2.5 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px]",
+            isDark
+              ? "border-white/[0.06] bg-white/[0.035] text-[var(--color-text-tertiary)]"
+              : "border-black/[0.05] bg-black/[0.025] text-gray-500"
           )}>
-            <ReplyIcon size={14} className="flex-shrink-0 opacity-60" />
-            <span className="font-medium truncate flex-1">
-              <span className="opacity-60 mr-1">{t('replyingTo')}</span>
-              <span className={isDark ? "text-slate-300" : "text-gray-700"}>{replyByDisplayName}</span>
+            <ReplyIcon size={12} className="flex-shrink-0 opacity-45" />
+            <span className="min-w-0 flex-1 truncate">
+              <span className="mr-1 opacity-55">{t('replyingTo')}</span>
+              <span className={classNames("font-medium", isDark ? "text-slate-300/90" : "text-gray-700")}>
+                {replyByDisplayName}
+              </span>
               <span className="mx-1 opacity-40">"</span>
-              <span className="italic opacity-80">{replyTarget.text}</span>
+              <span className="opacity-75">{replyTarget.text}</span>
               <span className="opacity-40">"</span>
             </span>
             <button
               className={classNames(
-                "p-2.5 -m-1.5 rounded-full transition-colors",
-                isDark ? "hover:bg-white/10 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]" : "hover:bg-black/10 text-gray-400 hover:text-gray-600"
+                "rounded-full p-1 transition-colors",
+                isDark
+                  ? "text-[var(--color-text-tertiary)] hover:bg-white/[0.08] hover:text-[var(--color-text-primary)]"
+                  : "text-gray-400 hover:bg-black/[0.06] hover:text-gray-600"
               )}
               onClick={onCancelReply}
               title={t('cancelReply')}
@@ -636,20 +512,24 @@ export function ChatComposer({
         {quotedPresentationRef && (
           <div
             className={classNames(
-              "mb-3 flex items-center gap-2 text-xs rounded-xl px-3 py-1.5",
-              isDark ? "text-[var(--color-text-tertiary)] bg-cyan-500/12 border border-cyan-400/15" : "text-gray-600 bg-cyan-50",
+              "mb-2.5 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px]",
+              isDark
+                ? "border-cyan-400/12 bg-cyan-500/6 text-[var(--color-text-tertiary)]"
+                : "border-cyan-200/70 bg-cyan-50/70 text-gray-600",
             )}
           >
-            <span className={classNames("font-medium flex-shrink-0", isDark ? "text-cyan-100" : "text-cyan-700")}>
+            <span className={classNames("flex-shrink-0 font-medium", isDark ? "text-cyan-100/90" : "text-cyan-700")}>
               {t("presentationQuotedViewLabel", { defaultValue: "Quoted view" })}
             </span>
-            <span className="min-w-0 flex-1 truncate" title={quotedPresentationRef.title || quotedPresentationRefLabel}>
+            <span className="min-w-0 flex-1 truncate opacity-80" title={quotedPresentationRef.title || quotedPresentationRefLabel}>
               {quotedPresentationRefLabel}
             </span>
             <button
               className={classNames(
-                "p-2.5 -m-1.5 rounded-full transition-colors",
-                isDark ? "hover:bg-white/10 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]" : "hover:bg-black/10 text-gray-400 hover:text-gray-600",
+                "rounded-full p-1 transition-colors",
+                isDark
+                  ? "text-[var(--color-text-tertiary)] hover:bg-white/[0.08] hover:text-[var(--color-text-primary)]"
+                  : "text-gray-400 hover:bg-black/[0.06] hover:text-gray-600",
               )}
               onClick={onClearQuotedPresentationRef}
               title={t("presentationRemoveQuotedView", { defaultValue: "Remove quoted view" })}
@@ -720,9 +600,8 @@ export function ChatComposer({
           }}
         />
 
-        {/* Assistant rail + integrated composer */}
+        {/* Integrated composer */}
         <div className="flex flex-col">
-          {/* Integrated 3-row composer */}
           <div
             className={classNames(
               "relative flex min-w-0 flex-1 flex-col transition-[background-color] duration-200",
@@ -731,54 +610,44 @@ export function ChatComposer({
                 : "bg-white/55 focus-within:bg-white/80",
             )}
           >
-            <BuiltInAssistantsComposerPanel
-              isDark={isDark}
-              selectedGroupId={selectedGroupId}
-              busy={busy}
-              voiceCaptureMode={voiceCaptureMode}
-              onVoiceCaptureModeChange={setVoiceCaptureMode}
-              composerText={composerText}
-              composerContext={composerAssistantContext}
-              onPromptDraft={fillPromptDraftFromSpeech}
-            />
-
             {/* Row 1 — Recipients */}
             <div
               className={classNames(
-                "flex items-center gap-2 border-b px-3 py-1.5",
-                isDark ? "border-white/5" : "border-black/5",
+                "flex items-center gap-1.5 border-b px-2.5 py-1",
+                isDark ? "border-white/[0.04]" : "border-black/[0.04]",
               )}
             >
-              <span className={classNames("text-[10px] font-semibold uppercase tracking-[0.14em] flex-shrink-0", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-400")}>
+              <span className={classNames("flex-shrink-0 text-[10px] font-medium tracking-[0.08em]", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-400")}>
                 {t('to', 'To')}
               </span>
 
-              <div className="relative flex-shrink-0">
-                <select
+              <div className="flex-shrink-0">
+                <GroupCombobox
+                  items={groupOptions}
                   value={destGroupId || selectedGroupId || ""}
-                  onChange={(e) => setDestGroupId(e.target.value)}
-                  style={{ colorScheme: isDark ? "dark" : "light" }}
-                  className={classNames(
-                    "appearance-none pr-7 truncate max-w-[180px] sm:max-w-[220px]",
-                    "h-7 transition-colors cursor-pointer",
+                  onChange={setDestGroupId}
+                  placeholder={t('destinationGroup')}
+                  searchPlaceholder={t('searchDestinationGroup', { defaultValue: '搜索 group...' })}
+                  emptyText={t('noMatchingGroups', { defaultValue: '没有匹配的 group' })}
+                  ariaLabel={t('destinationGroup')}
+                  triggerClassName={classNames(
+                    "inline-flex w-auto min-w-[68px] max-w-[148px] sm:max-w-[196px]",
+                    "h-6 cursor-pointer gap-1 px-2 text-[10px]",
                     chipBaseClass,
                     groupSelectClass,
                   )}
+                  contentClassName="max-w-[min(20rem,calc(100vw-1rem))]"
+                  descriptionClassName="text-[10px]"
+                  caretClassName={classNames(
+                    !canChooseDestGroup || groupOptions.length === 0
+                      ? (isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-400")
+                      : isCrossGroup
+                        ? "text-[var(--color-text-primary)]"
+                        : (isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")
+                  )}
                   disabled={!canChooseDestGroup || groupOptions.length === 0}
-                  aria-label={t('destinationGroup')}
-                >
-                  {groupOptions.map((g) => (
-                    <option key={g.gid} value={g.gid}>
-                      {g.label}
-                    </option>
-                  ))}
-                </select>
-                <div className={classNames("pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 opacity-60", groupCaretClass)}>
-                  <ChevronDownIcon size={12} />
-                </div>
+                />
               </div>
-
-              <div className={classNames("w-px h-4 flex-shrink-0 hidden sm:block", isDark ? "bg-white/10" : "bg-black/10")} />
 
               <ScrollFade
                 className="min-w-0 flex-1"
@@ -787,7 +656,7 @@ export function ChatComposer({
               >
                 <div
                   className={classNames(
-                    "flex min-w-max items-center gap-1.5 transition-opacity",
+                    "flex min-w-max items-center gap-1 transition-opacity",
                     recipientActorsBusy ? "opacity-50 pointer-events-none" : "",
                   )}
                 >
@@ -797,13 +666,10 @@ export function ChatComposer({
                       <button
                         key={tok}
                         className={classNames(
-                          "h-7",
                           chipBaseClass,
                           active
-                            ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
-                            : isDark
-                              ? "bg-white/[0.06] text-[var(--color-text-secondary)] border-white/[0.08] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
-                              : "bg-black/[0.04] text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800",
+                            ? chipActiveClass
+                            : chipInactiveClass,
                         )}
                         onClick={() => onToggleRecipient(tok)}
                         disabled={!selectedGroupId || busy === "send"}
@@ -821,13 +687,10 @@ export function ChatComposer({
                       <button
                         key={id}
                         className={classNames(
-                          "h-7",
                           chipBaseClass,
                           active
-                            ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
-                            : isDark
-                              ? "bg-white/[0.06] text-[var(--color-text-secondary)] border-white/[0.08] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
-                              : "bg-black/[0.04] text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800",
+                            ? chipActiveClass
+                            : chipInactiveClass,
                         )}
                         onClick={() => onToggleRecipient(id)}
                         disabled={!selectedGroupId || busy === "send" || !!recipientActorsBusy}
@@ -902,7 +765,7 @@ export function ChatComposer({
                             "w-full text-left px-4 py-3 text-sm transition-colors",
                             isDark ? "text-slate-200 border-b border-white/5" : "text-gray-700 border-b border-black/5",
                             idx === mentionSelectedIndex
-                              ? isDark ? "bg-blue-600/30 text-blue-300" : "bg-blue-50 text-blue-700 font-medium"
+                              ? "bg-[var(--glass-tab-bg-active)] text-[var(--color-text-primary)] font-medium"
                               : isDark ? "hover:bg-white/5" : "hover:bg-gray-50",
                           )}
                           onMouseDown={(e) => {
@@ -937,20 +800,35 @@ export function ChatComposer({
                 "flex items-center justify-between gap-2 px-2 pb-2 pt-1",
               )}
             >
-              <button
-                className={classNames(
-                  "glass-btn flex h-9 w-9 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60",
-                  busy !== "send" && selectedGroupId && !isCrossGroup
-                    ? isDark ? "hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/5 hover:text-gray-800"
-                    : "",
-                )}
-                onClick={() => fileInputRef.current?.click()}
-                disabled={!selectedGroupId || busy === "send" || isCrossGroup}
-                aria-label={t('attachFile')}
-                title={fileDisabledReason}
-              >
-                <AttachmentIcon size={18} />
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  className={classNames(
+                    "glass-btn flex h-9 w-9 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60",
+                    busy !== "send" && selectedGroupId && !isCrossGroup
+                      ? isDark ? "hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/5 hover:text-gray-800"
+                      : "",
+                  )}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!selectedGroupId || busy === "send" || isCrossGroup}
+                  aria-label={t('attachFile')}
+                  title={fileDisabledReason}
+                >
+                  <AttachmentIcon size={18} />
+                </button>
+
+                <VoiceSecretaryComposerControl
+                  isDark={isDark}
+                  selectedGroupId={selectedGroupId}
+                  busy={busy}
+                  disabled={!selectedGroupId || busy === "send"}
+                  variant="assistantRow"
+                  captureMode={voiceCaptureMode}
+                  onCaptureModeChange={setVoiceCaptureMode}
+                  composerText={composerText}
+                  composerContext={composerAssistantContext}
+                  onPromptDraft={fillPromptDraftFromSpeech}
+                />
+              </div>
 
               <div className="flex items-center gap-1.5">
                 <div ref={modeMenuRef} className="relative z-20">
@@ -1066,7 +944,7 @@ export function ChatComposer({
                     "flex h-9 w-9 items-center justify-center rounded-lg font-semibold transition-[background-color,box-shadow,transform] duration-150 disabled:cursor-not-allowed sm:w-[5.5rem]",
                     busy === "send" || !canSend
                       ? isDark ? "bg-white/[0.06] text-[var(--color-text-tertiary)]" : "bg-gray-100 text-gray-400"
-                      : "bg-blue-600 text-white shadow-md shadow-blue-500/25 hover:bg-blue-500 active:scale-[0.97]",
+                      : "bg-[var(--color-accent-primary)] text-[var(--color-text-inverse)] shadow-[var(--glass-accent-shadow)] hover:brightness-110 active:scale-[0.97]",
                   )}
                   onClick={onSendMessage}
                   disabled={busy === "send" || !canSend}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type {
   AssistantVoiceDocument,
@@ -10,6 +11,8 @@ import type {
 import { classNames } from "../../utils/classNames";
 import { ChevronDownIcon, MaximizeIcon, MicrophoneIcon, StopIcon } from "../../components/Icons";
 import { MarkdownDocumentSurface } from "../../components/document/MarkdownDocumentSurface";
+import { GroupCombobox } from "../../components/GroupCombobox";
+import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import {
   ackVoiceAssistantPromptDraft,
   appendVoiceAssistantInput,
@@ -23,6 +26,12 @@ import {
   updateAssistantSettings,
 } from "../../services/api";
 import { useUIStore } from "../../stores";
+import { useModalA11y } from "../../hooks/useModalA11y";
+import { AnimatedShinyText } from "../../registry/magicui/animated-shiny-text";
+import {
+  VOICE_SECRETARY_PROMPT_DRAFT_EVENT,
+  type VoiceSecretaryPromptDraftEventDetail,
+} from "../../utils/voiceSecretaryEvents";
 
 type VoiceSecretaryComposerControlProps = {
   isDark: boolean;
@@ -121,6 +130,7 @@ const VOICE_TRANSCRIPT_DISPLAY_LIMIT = 8;
 const BROWSER_SPEECH_RESTART_BASE_MS = 500;
 const BROWSER_SPEECH_RESTART_MAX_MS = 8000;
 const BROWSER_SPEECH_MAX_TRANSIENT_ERRORS = 8;
+const PROMPT_DRAFT_POLL_FALLBACK_MS = 10_000;
 const BROWSER_SPEECH_RECOVERABLE_ERRORS = new Set(["no-speech", "aborted", "network", "audio-capture"]);
 const BROWSER_SPEECH_FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed"]);
 const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
@@ -835,11 +845,22 @@ export function VoiceSecretaryComposerControl({
 
   useEffect(() => {
     if (!pendingPromptRequestId || pendingPromptDraft) return undefined;
+    const onPromptDraftReady = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceSecretaryPromptDraftEventDetail>).detail;
+      const requested = String(pendingPromptRequestIdRef.current || pendingPromptRequestId || "").trim();
+      if (!detail || detail.groupId !== selectedGroupId || detail.requestId !== requested) return;
+      if (detail.action && detail.action !== "submit") return;
+      void refreshAssistant({ quiet: true });
+    };
+    window.addEventListener(VOICE_SECRETARY_PROMPT_DRAFT_EVENT, onPromptDraftReady);
     const interval = window.setInterval(() => {
       void refreshAssistant({ quiet: true });
-    }, 1500);
-    return () => window.clearInterval(interval);
-  }, [pendingPromptDraft, pendingPromptRequestId, refreshAssistant]);
+    }, PROMPT_DRAFT_POLL_FALLBACK_MS);
+    return () => {
+      window.removeEventListener(VOICE_SECRETARY_PROMPT_DRAFT_EVENT, onPromptDraftReady);
+      window.clearInterval(interval);
+    };
+  }, [pendingPromptDraft, pendingPromptRequestId, refreshAssistant, selectedGroupId]);
 
   const acknowledgePromptDraft = useCallback(async (
     draft: AssistantVoicePromptDraft,
@@ -855,15 +876,9 @@ export function VoiceSecretaryComposerControl({
     if (resp.ok && resp.result.assistant) setAssistant(resp.result.assistant);
   }, [selectedGroupId]);
 
-  const applyPromptDraft = useCallback(async (draft: AssistantVoicePromptDraft, opts?: { force?: boolean }) => {
+  const applyPromptDraft = useCallback(async (draft: AssistantVoicePromptDraft) => {
     const text = String(draft.draft_text || "").trim();
     if (!text) return;
-    const snapshotHash = String(draft.composer_snapshot_hash || pendingPromptComposerHashRef.current || "").trim();
-    const currentHash = hashComposerSnapshot(composerText);
-    if (!opts?.force && snapshotHash && currentHash !== snapshotHash) {
-      setPendingPromptDraft(draft);
-      return;
-    }
     pendingPromptRequestIdRef.current = "";
     pendingPromptComposerHashRef.current = "";
     setPendingPromptRequestId("");
@@ -879,21 +894,7 @@ export function VoiceSecretaryComposerControl({
         defaultValue: "Refined prompt filled into the composer.",
       }),
     });
-  }, [acknowledgePromptDraft, composerText, onPromptDraft, showNotice, t]);
-
-  const dismissPromptDraft = useCallback(async () => {
-    const draft = pendingPromptDraft;
-    pendingPromptRequestIdRef.current = "";
-    pendingPromptComposerHashRef.current = "";
-    setPendingPromptRequestId("");
-    setPendingPromptDraft(null);
-    if (!draft) return;
-    try {
-      await acknowledgePromptDraft(draft, "dismissed");
-    } catch {
-      // ignore non-critical ack failure
-    }
-  }, [acknowledgePromptDraft, pendingPromptDraft]);
+  }, [acknowledgePromptDraft, onPromptDraft, showNotice, t]);
 
   useEffect(() => {
     if (!pendingPromptDraft) return;
@@ -1427,18 +1428,7 @@ export function VoiceSecretaryComposerControl({
   const closePanel = useCallback(() => {
     setOpen(false);
   }, []);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const handlePointerDown = (event: MouseEvent) => {
-      const root = rootRef.current;
-      if (!root || !event.target) return;
-      if (root.contains(event.target as Node)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [open]);
+  const { modalRef } = useModalA11y(open, closePanel);
 
   useEffect(() => {
     if (!showAssistantModeMenu) return undefined;
@@ -2258,10 +2248,17 @@ export function VoiceSecretaryComposerControl({
     t,
   ]);
 
-  const archiveDocument = useCallback(async () => {
+  const archiveDocument = useCallback(async (targetDocument?: AssistantVoiceDocument | null) => {
     const gid = String(selectedGroupId || "").trim();
-    const docId = activeDocumentKey || activeDocumentId;
+    const docId = targetDocument ? voiceDocumentKey(targetDocument) : (activeDocumentKey || activeDocumentId);
     if (!gid || !docId) return;
+    const title = String(targetDocument?.title || documents.find((item) => voiceDocumentKey(item) === docId)?.title || docId).trim();
+    const confirmed = window.confirm(t("voiceSecretaryArchiveDocumentConfirm", {
+      title,
+      defaultValue: "Archive document \"{{title}}\"?",
+    }));
+    if (!confirmed) return;
+    const isActiveTarget = docId === (activeDocumentKey || activeDocumentId);
     setActionBusy("archive_doc");
     try {
       const resp = await archiveVoiceAssistantDocument(gid, docId, { by: "user" });
@@ -2271,12 +2268,15 @@ export function VoiceSecretaryComposerControl({
       }
       archivedDocumentIdsRef.current.add(docId);
       setDocuments((prev) => prev.filter((item) => voiceDocumentKey(item) !== docId));
-      setActiveDocumentId("");
+      if (isActiveTarget) {
+        setActiveDocumentId("");
+        loadDocumentDraft(null);
+        setDocumentEditing(false);
+      }
       if (captureTargetDocumentIdRef.current === docId) {
         captureTargetDocumentIdRef.current = "";
         setCaptureTargetDocumentId("");
       }
-      loadDocumentDraft(null);
       showNotice({ message: t("voiceSecretaryDocumentArchived", { defaultValue: "Voice Secretary working document archived." }) });
       await refreshAssistant({ quiet: true });
     } catch {
@@ -2284,7 +2284,7 @@ export function VoiceSecretaryComposerControl({
     } finally {
       setActionBusy("");
     }
-  }, [activeDocumentKey, activeDocumentId, loadDocumentDraft, refreshAssistant, selectedGroupId, showError, showNotice, t]);
+  }, [activeDocumentId, activeDocumentKey, documents, loadDocumentDraft, refreshAssistant, selectedGroupId, showError, showNotice, t]);
 
   const downloadCurrentDocument = useCallback(() => {
     if (!activeDocument) return;
@@ -2298,13 +2298,9 @@ export function VoiceSecretaryComposerControl({
     });
   }, [activeDocument, documentDisplayTitle, documentDraft, showNotice, t]);
 
-  const captureRecordLabel = recording
+  const workspaceRecordLabel = recording
     ? t("voiceSecretaryStopShort", { defaultValue: "Stop" })
-    : captureMode === "prompt"
-      ? t("voiceSecretaryHoldShort", { defaultValue: "Hold" })
-      : captureMode === "instruction"
-        ? t("voiceSecretaryAskShort", { defaultValue: "Ask" })
-        : t("voiceSecretaryRecordShort", { defaultValue: "Record" });
+    : t("voiceSecretaryRecordShort", { defaultValue: "Record" });
   const captureStartTitle = captureMode === "prompt"
     ? t("voiceSecretaryPromptModeStartHint", { defaultValue: "Hold to dictate a prompt into the message composer" })
     : captureMode === "instruction"
@@ -2315,11 +2311,6 @@ export function VoiceSecretaryComposerControl({
       key: "document",
       label: t("voiceSecretaryModeDocument", { defaultValue: "Doc" }),
       description: t("voiceSecretaryModeDocumentDesc", { defaultValue: "Record into working docs" }),
-    },
-    {
-      key: "instruction",
-      label: t("voiceSecretaryModeInstruction", { defaultValue: "Ask" }),
-      description: t("voiceSecretaryModeInstructionDesc", { defaultValue: "Ask the secretary" }),
     },
     {
       key: "prompt",
@@ -2348,13 +2339,21 @@ export function VoiceSecretaryComposerControl({
     : recording
       ? t("voiceSecretaryOpenRecordingWorkspace", { defaultValue: "Expand Voice Secretary workspace - recording" })
       : t("voiceSecretaryOpenWorkspace", { defaultValue: "Expand Voice Secretary workspace" });
-  const openButtonIconSizePx = Math.max(20, Math.min(26, Math.round(buttonSizePx - 14)));
-  const promptDraftNeedsManualApply = Boolean(
-    pendingPromptDraft &&
-    pendingPromptDraft.composer_snapshot_hash &&
-    hashComposerSnapshot(composerText) !== pendingPromptDraft.composer_snapshot_hash,
-  );
+  const openButtonIconSizePx = buttonClassName
+    ? buttonSizePx
+    : Math.max(20, Math.min(26, Math.round(buttonSizePx - 14)));
   const promptDraftWaiting = Boolean(pendingPromptRequestId && !pendingPromptDraft);
+  const promptDraftTitle = t("voiceSecretaryPromptDraftWaiting", { defaultValue: "Voice Secretary is refining the prompt..." });
+  const documentsCountLabel = t("voiceSecretaryDocumentsCount", { count: documents.length, defaultValue: "{{count}} docs" });
+  const transcriptFeedHint = t("voiceSecretaryTranscriptFeedHint", {
+    title: documentDisplayTitle,
+    defaultValue: "Recent ASR text for this tab. Stable chunks go to {{title}}.",
+  });
+  const headerStatusHint = !assistantEnabled
+    ? t("voiceSecretaryDisabledHint", {
+        defaultValue: "Voice Secretary is off for this group. Enable the assistant here or in Settings > Assistants before recording.",
+      })
+    : speechError.trim();
   const startAfterEnableRef = useRef(false);
   const assistantRowCurrentMode = assistantRowModeOptions.find((option) => option.key === captureMode) || assistantRowModeOptions[0];
   const assistantRowControlLabel = recording
@@ -2391,295 +2390,309 @@ export function VoiceSecretaryComposerControl({
     startDictation,
     stopCurrentRecording,
   ]);
+  const handleAssistantRowPromptPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (captureMode !== "prompt" || recording || !!actionBusy || controlDisabled || !dictationSupported) return;
+    promptHoldActiveRef.current = true;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    void handleAssistantRowRecordClick();
+  }, [
+    actionBusy,
+    captureMode,
+    controlDisabled,
+    dictationSupported,
+    handleAssistantRowRecordClick,
+    recording,
+  ]);
+  const handleAssistantRowPromptPointerUp = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (captureMode !== "prompt") return;
+    promptHoldActiveRef.current = false;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    if (recordingRef.current) stopCurrentRecording();
+  }, [captureMode, stopCurrentRecording]);
+  const handleAssistantRowPromptPointerCancel = useCallback(() => {
+    if (captureMode !== "prompt") return;
+    promptHoldActiveRef.current = false;
+    if (recordingRef.current) stopCurrentRecording();
+  }, [captureMode, stopCurrentRecording]);
 
   return (
     <div ref={rootRef} className={classNames("relative", isAssistantRow ? "w-auto shrink-0" : "self-end")}>
-      {open ? (
-        <div
-          className={classNames(
-            "glass-panel fixed bottom-[10rem] left-1/2 z-[160] flex h-[min(52rem,calc(100vh-11rem))] w-[min(78rem,calc(100vw-1rem))] -translate-x-1/2 flex-col overflow-hidden rounded-3xl border p-3 shadow-2xl",
-            isDark ? "border-white/10 bg-slate-950/95" : "border-black/10 bg-white/95",
-          )}
-        >
-          <div className="mb-3 flex shrink-0 items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className={classNames("text-base font-semibold tracking-[-0.01em]", isDark ? "text-slate-100" : "text-gray-900")}>
-                {t("voiceSecretaryTitle", { defaultValue: "Voice Secretary" })}
-              </div>
-              <div className={classNames("mt-0.5 truncate text-xs", isDark ? "text-slate-400" : "text-gray-500")}>
-                {t("voiceSecretaryWorkspaceHint", {
-                  defaultValue: "Capture speech, maintain working documents, and ask the secretary to refine or send them.",
-                })}
-              </div>
+      {open && typeof document !== "undefined"
+        ? createPortal(
+          <div
+            className="fixed inset-0 z-[180] flex items-end justify-center p-0 sm:items-center sm:p-4"
+            aria-hidden={undefined}
+          >
+            <div
+              className="absolute inset-0 glass-overlay"
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) closePanel();
+              }}
+              aria-hidden="true"
+            />
+            <section
+              ref={modalRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="voice-secretary-sheet-title"
+              aria-describedby="voice-secretary-sheet-description"
+              className={classNames(
+                "relative z-[181] flex h-[min(92vh,58rem)] w-full max-w-[88rem] flex-col overflow-hidden rounded-t-[28px] border p-3 pt-6 shadow-2xl glass-modal sm:w-[min(94vw,88rem)] sm:rounded-[30px]",
+                isDark ? "border-white/10 bg-slate-950/96" : "border-black/10 bg-white/96",
+              )}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+            <div id="voice-secretary-sheet-title" className="sr-only">
+              {t("voiceSecretaryTitle", { defaultValue: "Voice Secretary" })}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <span
-                className={classNames(
-                  "rounded-full px-2.5 py-1 text-[11px] font-semibold",
-                  assistantEnabled
-                    ? isDark
-                      ? "bg-emerald-500/15 text-emerald-200"
-                      : "bg-emerald-50 text-emerald-700"
-                    : isDark
-                      ? "bg-white/10 text-slate-300"
-                      : "bg-gray-100 text-gray-600",
-                )}
-              >
-                {loading ? t("loadingContext", { defaultValue: "Loading context..." }) : statusLabel}
-              </span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={assistantEnabled}
-                className={classNames(
-                  "inline-flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                  assistantEnabled
-                    ? isDark
-                      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/15"
-                      : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                    : isDark
-                      ? "border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/10"
-                      : "border-black/10 bg-white text-gray-700 hover:bg-black/5",
-                )}
-                onClick={() => void setAssistantEnabledForGroup(!assistantEnabled)}
-                disabled={actionBusy === "enable" || !selectedGroupId}
-                title={assistantEnabled
-                  ? t("voiceSecretaryTurnOff", { defaultValue: "Turn off" })
-                  : t("voiceSecretaryTurnOn", { defaultValue: "Turn on" })}
-              >
-                <span
-                  aria-hidden="true"
-                  className={classNames(
-                    "relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors",
-                    assistantEnabled ? "bg-emerald-500" : isDark ? "bg-white/15" : "bg-gray-300",
-                  )}
-                >
-                  <span
-                    className={classNames(
-                      "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      assistantEnabled ? "translate-x-4" : "translate-x-0.5",
-                    )}
-                  />
-                </span>
-                <span>
-                  {actionBusy === "enable"
-                    ? t("voiceSecretarySavingState", { defaultValue: "Saving..." })
-                    : assistantEnabled
-                      ? t("voiceSecretaryEnabledShort", { defaultValue: "On" })
-                      : t("voiceSecretaryDisabledShort", { defaultValue: "Off" })}
-                </span>
-              </button>
+            <div id="voice-secretary-sheet-description" className="sr-only">
+              {t("voiceSecretaryWorkspaceHint", {
+                defaultValue: "Capture speech, maintain working documents, and ask the secretary to refine or send them.",
+              })}
             </div>
-          </div>
-
-          <div className="mb-3 shrink-0 border-b border-[var(--glass-border-subtle)] pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className={classNames("min-w-0 flex-1 truncate text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
-                {!assistantEnabled
-                  ? t("voiceSecretaryDisabledHint", {
-                      defaultValue: "Voice Secretary is off for this group. Enable the assistant here or in Settings > Assistants before recording.",
-                    })
-                  : speechError || null}
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                {assistantEnabled ? (
-                  <>
-                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
-                      <span>{t("voiceSecretaryLanguage", { defaultValue: "Language" })}</span>
-                      <select
-                        value={configuredRecognitionLanguage}
-                        onChange={(event) => void updateRecognitionLanguage(event.target.value)}
-                        className={classNames(
-                          "rounded-lg border px-2 py-1.5 text-[11px] outline-none transition-colors",
-                          isDark
-                            ? "border-white/10 bg-white/[0.06] text-slate-100 focus:border-cyan-300/45"
-                            : "border-black/10 bg-white text-gray-800 focus:border-cyan-400/45",
-                        )}
-                        disabled={recording || !!actionBusy}
-                      >
-                        {voiceLanguageOptions.map((optionValue) => (
-                          <option key={optionValue} value={optionValue}>
-                            {voiceLanguageLabel(optionValue)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {serviceAsrReady ? (
-                      <>
-                        <label className="flex min-w-[13rem] items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
-                          <span>{t("voiceSecretaryMicDevice", { defaultValue: "Microphone" })}</span>
-                          <select
-                            value={selectedAudioDeviceId}
-                            onChange={(event) => setSelectedAudioDeviceId(event.target.value)}
-                            className={classNames(
-                              "min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-[11px] outline-none transition-colors",
-                              isDark
-                                ? "border-white/10 bg-white/[0.06] text-slate-100 focus:border-cyan-300/45"
-                                : "border-black/10 bg-white text-gray-800 focus:border-cyan-400/45",
-                            )}
-                            disabled={recording || !!actionBusy}
-                          >
-                            <option value="">
-                              {t("voiceSecretaryDefaultMic", { defaultValue: "System default microphone" })}
-                            </option>
-                            {audioDevices.map((device, index) => (
-                              <option key={device.deviceId || `audio-${index}`} value={device.deviceId}>
-                                {device.label || t("voiceSecretaryMicDeviceFallback", {
-                                  index: index + 1,
-                                  defaultValue: "Microphone {{index}}",
-                                })}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <button
-                          type="button"
-                          className={classNames(
-                            "rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                            isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
-                          )}
-                          onClick={() => void loadAudioDevices()}
-                          disabled={recording || !!actionBusy}
-                        >
-                          {t("voiceSecretaryRefreshDevices", { defaultValue: "Refresh devices" })}
-                        </button>
-                      </>
-                    ) : null}
+            <div className={classNames(
+              "shrink-0 border-b px-4 pb-3 pt-2 sm:px-5 sm:pb-3 sm:pt-3",
+              isDark ? "border-white/10" : "border-black/10",
+            )}>
+              <div className="flex flex-wrap items-end justify-between gap-4 pr-8">
+                <div className="min-w-0 flex-1">
+                  <div className={classNames("text-lg font-semibold tracking-[-0.02em]", isDark ? "text-slate-100" : "text-gray-900")}>
+                    {t("voiceSecretaryTitle", { defaultValue: "Voice Secretary" })}
+                  </div>
+                  <div className={classNames("mt-1 text-xs leading-5", isDark ? "text-slate-400" : "text-gray-500")}>
+                    {t("voiceSecretaryWorkspaceHint", {
+                      defaultValue: "Capture speech, maintain working documents, and ask the secretary to refine or send them.",
+                    })}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
+                      role="switch"
+                      aria-checked={assistantEnabled}
                       className={classNames(
-                        "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-60",
-                        recording
-                          ? isDark
-                            ? "border-rose-300/35 bg-rose-500/15 text-rose-100 hover:bg-rose-500/22"
-                            : "border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100"
-                          : isDark
-                            ? "border-white/10 bg-white/[0.06] text-slate-100 hover:bg-white/10"
-                            : "border-black/10 bg-white text-gray-800 hover:bg-black/5",
+                        "inline-flex min-h-[34px] items-center gap-2 rounded-full border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
+                        isDark
+                          ? "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/10"
+                          : "border-black/10 bg-white text-gray-700 hover:bg-black/5",
                       )}
-                      onPointerDown={captureMode === "prompt" && !recording ? (event) => {
-                        if (!!actionBusy || (!recording && !dictationSupported)) return;
-                        promptHoldActiveRef.current = true;
-                        event.currentTarget.setPointerCapture?.(event.pointerId);
-                        void startDictation();
-                      } : undefined}
-                      onPointerUp={captureMode === "prompt" ? (event) => {
-                        promptHoldActiveRef.current = false;
-                        event.currentTarget.releasePointerCapture?.(event.pointerId);
-                        if (recordingRef.current) stopCurrentRecording();
-                      } : undefined}
-                      onPointerCancel={captureMode === "prompt" ? () => {
-                        promptHoldActiveRef.current = false;
-                        if (recordingRef.current) stopCurrentRecording();
-                      } : undefined}
-                      onClick={(event) => {
-                        if (captureMode === "prompt") {
-                          event.preventDefault();
-                          return;
-                        }
-                        if (recording) stopCurrentRecording();
-                        else void startDictation();
-                      }}
-                      disabled={!!actionBusy || (!recording && !dictationSupported)}
-                      title={recording
-                        ? t("voiceSecretaryStopDictation", { defaultValue: "Stop recording" })
-                        : captureStartTitle}
+                      onClick={() => void setAssistantEnabledForGroup(!assistantEnabled)}
+                      disabled={actionBusy === "enable" || !selectedGroupId}
+                      title={assistantEnabled
+                        ? t("voiceSecretaryTurnOff", { defaultValue: "Turn off" })
+                        : t("voiceSecretaryTurnOn", { defaultValue: "Turn on" })}
                     >
                       <span
                         aria-hidden="true"
                         className={classNames(
-                          "inline-flex h-6 w-6 items-center justify-center rounded-full",
-                          recording
-                            ? isDark ? "bg-rose-300/15" : "bg-white"
-                            : isDark ? "bg-rose-400/15 text-rose-100" : "bg-rose-50 text-rose-700",
+                          "relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors",
+                          assistantEnabled
+                            ? isDark ? "bg-white" : "bg-[rgb(35,36,37)]"
+                            : isDark ? "bg-white/15" : "bg-gray-300",
                         )}
                       >
-                        {recording ? (
-                          <StopIcon size={13} />
-                        ) : (
-                          <span className="h-2.5 w-2.5 rounded-full bg-rose-600" />
-                        )}
+                        <span
+                          className={classNames(
+                            "absolute top-0.5 h-4 w-4 rounded-full shadow-sm transition-transform",
+                            assistantEnabled
+                              ? isDark ? "bg-slate-950" : "bg-white"
+                              : "bg-white",
+                            assistantEnabled ? "translate-x-4" : "translate-x-0.5",
+                          )}
+                        />
                       </span>
-                      {recording
-                        ? t("voiceSecretaryStopDictation", { defaultValue: "Stop recording" })
-                        : captureRecordLabel}
+                      <span>
+                        {actionBusy === "enable"
+                          ? t("voiceSecretarySavingState", { defaultValue: "Saving..." })
+                          : assistantEnabled
+                            ? t("voiceSecretaryEnabledShort", { defaultValue: "On" })
+                            : t("voiceSecretaryDisabledShort", { defaultValue: "Off" })}
+                      </span>
                     </button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          {pendingPromptDraft || promptDraftWaiting ? (
-            <div
-              className={classNames(
-                "mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border px-3 py-2",
-                pendingPromptDraft
-                  ? isDark
-                    ? "border-cyan-300/20 bg-cyan-400/10 text-cyan-50"
-                    : "border-cyan-200 bg-cyan-50 text-cyan-950"
-                  : isDark
-                    ? "border-white/10 bg-white/[0.04] text-slate-300"
-                    : "border-black/10 bg-white text-gray-700",
-              )}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-semibold">
-                  {pendingPromptDraft
-                    ? t("voiceSecretaryPromptDraftReady", { defaultValue: "Refined prompt ready" })
-                    : t("voiceSecretaryPromptDraftWaiting", { defaultValue: "Voice Secretary is refining the prompt..." })}
+                    <span
+                      className={classNames(
+                        "inline-flex min-h-[34px] items-center rounded-full px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap",
+                        isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
+                      )}
+                    >
+                      {loading ? t("loadingContext", { defaultValue: "Loading context..." }) : statusLabel}
+                    </span>
+                  </div>
                 </div>
-                {pendingPromptDraft ? (
-                  <div className="mt-0.5 truncate text-[11px] opacity-75">
-                    {promptDraftNeedsManualApply
-                      ? t("voiceSecretaryPromptDraftChangedComposer", {
-                          defaultValue: "Composer changed since the request. Review before applying.",
-                        })
-                      : pendingPromptDraft.draft_preview || pendingPromptDraft.summary || pendingPromptDraft.draft_text}
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
+                  {assistantEnabled ? (
+                    <>
+                      <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                        <span>{t("voiceSecretaryLanguage", { defaultValue: "Language" })}</span>
+                        <GroupCombobox
+                          items={voiceLanguageOptions.map((optionValue) => ({
+                            value: optionValue,
+                            label: voiceLanguageLabel(optionValue),
+                          }))}
+                          value={configuredRecognitionLanguage}
+                          onChange={(nextValue) => void updateRecognitionLanguage(nextValue)}
+                          placeholder={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
+                          searchPlaceholder={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
+                          emptyText={t("common:noResults", { defaultValue: "没有匹配结果" })}
+                          ariaLabel={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
+                          triggerClassName={classNames(
+                            "min-h-[38px] min-w-[7.5rem] rounded-full border px-3 py-2 text-xs font-semibold transition-colors",
+                            isDark
+                              ? "border-white/10 bg-white/[0.06] text-slate-100 focus:border-white/30"
+                              : "border-black/10 bg-white text-gray-800 focus:border-black/25",
+                          )}
+                          contentClassName="p-0"
+                          disabled={recording || !!actionBusy}
+                          searchable={false}
+                          matchTriggerWidth
+                        />
+                      </label>
+                      {serviceAsrReady ? (
+                        <>
+                          <label className="inline-flex min-w-[13rem] items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                            <span>{t("voiceSecretaryMicDevice", { defaultValue: "Microphone" })}</span>
+                            <select
+                              value={selectedAudioDeviceId}
+                              onChange={(event) => setSelectedAudioDeviceId(event.target.value)}
+                              className={classNames(
+                                "min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-[11px] outline-none transition-colors",
+                                isDark
+                                  ? "border-white/10 bg-white/[0.06] text-slate-100 focus:border-white/30"
+                                  : "border-black/10 bg-white text-gray-800 focus:border-black/25",
+                              )}
+                              disabled={recording || !!actionBusy}
+                            >
+                              <option value="">
+                                {t("voiceSecretaryDefaultMic", { defaultValue: "System default microphone" })}
+                              </option>
+                              {audioDevices.map((device, index) => (
+                                <option key={device.deviceId || `audio-${index}`} value={device.deviceId}>
+                                  {device.label || t("voiceSecretaryMicDeviceFallback", {
+                                    index: index + 1,
+                                    defaultValue: "Microphone {{index}}",
+                                  })}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            className={classNames(
+                              "inline-flex min-h-[34px] items-center rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
+                              isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 bg-white text-gray-700 hover:bg-black/5",
+                            )}
+                            onClick={() => void loadAudioDevices()}
+                            disabled={recording || !!actionBusy}
+                          >
+                            {t("voiceSecretaryRefreshDevices", { defaultValue: "Refresh devices" })}
+                          </button>
+                        </>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={classNames(
+                          "inline-flex min-h-[38px] items-center gap-2.5 rounded-full border px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
+                          recording
+                            ? isDark
+                              ? "border-rose-300/35 bg-rose-500/15 text-rose-100 hover:bg-rose-500/22"
+                              : "border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100"
+                            : isDark
+                              ? "border-white/10 bg-white/[0.06] text-slate-100 hover:bg-white/10"
+                              : "border-black/10 bg-white text-gray-800 hover:bg-black/5",
+                        )}
+                        onPointerDown={captureMode === "prompt" && !recording ? (event) => {
+                          if (!!actionBusy || (!recording && !dictationSupported)) return;
+                          promptHoldActiveRef.current = true;
+                          event.currentTarget.setPointerCapture?.(event.pointerId);
+                          void startDictation();
+                        } : undefined}
+                        onPointerUp={captureMode === "prompt" ? (event) => {
+                          promptHoldActiveRef.current = false;
+                          event.currentTarget.releasePointerCapture?.(event.pointerId);
+                          if (recordingRef.current) stopCurrentRecording();
+                        } : undefined}
+                        onPointerCancel={captureMode === "prompt" ? () => {
+                          promptHoldActiveRef.current = false;
+                          if (recordingRef.current) stopCurrentRecording();
+                        } : undefined}
+                        onClick={(event) => {
+                          if (captureMode === "prompt") {
+                            event.preventDefault();
+                            return;
+                          }
+                          if (recording) stopCurrentRecording();
+                          else void startDictation();
+                        }}
+                        disabled={!!actionBusy || (!recording && !dictationSupported)}
+                        title={recording
+                          ? t("voiceSecretaryStopDictation", { defaultValue: "Stop recording" })
+                          : captureStartTitle}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={classNames(
+                            "inline-flex h-5 w-5 items-center justify-center rounded-full",
+                            recording
+                              ? isDark ? "bg-rose-300/15" : "bg-white"
+                              : isDark ? "bg-rose-400/15 text-rose-100" : "bg-rose-50 text-rose-700",
+                          )}
+                        >
+                          {recording ? <StopIcon size={12} /> : <span className="h-2.5 w-2.5 rounded-full bg-rose-600" />}
+                        </span>
+                        {recording
+                          ? t("voiceSecretaryStopDictation", { defaultValue: "Stop recording" })
+                          : workspaceRecordLabel}
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="mt-2">
+                {headerStatusHint ? (
+                  <div className={classNames("text-[11px] leading-5", isDark ? "text-slate-400" : "text-gray-500")}>
+                    {headerStatusHint}
                   </div>
                 ) : null}
               </div>
-              {pendingPromptDraft ? (
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => void dismissPromptDraft()}
-                    className={classNames(
-                      "rounded-full px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
-                      isDark ? "text-slate-300 hover:bg-white/10" : "text-gray-600 hover:bg-black/5",
-                    )}
-                  >
-                    {t("dismiss", { defaultValue: "Dismiss" })}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void applyPromptDraft(pendingPromptDraft, { force: true })}
-                    className={classNames(
-                      "rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors",
-                      isDark ? "bg-cyan-300 text-slate-950 hover:bg-cyan-200" : "bg-cyan-600 text-white hover:bg-cyan-500",
-                    )}
-                  >
-                    {t("voiceSecretaryPromptDraftApply", { defaultValue: "Apply to composer" })}
-                  </button>
-                </div>
-              ) : null}
             </div>
-          ) : null}
 
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto lg:grid-cols-[15rem_minmax(0,1fr)_18rem] lg:overflow-hidden">
+            {promptDraftWaiting ? (
+              <div
+                className={classNames(
+                  "mx-4 mt-4 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border px-3 py-2 sm:mx-5",
+                  isDark
+                    ? "border-amber-200/15 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(251,191,36,0.07),rgba(255,255,255,0.03))] text-amber-50"
+                    : "border-amber-200 bg-[linear-gradient(135deg,rgba(255,251,235,1),rgba(255,247,237,0.96),rgba(250,250,249,0.94))] text-amber-950",
+                )}
+              >
+                <div className="min-w-0 flex-1 truncate text-xs font-semibold">
+                  <AnimatedShinyText
+                    className={classNames(
+                      isDark
+                        ? "bg-[linear-gradient(110deg,rgba(254,243,199,0.78)_18%,rgba(255,255,255,0.98)_48%,rgba(251,191,36,0.92)_68%,rgba(254,243,199,0.78)_84%)]"
+                        : "bg-[linear-gradient(110deg,rgb(120,53,15)_18%,rgb(245,158,11)_44%,rgb(255,255,255)_52%,rgb(180,83,9)_66%,rgb(120,53,15)_84%)]",
+                    )}
+                  >
+                    {promptDraftTitle}
+                  </AnimatedShinyText>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-auto scrollbar-hide px-4 py-4 sm:px-5 sm:py-5 lg:grid-cols-[15rem_minmax(0,1fr)_18rem] lg:overflow-hidden">
             <aside
               className={classNames(
-                "flex min-h-0 flex-col rounded-2xl border",
-                isDark ? "border-white/10 bg-white/[0.035]" : "border-black/10 bg-gray-50/80",
+                "flex min-h-0 flex-col rounded-[26px] border",
+                isDark ? "border-white/10 bg-white/[0.035]" : "border-black/10 bg-[rgb(250,250,250)]",
               )}
             >
-              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--glass-border-subtle)] px-3 py-2">
-                <div>
-                  <div className={classNames("text-xs font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
+              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-3.5 py-3">
+                <div className="min-w-0">
+                  <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
                     {t("voiceSecretaryDocumentsTitle", { defaultValue: "Working documents" })}
                   </div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">
-                    {t("voiceSecretaryDocumentsCount", { count: documents.length, defaultValue: "{{count}} docs" })}
+                  <div className="mt-0.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                    {documentsCountLabel}
                     {documents.length ? (
                       <span>
                         {" · "}
@@ -2695,8 +2708,8 @@ export function VoiceSecretaryComposerControl({
                   onClick={startCreateDocument}
                   disabled={!!actionBusy}
                   className={classNames(
-                    "rounded-full border px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                    isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
+                    "rounded-full border px-3 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
+                    isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 bg-white text-gray-700 hover:bg-black/5",
                   )}
                 >
                   {actionBusy === "new_doc"
@@ -2704,12 +2717,12 @@ export function VoiceSecretaryComposerControl({
                     : t("voiceSecretaryNewDocumentShort", { defaultValue: "New" })}
                 </button>
               </div>
-              <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
+              <div className="min-h-0 flex-1 space-y-1.5 overflow-auto scrollbar-hide p-2.5">
                 {creatingDocument ? (
                   <div
                     className={classNames(
-                      "mb-2 space-y-2 rounded-xl border p-2",
-                      isDark ? "border-cyan-300/20 bg-cyan-300/8" : "border-cyan-200 bg-cyan-50/70",
+                      "mb-2 space-y-2 rounded-2xl border p-2.5",
+                      isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
                     )}
                   >
                     <input
@@ -2732,8 +2745,8 @@ export function VoiceSecretaryComposerControl({
                       className={classNames(
                         "w-full rounded-lg border px-2.5 py-1.5 text-xs outline-none transition-colors",
                         isDark
-                          ? "border-white/10 bg-black/20 text-slate-100 placeholder:text-slate-500 focus:border-cyan-300/50"
-                          : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-cyan-400/60",
+                          ? "border-white/10 bg-black/20 text-slate-100 placeholder:text-slate-500 focus:border-white/30"
+                          : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/25",
                       )}
                     />
                     <div className="flex items-center justify-end gap-1.5">
@@ -2754,7 +2767,7 @@ export function VoiceSecretaryComposerControl({
                         disabled={actionBusy === "new_doc"}
                         className={classNames(
                           "rounded-full px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                          isDark ? "bg-cyan-300 text-slate-950 hover:bg-cyan-200" : "bg-cyan-600 text-white hover:bg-cyan-500",
+                          isDark ? "bg-white text-[rgb(20,20,22)] hover:bg-white/90" : "bg-[rgb(35,36,37)] text-white hover:bg-black",
                         )}
                       >
                         {actionBusy === "new_doc"
@@ -2780,24 +2793,46 @@ export function VoiceSecretaryComposerControl({
                         void selectDocument(document);
                       }}
                       className={classNames(
-                        "group flex w-full min-w-0 flex-col gap-1 rounded-xl border px-2.5 py-2 text-left transition-colors",
+                        "group flex w-full min-w-0 flex-col gap-1.5 rounded-2xl border px-3 py-2.5 text-left transition-colors",
                         viewing
                           ? isDark
-                            ? "border-cyan-300/20 bg-cyan-400/12 text-cyan-100"
-                            : "border-cyan-200 bg-cyan-50 text-cyan-800"
+                            ? "border-white/14 bg-white/[0.08] text-white shadow-[0_10px_30px_-24px_rgba(255,255,255,0.32)]"
+                            : "border-black/12 bg-white text-[rgb(35,36,37)] shadow-[0_10px_30px_-24px_rgba(15,23,42,0.14)]"
                           : isDark
                             ? "border-transparent text-slate-300 hover:border-white/10 hover:bg-white/8"
                             : "border-transparent text-gray-700 hover:border-black/10 hover:bg-white",
                       )}
                     >
                       <span className="flex min-w-0 items-center justify-between gap-2">
-                        <span className="truncate text-xs font-semibold">{document.title || docId}</span>
+                        <span className="truncate text-sm font-semibold">{document.title || docId}</span>
                         <span className="flex shrink-0 items-center gap-1">
-                          {viewing ? (
-                            <span className="rounded-full bg-current/10 px-1.5 py-0.5 text-[10px] font-medium">
-                              {t("voiceSecretaryViewingDocumentBadge", { defaultValue: "Viewing" })}
+                          <button
+                            type="button"
+                            aria-label={t("voiceSecretaryArchiveDocumentItemAriaLabel", {
+                              title: document.title || docId,
+                              defaultValue: "Archive {{title}}",
+                            })}
+                            title={t("voiceSecretaryArchiveDocument", { defaultValue: "Archive viewed" })}
+                            disabled={!docId || actionBusy === "archive_doc"}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void archiveDocument(document);
+                            }}
+                            onKeyDown={(event) => {
+                              event.stopPropagation();
+                            }}
+                            className={classNames(
+                              "inline-flex h-6 items-center justify-center rounded-full border px-2 transition-all disabled:cursor-default",
+                              viewing ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                              isDark
+                                ? "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/10 hover:text-slate-100 disabled:opacity-35"
+                                : "border-black/10 bg-white text-gray-500 hover:bg-black/5 hover:text-gray-900 disabled:opacity-35",
+                            )}
+                          >
+                            <span className="text-[10px] font-semibold leading-none">
+                              {t("voiceSecretaryArchiveShort", { defaultValue: "Archive" })}
                             </span>
-                          ) : null}
+                          </button>
                           <button
                             type="button"
                             aria-pressed={!!captureTarget}
@@ -2829,11 +2864,11 @@ export function VoiceSecretaryComposerControl({
                               "relative flex h-5 w-5 items-center justify-center rounded-full border transition-colors disabled:cursor-default",
                               captureTarget
                                 ? isDark
-                                  ? "border-cyan-200 bg-cyan-300/15 shadow-[0_0_0_3px_rgba(34,211,238,0.08)]"
-                                  : "border-cyan-500 bg-white shadow-[0_0_0_3px_rgba(6,182,212,0.08)]"
+                                  ? "border-white/70 bg-white/10 shadow-[0_0_0_3px_rgba(255,255,255,0.08)]"
+                                  : "border-[rgb(35,36,37)] bg-white shadow-[0_0_0_3px_rgba(35,36,37,0.08)]"
                                 : isDark
-                                  ? "border-white/25 bg-white/[0.03] hover:border-cyan-300/60 hover:bg-cyan-300/10 disabled:opacity-45"
-                                  : "border-gray-300 bg-white hover:border-cyan-400 hover:bg-cyan-50 disabled:opacity-45",
+                                  ? "border-white/25 bg-white/[0.03] hover:border-white/50 hover:bg-white/[0.08] disabled:opacity-45"
+                                  : "border-gray-300 bg-white hover:border-[rgb(35,36,37)]/35 hover:bg-[rgb(245,245,245)] disabled:opacity-45",
                             )}
                           >
                             {captureTarget ? (
@@ -2841,7 +2876,7 @@ export function VoiceSecretaryComposerControl({
                                 aria-hidden="true"
                                 className={classNames(
                                   "h-2.5 w-2.5 rounded-full",
-                                  isDark ? "bg-cyan-100" : "bg-cyan-600",
+                                  isDark ? "bg-white" : "bg-[rgb(35,36,37)]",
                                 )}
                               />
                             ) : null}
@@ -2849,7 +2884,7 @@ export function VoiceSecretaryComposerControl({
                         </span>
                       </span>
                       {document.workspace_path ? (
-                        <span className="truncate text-[10px] text-[var(--color-text-muted)]">{document.workspace_path}</span>
+                        <span className="truncate text-[11px] text-[var(--color-text-muted)]">{document.workspace_path}</span>
                       ) : null}
                     </div>
                   );
@@ -2859,45 +2894,30 @@ export function VoiceSecretaryComposerControl({
                   </div>
                 )}
               </div>
-              <div className="shrink-0 border-t border-[var(--glass-border-subtle)] p-2">
-                <button
-                  type="button"
-                  className={classNames(
-                    "w-full rounded-xl px-2.5 py-2 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                    isDark ? "text-slate-400 hover:bg-white/8 hover:text-slate-200" : "text-gray-500 hover:bg-black/5 hover:text-gray-700",
-                  )}
-                  onClick={() => void archiveDocument()}
-                  disabled={!!actionBusy || !activeDocument}
-                >
-                  {actionBusy === "archive_doc"
-                    ? t("voiceSecretaryArchivingDocument", { defaultValue: "Archiving..." })
-                    : t("voiceSecretaryArchiveDocument", { defaultValue: "Archive viewed" })}
-                </button>
-              </div>
             </aside>
 
             <section
               className={classNames(
-                "flex min-h-0 flex-col rounded-2xl border p-3",
+                "flex min-h-0 flex-col rounded-[28px] border p-4",
                 isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
               )}
             >
-              <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
+              <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] pb-4">
                 <div className="min-w-0 flex-1">
-                  <div className={classNames("truncate text-base font-semibold tracking-[-0.01em]", isDark ? "text-slate-100" : "text-gray-900")}>
+                  <div className={classNames("break-words text-xl font-semibold tracking-[-0.02em]", isDark ? "text-slate-100" : "text-gray-900")}>
                     {documentDisplayTitle}
                   </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                    <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-cyan-500/10 text-cyan-200" : "bg-cyan-50 text-cyan-700")}>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-100" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
                       {t("voiceSecretaryMarkdownBadge", { defaultValue: "Markdown" })}
                     </span>
-                    <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", activeDocumentPath ? (isDark ? "bg-emerald-500/10 text-emerald-200" : "bg-emerald-50 text-emerald-700") : (isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-600"))}>
+                    <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", activeDocumentPath ? (isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]") : (isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-600"))}>
                       {activeDocumentPath
                         ? t("voiceSecretaryRepoBackedBadge", { defaultValue: "Repo-backed" })
                         : t("voiceSecretaryWaitingTranscriptBadge", { defaultValue: "Waiting for transcript" })}
                     </span>
                     {voiceDocumentKey(activeDocument) && voiceDocumentKey(activeDocument) === captureTargetDocumentId ? (
-                      <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-emerald-500/10 text-emerald-200" : "bg-emerald-50 text-emerald-700")}>
+                      <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
                         {t("voiceSecretaryDefaultDocumentBadge", { defaultValue: "Default document" })}
                       </span>
                     ) : null}
@@ -2907,20 +2927,27 @@ export function VoiceSecretaryComposerControl({
                       </span>
                     ) : null}
                     {documentRemoteChanged ? (
-                      <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-blue-500/10 text-blue-200" : "bg-blue-50 text-blue-700")}>
+                      <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
                         {t("voiceSecretaryRemoteChangedBadge", { defaultValue: "Remote update available" })}
                       </span>
                     ) : null}
                   </div>
-                  <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
-                    {activeDocumentPath
-                      ? t("voiceSecretaryWorkingDocumentPath", {
-                          path: activeDocumentPath,
-                          defaultValue: "Repo markdown: {{path}}",
-                        })
-                      : t("voiceSecretaryWorkingDocumentPending", {
-                          defaultValue: "Transcript will create a repo markdown document automatically.",
-                        })}
+                  <div
+                    className={classNames(
+                      "mt-3 rounded-2xl border px-3 py-2.5 text-[11px] leading-5",
+                      isDark ? "border-white/8 bg-black/20 text-[var(--color-text-muted)]" : "border-black/8 bg-[rgb(248,248,248)] text-[rgb(108,114,127)]",
+                    )}
+                  >
+                    <span className="block break-all [overflow-wrap:anywhere]">
+                      {activeDocumentPath
+                        ? t("voiceSecretaryWorkingDocumentPath", {
+                            path: activeDocumentPath,
+                            defaultValue: "Repo markdown: {{path}}",
+                          })
+                        : t("voiceSecretaryWorkingDocumentPending", {
+                            defaultValue: "Transcript will create a repo markdown document automatically.",
+                          })}
+                    </span>
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -2929,7 +2956,7 @@ export function VoiceSecretaryComposerControl({
                       type="button"
                       className={classNames(
                         "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                        isDark ? "border-blue-300/20 text-blue-200 hover:bg-blue-400/10" : "border-blue-200 text-blue-700 hover:bg-blue-50",
+                        isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
                       )}
                       onClick={() => loadDocumentDraft(activeDocument)}
                       disabled={!activeDocument}
@@ -2982,7 +3009,7 @@ export function VoiceSecretaryComposerControl({
               </div>
 
               <MarkdownDocumentSurface
-                className="mt-3 min-h-0 flex-1 overflow-auto"
+                className="mt-4 min-h-0 flex-1 overflow-auto scrollbar-hide"
                 content={documentDraft}
                 editValue={documentDraft}
                 editing={documentEditing}
@@ -3001,13 +3028,23 @@ export function VoiceSecretaryComposerControl({
 
             <aside
               className={classNames(
-                "flex min-h-0 flex-col gap-3 rounded-2xl border p-3",
-                isDark ? "border-white/10 bg-white/[0.035]" : "border-black/10 bg-gray-50/80",
+                "flex min-h-0 flex-col gap-4 rounded-[26px] border p-3.5",
+                isDark ? "border-white/10 bg-white/[0.035]" : "border-black/10 bg-[rgb(250,250,250)]",
               )}
             >
-              <div className="shrink-0">
-                <div className={classNames("text-xs font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
+              <div
+                className={classNames(
+                  "shrink-0 rounded-2xl border p-3",
+                  isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
+                )}
+              >
+                <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
                   {t("voiceSecretaryInstructionLabel", { defaultValue: "Ask Voice Secretary" })}
+                </div>
+                <div className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  {t("voiceSecretaryInstructionPlaceholder", {
+                    defaultValue: "Tell Voice Secretary how to refine, split, summarize, or send this document.",
+                  })}
                 </div>
                 <textarea
                   value={documentInstruction}
@@ -3016,15 +3053,20 @@ export function VoiceSecretaryComposerControl({
                     defaultValue: "Tell Voice Secretary how to refine, split, summarize, or send this document.",
                   })}
                   className={classNames(
-                    "mt-2 min-h-[112px] w-full resize-y rounded-2xl border px-3 py-2 text-xs leading-5 outline-none transition-colors",
+                    "mt-3 min-h-[96px] w-full resize-y rounded-2xl border px-3 py-2 text-xs leading-5 outline-none transition-colors",
                     isDark
-                      ? "border-white/10 bg-white/[0.06] text-slate-100 placeholder:text-slate-500 focus:border-cyan-300/45"
-                      : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-cyan-400/45",
+                      ? "border-white/10 bg-white/[0.06] text-slate-100 placeholder:text-slate-500 focus:border-white/30"
+                      : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/25",
                   )}
                 />
                 <button
                   type="button"
-                  className="mt-2 w-full rounded-xl border border-blue-500 bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/20 transition-colors hover:bg-blue-500 disabled:opacity-60"
+                  className={classNames(
+                    "mt-3 w-full rounded-2xl border px-3 py-2.5 text-xs font-semibold transition-colors disabled:opacity-60",
+                    isDark
+                      ? "border-white bg-white text-[rgb(20,20,22)] hover:bg-white/90"
+                      : "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:bg-black",
+                  )}
                   onClick={() => void sendDocumentInstruction()}
                   disabled={!!actionBusy || !documentInstruction.trim()}
                 >
@@ -3035,14 +3077,17 @@ export function VoiceSecretaryComposerControl({
               </div>
 
               <div className={classNames("flex min-h-0 flex-1 flex-col rounded-2xl border text-xs leading-5", isDark ? "border-white/10 bg-black/10 text-slate-300" : "border-black/10 bg-white text-gray-700")}>
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--glass-border-subtle)] px-3 py-2">
-                  <div className={classNames("font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
+                <div className="shrink-0 border-b border-[var(--glass-border-subtle)] px-3 py-3">
+                  <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
                     {t("voiceSecretaryTranscriptFeedTitle", { defaultValue: "Transcript" })}
                   </div>
+                  <div className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                    {transcriptFeedHint}
+                  </div>
                 </div>
-                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 py-2">
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto scrollbar-hide px-2.5 py-2.5">
                   {liveTranscriptText ? (
-                    <div className={classNames("rounded-lg border-l-2 px-2 py-1.5", isDark ? "border-cyan-300 bg-cyan-300/10 text-cyan-50" : "border-cyan-500 bg-cyan-50 text-cyan-950")}>
+                    <div className={classNames("rounded-2xl border px-2.5 py-2", isDark ? "border-white/15 bg-white/[0.08] text-white" : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
                       <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide opacity-70">
                         {t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })}
                       </div>
@@ -3050,11 +3095,11 @@ export function VoiceSecretaryComposerControl({
                     </div>
                   ) : null}
                   {recentTranscriptItems.length ? recentTranscriptItems.map((item) => (
-                    <div key={item.id} className={classNames("rounded-lg border-l-2 px-2 py-1.5", isDark ? "border-white/10 bg-white/[0.025] text-slate-300" : "border-gray-200 bg-gray-50 text-gray-700")}>
+                    <div key={item.id} className={classNames("rounded-2xl border px-2.5 py-2", isDark ? "border-white/10 bg-white/[0.025] text-slate-300" : "border-gray-200 bg-gray-50 text-gray-700")}>
                       <div className="whitespace-pre-wrap break-words text-[11px] leading-4">{item.text}</div>
                     </div>
                   )) : !liveTranscriptText ? (
-                    <div className="rounded-xl border border-dashed border-[var(--glass-border-subtle)] px-2.5 py-4 text-center text-[11px] text-[var(--color-text-muted)]">
+                    <div className="rounded-2xl border border-dashed border-[var(--glass-border-subtle)] px-2.5 py-4 text-center text-[11px] text-[var(--color-text-muted)]">
                       {recording
                         ? t("voiceSecretaryTranscriptFeedListeningEmpty", { defaultValue: "Listening. Transcript will appear here." })
                         : t("voiceSecretaryTranscriptFeedEmpty", { defaultValue: "Start recording to see transcript here." })}
@@ -3064,25 +3109,30 @@ export function VoiceSecretaryComposerControl({
               </div>
             </aside>
           </div>
-        </div>
-      ) : null}
+          <button
+            type="button"
+            onClick={closePanel}
+            className="absolute right-3 top-3 rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45 sm:right-4 sm:top-4"
+            aria-label={t("voiceSecretaryClose", { defaultValue: "Close Voice Secretary" })}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+            </section>
+          </div>,
+          document.body,
+        )
+        : null}
 
       {isAssistantRow ? (
         <div className="inline-flex max-w-full items-center gap-1.5">
           <div
             className={classNames(
-              "inline-flex h-8 shrink-0 items-center gap-0.5 rounded-lg border p-0.5 transition-colors",
+              "inline-flex h-9 shrink-0 items-center gap-0.5 rounded-lg border p-0.5 transition-colors",
               recording
                 ? isDark
-                  ? "border-rose-300/30 bg-rose-500/14 text-rose-100"
-                  : "border-rose-200 bg-rose-50 text-rose-800"
-                : assistantEnabled
-                  ? isDark
-                    ? "border-cyan-300/22 bg-cyan-400/10 text-cyan-100"
-                    : "border-cyan-200 bg-cyan-50 text-cyan-800"
-                  : isDark
-                    ? "border-white/10 bg-white/[0.04] text-slate-400"
-                    : "border-black/10 bg-white text-gray-600 shadow-sm",
+                  ? "border-rose-400/30 bg-rose-500/10"
+                  : "border-rose-200 bg-rose-50/70"
+                : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]",
             )}
             role="group"
             aria-label={t("voiceSecretaryTitle", { defaultValue: "Voice Secretary" })}
@@ -3090,23 +3140,28 @@ export function VoiceSecretaryComposerControl({
             <button
               type="button"
               className={classNames(
-                "relative inline-flex h-7 w-8 items-center justify-center rounded-md transition-[background-color,color,transform] disabled:cursor-not-allowed disabled:opacity-50",
+                "relative inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                 recording
-                  ? "bg-rose-600 text-white shadow-sm shadow-rose-500/25 hover:bg-rose-500"
+                  ? isDark
+                    ? "bg-rose-500/20 text-rose-200 hover:bg-rose-500/28"
+                    : "bg-rose-500 text-white shadow-sm hover:bg-rose-600"
                   : !dictationSupported
-                    ? isDark
-                      ? "text-slate-500"
-                      : "bg-gray-100 text-gray-400"
-                    : assistantEnabled
-                    ? isDark
-                      ? "text-rose-100 hover:bg-rose-500/18"
-                      : "text-rose-700 hover:bg-rose-100"
+                    ? "text-[var(--color-text-tertiary)]"
                     : isDark
-                      ? "text-rose-200 hover:bg-rose-500/16"
-                      : "text-rose-700 hover:bg-rose-100",
-                !controlDisabled && !actionBusy && "active:scale-[0.98]",
+                      ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+                      : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
+                !controlDisabled && !actionBusy && "active:scale-[0.96]",
               )}
-              onClick={(event) => void handleAssistantRowRecordClick(event)}
+              onClick={(event) => {
+                if (captureMode === "prompt") {
+                  event.preventDefault();
+                  return;
+                }
+                void handleAssistantRowRecordClick(event);
+              }}
+              onPointerDown={captureMode === "prompt" ? handleAssistantRowPromptPointerDown : undefined}
+              onPointerUp={captureMode === "prompt" ? handleAssistantRowPromptPointerUp : undefined}
+              onPointerCancel={captureMode === "prompt" ? handleAssistantRowPromptPointerCancel : undefined}
               disabled={!!actionBusy || controlDisabled || (!recording && !dictationSupported)}
               aria-pressed={recording}
               aria-label={assistantRowControlLabel}
@@ -3119,31 +3174,30 @@ export function VoiceSecretaryComposerControl({
               )}
             </button>
             {onCaptureModeChange ? (
-              <div className="relative">
-                <button
-                  type="button"
-                  className={classNames(
-                    "inline-flex h-7 min-w-[3.85rem] shrink-0 items-center justify-center gap-1 rounded-md px-1.5 text-[10px] font-semibold tracking-[-0.005em] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                    recording
-                      ? isDark ? "hover:bg-rose-300/10" : "hover:bg-rose-100"
-                      : isDark ? "hover:bg-white/8" : "hover:bg-black/5",
-                  )}
-                  onClick={() => setShowAssistantModeMenu((value) => !value)}
-                  disabled={controlDisabled}
-                  title={`${t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}: ${assistantRowCurrentMode.label}`}
-                  aria-label={t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}
-                  aria-haspopup="menu"
-                  aria-expanded={showAssistantModeMenu}
-                >
-                  <span className="min-w-0 truncate">{assistantRowCurrentMode.label}</span>
-                  <ChevronDownIcon size={12} aria-hidden="true" />
-                </button>
-                {showAssistantModeMenu ? (
-                  <div
+              <Popover open={showAssistantModeMenu} onOpenChange={setShowAssistantModeMenu}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
                     className={classNames(
-                      "glass-panel absolute left-0 top-full z-[190] mt-1 w-36 rounded-xl border p-1 shadow-xl",
-                      isDark ? "border-white/10 bg-slate-950/95" : "border-black/10 bg-white/95",
+                      "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                      isDark
+                        ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+                        : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
                     )}
+                    disabled={controlDisabled}
+                    title={`${t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}: ${assistantRowCurrentMode.label}`}
+                    aria-label={t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}
+                  >
+                    <span className="min-w-0 truncate">{assistantRowCurrentMode.label}</span>
+                    <ChevronDownIcon size={12} aria-hidden="true" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  sideOffset={6}
+                  className="w-56 rounded-2xl p-1.5"
+                >
+                  <div
                     role="menu"
                     aria-label={t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}
                   >
@@ -3154,41 +3208,70 @@ export function VoiceSecretaryComposerControl({
                           key={option.key}
                           type="button"
                           className={classNames(
-                            "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors",
+                            "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors",
                             active
-                              ? isDark ? "bg-cyan-400/14 text-cyan-100" : "bg-cyan-50 text-cyan-900"
-                              : isDark ? "text-slate-300 hover:bg-white/8" : "text-gray-700 hover:bg-black/5",
+                              ? isDark
+                                ? "bg-white/10"
+                                : "bg-black/5"
+                              : isDark
+                                ? "hover:bg-white/5"
+                                : "hover:bg-black/5",
                           )}
                           role="menuitemradio"
                           aria-checked={active}
-                          onClick={() => handleAssistantRowModeChange(option.key)}
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            handleAssistantRowModeChange(option.key);
+                          }}
                         >
-                          <span className="min-w-0">
-                            <span className="block truncate font-semibold">{option.label}</span>
-                            <span className={classNames("block truncate text-[10px] font-medium", active ? "opacity-75" : "opacity-55")}>
+                          <span
+                            className={classNames(
+                              "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
+                              option.key === "document"
+                                ? isDark
+                                  ? "bg-slate-700 text-slate-200"
+                                  : "bg-gray-100 text-gray-700"
+                                : isDark
+                                  ? "bg-indigo-500/25 text-indigo-200"
+                                  : "bg-indigo-100 text-indigo-700",
+                            )}
+                          >
+                            {option.key === "document" ? (
+                              <MicrophoneIcon size={13} />
+                            ) : (
+                              <span className="text-[11px] font-black italic leading-none">P</span>
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className={classNames("block text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
+                              {option.label}
+                            </span>
+                            <span className={classNames("block text-[11px]", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>
                               {option.description}
                             </span>
                           </span>
-                          {active ? <span className="shrink-0 text-[11px] font-bold">✓</span> : null}
+                          {active ? (
+                            <span className={classNames("text-xs font-semibold", isDark ? "text-slate-200" : "text-[rgb(35,36,37)]")}>✓</span>
+                          ) : null}
                         </button>
                       );
                     })}
                   </div>
-                ) : null}
-              </div>
+                </PopoverContent>
+              </Popover>
             ) : null}
             <button
               type="button"
               className={classNames(
-                "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-[background-color,color,transform] disabled:cursor-not-allowed disabled:opacity-50",
+                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                 open
                   ? isDark
-                    ? "bg-cyan-300/14 text-cyan-100"
-                    : "bg-cyan-100 text-cyan-800"
-                  : recording
-                    ? isDark ? "hover:bg-rose-300/10" : "hover:bg-rose-100"
-                    : isDark ? "hover:bg-white/8" : "hover:bg-black/5",
-                !controlDisabled && "active:scale-[0.98]",
+                    ? "bg-white/10 text-[var(--color-text-primary)]"
+                    : "bg-black/5 text-gray-900"
+                  : isDark
+                    ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+                    : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
+                !controlDisabled && "active:scale-[0.96]",
               )}
               onClick={() => {
                 if (open) closePanel();
@@ -3206,38 +3289,30 @@ export function VoiceSecretaryComposerControl({
             <div
               className={classNames(
                 "inline-flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]",
-                isDark ? "bg-cyan-400/12 text-cyan-100" : "bg-cyan-50 text-cyan-900",
+                pendingPromptDraft
+                  ? isDark
+                    ? "bg-emerald-400/12 text-emerald-100"
+                    : "bg-emerald-50 text-emerald-900"
+                  : isDark
+                    ? "bg-amber-400/12 text-amber-100"
+                    : "bg-amber-50 text-amber-900",
               )}
             >
               <div className="truncate font-semibold">
-                {pendingPromptDraft
-                  ? t("voiceSecretaryPromptDraftReady", { defaultValue: "Refined prompt ready" })
-                  : t("voiceSecretaryPromptDraftWaiting", { defaultValue: "Voice Secretary is refining the prompt..." })}
+                {promptDraftWaiting ? (
+                  <AnimatedShinyText
+                    className={classNames(
+                      isDark
+                        ? "bg-[linear-gradient(110deg,rgba(254,243,199,0.82)_18%,rgba(255,255,255,0.98)_48%,rgba(251,191,36,0.94)_68%,rgba(254,243,199,0.82)_84%)]"
+                        : "bg-[linear-gradient(110deg,rgb(120,53,15)_18%,rgb(217,119,6)_42%,rgb(255,255,255)_52%,rgb(146,64,14)_66%,rgb(120,53,15)_84%)]",
+                    )}
+                  >
+                    {promptDraftTitle}
+                  </AnimatedShinyText>
+                ) : (
+                  promptDraftTitle
+                )}
               </div>
-              {pendingPromptDraft ? (
-                <div className="flex items-center justify-end gap-1">
-                  <button
-                    type="button"
-                    className={classNames(
-                      "rounded-full px-1.5 py-0.5 font-semibold transition-colors",
-                      isDark ? "text-slate-300 hover:bg-white/10" : "text-gray-600 hover:bg-black/5",
-                    )}
-                    onClick={() => void dismissPromptDraft()}
-                  >
-                    {t("dismiss", { defaultValue: "Dismiss" })}
-                  </button>
-                  <button
-                    type="button"
-                    className={classNames(
-                      "rounded-full px-2 py-0.5 font-semibold transition-colors",
-                      isDark ? "bg-cyan-300 text-slate-950 hover:bg-cyan-200" : "bg-cyan-600 text-white hover:bg-cyan-500",
-                    )}
-                    onClick={() => void applyPromptDraft(pendingPromptDraft, { force: true })}
-                  >
-                    {t("voiceSecretaryPromptDraftApplyShort", { defaultValue: "Apply" })}
-                  </button>
-                </div>
-              ) : null}
             </div>
           ) : null}
         </div>
@@ -3245,21 +3320,26 @@ export function VoiceSecretaryComposerControl({
         <button
           type="button"
           className={classNames(
-            buttonClassName,
-            "relative",
-            controlDisabled
-              ? ""
-              : recording || assistantEnabled
-                ? isDark
-                  ? recording
+            buttonClassName || classNames(
+              "glass-btn flex items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+              controlDisabled
+                ? "text-[var(--color-text-tertiary)]"
+                : recording
+                  ? isDark
                     ? "border-rose-400/25 bg-rose-500/15 text-rose-100 hover:bg-rose-500/22"
-                    : "border-cyan-400/25 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/22"
-                  : recording
-                    ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                    : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
-                : "hover:text-[var(--color-text-primary)] active:scale-95",
+                    : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                  : isDark
+                    ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+                    : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-800",
+            ),
+            "relative",
+            recording && buttonClassName
+              ? isDark
+                ? "!text-rose-300"
+                : "!text-rose-600"
+              : "",
           )}
-          style={{ width: `${buttonSizePx}px`, height: `${buttonSizePx}px` }}
+          style={buttonClassName ? undefined : { width: `${buttonSizePx}px`, height: `${buttonSizePx}px` }}
           onClick={() => {
             if (open) closePanel();
             else setOpen(true);

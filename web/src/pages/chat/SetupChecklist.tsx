@@ -114,7 +114,7 @@ export function SetupChecklist({
           <button
             type="button"
             className={classNames(
-              "flex-shrink-0 font-semibold bg-blue-600 hover:bg-blue-500 text-white",
+              "flex-shrink-0 font-semibold border border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:border-black hover:bg-black dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:border-white dark:hover:bg-white/92",
               isCompact ? "rounded-xl px-3 py-1.5 min-h-[36px] flex items-center text-[11px]" : "mt-3 w-full rounded-xl px-4 py-2 text-sm"
             )}
             onClick={onAddAgent}
@@ -151,7 +151,7 @@ export function SetupChecklist({
           <button
             type="button"
             className={classNames(
-              "flex-shrink-0 font-semibold bg-emerald-600 hover:bg-emerald-500 text-white",
+              "flex-shrink-0 font-semibold border border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:border-black hover:bg-black dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:border-white dark:hover:bg-white/92",
               isCompact ? "rounded-xl px-3 py-1.5 min-h-[36px] flex items-center text-[11px]" : "mt-3 w-full rounded-xl px-4 py-2 text-sm",
               busy === "group-start" ? "opacity-60" : ""
             )}

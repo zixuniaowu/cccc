@@ -1,14 +1,27 @@
 import type { RuntimeDockItem } from "./runtimeDockItems";
 
-export type RuntimeRingTone = "stopped" | "ready" | "queued" | "active" | "attention";
+export type RuntimeRingTone = "stopped" | "active" | "attention";
 
-export function getRuntimeRingTone(item: Pick<RuntimeDockItem, "liveWorkCard">, isRunning: boolean, workingState: string): RuntimeRingTone {
+export function getRuntimeRingTone(
+  item: Pick<RuntimeDockItem, "liveWorkCard" | "runner">,
+  isRunning: boolean,
+  workingState: string,
+): RuntimeRingTone {
   const actorState = String(workingState || "").trim().toLowerCase();
   if (item.liveWorkCard?.phase === "failed") return "attention";
   if (!isRunning) return "stopped";
   if (actorState === "stuck") return "attention";
-  if (item.liveWorkCard?.phase === "pending") return "queued";
+
+  // Headless runtimes already expose their real daemon-derived working state.
+  // Live-work transcript state can lag during reconnect/catch-up, so don't let
+  // stale pending/streaming cards light the ring after the actor is idle.
+  if (item.runner === "headless") {
+    if (actorState === "working" || actorState === "waiting") return "active";
+    return "stopped";
+  }
+
+  if (item.liveWorkCard?.phase === "pending") return "active";
   if (item.liveWorkCard?.phase === "streaming") return "active";
   if (actorState === "working" || actorState === "waiting") return "active";
-  return "ready";
+  return "stopped";
 }

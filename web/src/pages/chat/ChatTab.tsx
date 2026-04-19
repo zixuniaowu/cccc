@@ -538,10 +538,12 @@ export function ChatTab({
                                   className={classNames(
                                     "min-w-0 rounded-full px-3 py-1.5 text-[11px] font-medium transition-all whitespace-nowrap",
                                     active
-                                      ? "bg-blue-600 text-white shadow-sm"
+                                      ? isDark
+                                        ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
+                                        : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
                                       : isDark
-                                        ? "text-slate-500 hover:text-slate-200 hover:bg-slate-800/60"
-                                        : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+                                        ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
+                                        : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]"
                                   )}
                                   onClick={() => setChatFilter(key)}
                                   aria-pressed={active}
@@ -618,10 +620,12 @@ export function ChatTab({
                           className={classNames(
                             "text-xs px-4 py-1.5 rounded-full transition-all font-medium",
                             active
-                              ? "bg-blue-600 text-white shadow-sm"
+                              ? isDark
+                                ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
+                                : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
                               : isDark
-                                ? "text-slate-500 hover:text-slate-200 hover:bg-slate-800/60"
-                                : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+                                ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
+                                : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]"
                           )}
                           onClick={() => setChatFilter(key)}
                           aria-pressed={active}
@@ -644,7 +648,7 @@ export function ChatTab({
                   <div className="flex h-full flex-col items-center justify-center text-center pb-20">
                     <div className={classNames("w-full max-w-md", isDark ? "text-slate-200" : "text-gray-800")}>
                       <div className="mb-4 flex justify-center" aria-hidden="true">
-                        <CompassIcon size={32} className={isDark ? "text-cyan-300" : "text-cyan-600"} />
+                        <CompassIcon size={32} className={isDark ? "text-white" : "text-[rgb(35,36,37)]"} />
                       </div>
                       <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
                         {t('nextSteps')}
