@@ -158,11 +158,95 @@ class TestSystemNotifyOps(unittest.TestCase):
         )
 
         self.assertIn("read_new_input", text)
+        self.assertIn("Your first action in this turn must be cccc_voice_secretary_document(action=\"read_new_input\")", text)
+        self.assertIn("attached the current unread Secretary batch below only as a preview", text)
+        self.assertIn("If read_new_input returns empty or inconsistent data", text)
         self.assertIn("Do not bootstrap", text)
         self.assertIn("cccc_voice_secretary_composer", text)
+        self.assertIn("Do not finish this turn with only a plan", text)
         self.assertNotIn("alpha beta transcript", text)
         self.assertIn("cccc_voice_secretary_document", text)
         self.assertNotIn("source_chars", text)
+
+    def test_voice_secretary_input_notify_delivery_inlines_pending_batch_when_group_available(self) -> None:
+        from cccc.contracts.v1 import SystemNotifyData
+        from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
+        from cccc.daemon.messaging.delivery import render_system_notify_delivery_text
+        from cccc.kernel.group import load_group
+
+        home, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "voice-inline-batch", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "voice-secretary",
+                    "title": "Voice Secretary",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc.setdefault("assistants", {})
+            group.doc["assistants"]["voice_secretary"] = {
+                "enabled": True,
+                "config": {
+                    "capture_mode": "browser",
+                    "recognition_backend": "browser_asr",
+                    "recognition_language": "zh-CN",
+                    "retention_ttl_seconds": 900,
+                    "auto_document_enabled": True,
+                    "document_default_dir": "docs/voice-secretary",
+                    "auto_document_quiet_ms": 5000,
+                    "auto_document_min_chars": 700,
+                    "auto_document_max_window_seconds": 120,
+                    "tts_enabled": False,
+                },
+            }
+            group.save()
+
+            resp = handle_assistant_voice_input_append(
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "prompt_refine",
+                    "request_id": "voice-prompt-inline",
+                    "composer_text": "",
+                    "voice_transcript": "把按钮文案改得更直接",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+
+            text = render_system_notify_delivery_text(
+                notify=SystemNotifyData(
+                    kind="info",
+                    priority="normal",
+                    title="Voice Secretary input available",
+                    message='Secretary input is ready. Call cccc_voice_secretary_document(action="read_new_input").',
+                    target_actor_id="voice-secretary",
+                    requires_ack=False,
+                    context={"kind": "voice_secretary_input", "reason": "new_input"},
+                ),
+                group=group,
+            )
+
+            self.assertIn("Attached batch:", text)
+            self.assertIn("Secretary input batch:", text)
+            self.assertIn("voice-prompt-inline", text)
+            self.assertIn("把按钮文案改得更直接", text)
+        finally:
+            cleanup()
 
     def test_voice_secretary_action_request_notify_delivery_is_actionable(self) -> None:
         from cccc.contracts.v1 import SystemNotifyData

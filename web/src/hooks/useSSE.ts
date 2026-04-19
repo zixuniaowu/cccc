@@ -37,7 +37,6 @@ import { getPresentationMessageRefs, getPresentationRefStatus } from "../utils/p
 import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
 import { isHeadlessActorRunner } from "../utils/headlessRuntimeSupport";
-import { emitVoiceSecretaryPromptDraftEvent } from "../utils/voiceSecretaryEvents";
 
 // Re-export for backward compatibility
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
@@ -511,6 +510,24 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         ));
       }
 
+      function queueHeadlessActivity(activity: StreamingActivity) {
+        const activityKey = `${groupId}:${actorId}:${streamId || pendingEventId || "pending"}`;
+        const existingActivityBatch = pendingHeadlessActivitiesRef.current.get(activityKey);
+        if (existingActivityBatch) {
+          existingActivityBatch.match = { pendingEventId, streamId };
+          const existingActivity = existingActivityBatch.activities.get(activity.id);
+          existingActivityBatch.activities.set(activity.id, mergeStreamingActivity(existingActivity, activity) || activity);
+        } else {
+          pendingHeadlessActivitiesRef.current.set(activityKey, {
+            actorId,
+            groupId,
+            match: { pendingEventId, streamId },
+            activities: new Map([[activity.id, activity]]),
+          });
+        }
+        schedulePendingHeadlessActivityFlush();
+      }
+
       if (eventType === "headless.thread.started") {
         const threadId = typeof data.thread_id === "string" ? data.thread_id.trim() : "";
         const actorKey = headlessActorKey(groupId, actorId);
@@ -584,6 +601,80 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         return;
       }
 
+      if (
+        eventType === "headless.control.queued"
+        || eventType === "headless.control.started"
+        || eventType === "headless.control.requeued"
+        || eventType === "headless.control.completed"
+        || eventType === "headless.control.failed"
+      ) {
+        const controlKind = typeof data.control_kind === "string" ? data.control_kind.trim() : "control";
+        const turnId = typeof data.turn_id === "string" ? data.turn_id.trim() : "";
+        const controlEventId = typeof data.event_id === "string" ? data.event_id.trim() : "";
+        const errorMessage = typeof data.error === "string"
+          ? data.error.trim()
+          : (data.error && typeof data.error === "object" && typeof (data.error as { message?: unknown }).message === "string"
+            ? String((data.error as { message?: unknown }).message || "").trim()
+            : "");
+        const controlStatusLabel = (() => {
+          switch (eventType) {
+            case "headless.control.queued":
+              return "控制任务已排队";
+            case "headless.control.started":
+              return "正在处理控制任务";
+            case "headless.control.requeued":
+              return "控制任务正在重试";
+            case "headless.control.completed":
+              return "控制任务处理完成";
+            case "headless.control.failed":
+              return "控制任务处理失败";
+            default:
+              return "控制任务更新";
+          }
+        })();
+        const activity: StreamingActivity = {
+          id: `control:${controlEventId || turnId || controlKind || actorId}`,
+          kind: eventType === "headless.control.queued" ? "queued" : "thinking",
+          status:
+            eventType === "headless.control.completed" || eventType === "headless.control.failed"
+              ? "completed"
+              : eventType === "headless.control.started"
+                ? "started"
+                : "updated",
+          summary: controlStatusLabel,
+          detail: [controlKind ? `kind ${controlKind}` : "", errorMessage].filter(Boolean).join(" | ") || undefined,
+          ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
+        };
+        queueHeadlessActivity(activity);
+
+        if (eventType === "headless.control.completed" || eventType === "headless.control.failed") {
+          flushPendingHeadlessActivities(groupId, actorId);
+          flushPendingHeadlessMessages(groupId, actorId);
+          clearPendingHeadlessBuffers(groupId, actorId);
+          updateHeadlessActorRuntime({
+            id: actorId,
+            running: true,
+            idle_seconds: null,
+            effective_working_state: "idle",
+            effective_working_reason: eventType === "headless.control.failed" ? "headless_control_failed" : "headless_control_idle",
+            effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
+            effective_active_task_id: null,
+          });
+          clearEmptyStreamingEventsForActor(actorId, groupId);
+        } else {
+          updateHeadlessActorRuntime({
+            id: actorId,
+            running: true,
+            idle_seconds: null,
+            effective_working_state: "working",
+            effective_working_reason: "headless_control_active",
+            effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
+            effective_active_task_id: turnId || controlEventId || null,
+          });
+        }
+        return;
+      }
+
       if (eventType === "headless.activity.started" || eventType === "headless.activity.updated" || eventType === "headless.activity.completed") {
         const activityId = typeof data.activity_id === "string" ? data.activity_id.trim() : "";
         const summary = typeof data.summary === "string" ? data.summary.trim() : "";
@@ -606,21 +697,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
             : undefined,
           query: typeof data.query === "string" ? data.query.trim() : undefined,
         };
-        const activityKey = `${groupId}:${actorId}:${streamId || pendingEventId || "pending"}`;
-        const existingActivityBatch = pendingHeadlessActivitiesRef.current.get(activityKey);
-        if (existingActivityBatch) {
-          existingActivityBatch.match = { pendingEventId, streamId };
-          const existingActivity = existingActivityBatch.activities.get(activityId);
-          existingActivityBatch.activities.set(activityId, mergeStreamingActivity(existingActivity, activity) || activity);
-        } else {
-          pendingHeadlessActivitiesRef.current.set(activityKey, {
-            actorId,
-            groupId,
-            match: { pendingEventId, streamId },
-            activities: new Map([[activityId, activity]]),
-          });
-        }
-        schedulePendingHeadlessActivityFlush();
+        queueHeadlessActivity(activity);
         return;
       }
 
@@ -893,20 +970,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         initializeObligationStatus(nextEvent, actorsRef.current);
 
         appendEvent(nextEvent, groupId);
-        if (String(nextEvent.kind || "").trim() === "assistant.voice.prompt_draft") {
-          const data = nextEvent.data && typeof nextEvent.data === "object"
-            ? nextEvent.data as { request_id?: unknown; status?: unknown; action?: unknown }
-            : null;
-          const requestId = String(data?.request_id || "").trim();
-          if (requestId) {
-            emitVoiceSecretaryPromptDraftEvent({
-              groupId,
-              requestId,
-              status: String(data?.status || "").trim(),
-              action: String(data?.action || "").trim(),
-            });
-          }
-        }
         if (isChatMessageEvent(nextEvent)) {
           const msgData = nextEvent.data && typeof nextEvent.data === "object"
             ? (nextEvent.data as { stream_id?: unknown })

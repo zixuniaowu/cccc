@@ -1123,10 +1123,8 @@ def _append_voice_input_event(
         _emit_voice_input_notify(group, reason="idle_review")
     elif idle_review_requested:
         pass
-    elif was_caught_up:
-        _emit_voice_input_notify(group, reason="new_input")
     else:
-        _maybe_emit_voice_input_retry_notify(group)
+        _emit_voice_input_notify(group, reason="new_input")
     return _voice_input_event_public(event)
 
 
@@ -1296,6 +1294,30 @@ def _voice_input_batch_text(grouped: list[Dict[str, Any]], *, item_count: int) -
             lines.extend(["", text])
         blocks.append("\n".join(lines).strip())
     return "\n\n".join(block for block in blocks if block.strip()).strip()
+
+
+def _peek_voice_input_batch(group: Group, *, max_items: int = 100, max_chars: int = 24_000) -> Dict[str, Any]:
+    state = _load_voice_input_state(group)
+    cursor = int(state.get("secretary_read_cursor") or 0)
+    items = _read_voice_input_events(group, after_seq=cursor, max_items=max_items, max_chars=max_chars)
+    grouped = _group_voice_input_by_target(items)
+    composer_request_ids: list[str] = []
+    for group_item in grouped:
+        if str(group_item.get("target_kind") or "").strip() != "composer":
+            continue
+        for request_id in (group_item.get("request_ids") if isinstance(group_item.get("request_ids"), list) else []):
+            request_id_text = str(request_id or "").strip()
+            if request_id_text and request_id_text not in composer_request_ids:
+                composer_request_ids.append(request_id_text)
+    return {
+        "item_count": len(items),
+        "input_text": _voice_input_batch_text(grouped, item_count=len(items)),
+        "input_batches": [_voice_input_batch_public(item) for item in grouped],
+        "composer_request_ids": composer_request_ids,
+        "latest_seq": int(state.get("latest_seq") or 0),
+        "secretary_read_cursor": cursor,
+        "has_new_input": bool(items),
+    }
 
 
 def _voice_input_batch_public(group_item: Dict[str, Any]) -> Dict[str, Any]:
@@ -3417,8 +3439,6 @@ def handle_assistant_voice_input_append(
             trigger=raw_trigger,
             metadata=metadata,
         )
-        if actor_woken:
-            _emit_voice_input_notify(group, reason="new_input")
         event = append_event(
             group.ledger_path,
             kind="assistant.voice.input",

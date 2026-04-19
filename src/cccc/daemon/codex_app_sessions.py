@@ -15,10 +15,12 @@ from ..kernel.actors import find_actor
 from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.headless_events import append_headless_event
 from ..kernel.group import load_group
+from ..kernel.inbox import find_event
 from ..kernel.system_prompt import render_system_prompt
+from ..paths import ensure_home
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
-from ..util.fs import atomic_write_json
+from ..util.fs import atomic_write_json, read_json
 from ..util.process import pid_is_alive
 from ..util.time import utc_now_iso
 
@@ -65,6 +67,110 @@ def _jsonrpc_request(request_id: int, method: str, params: Dict[str, Any]) -> Di
     return {"jsonrpc": "2.0", "id": int(request_id), "method": method, "params": params}
 
 
+def _voice_secretary_input_state(group_id: str) -> Dict[str, int]:
+    path = ensure_home() / "voice-secretary" / str(group_id or "").strip() / "input_state.json"
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        return {"latest_seq": 0, "secretary_read_cursor": 0}
+    return {
+        "latest_seq": max(0, int(payload.get("latest_seq") or 0)),
+        "secretary_read_cursor": max(0, int(payload.get("secretary_read_cursor") or 0)),
+    }
+
+
+def _voice_secretary_prompt_draft_state(group_id: str, *, request_ids: list[str]) -> Dict[str, Dict[str, Any]]:
+    if not request_ids:
+        return {}
+    group = load_group(group_id)
+    if group is None:
+        return {}
+    payload = read_json(group.path / "state" / "assistants.json")
+    if not isinstance(payload, dict):
+        return {}
+    drafts = payload.get("voice_prompt_drafts") if isinstance(payload.get("voice_prompt_drafts"), dict) else {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for request_id in request_ids:
+        normalized = str(request_id or "").strip()
+        if not normalized:
+            continue
+        draft = drafts.get(normalized) if isinstance(drafts.get(normalized), dict) else {}
+        out[normalized] = {
+            "updated_at": str(draft.get("updated_at") or "").strip(),
+            "draft_text": str(draft.get("draft_text") or ""),
+            "status": str(draft.get("status") or "").strip(),
+        }
+    return out
+
+
+def _voice_secretary_control_snapshot(*, group_id: str, actor_id: str, event_id: str, control_kind: str) -> Dict[str, Any]:
+    if str(actor_id or "").strip() != "voice-secretary":
+        return {}
+    if str(control_kind or "").strip().lower() != "system_notify":
+        return {}
+    group = load_group(group_id)
+    if group is None:
+        return {}
+    event = find_event(group, str(event_id or "").strip())
+    if not isinstance(event, dict):
+        return {}
+    if str(event.get("kind") or "").strip() != "system.notify":
+        return {}
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    context = data.get("context") if isinstance(data.get("context"), dict) else {}
+    if str(context.get("kind") or "").strip() != "voice_secretary_input":
+        return {}
+    state = _voice_secretary_input_state(group.group_id)
+    composer_request_ids: list[str] = []
+    try:
+        from .assistants.assistant_ops import _peek_voice_input_batch
+
+        preview = _peek_voice_input_batch(group)
+        composer_request_ids = [
+            str(item).strip()
+            for item in ((preview or {}).get("composer_request_ids") if isinstance((preview or {}).get("composer_request_ids"), list) else [])
+            if str(item).strip()
+        ]
+    except Exception:
+        composer_request_ids = []
+    return {
+        "kind": "voice_secretary_input",
+        "event_id": str(event_id or "").strip(),
+        "before_latest_seq": int(state.get("latest_seq") or 0),
+        "before_secretary_read_cursor": int(state.get("secretary_read_cursor") or 0),
+        "composer_request_ids": composer_request_ids,
+        "before_prompt_drafts": _voice_secretary_prompt_draft_state(group.group_id, request_ids=composer_request_ids),
+    }
+
+
+def _voice_secretary_control_consumed_input(*, group_id: str, snapshot: Dict[str, Any]) -> bool:
+    if str((snapshot or {}).get("kind") or "").strip() != "voice_secretary_input":
+        return True
+    before_latest = int((snapshot or {}).get("before_latest_seq") or 0)
+    before_cursor = int((snapshot or {}).get("before_secretary_read_cursor") or 0)
+    if before_latest <= before_cursor:
+        return True
+    state = _voice_secretary_input_state(group_id)
+    if int(state.get("secretary_read_cursor") or 0) > before_cursor:
+        return True
+    composer_request_ids = [
+        str(item).strip()
+        for item in ((snapshot or {}).get("composer_request_ids") if isinstance((snapshot or {}).get("composer_request_ids"), list) else [])
+        if str(item).strip()
+    ]
+    if not composer_request_ids:
+        return False
+    before_prompt_drafts = (snapshot or {}).get("before_prompt_drafts") if isinstance((snapshot or {}).get("before_prompt_drafts"), dict) else {}
+    current_prompt_drafts = _voice_secretary_prompt_draft_state(group_id, request_ids=composer_request_ids)
+    for request_id in composer_request_ids:
+        current = current_prompt_drafts.get(request_id) if isinstance(current_prompt_drafts.get(request_id), dict) else {}
+        before = before_prompt_drafts.get(request_id) if isinstance(before_prompt_drafts.get(request_id), dict) else {}
+        if not str(current.get("draft_text") or "").strip():
+            return False
+        if str(current.get("updated_at") or "").strip() == str(before.get("updated_at") or "").strip():
+            return False
+    return True
+
+
 @dataclass
 class _PendingTurn:
     text: str
@@ -73,6 +179,8 @@ class _PendingTurn:
     reply_to: Optional[str] = None
     control_kind: str = ""
     attachments: list[dict[str, Any]] = field(default_factory=list)
+    retry_count: int = 0
+    validation_snapshot: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -116,6 +224,7 @@ class CodexAppSession:
         self._agent_message_phase_by_stream_id: Dict[str, str] = {}
         self._item_snapshots_by_id: Dict[str, Dict[str, Any]] = {}
         self._active_control_kind = ""
+        self._active_payload: Optional[_PendingTurn] = None
 
     def _agent_message_phase(self, item_id: str, item: Optional[Dict[str, Any]] = None) -> str:
         stream_id = str(item_id or "").strip()
@@ -473,11 +582,19 @@ class CodexAppSession:
     def _queue_control_turn(self, *, text: str, control_kind: str, event_id: str = "", ts: str = "") -> bool:
         if not self.is_running():
             return False
+        normalized_control_kind = str(control_kind or "").strip().lower()
+        normalized_event_id = str(event_id or "").strip()
         payload = _PendingTurn(
             text=str(text or ""),
-            event_id=str(event_id or "").strip(),
+            event_id=normalized_event_id,
             ts=str(ts or "").strip(),
-            control_kind=str(control_kind or "").strip().lower(),
+            control_kind=normalized_control_kind,
+            validation_snapshot=_voice_secretary_control_snapshot(
+                group_id=self.group_id,
+                actor_id=self.actor_id,
+                event_id=normalized_event_id,
+                control_kind=normalized_control_kind,
+            ),
         )
         if not payload.text.strip() or not payload.control_kind:
             return False
@@ -657,6 +774,7 @@ class CodexAppSession:
             turn_id = ""
             with self._lock:
                 self._active_control_kind = str(payload.control_kind or "").strip().lower()
+                self._active_payload = payload
             turn_text = str(payload.text or "")
 
             def _handle_turn_start_failed(exc_obj: BaseException) -> None:
@@ -667,6 +785,7 @@ class CodexAppSession:
                         self._session_state.status = "idle"
                         self._active_event_id = ""
                         self._active_control_kind = ""
+                        self._active_payload = None
                         self._session_state.current_task_id = None
                         self._session_state.updated_at = utc_now_iso()
                     self._persist_state()
@@ -751,6 +870,7 @@ class CodexAppSession:
                     self._session_state.status = "idle"
                     self._active_event_id = ""
                     self._active_control_kind = ""
+                    self._active_payload = None
                     self._session_state.current_task_id = None
                     self._session_state.updated_at = utc_now_iso()
                 self._persist_state()
@@ -801,9 +921,16 @@ class CodexAppSession:
             status = str(turn.get("status") or "completed").strip() or "completed"
             error = turn.get("error") if isinstance(turn.get("error"), dict) else None
             with self._lock:
+                active_payload = self._active_payload
+            should_complete = _voice_secretary_control_consumed_input(
+                group_id=self.group_id,
+                snapshot=(active_payload.validation_snapshot if isinstance(active_payload, _PendingTurn) else {}),
+            )
+            with self._lock:
                 self._active_turn_id = ""
                 self._active_event_id = ""
                 self._active_control_kind = ""
+                self._active_payload = None
                 self._session_state.status = "idle"
                 self._session_state.current_task_id = None
                 self._session_state.updated_at = now
@@ -811,6 +938,59 @@ class CodexAppSession:
             self._agent_message_phase_by_stream_id.clear()
             self._item_snapshots_by_id.clear()
             self._plan_activity_id = ""
+            if not should_complete:
+                retry_count = int(active_payload.retry_count or 0) if isinstance(active_payload, _PendingTurn) else 0
+                if isinstance(active_payload, _PendingTurn) and retry_count < 1:
+                    retry_payload = _PendingTurn(
+                        text=active_payload.text,
+                        event_id=active_payload.event_id,
+                        ts=active_payload.ts,
+                        reply_to=active_payload.reply_to,
+                        control_kind=active_payload.control_kind,
+                        attachments=list(active_payload.attachments),
+                        retry_count=retry_count + 1,
+                        validation_snapshot=active_payload.validation_snapshot,
+                    )
+                    try:
+                        self._turn_queue.put_nowait(retry_payload)
+                        self._emit(
+                            "headless.control.requeued",
+                            {
+                                "turn_id": turn_id,
+                                "event_id": active_event_id,
+                                "control_kind": control_kind,
+                                "status": status,
+                                "reason": "voice_secretary_input_not_consumed",
+                                "retry_count": retry_payload.retry_count,
+                            },
+                        )
+                    except Exception as exc:
+                        self._emit(
+                            "headless.control.failed",
+                            {
+                                "turn_id": turn_id,
+                                "event_id": active_event_id,
+                                "control_kind": control_kind,
+                                "status": status,
+                                "error": {
+                                    "message": f"voice_secretary_input_not_consumed; requeue failed: {exc}",
+                                },
+                            },
+                        )
+                    self._turn_done.set()
+                    return
+                self._emit(
+                    "headless.control.failed",
+                    {
+                        "turn_id": turn_id,
+                        "event_id": active_event_id,
+                        "control_kind": control_kind,
+                        "status": status,
+                        "error": error or {"message": "voice_secretary_input_not_consumed"},
+                    },
+                )
+                self._turn_done.set()
+                return
             self._emit(
                 "headless.control.completed",
                 {

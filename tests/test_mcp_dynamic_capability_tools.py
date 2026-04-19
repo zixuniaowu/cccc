@@ -9,6 +9,32 @@ from cccc.ports.mcp.common import MCPError
 
 
 class TestMcpDynamicCapabilityTools(unittest.TestCase):
+    def test_capability_use_accepts_voice_secretary_builtin_tool_without_capability_id(self) -> None:
+        from cccc.ports.mcp.handlers.cccc_capability import capability_use
+
+        with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "voice-secretary"}, clear=False), patch(
+            "cccc.ports.mcp.server.handle_tool_call",
+            return_value={"ok": True, "item_count": 1},
+        ) as handle_tool_call:
+            result = capability_use(
+                group_id="g1",
+                by="voice-secretary",
+                actor_id="voice-secretary",
+                capability_id="",
+                tool_name="cccc_voice_secretary_document",
+                tool_arguments={"action": "read_new_input"},
+                scope="session",
+                ttl_seconds=3600,
+                reason="Mandatory voice secretary input consumption",
+            )
+
+        self.assertEqual(result.get("capability_id"), "core")
+        self.assertTrue(bool(result.get("tool_called")))
+        handle_tool_call.assert_called_once_with(
+            "cccc_voice_secretary_document",
+            {"action": "read_new_input", "group_id": "g1", "by": "voice-secretary", "actor_id": "voice-secretary"},
+        )
+
     def test_list_tools_for_caller_appends_dynamic_specs(self) -> None:
         from cccc.ports.mcp.server import list_tools_for_caller
 

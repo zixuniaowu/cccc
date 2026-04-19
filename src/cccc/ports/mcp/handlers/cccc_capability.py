@@ -6,10 +6,10 @@ import os
 import re
 from typing import Any, Dict, Optional
 
-from ....kernel.capabilities import BUILTIN_CAPABILITY_PACKS, CORE_TOOL_NAMES
+from ....kernel.capabilities import BUILTIN_CAPABILITY_PACKS, CORE_TOOL_NAMES, SPECIALIZED_CORE_TOOL_NAMES
 from ..common import MCPError, _call_daemon_or_raise
 
-_CORE_TOOL_NAME_SET = set(CORE_TOOL_NAMES)
+_CORE_TOOL_NAME_SET = set(CORE_TOOL_NAMES) | set(SPECIALIZED_CORE_TOOL_NAMES)
 _EXT_TOOL_NAME_RE = re.compile(r"^cccc_ext_[a-f0-9]{8}_(.+)$")
 
 

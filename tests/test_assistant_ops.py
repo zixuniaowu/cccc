@@ -1700,6 +1700,45 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_input_append_emits_notify_when_actor_already_running(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
+
+            notify_reasons: list[str] = []
+
+            def fake_emit(group, *, reason):
+                notify_reasons.append(str(reason))
+
+            with (
+                patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=True),
+                patch("cccc.daemon.assistants.assistant_ops._emit_voice_input_notify", side_effect=fake_emit),
+            ):
+                resp = handle_assistant_voice_input_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "prompt_refine",
+                        "request_id": "voice-prompt-running",
+                        "composer_text": "",
+                        "voice_transcript": "running actor request",
+                        "language": "en",
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=lambda *_args, **_kwargs: {"success": True},
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual(notify_reasons, ["new_input"])
+        finally:
+            cleanup()
+
     def test_assistant_state_can_return_prompt_draft_for_requested_id(self) -> None:
         home, cleanup = self._with_home()
         try:

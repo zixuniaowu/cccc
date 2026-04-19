@@ -857,6 +857,87 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_claude_voice_secretary_control_turn_requeues_when_input_not_consumed(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-voice"
+            session._active_event_id = "event-voice"
+            session._active_control_kind = "system_notify"
+            session._active_payload = _PendingTurn(
+                text="read secretary input",
+                event_id="event-voice",
+                control_kind="system_notify",
+                validation_snapshot={"kind": "voice_secretary_input", "before_latest_seq": 8, "before_secretary_read_cursor": 5},
+            )
+
+            with (
+                patch("cccc.daemon.claude_app_sessions._voice_secretary_control_consumed_input", return_value=False),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_result_event({"type": "result", "subtype": "success"})
+
+            done_set.assert_called_once()
+            queued = session._turn_queue.get_nowait()
+            self.assertIsInstance(queued, _PendingTurn)
+            assert isinstance(queued, _PendingTurn)
+            self.assertEqual(queued.retry_count, 1)
+            self.assertEqual(queued.control_kind, "system_notify")
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.requeued", event_types)
+            self.assertNotIn("headless.control.completed", event_types)
+            self.assertNotIn("headless.control.failed", event_types)
+        finally:
+            cleanup()
+
+    def test_claude_voice_secretary_control_turn_fails_after_retry_when_input_not_consumed(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-voice"
+            session._active_event_id = "event-voice"
+            session._active_control_kind = "system_notify"
+            session._active_payload = _PendingTurn(
+                text="read secretary input",
+                event_id="event-voice",
+                control_kind="system_notify",
+                retry_count=1,
+                validation_snapshot={"kind": "voice_secretary_input", "before_latest_seq": 8, "before_secretary_read_cursor": 5},
+            )
+
+            with (
+                patch("cccc.daemon.claude_app_sessions._voice_secretary_control_consumed_input", return_value=False),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_result_event({"type": "result", "subtype": "success"})
+
+            done_set.assert_called_once()
+            self.assertTrue(session._turn_queue.empty())
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.failed", event_types)
+            self.assertNotIn("headless.control.completed", event_types)
+            self.assertNotIn("headless.control.requeued", event_types)
+        finally:
+            cleanup()
+
     def test_codex_control_turn_uses_control_events_and_skips_auto_mark(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
 
@@ -930,6 +1011,160 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertIn("headless.control.completed", event_types)
             self.assertNotIn("headless.message.started", event_types)
             self.assertNotIn("headless.message.completed", event_types)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_control_turn_requeues_when_input_not_consumed(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-voice"
+            session._active_event_id = "event-voice"
+            session._active_control_kind = "system_notify"
+            session._active_payload = _PendingTurn(
+                text="read secretary input",
+                event_id="event-voice",
+                control_kind="system_notify",
+                validation_snapshot={"kind": "voice_secretary_input", "before_latest_seq": 8, "before_secretary_read_cursor": 5},
+            )
+
+            with (
+                patch("cccc.daemon.codex_app_sessions._voice_secretary_control_consumed_input", return_value=False),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_notification(
+                    "turn/completed",
+                    {"turn": {"id": "turn-voice", "status": "completed"}},
+                )
+
+            done_set.assert_called_once()
+            queued = session._turn_queue.get_nowait()
+            self.assertIsInstance(queued, _PendingTurn)
+            assert isinstance(queued, _PendingTurn)
+            self.assertEqual(queued.retry_count, 1)
+            self.assertEqual(queued.control_kind, "system_notify")
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.requeued", event_types)
+            self.assertNotIn("headless.control.completed", event_types)
+            self.assertNotIn("headless.control.failed", event_types)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_control_turn_fails_after_retry_when_input_not_consumed(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-voice"
+            session._active_event_id = "event-voice"
+            session._active_control_kind = "system_notify"
+            session._active_payload = _PendingTurn(
+                text="read secretary input",
+                event_id="event-voice",
+                control_kind="system_notify",
+                retry_count=1,
+                validation_snapshot={"kind": "voice_secretary_input", "before_latest_seq": 8, "before_secretary_read_cursor": 5},
+            )
+
+            with (
+                patch("cccc.daemon.codex_app_sessions._voice_secretary_control_consumed_input", return_value=False),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_notification(
+                    "turn/completed",
+                    {"turn": {"id": "turn-voice", "status": "completed"}},
+                )
+
+            done_set.assert_called_once()
+            self.assertTrue(session._turn_queue.empty())
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.failed", event_types)
+            self.assertNotIn("headless.control.completed", event_types)
+            self.assertNotIn("headless.control.requeued", event_types)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_control_turn_completes_when_prompt_draft_submitted_without_cursor_advance(self) -> None:
+        from cccc.daemon.codex_app_sessions import _voice_secretary_control_consumed_input
+
+        home, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call("group_create", {"title": "voice-secretary-inline-success", "topic": "", "by": "user"})
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+            state_dir = Path(home) / "groups" / group_id / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            assistants_path = state_dir / "assistants.json"
+            assistants_path.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": group_id,
+                        "assistants": {},
+                        "voice_sessions": {},
+                        "voice_prompt_requests": {},
+                        "voice_prompt_drafts": {
+                            "voice-prompt-1": {
+                                "request_id": "voice-prompt-1",
+                                "updated_at": "2026-04-20T10:00:01Z",
+                                "draft_text": "refined prompt",
+                                "status": "pending",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            voice_state_dir = Path(home) / "voice-secretary" / group_id
+            voice_state_dir.mkdir(parents=True, exist_ok=True)
+            (voice_state_dir / "input_state.json").write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": group_id,
+                        "latest_seq": 8,
+                        "secretary_read_cursor": 5,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            consumed = _voice_secretary_control_consumed_input(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 5,
+                    "composer_request_ids": ["voice-prompt-1"],
+                    "before_prompt_drafts": {
+                        "voice-prompt-1": {
+                            "updated_at": "",
+                            "draft_text": "",
+                            "status": "",
+                        }
+                    },
+                },
+            )
+
+            self.assertTrue(consumed)
         finally:
             cleanup()
 

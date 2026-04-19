@@ -1076,7 +1076,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           {/* Scroll Button */}
           {!readOnly && showScrollButton && (
             <button
-              className={`fixed bottom-36 right-6 p-3 rounded-full shadow-xl transition-all z-10 ${isDark
+              className={`fixed bottom-52 right-5 sm:bottom-44 sm:right-6 p-3 rounded-full shadow-xl transition-all z-30 ${isDark
                 ? "bg-slate-800 text-white hover:bg-slate-700 border border-slate-700"
                 : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-100"
                 }`}

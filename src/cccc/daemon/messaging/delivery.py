@@ -572,7 +572,27 @@ def render_single_message(msg: PendingMessage) -> str:
     )
 
 
-def _render_system_notify_message_for_delivery(*, notify: SystemNotifyData) -> str:
+def _voice_secretary_inline_batch_text(group: Optional[Group], *, notify: SystemNotifyData) -> str:
+    if group is None:
+        return ""
+    if str(notify.target_actor_id or "").strip() != "voice-secretary":
+        return ""
+    context = notify.context if isinstance(notify.context, dict) else {}
+    if str(context.get("kind") or "").strip() != "voice_secretary_input":
+        return ""
+    try:
+        from ..assistants.assistant_ops import _peek_voice_input_batch
+
+        preview = _peek_voice_input_batch(group)
+    except Exception:
+        return ""
+    input_text = str((preview or {}).get("input_text") or "").strip()
+    if not input_text or input_text == "No new Secretary input.":
+        return ""
+    return input_text
+
+
+def _render_system_notify_message_for_delivery(*, notify: SystemNotifyData, group: Optional[Group] = None) -> str:
     message = str(notify.message or "").strip()
     context = notify.context if isinstance(notify.context, dict) else {}
     context_kind = str(context.get("kind") or "").strip()
@@ -595,12 +615,19 @@ def _render_system_notify_message_for_delivery(*, notify: SystemNotifyData) -> s
         blocks.append("Action: handle the request from your inbox; acknowledge or reply according to the requested work.")
         return "\n\n".join(blocks).strip()
     if context_kind == "voice_secretary_input":
-        return (
-            "Secretary input is ready.\n"
-            "First action: call cccc_voice_secretary_document(action=\"read_new_input\").\n"
-            "Do not bootstrap, list resources, or research how to respond before that read.\n"
-            "If the batch target is composer, submit the refined prompt through cccc_voice_secretary_composer immediately after reading."
-        )
+        inline_batch = _voice_secretary_inline_batch_text(group, notify=notify)
+        blocks = [
+            "Secretary input is ready.",
+            "Your first action in this turn must be cccc_voice_secretary_document(action=\"read_new_input\").",
+            "Daemon has already attached the current unread Secretary batch below only as a preview; do not treat the preview as a substitute for read_new_input.",
+            "If read_new_input returns empty or inconsistent data, compare it against the attached preview before deciding the batch is invalid.",
+            "Do not bootstrap, list resources, or research how to respond before processing the batch.",
+            "If the batch target is composer, submit the refined prompt through cccc_voice_secretary_composer in the same turn.",
+            "Do not finish this turn with only a plan, summary, or acknowledgement.",
+        ]
+        if inline_batch:
+            blocks.extend(["", "Attached batch:", inline_batch])
+        return "\n".join(blocks).strip()
     return message
 
 
@@ -629,7 +656,7 @@ def render_headless_control_text(*, control_kind: str, body: str) -> str:
     return f"{intro}\n\n{content}".strip()
 
 
-def render_system_notify_delivery_text(*, notify: SystemNotifyData) -> str:
+def render_system_notify_delivery_text(*, notify: SystemNotifyData, group: Optional[Group] = None) -> str:
     return render_single_message(
         PendingMessage(
             event_id="",
@@ -639,7 +666,7 @@ def render_system_notify_delivery_text(*, notify: SystemNotifyData) -> str:
             kind="system.notify",
             notify_kind=str(notify.kind or "info"),
             notify_title=str(notify.title or ""),
-            notify_message=_render_system_notify_message_for_delivery(notify=notify),
+            notify_message=_render_system_notify_message_for_delivery(notify=notify, group=group),
         )
     )
 
@@ -935,7 +962,7 @@ def emit_system_notify(
 
     headless_control_text = render_headless_control_text(
         control_kind="system_notify",
-        body=render_system_notify_delivery_text(notify=notify),
+        body=render_system_notify_delivery_text(notify=notify, group=group),
     )
 
     for aid in target_actor_ids:

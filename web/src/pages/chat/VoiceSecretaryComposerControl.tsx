@@ -25,13 +25,9 @@ import {
   transcribeVoiceAssistantAudio,
   updateAssistantSettings,
 } from "../../services/api";
-import { useUIStore } from "../../stores";
+import { useGroupStore, useUIStore } from "../../stores";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { AnimatedShinyText } from "../../registry/magicui/animated-shiny-text";
-import {
-  VOICE_SECRETARY_PROMPT_DRAFT_EVENT,
-  type VoiceSecretaryPromptDraftEventDetail,
-} from "../../utils/voiceSecretaryEvents";
 
 type VoiceSecretaryComposerControlProps = {
   isDark: boolean;
@@ -130,7 +126,6 @@ const VOICE_TRANSCRIPT_DISPLAY_LIMIT = 8;
 const BROWSER_SPEECH_RESTART_BASE_MS = 500;
 const BROWSER_SPEECH_RESTART_MAX_MS = 8000;
 const BROWSER_SPEECH_MAX_TRANSIENT_ERRORS = 8;
-const PROMPT_DRAFT_POLL_FALLBACK_MS = 10_000;
 const BROWSER_SPEECH_RECOVERABLE_ERRORS = new Set(["no-speech", "aborted", "network", "audio-capture"]);
 const BROWSER_SPEECH_FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed"]);
 const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
@@ -496,6 +491,7 @@ export function VoiceSecretaryComposerControl({
   const promptHoldActiveRef = useRef(false);
   const pendingPromptRequestIdRef = useRef("");
   const pendingPromptComposerHashRef = useRef("");
+  const lastVoiceLedgerSignalRef = useRef("");
   const activeDocumentIdRef = useRef("");
   const captureTargetDocumentIdRef = useRef("");
   const documentBaseTitleRef = useRef("");
@@ -531,6 +527,27 @@ export function VoiceSecretaryComposerControl({
   const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState("");
   const [pendingPromptRequestId, setPendingPromptRequestId] = useState("");
   const [pendingPromptDraft, setPendingPromptDraft] = useState<AssistantVoicePromptDraft | null>(null);
+  const latestVoiceLedgerSignal = useGroupStore((state) => {
+    const gid = String(selectedGroupId || "").trim();
+    const events = gid ? (state.chatByGroup[gid]?.events || []) : [];
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      const kind = String(event?.kind || "").trim();
+      if (!kind.startsWith("assistant.voice.")) continue;
+      const data = event?.data && typeof event.data === "object"
+        ? event.data as { request_id?: unknown; action?: unknown; document_path?: unknown; status?: unknown }
+        : null;
+      return [
+        String(event?.id || "").trim(),
+        kind,
+        String(data?.request_id || "").trim(),
+        String(data?.action || "").trim(),
+        String(data?.document_path || "").trim(),
+        String(data?.status || "").trim(),
+      ].join(":");
+    }
+    return "";
+  });
 
   useEffect(() => {
     recordingRef.current = recording;
@@ -836,31 +853,11 @@ export function VoiceSecretaryComposerControl({
   }, [open, refreshAssistant]);
 
   useEffect(() => {
-    if (!open || !assistantEnabled) return undefined;
-    const interval = window.setInterval(() => {
-      void refreshAssistant({ quiet: true });
-    }, 5000);
-    return () => window.clearInterval(interval);
-  }, [assistantEnabled, open, refreshAssistant]);
-
-  useEffect(() => {
-    if (!pendingPromptRequestId || pendingPromptDraft) return undefined;
-    const onPromptDraftReady = (event: Event) => {
-      const detail = (event as CustomEvent<VoiceSecretaryPromptDraftEventDetail>).detail;
-      const requested = String(pendingPromptRequestIdRef.current || pendingPromptRequestId || "").trim();
-      if (!detail || detail.groupId !== selectedGroupId || detail.requestId !== requested) return;
-      if (detail.action && detail.action !== "submit") return;
-      void refreshAssistant({ quiet: true });
-    };
-    window.addEventListener(VOICE_SECRETARY_PROMPT_DRAFT_EVENT, onPromptDraftReady);
-    const interval = window.setInterval(() => {
-      void refreshAssistant({ quiet: true });
-    }, PROMPT_DRAFT_POLL_FALLBACK_MS);
-    return () => {
-      window.removeEventListener(VOICE_SECRETARY_PROMPT_DRAFT_EVENT, onPromptDraftReady);
-      window.clearInterval(interval);
-    };
-  }, [pendingPromptDraft, pendingPromptRequestId, refreshAssistant, selectedGroupId]);
+    if (!open || !latestVoiceLedgerSignal) return;
+    if (latestVoiceLedgerSignal === lastVoiceLedgerSignalRef.current) return;
+    lastVoiceLedgerSignalRef.current = latestVoiceLedgerSignal;
+    void refreshAssistant({ quiet: true });
+  }, [latestVoiceLedgerSignal, open, refreshAssistant]);
 
   const acknowledgePromptDraft = useCallback(async (
     draft: AssistantVoicePromptDraft,

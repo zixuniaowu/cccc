@@ -12,11 +12,11 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { withAuthToken, fetchTerminalTail } from "../services/api";
 import { HeadlessLiveTrace } from "./headless/HeadlessLiveTrace";
-import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
+import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, TerminalIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
 import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
-import { getEffectiveActorRunner, supportsStandardWebHeadlessRuntime } from "../utils/headlessRuntimeSupport";
+import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
 import { copyTextToClipboard } from "../utils/copy";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
