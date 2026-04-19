@@ -3,11 +3,13 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Actor, GroupMeta, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon } from "../../components/Icons";
+import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, PetIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { useTranslation } from 'react-i18next';
-import { VoiceSecretaryComposerControl } from "./VoiceSecretaryComposerControl";
+import { VoiceSecretaryComposerControl, type VoiceSecretaryCaptureMode } from "./VoiceSecretaryComposerControl";
+import { updateSettings } from "../../services/api";
+import { useBuiltInAssistantStore, useGroupStore, useUIStore } from "../../stores";
 
 export interface ChatComposerProps {
   isDark: boolean;
@@ -59,6 +61,135 @@ export interface ChatComposerProps {
   onAppendRecipientToken: (token: string) => void;
 }
 
+function BuiltInAssistantsComposerPanel({
+  isDark,
+  selectedGroupId,
+  busy,
+  voiceCaptureMode,
+  onVoiceCaptureModeChange,
+  composerText,
+  composerContext,
+  onPromptDraft,
+}: {
+  isDark: boolean;
+  selectedGroupId: string;
+  busy: string;
+  voiceCaptureMode: VoiceSecretaryCaptureMode;
+  onVoiceCaptureModeChange: (mode: VoiceSecretaryCaptureMode) => void;
+  composerText: string;
+  composerContext: Record<string, unknown>;
+  onPromptDraft: (text: string, opts?: { mode?: "replace" | "append" }) => void;
+}) {
+  const { t } = useTranslation("chat");
+  const groupSettings = useGroupStore((state) => state.groupSettings);
+  const refreshSettings = useGroupStore((state) => state.refreshSettings);
+  const refreshInternalRuntimeActors = useGroupStore((state) => state.refreshInternalRuntimeActors);
+  const showError = useUIStore((state) => state.showError);
+  const showNotice = useUIStore((state) => state.showNotice);
+  const requestAssistantOpen = useBuiltInAssistantStore((state) => state.requestOpen);
+  const [petBusy, setPetBusy] = useState(false);
+  const petEnabled = Boolean(groupSettings?.desktop_pet_enabled);
+  const panelDisabled = !selectedGroupId || busy === "send";
+
+  useEffect(() => {
+    if (!selectedGroupId || groupSettings) return;
+    void refreshSettings(selectedGroupId);
+  }, [groupSettings, refreshSettings, selectedGroupId]);
+
+  const activatePet = useCallback(async () => {
+    const gid = String(selectedGroupId || "").trim();
+    if (!gid || panelDisabled || petBusy) return;
+    if (petEnabled) {
+      requestAssistantOpen(gid, "pet");
+      return;
+    }
+    setPetBusy(true);
+    try {
+      const resp = await updateSettings(gid, { desktop_pet_enabled: true });
+      if (!resp.ok) {
+        showError(resp.error.message);
+        return;
+      }
+      await refreshSettings(gid);
+      await refreshInternalRuntimeActors(gid);
+      showNotice({
+        message: t("builtInAssistantPetEnabled", { defaultValue: "PET enabled for this group." }),
+      });
+      requestAssistantOpen(gid, "pet");
+    } catch {
+      showError(t("builtInAssistantPetToggleFailed", { defaultValue: "Failed to update PET." }));
+    } finally {
+      setPetBusy(false);
+    }
+  }, [
+    panelDisabled,
+    petBusy,
+    petEnabled,
+    refreshInternalRuntimeActors,
+    refreshSettings,
+    requestAssistantOpen,
+    selectedGroupId,
+    showError,
+    showNotice,
+    t,
+  ]);
+
+  const dotClass = (active: boolean) => classNames(
+    "h-1.5 w-1.5 rounded-full shrink-0 transition-colors",
+    active ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]" : isDark ? "bg-white/20" : "bg-gray-300",
+  );
+
+  const petLabel = t("builtInAssistantPetTitle", { defaultValue: "PET" });
+  const petButtonLabel = petEnabled
+    ? t("builtInAssistantPetOpen", { defaultValue: "Open PET" })
+    : t("builtInAssistantPetTurnOn", { defaultValue: "Turn PET on" });
+
+  return (
+    <aside
+      className={classNames(
+        "flex w-full items-center gap-1 px-2 pb-1.5 pt-0.5",
+      )}
+      aria-label={t("builtInAssistantsArea", { defaultValue: "Built-in assistants" })}
+    >
+      <button
+        type="button"
+        onClick={() => void activatePet()}
+        disabled={panelDisabled || petBusy}
+        className={classNames(
+          "relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-[background-color,border-color,color,box-shadow,transform] disabled:cursor-not-allowed disabled:opacity-50",
+          petEnabled
+            ? isDark
+              ? "border-amber-300/25 bg-amber-300/12 text-amber-100 hover:bg-amber-300/18"
+              : "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+            : isDark
+              ? "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/[0.08] hover:text-slate-100"
+              : "border-black/10 bg-white text-gray-600 shadow-sm hover:bg-gray-50 hover:text-gray-900",
+          !panelDisabled && !petBusy && "active:scale-[0.97]",
+        )}
+        title={petButtonLabel}
+        aria-label={petButtonLabel}
+      >
+        <span className="sr-only">{petLabel}</span>
+        <PetIcon size={15} />
+        <span className={classNames("absolute right-1 top-1", dotClass(petEnabled))} aria-hidden="true" />
+      </button>
+
+      <VoiceSecretaryComposerControl
+        isDark={isDark}
+        selectedGroupId={selectedGroupId}
+        busy={busy}
+        disabled={panelDisabled}
+        variant="assistantRow"
+        captureMode={voiceCaptureMode}
+        onCaptureModeChange={onVoiceCaptureModeChange}
+        composerText={composerText}
+        composerContext={composerContext}
+        onPromptDraft={onPromptDraft}
+      />
+    </aside>
+  );
+}
+
 export function ChatComposer({
   isDark,
   isSmallScreen,
@@ -101,6 +232,7 @@ export function ChatComposer({
   const composerHeightRef = useRef(0);
   const isUserInputRef = useRef(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [voiceCaptureMode, setVoiceCaptureMode] = useState<VoiceSecretaryCaptureMode>("document");
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation('chat');
 
@@ -185,10 +317,6 @@ export function ChatComposer({
 
   const chipBaseClass =
     "flex-shrink-0 whitespace-nowrap text-[10px] sm:text-[11px] px-2.5 sm:px-3 rounded-full border transition-all flex items-center justify-center font-medium";
-  const composerToolButtonClass =
-    "glass-btn flex flex-shrink-0 items-center justify-center rounded-xl sm:rounded-2xl border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] transition-[background-color,border-color,color,transform,box-shadow] duration-200 disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-70";
-  const composerInlineToolButtonClass =
-    "glass-btn flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] transition-[background-color,border-color,color,transform,box-shadow] duration-200 sm:h-10 sm:w-10";
 
   // Get display name for reply target
   const replyByDisplayName = useMemo(() => {
@@ -377,12 +505,50 @@ export function ChatComposer({
       ? t('modeNoticeImportant')
       : "";
 
+  const composerAssistantContext = useMemo<Record<string, unknown>>(() => ({
+    recipients: toTokens,
+    message_mode: messageMode,
+    priority,
+    reply_required: replyRequired,
+    reply_target: replyTarget
+      ? `${replyTarget.by || "unknown"}: ${String(replyTarget.text || "").slice(0, 240)}`
+      : "",
+    quoted_reference: quotedPresentationRef ? getPresentationRefChipLabel(quotedPresentationRef) : "",
+  }), [messageMode, priority, quotedPresentationRef, replyRequired, replyTarget, toTokens]);
+
+  const fillPromptDraftFromSpeech = useCallback((draft: string, opts?: { mode?: "replace" | "append" }) => {
+    const text = String(draft || "").trim();
+    if (!text) return;
+    setComposerText((current) => {
+      const existing = String(current || "");
+      if (opts?.mode === "replace" || !existing.trim()) return text;
+      return `${existing.replace(/\s+$/g, "")}\n\n${text}`;
+    });
+    requestAnimationFrame(() => {
+      const textarea = composerRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    });
+  }, [composerRef, setComposerText]);
+
   const fileDisabledReason = (() => {
     if (!selectedGroupId) return t('selectGroupFirst');
     if (busy === "send") return t('busy');
     if (isCrossGroup) return t('crossGroupAttachment');
     return t('attachFile');
   })();
+  const sendShortcutLabel = useMemo(() => {
+    if (typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || "")) {
+      return "⌘+Enter";
+    }
+    return "Ctrl+Enter";
+  }, []);
+  const sendButtonTitle = t("sendMessageWithShortcut", {
+    shortcut: sendShortcutLabel,
+    defaultValue: "Send message ({{shortcut}})",
+  });
 
   const groupOptions = useMemo(() => {
     const cur = String(selectedGroupId || "").trim();
@@ -435,7 +601,7 @@ export function ChatComposer({
   return (
     <footer
       className={classNames(
-        "relative z-40 flex-shrink-0 border-t px-3 sm:px-4 py-2.5 sm:py-3 safe-area-bottom-compact transition-colors",
+        "relative z-40 flex-shrink-0 border-t px-2 py-1.5 safe-area-bottom-compact transition-colors sm:px-2.5 sm:py-2",
         isDark ? "border-white/5 bg-slate-950/72 backdrop-blur-md" : "border-black/5 bg-white/78 backdrop-blur-md"
       )}
     >
@@ -494,120 +660,9 @@ export function ChatComposer({
           </div>
         )}
 
-        {/* Recipient Selector Row */}
-        <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2">
-          <ScrollFade
-            className="-mx-1 min-w-0 sm:mx-0 sm:flex-1"
-            innerClassName="w-full max-w-full px-1 sm:px-0"
-            fadeWidth={20}
-          >
-            <div className="flex min-w-max items-center gap-1.5 sm:gap-2">
-              <div className={classNames("text-[10px] font-medium uppercase tracking-wide flex-shrink-0", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>{t('to', 'To')}</div>
-
-              {/* Group Selector - Styled to match buttons */}
-              <div className="relative flex-shrink-0">
-                <select
-                  value={destGroupId || selectedGroupId || ""}
-                  onChange={(e) => setDestGroupId(e.target.value)}
-                  style={{ colorScheme: isDark ? "dark" : "light" }}
-                  className={classNames(
-                    "appearance-none pr-8 truncate min-w-[120px] max-w-[180px] sm:max-w-[240px]",
-                    "h-7 sm:h-8 transition-colors cursor-pointer",
-                    chipBaseClass,
-                    groupSelectClass
-                  )}
-                  disabled={!canChooseDestGroup || groupOptions.length === 0}
-                  aria-label={t('destinationGroup')}
-                >
-                  {groupOptions.map((g) => (
-                    <option key={g.gid} value={g.gid}>
-                      {g.label}
-                    </option>
-                  ))}
-                </select>
-                <div className={classNames("pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-60", groupCaretClass)}>
-                  <ChevronDownIcon size={12} />
-                </div>
-              </div>
-
-              <div className="w-[1px] h-4 bg-current opacity-10 flex-shrink-0 mx-1 hidden sm:block" />
-
-              {/* Recipients List - Scrollable horizontally */}
-              <div className={classNames(
-                "flex items-center gap-1 sm:gap-1.5 transition-opacity",
-                recipientActorsBusy ? "opacity-50 pointer-events-none" : ""
-              )}>
-                {/* Special tokens */}
-                {["@all", "@foreman", "@peers"].map((tok) => {
-                  const active = toTokens.includes(tok);
-                  return (
-                    <button
-                      key={tok}
-                      className={classNames(
-                        "h-[26px] sm:h-8",
-                        chipBaseClass,
-                        active
-                          ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
-                          : isDark
-                            ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
-                            : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
-                      )}
-                      onClick={() => onToggleRecipient(tok)}
-                      disabled={!selectedGroupId || busy === "send"}
-                      aria-pressed={active}
-                    >
-                      {tok}
-                    </button>
-                  );
-                })}
-                {/* Actor tokens */}
-                {recipientActors.map((actor) => {
-                  const id = String(actor.id || "");
-                  if (!id) return null;
-                  const active = toTokens.includes(id);
-                  return (
-                    <button
-                      key={id}
-                      className={classNames(
-                        "h-[26px] sm:h-8",
-                        chipBaseClass,
-                        active
-                          ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
-                          : isDark
-                            ? "bg-white/[0.08] text-[var(--color-text-secondary)] border-white/[0.1] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
-                            : "bg-black/5 text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800"
-                      )}
-                      onClick={() => onToggleRecipient(id)}
-                      disabled={!selectedGroupId || busy === "send" || !!recipientActorsBusy}
-                      aria-pressed={active}
-                    >
-                      {actor.title || id}
-                    </button>
-                  );
-                })}
-
-                {toTokens.length > 0 && (
-                  <button
-                    className={classNames(
-                      "p-2 rounded-full transition-all flex-shrink-0 opacity-40 hover:opacity-100",
-                      isDark ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/10"
-                    )}
-                    onClick={onClearRecipients}
-                    disabled={busy === "send"}
-                    aria-label={t('clearRecipients')}
-                    title={t('clearRecipients')}
-                  >
-                    <CloseIcon size={14} />
-                  </button>
-                )}
-              </div>
-            </div>
-          </ScrollFade>
-        </div>
-
         {/* File list */}
         {composerFiles.length > 0 && (
-          <div className="mb-4 flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="mb-3 flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
             {composerFiles.map((f, idx) => (
               <div
                 key={`${f.name}:${idx}`}
@@ -653,260 +708,384 @@ export function ChatComposer({
           </div>
         ) : null}
 
-        {/* Main Input Area */}
-        <div className="flex gap-2 sm:gap-2.5 relative items-end">
-          <input
-            ref={fileInputRef as RefObject<HTMLInputElement>}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              const files = Array.from(e.target.files || []);
-              if (files.length > 0) appendComposerFiles(files);
-              e.target.value = "";
-            }}
-          />
+        <input
+          ref={fileInputRef as RefObject<HTMLInputElement>}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            if (files.length > 0) appendComposerFiles(files);
+            e.target.value = "";
+          }}
+        />
 
-          {/* Attachment Button */}
-          <button
+        {/* Assistant rail + integrated composer */}
+        <div className="flex flex-col">
+          {/* Integrated 3-row composer */}
+          <div
             className={classNames(
-              composerToolButtonClass,
-              "self-end",
-              busy !== "send" && selectedGroupId && !isCrossGroup && "hover:text-[var(--color-text-primary)] active:scale-95"
+              "relative flex min-w-0 flex-1 flex-col transition-[background-color] duration-200",
+              isDark
+                ? "bg-white/[0.025] focus-within:bg-white/[0.045]"
+                : "bg-white/55 focus-within:bg-white/80",
             )}
-            style={{ width: `${baseComposerHeight}px`, height: `${baseComposerHeight}px` }}
-            onClick={() => fileInputRef.current?.click()}
-            disabled={!selectedGroupId || busy === "send" || isCrossGroup}
-            aria-label={t('attachFile')}
-            title={fileDisabledReason}
           >
-            <AttachmentIcon size={18} className="sm:w-5 sm:h-5 transition-transform" />
-          </button>
-
-          {/* Text Area Wrapper */}
-          <div className="flex-1 relative min-w-0">
-            <textarea
-              ref={composerRef as RefObject<HTMLTextAreaElement>}
-              className={classNames(
-                  "w-full rounded-xl sm:rounded-2xl border px-3.5 sm:px-5 pr-10 sm:pr-14 py-2.5 sm:py-3.5 resize-none overflow-y-auto scrollbar-hide transition-all duration-300 ease-out",
-                  "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center shadow-sm",
-                  isDark
-                  ? "bg-white/[0.08] border-white/[0.1] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:ring-blue-500/35 focus:border-blue-400/45"
-                  : "bg-black/5 border-transparent text-gray-900 placeholder-gray-400 focus:ring-blue-400/30 focus:border-blue-400/40"
-              )}
-              style={{
-                minHeight: `${baseComposerHeight}px`,
-                maxHeight: `${maxComposerHeight}px`,
-                fontSize: `${composerFontSize}px`,
-                lineHeight: `${composerLineHeight}px`,
-              }}
-              placeholder={isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop')}
-              rows={1}
-              value={composerText}
-              onPaste={handlePaste}
-              onChange={handleChange}
-              onKeyDown={handleKeyDown}
-              onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
-              aria-label={t('messageInput')}
+            <BuiltInAssistantsComposerPanel
+              isDark={isDark}
+              selectedGroupId={selectedGroupId}
+              busy={busy}
+              voiceCaptureMode={voiceCaptureMode}
+              onVoiceCaptureModeChange={setVoiceCaptureMode}
+              composerText={composerText}
+              composerContext={composerAssistantContext}
+              onPromptDraft={fillPromptDraftFromSpeech}
             />
 
-            {/* Message Type Selector */}
-            <div ref={modeMenuRef} className="absolute right-2 top-1/2 -translate-y-1/2 z-20">
-              <button
-                type="button"
-                className={classNames(
-                  composerInlineToolButtonClass,
-                  "h-8 w-8 sm:h-10 sm:w-10",
-                  busy === "send" || !selectedGroupId
-                    ? "text-[var(--color-text-tertiary)]"
-                    : messageMode === "task"
-                      ? isDark
-                        ? "border-violet-400/20 bg-violet-500/20 text-violet-200 hover:bg-violet-500/28"
-                        : "border-violet-200 bg-violet-100 text-violet-700 hover:bg-violet-200"
-                      : messageMode === "attention"
-                        ? isDark
-                          ? "border-amber-400/20 bg-amber-500/20 text-amber-200 hover:bg-amber-500/28"
-                          : "border-amber-200 bg-amber-100 text-amber-700 hover:bg-amber-200"
-                        : isDark
-                          ? "text-slate-100 hover:bg-slate-700/70"
-                          : "text-gray-700 hover:bg-gray-50"
-                )}
-                disabled={busy === "send" || !selectedGroupId}
-                onClick={() => setShowModeMenu((v) => !v)}
-                aria-label={t('messageType')}
-                aria-haspopup="menu"
-                aria-expanded={showModeMenu}
-                title={t('messageMode', { mode: activeMode.label })}
-              >
-                {messageMode === "task" ? (
-                  <ReplyIcon size={12} className="opacity-95" />
-                ) : messageMode === "attention" ? (
-                  <AlertIcon size={12} className="opacity-95" />
-                ) : (
-                  <span className="text-[11px] sm:text-xs font-black italic leading-none">N</span>
-                )}
-              </button>
+            {/* Row 1 — Recipients */}
+            <div
+              className={classNames(
+                "flex items-center gap-2 border-b px-3 py-1.5",
+                isDark ? "border-white/5" : "border-black/5",
+              )}
+            >
+              <span className={classNames("text-[10px] font-semibold uppercase tracking-[0.14em] flex-shrink-0", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-400")}>
+                {t('to', 'To')}
+              </span>
 
-              {showModeMenu && (
+              <div className="relative flex-shrink-0">
+                <select
+                  value={destGroupId || selectedGroupId || ""}
+                  onChange={(e) => setDestGroupId(e.target.value)}
+                  style={{ colorScheme: isDark ? "dark" : "light" }}
+                  className={classNames(
+                    "appearance-none pr-7 truncate max-w-[180px] sm:max-w-[220px]",
+                    "h-7 transition-colors cursor-pointer",
+                    chipBaseClass,
+                    groupSelectClass,
+                  )}
+                  disabled={!canChooseDestGroup || groupOptions.length === 0}
+                  aria-label={t('destinationGroup')}
+                >
+                  {groupOptions.map((g) => (
+                    <option key={g.gid} value={g.gid}>
+                      {g.label}
+                    </option>
+                  ))}
+                </select>
+                <div className={classNames("pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 opacity-60", groupCaretClass)}>
+                  <ChevronDownIcon size={12} />
+                </div>
+              </div>
+
+              <div className={classNames("w-px h-4 flex-shrink-0 hidden sm:block", isDark ? "bg-white/10" : "bg-black/10")} />
+
+              <ScrollFade
+                className="min-w-0 flex-1"
+                innerClassName="w-full max-w-full"
+                fadeWidth={20}
+              >
                 <div
                   className={classNames(
-                    "glass-panel absolute bottom-full right-0 mb-2 z-40 w-56 sm:w-64 rounded-2xl border p-1.5 shadow-2xl pointer-events-auto"
+                    "flex min-w-max items-center gap-1.5 transition-opacity",
+                    recipientActorsBusy ? "opacity-50 pointer-events-none" : "",
                   )}
-                  role="menu"
-                  aria-label={t('messageTypeOptions')}
                 >
-                  {modeOptions.map((opt) => {
-                    const active = messageMode === opt.key;
+                  {["@all", "@foreman", "@peers"].map((tok) => {
+                    const active = toTokens.includes(tok);
                     return (
                       <button
-                        key={opt.key}
-                        type="button"
+                        key={tok}
                         className={classNames(
-                          "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors",
+                          "h-7",
+                          chipBaseClass,
                           active
-                            ? isDark
-                              ? "bg-white/10"
-                              : "bg-black/5"
+                            ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
                             : isDark
-                              ? "hover:bg-white/5"
-                              : "hover:bg-black/5"
+                              ? "bg-white/[0.06] text-[var(--color-text-secondary)] border-white/[0.08] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
+                              : "bg-black/[0.04] text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800",
                         )}
-                        role="menuitemradio"
-                        aria-checked={active}
-                        onClick={() => {
-                          setMessageMode(opt.key);
-                          setShowModeMenu(false);
-                        }}
+                        onClick={() => onToggleRecipient(tok)}
+                        disabled={!selectedGroupId || busy === "send"}
+                        aria-pressed={active}
                       >
-                        <span
-                          className={classNames(
-                            "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
-                            opt.key === "task"
-                              ? isDark
-                                ? "bg-violet-500/25 text-violet-200"
-                                : "bg-violet-100 text-violet-700"
-                              : opt.key === "attention"
-                                ? isDark
-                                  ? "bg-amber-500/25 text-amber-200"
-                                  : "bg-amber-100 text-amber-700"
-                                : isDark
-                                  ? "bg-slate-700 text-slate-200"
-                                  : "bg-gray-100 text-gray-700"
-                          )}
-                        >
-                          {opt.key === "task" ? (
-                            <ReplyIcon size={13} />
-                          ) : opt.key === "attention" ? (
-                            <AlertIcon size={13} />
-                          ) : (
-                            <span className="text-[11px] font-black italic leading-none">N</span>
-                          )}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className={classNames("block text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
-                            {opt.label}
-                          </span>
-                          <span className={classNames("block text-[11px]", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>
-                            {opt.description}
-                          </span>
-                        </span>
-                        {active && <span className={classNames("text-xs font-semibold", isDark ? "text-emerald-300" : "text-emerald-600")}>✓</span>}
+                        {tok}
+                      </button>
+                    );
+                  })}
+                  {recipientActors.map((actor) => {
+                    const id = String(actor.id || "");
+                    if (!id) return null;
+                    const active = toTokens.includes(id);
+                    return (
+                      <button
+                        key={id}
+                        className={classNames(
+                          "h-7",
+                          chipBaseClass,
+                          active
+                            ? "bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/20"
+                            : isDark
+                              ? "bg-white/[0.06] text-[var(--color-text-secondary)] border-white/[0.08] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
+                              : "bg-black/[0.04] text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800",
+                        )}
+                        onClick={() => onToggleRecipient(id)}
+                        disabled={!selectedGroupId || busy === "send" || !!recipientActorsBusy}
+                        aria-pressed={active}
+                      >
+                        {actor.title || id}
                       </button>
                     );
                   })}
                 </div>
+              </ScrollFade>
+
+              {toTokens.length > 0 && (
+                <button
+                  className={classNames(
+                    "flex-shrink-0 h-7 w-7 rounded-full flex items-center justify-center transition-colors opacity-50 hover:opacity-100",
+                    isDark ? "text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "text-gray-400 hover:bg-black/5 hover:text-gray-700",
+                  )}
+                  onClick={onClearRecipients}
+                  disabled={busy === "send"}
+                  aria-label={t('clearRecipients')}
+                  title={t('clearRecipients')}
+                >
+                  <CloseIcon size={12} />
+                </button>
               )}
             </div>
 
-            {/* Mention menu */}
-            {showMentionMenu && mentionSuggestions.length > 0 && (
-              <div
+            {/* Row 2 — Textarea */}
+            <div className="relative min-w-0 flex-1">
+              <textarea
+                ref={composerRef as RefObject<HTMLTextAreaElement>}
                 className={classNames(
-                  "glass-panel absolute bottom-full left-0 mb-3 w-64 max-h-60 overflow-auto scrollbar-subtle rounded-2xl border shadow-2xl z-30 animate-in fade-in zoom-in-95 duration-200"
+                  "w-full bg-transparent border-0 px-4 py-3 resize-none overflow-y-auto scrollbar-hide focus:outline-none focus:ring-0",
+                  isDark
+                    ? "text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
+                    : "text-gray-900 placeholder-gray-400",
                 )}
-                role="listbox"
-              >
-                {mentionSuggestions.slice(0, 8).map((s, idx) => (
-                  (() => {
-                    const option = recipientLabelMap.get(s);
-                    const primaryLabel = option?.label || s;
-                    const secondaryLabel = option?.secondary;
-                    return (
-                  <button
-                    key={s}
-                    className={classNames(
-                      "w-full text-left px-4 py-3 text-sm transition-colors",
-                      isDark ? "text-slate-200 border-b border-white/5" : "text-gray-700 border-b border-black/5",
-                      idx === mentionSelectedIndex
-                        ? isDark ? "bg-blue-600/30 text-blue-300" : "bg-blue-50 text-blue-700 font-medium"
-                        : isDark ? "hover:bg-white/5" : "hover:bg-gray-50"
-                    )}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      selectMention(s);
-                      composerRef.current?.focus();
-                    }}
-                    onMouseEnter={() => setMentionSelectedIndex(idx)}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="opacity-60 flex-shrink-0">@</span>
-                      <div className="min-w-0">
-                        <div className="truncate">{primaryLabel}</div>
-                        {secondaryLabel ? (
-                          <div className={classNames("truncate text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
-                            @{secondaryLabel}
+                style={{
+                  minHeight: `${Math.max(baseComposerHeight + 6, 52)}px`,
+                  maxHeight: `${maxComposerHeight}px`,
+                  fontSize: `${composerFontSize}px`,
+                  lineHeight: `${composerLineHeight}px`,
+                }}
+                placeholder={isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop')}
+                rows={1}
+                value={composerText}
+                onPaste={handlePaste}
+                onChange={handleChange}
+                onKeyDown={handleKeyDown}
+                onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
+                aria-label={t('messageInput')}
+              />
+
+              {/* Mention menu */}
+              {showMentionMenu && mentionSuggestions.length > 0 && (
+                <div
+                  className={classNames(
+                    "glass-panel absolute bottom-full left-2 mb-3 w-64 max-h-60 overflow-auto scrollbar-subtle rounded-2xl border shadow-2xl z-30 animate-in fade-in zoom-in-95 duration-200",
+                  )}
+                  role="listbox"
+                >
+                  {mentionSuggestions.slice(0, 8).map((s, idx) => (
+                    (() => {
+                      const option = recipientLabelMap.get(s);
+                      const primaryLabel = option?.label || s;
+                      const secondaryLabel = option?.secondary;
+                      return (
+                        <button
+                          key={s}
+                          className={classNames(
+                            "w-full text-left px-4 py-3 text-sm transition-colors",
+                            isDark ? "text-slate-200 border-b border-white/5" : "text-gray-700 border-b border-black/5",
+                            idx === mentionSelectedIndex
+                              ? isDark ? "bg-blue-600/30 text-blue-300" : "bg-blue-50 text-blue-700 font-medium"
+                              : isDark ? "hover:bg-white/5" : "hover:bg-gray-50",
+                          )}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            selectMention(s);
+                            composerRef.current?.focus();
+                          }}
+                          onMouseEnter={() => setMentionSelectedIndex(idx)}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="opacity-60 flex-shrink-0">@</span>
+                            <div className="min-w-0">
+                              <div className="truncate">{primaryLabel}</div>
+                              {secondaryLabel ? (
+                                <div className={classNames("truncate text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
+                                  @{secondaryLabel}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
-                        ) : null}
-                      </div>
-                    </div>
+                        </button>
+                      );
+                    })()
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Row 3 — Action bar */}
+            <div
+              className={classNames(
+                "flex items-center justify-between gap-2 px-2 pb-2 pt-1",
+              )}
+            >
+              <button
+                className={classNames(
+                  "glass-btn flex h-9 w-9 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60",
+                  busy !== "send" && selectedGroupId && !isCrossGroup
+                    ? isDark ? "hover:bg-white/10 hover:text-[var(--color-text-primary)]" : "hover:bg-black/5 hover:text-gray-800"
+                    : "",
+                )}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!selectedGroupId || busy === "send" || isCrossGroup}
+                aria-label={t('attachFile')}
+                title={fileDisabledReason}
+              >
+                <AttachmentIcon size={18} />
+              </button>
+
+              <div className="flex items-center gap-1.5">
+                <div ref={modeMenuRef} className="relative z-20">
+                  <button
+                    type="button"
+                    className={classNames(
+                      "inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                      busy === "send" || !selectedGroupId
+                        ? isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-400"
+                        : messageMode === "task"
+                          ? isDark
+                            ? "bg-violet-500/18 text-violet-200 hover:bg-violet-500/26"
+                            : "bg-violet-100 text-violet-700 hover:bg-violet-200"
+                          : messageMode === "attention"
+                            ? isDark
+                              ? "bg-amber-500/18 text-amber-200 hover:bg-amber-500/26"
+                              : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                            : isDark
+                              ? "text-slate-200 hover:bg-white/10"
+                              : "text-gray-700 hover:bg-black/5",
+                    )}
+                    disabled={busy === "send" || !selectedGroupId}
+                    onClick={() => setShowModeMenu((v) => !v)}
+                    aria-label={t('messageType')}
+                    aria-haspopup="menu"
+                    aria-expanded={showModeMenu}
+                    title={t('messageMode', { mode: activeMode.label })}
+                  >
+                    {messageMode === "task" ? (
+                      <ReplyIcon size={13} />
+                    ) : messageMode === "attention" ? (
+                      <AlertIcon size={13} />
+                    ) : (
+                      <span className="text-[11px] font-black italic leading-none">N</span>
+                    )}
+                    <span className="hidden sm:inline">{activeMode.label}</span>
+                    <ChevronDownIcon size={12} className="opacity-70" />
                   </button>
-                    );
-                  })()
-                ))}
+
+                  {showModeMenu && (
+                    <div
+                      className={classNames(
+                        "glass-panel absolute bottom-full right-0 mb-2 z-40 w-56 sm:w-64 rounded-2xl border p-1.5 shadow-2xl pointer-events-auto",
+                      )}
+                      role="menu"
+                      aria-label={t('messageTypeOptions')}
+                    >
+                      {modeOptions.map((opt) => {
+                        const active = messageMode === opt.key;
+                        return (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            className={classNames(
+                              "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors",
+                              active
+                                ? isDark
+                                  ? "bg-white/10"
+                                  : "bg-black/5"
+                                : isDark
+                                  ? "hover:bg-white/5"
+                                  : "hover:bg-black/5",
+                            )}
+                            role="menuitemradio"
+                            aria-checked={active}
+                            onClick={() => {
+                              setMessageMode(opt.key);
+                              setShowModeMenu(false);
+                            }}
+                          >
+                            <span
+                              className={classNames(
+                                "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
+                                opt.key === "task"
+                                  ? isDark
+                                    ? "bg-violet-500/25 text-violet-200"
+                                    : "bg-violet-100 text-violet-700"
+                                  : opt.key === "attention"
+                                    ? isDark
+                                      ? "bg-amber-500/25 text-amber-200"
+                                      : "bg-amber-100 text-amber-700"
+                                    : isDark
+                                      ? "bg-slate-700 text-slate-200"
+                                      : "bg-gray-100 text-gray-700",
+                              )}
+                            >
+                              {opt.key === "task" ? (
+                                <ReplyIcon size={13} />
+                              ) : opt.key === "attention" ? (
+                                <AlertIcon size={13} />
+                              ) : (
+                                <span className="text-[11px] font-black italic leading-none">N</span>
+                              )}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className={classNames("block text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
+                                {opt.label}
+                              </span>
+                              <span className={classNames("block text-[11px]", isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500")}>
+                                {opt.description}
+                              </span>
+                            </span>
+                            {active && <span className={classNames("text-xs font-semibold", isDark ? "text-emerald-300" : "text-emerald-600")}>✓</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  className={classNames(
+                    "flex h-9 w-9 items-center justify-center rounded-lg font-semibold transition-[background-color,box-shadow,transform] duration-150 disabled:cursor-not-allowed sm:w-[5.5rem]",
+                    busy === "send" || !canSend
+                      ? isDark ? "bg-white/[0.06] text-[var(--color-text-tertiary)]" : "bg-gray-100 text-gray-400"
+                      : "bg-blue-600 text-white shadow-md shadow-blue-500/25 hover:bg-blue-500 active:scale-[0.97]",
+                  )}
+                  onClick={onSendMessage}
+                  disabled={busy === "send" || !canSend}
+                  aria-label={t('sendMessage')}
+                  title={sendButtonTitle}
+                >
+                  {busy === "send" ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <SendIcon size={16} className="sm:hidden" />
+                      <span className="hidden sm:inline">{t('send')}</span>
+                    </>
+                  )}
+                </button>
               </div>
-            )}
+            </div>
           </div>
 
-          <VoiceSecretaryComposerControl
-            isDark={isDark}
-            selectedGroupId={selectedGroupId}
-            busy={busy}
-            buttonClassName={classNames(
-              composerToolButtonClass,
-              "self-end",
-              busy !== "send" && selectedGroupId && "hover:text-[var(--color-text-primary)] active:scale-95"
-            )}
-            buttonSizePx={baseComposerHeight}
-            disabled={!selectedGroupId || busy === "send"}
-          />
-
-          {/* Send button - Using icon for modern feel */}
-          <button
-            className={classNames(
-              composerToolButtonClass,
-              "self-end sm:min-w-[6.25rem] sm:px-3",
-              busy === "send" || !canSend
-                ? isDark ? "border-white/[0.12] bg-white/[0.08] text-[var(--color-text-tertiary)] shadow-none disabled:opacity-100" : "border-gray-200 bg-gray-100 text-gray-400 shadow-none disabled:opacity-100"
-                : "border-blue-500 bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/30 active:scale-95 active:shadow-sm group"
-            )}
-            style={{
-              height: `${baseComposerHeight}px`,
-              width: isSmallScreen ? `${baseComposerHeight}px` : undefined,
-            }}
-            onClick={onSendMessage}
-            disabled={busy === "send" || !canSend}
-            aria-label={t('sendMessage')}
-            title={t('sendMessage')}
-          >
-            {busy === "send" ? (
-              <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <>
-                <SendIcon size={18} className="sm:hidden" />
-                <span className="hidden sm:inline font-bold">{t('send')}</span>
-              </>
-            )}
-          </button>
         </div>
     </footer>
   );

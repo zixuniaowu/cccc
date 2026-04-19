@@ -13,6 +13,8 @@ from .assistant import (
     AssistantSettingsUpdateData,
     AssistantStatusUpdateData,
     AssistantVoiceDocumentData,
+    AssistantVoiceInputData,
+    AssistantVoicePromptDraftData,
     AssistantVoiceRequestData,
     BuiltinAssistant,
 )
@@ -62,6 +64,8 @@ __all__ = [
     "AssistantSettingsUpdateData",
     "AssistantStatusUpdateData",
     "AssistantVoiceDocumentData",
+    "AssistantVoiceInputData",
+    "AssistantVoicePromptDraftData",
     "AssistantVoiceRequestData",
     "build_async_result_fields",
     "AutomationAction",

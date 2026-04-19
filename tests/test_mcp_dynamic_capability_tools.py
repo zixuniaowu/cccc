@@ -93,6 +93,28 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
         self.assertEqual(req.get("op"), "assistant_voice_document_input_read")
         self.assertEqual(args.get("by"), "assistant:voice_secretary")
 
+    def test_voice_secretary_composer_submit_prompt_draft_routes_to_daemon(self) -> None:
+        from cccc.ports.mcp.server import handle_tool_call
+
+        with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "voice-secretary"}, clear=False), patch(
+            "cccc.ports.mcp.server._call_daemon_or_raise",
+            return_value={"ok": True},
+        ) as daemon_call:
+            handle_tool_call(
+                "cccc_voice_secretary_composer",
+                {
+                    "action": "submit_prompt_draft",
+                    "request_id": "voice-prompt-1",
+                    "draft_text": "Please review the plan and list concrete risks.",
+                },
+            )
+
+        req = daemon_call.call_args.args[0]
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(req.get("op"), "assistant_voice_prompt_draft_submit")
+        self.assertEqual(args.get("by"), "voice-secretary")
+        self.assertEqual(args.get("request_id"), "voice-prompt-1")
+
     def test_voice_secretary_document_list_defaults_to_compact_content(self) -> None:
         from cccc.ports.mcp.server import handle_tool_call
 
@@ -315,6 +337,7 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
         names = {str(item.get("name") or "") for item in tools if isinstance(item, dict)}
         self.assertIn("cccc_help", names)
         self.assertIn("cccc_voice_secretary_document", names)
+        self.assertIn("cccc_voice_secretary_composer", names)
         self.assertIn("cccc_voice_secretary_request", names)
         self.assertNotIn("cccc_pet_decisions", names)
         self.assertNotIn("cccc_message_send", names)

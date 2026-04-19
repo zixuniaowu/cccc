@@ -476,6 +476,29 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             }
         )
 
+    if name == "cccc_voice_secretary_composer":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        if aid != VOICE_SECRETARY_ACTOR_ID:
+            raise MCPError(code="permission_denied", message="cccc_voice_secretary_composer is only available to the voice-secretary actor")
+        action = str(arguments.get("action") or "submit_prompt_draft").strip().lower()
+        if action != "submit_prompt_draft":
+            raise MCPError(code="invalid_request", message="cccc_voice_secretary_composer action must be submit_prompt_draft")
+        return _call_daemon_or_raise(
+            {
+                "op": "assistant_voice_prompt_draft_submit",
+                "args": {
+                    "group_id": gid,
+                    "request_id": str(arguments.get("request_id") or ""),
+                    "draft_text": str(arguments.get("draft_text") or ""),
+                    "summary": str(arguments.get("summary") or ""),
+                    "operation": str(arguments.get("operation") or "replace_with_refined_prompt"),
+                    "composer_snapshot_hash": str(arguments.get("composer_snapshot_hash") or ""),
+                    "by": VOICE_SECRETARY_ACTOR_ID,
+                },
+            }
+        )
+
     if name == "cccc_file":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)

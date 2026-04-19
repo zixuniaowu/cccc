@@ -286,6 +286,27 @@ export function WindowViewIcon({ className, size = 18 }: IconProps) {
   );
 }
 
+export function MaximizeIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M15 3h6v6" />
+      <path d="M9 21H3v-6" />
+      <path d="M21 3l-7 7" />
+      <path d="M3 21l7-7" />
+    </svg>
+  );
+}
+
 export function MonitorIcon({ className, size = 18 }: IconProps) {
   return (
     <svg
@@ -602,6 +623,31 @@ export function MicrophoneIcon({ className, size = 18 }: IconProps) {
       <path d="M5 11a7 7 0 0 0 14 0" />
       <path d="M12 18v3" />
       <path d="M8.5 21h7" />
+    </svg>
+  );
+}
+
+export function PetIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M7.2 10.6c1 0 1.7-.92 1.7-2.05S8.14 6.5 7.2 6.5s-1.7.92-1.7 2.05.76 2.05 1.7 2.05z" fill="currentColor" opacity="0.12" />
+      <path d="M16.8 10.6c1 0 1.7-.92 1.7-2.05s-.76-2.05-1.7-2.05-1.7.92-1.7 2.05.76 2.05 1.7 2.05z" fill="currentColor" opacity="0.12" />
+      <path d="M7.2 10.6c1 0 1.7-.92 1.7-2.05S8.14 6.5 7.2 6.5s-1.7.92-1.7 2.05.76 2.05 1.7 2.05z" />
+      <path d="M16.8 10.6c1 0 1.7-.92 1.7-2.05s-.76-2.05-1.7-2.05-1.7.92-1.7 2.05.76 2.05 1.7 2.05z" />
+      <path d="M11.98 9.1c1.06 0 1.92-1.04 1.92-2.32s-.86-2.33-1.92-2.33-1.92 1.04-1.92 2.33.86 2.32 1.92 2.32z" fill="currentColor" opacity="0.12" />
+      <path d="M11.98 9.1c1.06 0 1.92-1.04 1.92-2.32s-.86-2.33-1.92-2.33-1.92 1.04-1.92 2.33.86 2.32 1.92 2.32z" />
+      <path d="M8.9 14.25c.84-1.53 1.62-2.27 3.1-2.27s2.26.74 3.1 2.27c.42.76 1.3 1.4 1.3 2.55 0 1.65-1.2 2.7-2.82 2.7-.64 0-1.1-.18-1.58-.18s-.94.18-1.58.18c-1.62 0-2.82-1.05-2.82-2.7 0-1.15.88-1.79 1.3-2.55z" fill="currentColor" opacity="0.12" />
+      <path d="M8.9 14.25c.84-1.53 1.62-2.27 3.1-2.27s2.26.74 3.1 2.27c.42.76 1.3 1.4 1.3 2.55 0 1.65-1.2 2.7-2.82 2.7-.64 0-1.1-.18-1.58-.18s-.94.18-1.58.18c-1.62 0-2.82-1.05-2.82-2.7 0-1.15.88-1.79 1.3-2.55z" />
     </svg>
   );
 }

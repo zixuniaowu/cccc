@@ -1421,6 +1421,257 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_prompt_refine_round_trip_uses_composer_draft_channel(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            enqueue, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "prompt_refine",
+                    "request_id": "voice-prompt-test",
+                    "composer_text": "请帮我检查这个方案",
+                    "voice_transcript": "重点看看风险和副作用，语气专业一点",
+                    "composer_snapshot_hash": "abc123",
+                    "composer_context": {"recipients": ["@foreman"], "message_mode": "normal"},
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(enqueue.ok, getattr(enqueue, "error", None))
+            result = enqueue.result or {}
+            self.assertEqual(result.get("request_id"), "voice-prompt-test")
+            input_event = result.get("input_event") if isinstance(result.get("input_event"), dict) else {}
+            self.assertEqual(input_event.get("kind"), "prompt_refine")
+            self.assertEqual(((input_event.get("metadata") or {}).get("target_kind")), "composer")
+            self.assertTrue(bool(result.get("input_notify_emitted")), result)
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            input_text = str((read.result or {}).get("input_text") or "")
+            self.assertIn("Target: composer", input_text)
+            self.assertIn("Request id: voice-prompt-test", input_text)
+            self.assertIn("请帮我检查这个方案", input_text)
+            self.assertIn("重点看看风险和副作用", input_text)
+
+            submit, _ = self._call(
+                "assistant_voice_prompt_draft_submit",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "request_id": "voice-prompt-test",
+                    "composer_snapshot_hash": "abc123",
+                    "draft_text": "请基于第一性原理检查这套方案，重点评估风险、副作用和验证路径。",
+                    "summary": "Clarified the review ask.",
+                },
+            )
+            self.assertTrue(submit.ok, getattr(submit, "error", None))
+            draft = (submit.result or {}).get("prompt_draft") if isinstance(submit.result, dict) else {}
+            self.assertEqual(draft.get("status"), "pending")
+            self.assertEqual(draft.get("composer_snapshot_hash"), "abc123")
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            pending = (state.result or {}).get("prompt_draft") if isinstance(state.result, dict) else {}
+            self.assertEqual(pending.get("request_id"), "voice-prompt-test")
+            self.assertIn("第一性原理", str(pending.get("draft_text") or ""))
+
+            ack, _ = self._call(
+                "assistant_voice_prompt_draft_ack",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "request_id": "voice-prompt-test",
+                    "status": "applied",
+                },
+            )
+            self.assertTrue(ack.ok, getattr(ack, "error", None))
+            state_after, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state_after.ok, getattr(state_after, "error", None))
+            self.assertFalse(bool((state_after.result or {}).get("prompt_draft")))
+        finally:
+            cleanup()
+
+    def test_voice_secretary_prompt_refine_followup_reuses_request_and_stales_old_draft(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            first, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "prompt_refine",
+                    "request_id": "voice-prompt-merge",
+                    "composer_text": "请帮我检查这个方案",
+                    "voice_transcript": "先强调风险和副作用。",
+                    "composer_snapshot_hash": "hash-1",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+
+            read_first, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read_first.ok, getattr(read_first, "error", None))
+            first_text = str((read_first.result or {}).get("input_text") or "")
+            self.assertIn("先强调风险", first_text)
+
+            submit_first, _ = self._call(
+                "assistant_voice_prompt_draft_submit",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "request_id": "voice-prompt-merge",
+                    "composer_snapshot_hash": "hash-1",
+                    "draft_text": "请检查方案风险与副作用。",
+                },
+            )
+            self.assertTrue(submit_first.ok, getattr(submit_first, "error", None))
+            state_with_first_draft, _ = self._call(
+                "assistant_state",
+                {
+                    "group_id": group_id,
+                    "assistant_id": "voice_secretary",
+                    "prompt_request_id": "voice-prompt-merge",
+                },
+            )
+            self.assertTrue(state_with_first_draft.ok, getattr(state_with_first_draft, "error", None))
+            self.assertEqual(((state_with_first_draft.result or {}).get("prompt_draft") or {}).get("request_id"), "voice-prompt-merge")
+
+            followup, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "prompt_refine",
+                    "request_id": "voice-prompt-merge",
+                    "composer_text": "请帮我检查这个方案",
+                    "voice_transcript": "再补充验证步骤和回滚路径。",
+                    "composer_snapshot_hash": "hash-1",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(followup.ok, getattr(followup, "error", None))
+
+            state_after_followup, _ = self._call(
+                "assistant_state",
+                {
+                    "group_id": group_id,
+                    "assistant_id": "voice_secretary",
+                    "prompt_request_id": "voice-prompt-merge",
+                },
+            )
+            self.assertTrue(state_after_followup.ok, getattr(state_after_followup, "error", None))
+            self.assertFalse(bool((state_after_followup.result or {}).get("prompt_draft")))
+
+            read_followup, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read_followup.ok, getattr(read_followup, "error", None))
+            merged_text = str((read_followup.result or {}).get("input_text") or "")
+            self.assertIn("Request id: voice-prompt-merge", merged_text)
+            self.assertIn("先强调风险", merged_text)
+            self.assertIn("再补充验证步骤", merged_text)
+        finally:
+            cleanup()
+
+    def test_assistant_state_can_return_prompt_draft_for_requested_id(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            for request_id, draft in (
+                ("voice-prompt-first", "第一条优化结果"),
+                ("voice-prompt-second", "第二条优化结果"),
+            ):
+                submit, _ = self._call(
+                    "assistant_voice_prompt_draft_submit",
+                    {
+                        "group_id": group_id,
+                        "by": "assistant:voice_secretary",
+                        "request_id": request_id,
+                        "draft_text": draft,
+                    },
+                )
+                self.assertTrue(submit.ok, getattr(submit, "error", None))
+
+            latest_state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(latest_state.ok, getattr(latest_state, "error", None))
+            self.assertEqual(((latest_state.result or {}).get("prompt_draft") or {}).get("request_id"), "voice-prompt-second")
+
+            requested_state, _ = self._call(
+                "assistant_state",
+                {
+                    "group_id": group_id,
+                    "assistant_id": "voice_secretary",
+                    "prompt_request_id": "voice-prompt-first",
+                },
+            )
+            self.assertTrue(requested_state.ok, getattr(requested_state, "error", None))
+            requested = (requested_state.result or {}).get("prompt_draft") or {}
+            self.assertEqual(requested.get("request_id"), "voice-prompt-first")
+            self.assertIn("第一条", str(requested.get("draft_text") or ""))
+        finally:
+            cleanup()
+
+    def test_voice_secretary_general_instruction_does_not_require_document(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            enqueue, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "voice_instruction",
+                    "instruction": "帮我检查一下刚才的总结有没有遗漏。",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(enqueue.ok, getattr(enqueue, "error", None))
+            input_event = (enqueue.result or {}).get("input_event") if isinstance(enqueue.result, dict) else {}
+            self.assertEqual(input_event.get("kind"), "voice_instruction")
+            self.assertEqual(str(input_event.get("document_path") or ""), "")
+            self.assertEqual(((input_event.get("metadata") or {}).get("target_kind")), "secretary")
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            input_text = str((read.result or {}).get("input_text") or "")
+            self.assertIn("Target: secretary", input_text)
+            self.assertIn("刚才的总结有没有遗漏", input_text)
+        finally:
+            cleanup()
+
     def test_voice_secretary_request_uses_targeted_system_notify(self) -> None:
         _, cleanup = self._with_home()
         try:

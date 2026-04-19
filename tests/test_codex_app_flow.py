@@ -775,6 +775,55 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_codex_turn_start_timeout_stops_session_without_idle_overwrite(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+
+            class _Proc:
+                pid = os.getpid()
+
+                @staticmethod
+                def poll():
+                    return None
+
+                @staticmethod
+                def terminate():
+                    return None
+
+                @staticmethod
+                def wait(timeout: float | None = None):
+                    _ = timeout
+                    return 0
+
+            session._proc = _Proc()
+            session._running = True
+            session._session_state.thread_id = "thread-1"
+            session._session_state.status = "idle"
+            session._turn_queue.put_nowait(_PendingTurn(text="hello", event_id="evt-1", ts="2026-04-08T00:00:00Z"))
+
+            with (
+                patch.object(session, "_request", side_effect=RuntimeError("codex request timed out: turn/start")),
+                patch.object(session, "_emit") as emit,
+            ):
+                session._turn_loop()
+
+            state = session.state()
+            self.assertEqual(str(state.get("status") or ""), "stopped")
+            self.assertFalse(session.is_running())
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.turn.failed", event_types)
+            self.assertIn("headless.session.stopped", event_types)
+        finally:
+            cleanup()
+
     def test_claude_turn_loop_auto_marks_only_after_runtime_accepts_turn(self) -> None:
         from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
 

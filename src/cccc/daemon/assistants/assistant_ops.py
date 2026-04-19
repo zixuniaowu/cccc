@@ -53,6 +53,8 @@ _STATE_SCHEMA = 1
 _STATE_FILENAME = "assistants.json"
 _MAX_TRANSCRIPT_CHARS = 32_000
 _MAX_TRANSCRIPT_SESSION_CHARS = 16_000
+_MAX_PROMPT_REFINE_CHARS = 16_000
+_MAX_PROMPT_DRAFT_CHARS = 16_000
 _MAX_AUDIO_BYTES = 25 * 1024 * 1024
 _MAX_VOICE_DOCUMENT_CHARS = 200_000
 _MAX_VOICE_DOCUMENTS = 100
@@ -211,14 +213,20 @@ def _load_runtime_state(group: Group) -> Dict[str, Any]:
             "group_id": group.group_id,
             "assistants": {},
             "voice_sessions": {},
+            "voice_prompt_drafts": {},
+            "voice_prompt_requests": {},
         }
     assistants = payload.get("assistants") if isinstance(payload.get("assistants"), dict) else {}
     voice_sessions = payload.get("voice_sessions") if isinstance(payload.get("voice_sessions"), dict) else {}
+    voice_prompt_drafts = payload.get("voice_prompt_drafts") if isinstance(payload.get("voice_prompt_drafts"), dict) else {}
+    voice_prompt_requests = payload.get("voice_prompt_requests") if isinstance(payload.get("voice_prompt_requests"), dict) else {}
     return {
         "schema": _STATE_SCHEMA,
         "group_id": group.group_id,
         "assistants": {str(k): v for k, v in assistants.items() if isinstance(v, dict)},
         "voice_sessions": {str(k): v for k, v in voice_sessions.items() if isinstance(v, dict)},
+        "voice_prompt_drafts": {str(k): v for k, v in voice_prompt_drafts.items() if isinstance(v, dict)},
+        "voice_prompt_requests": {str(k): v for k, v in voice_prompt_requests.items() if isinstance(v, dict)},
     }
 
 
@@ -239,6 +247,8 @@ def _save_runtime_state(group: Group, payload: Dict[str, Any]) -> None:
         "group_id": group.group_id,
         "assistants": payload.get("assistants") if isinstance(payload.get("assistants"), dict) else {},
         "voice_sessions": payload.get("voice_sessions") if isinstance(payload.get("voice_sessions"), dict) else {},
+        "voice_prompt_drafts": payload.get("voice_prompt_drafts") if isinstance(payload.get("voice_prompt_drafts"), dict) else {},
+        "voice_prompt_requests": payload.get("voice_prompt_requests") if isinstance(payload.get("voice_prompt_requests"), dict) else {},
     }
     _state_path(group).parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(_state_path(group), normalized, indent=2)
@@ -415,6 +425,128 @@ def _clean_multiline_text(value: Any, *, max_len: int = _MAX_TRANSCRIPT_CHARS) -
             lines.append(clean)
     text = "\n".join(lines) if lines else " ".join(str(value or "").strip().split())
     return text[:max_len]
+
+
+def _clean_voice_prompt_request_id(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raw = f"voice-prompt-{uuid.uuid4().hex}"
+    safe = re.sub(r"[^A-Za-z0-9_.:-]+", "-", raw).strip(".:-")[:128]
+    return safe or f"voice-prompt-{uuid.uuid4().hex}"
+
+
+def _voice_prompt_draft_public(record: Dict[str, Any]) -> Dict[str, Any]:
+    out = {
+        "schema": 1,
+        "request_id": str(record.get("request_id") or ""),
+        "status": str(record.get("status") or "pending"),
+        "operation": str(record.get("operation") or "replace_with_refined_prompt"),
+        "draft_text": str(record.get("draft_text") or ""),
+        "draft_preview": str(record.get("draft_preview") or ""),
+        "summary": str(record.get("summary") or ""),
+        "composer_snapshot_hash": str(record.get("composer_snapshot_hash") or ""),
+        "created_at": str(record.get("created_at") or ""),
+        "updated_at": str(record.get("updated_at") or ""),
+    }
+    return {key: value for key, value in out.items() if value not in ("", None)}
+
+
+def _latest_pending_voice_prompt_draft(group: Group, *, runtime_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    state = runtime_state or _load_runtime_state(group)
+    drafts = state.get("voice_prompt_drafts") if isinstance(state.get("voice_prompt_drafts"), dict) else {}
+    pending = [
+        dict(item)
+        for item in drafts.values()
+        if isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "pending"
+    ]
+    if not pending:
+        return {}
+    pending.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""))
+    return _voice_prompt_draft_public(pending[-1])
+
+
+def _pending_voice_prompt_draft_by_request(
+    group: Group,
+    *,
+    request_id: str,
+    runtime_state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    rid = str(request_id or "").strip()
+    if not rid:
+        return _latest_pending_voice_prompt_draft(group, runtime_state=runtime_state)
+    state = runtime_state or _load_runtime_state(group)
+    drafts = state.get("voice_prompt_drafts") if isinstance(state.get("voice_prompt_drafts"), dict) else {}
+    record = drafts.get(rid) if isinstance(drafts.get(rid), dict) else {}
+    if str(record.get("status") or "").strip().lower() != "pending":
+        return {}
+    return _voice_prompt_draft_public(dict(record))
+
+
+def _trim_voice_prompt_drafts(drafts: Dict[str, Any], *, keep: int = 30) -> Dict[str, Any]:
+    items = [(str(key), value) for key, value in drafts.items() if isinstance(value, dict)]
+    items.sort(key=lambda pair: str(pair[1].get("updated_at") or pair[1].get("created_at") or ""))
+    return {key: value for key, value in items[-keep:]}
+
+
+def _trim_voice_prompt_requests(requests: Dict[str, Any], *, keep: int = 30) -> Dict[str, Any]:
+    items = [(str(key), value) for key, value in requests.items() if isinstance(value, dict)]
+    items.sort(key=lambda pair: str(pair[1].get("updated_at") or pair[1].get("created_at") or ""))
+    return {key: value for key, value in items[-keep:]}
+
+
+def _merge_voice_prompt_request(
+    state: Dict[str, Any],
+    *,
+    group: Group,
+    request_id: str,
+    composer_text: str,
+    voice_transcript: str,
+    operation: str,
+    composer_context: Dict[str, Any],
+    composer_snapshot_hash: str,
+    now: str,
+) -> Dict[str, Any]:
+    requests = state.setdefault("voice_prompt_requests", {})
+    existing = requests.get(request_id) if isinstance(requests.get(request_id), dict) else {}
+    transcripts = [
+        _clean_multiline_text(item, max_len=4_000)
+        for item in (existing.get("voice_transcripts") if isinstance(existing.get("voice_transcripts"), list) else [])
+    ]
+    transcripts = [item for item in transcripts if item]
+    clean_voice = _clean_multiline_text(voice_transcript, max_len=8_000)
+    if clean_voice and (not transcripts or transcripts[-1] != clean_voice):
+        transcripts.append(clean_voice)
+    while len("\n\n".join(transcripts)) > _MAX_PROMPT_REFINE_CHARS and len(transcripts) > 1:
+        transcripts.pop(0)
+    record = {
+        "schema": 1,
+        "group_id": group.group_id,
+        "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+        "request_id": request_id,
+        "operation": operation,
+        "composer_text": composer_text,
+        "composer_context": dict(composer_context),
+        "composer_snapshot_hash": composer_snapshot_hash,
+        "voice_transcripts": transcripts[-12:],
+        "created_at": str(existing.get("created_at") or now) if isinstance(existing, dict) else now,
+        "updated_at": now,
+    }
+    requests[request_id] = record
+    state["voice_prompt_requests"] = _trim_voice_prompt_requests(requests)
+    return record
+
+
+def _stale_pending_voice_prompt_draft_in_state(state: Dict[str, Any], *, request_id: str, now: str) -> bool:
+    drafts = state.setdefault("voice_prompt_drafts", {})
+    record = drafts.get(request_id) if isinstance(drafts.get(request_id), dict) else {}
+    if str(record.get("status") or "").strip().lower() != "pending":
+        return False
+    updated = dict(record)
+    updated["status"] = "stale"
+    updated["updated_at"] = now
+    drafts[request_id] = updated
+    state["voice_prompt_drafts"] = _trim_voice_prompt_drafts(drafts)
+    return True
 
 
 def _voice_secretary_foreman_actor_id(group: Group) -> str:
@@ -918,7 +1050,14 @@ def _voice_input_event_public(event: Dict[str, Any]) -> Dict[str, Any]:
     metadata = out.get("metadata") if isinstance(out.get("metadata"), dict) else {}
     safe_metadata = {
         key: metadata.get(key)
-        for key in ("capture_continuity", "suggested_document_mode")
+        for key in (
+            "capture_continuity",
+            "suggested_document_mode",
+            "target_kind",
+            "request_id",
+            "operation",
+            "composer_snapshot_hash",
+        )
         if metadata.get(key) not in (None, "")
     }
     if safe_metadata:
@@ -1049,17 +1188,37 @@ def _latest_voice_input_event_for_idle_review(group: Group, *, after_seq: int) -
     return latest
 
 
-def _group_voice_input_by_document(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+def _voice_input_target_kind(item: Dict[str, Any]) -> str:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    target_kind = str(metadata.get("target_kind") or "").strip().lower()
+    if target_kind in {"document", "composer", "secretary"}:
+        return target_kind
+    return "document" if str(item.get("document_path") or "").strip() else "secretary"
+
+
+def _group_voice_input_by_target(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
     grouped: Dict[str, Dict[str, Any]] = {}
     for item in items:
         document_path = str(item.get("document_path") or "").strip()
-        key = document_path or "__unassigned__"
+        target_kind = _voice_input_target_kind(item)
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        request_id = str(metadata.get("request_id") or "").strip()
+        key = (
+            f"document:{document_path}"
+            if target_kind == "document" and document_path
+            else f"composer:{request_id or item.get('seq') or 'prompt'}"
+            if target_kind == "composer"
+            else "secretary"
+        )
         group_item = grouped.setdefault(
             key,
             {
+                "target_kind": target_kind,
                 "document_path": document_path,
                 "filename": str(item.get("filename") or ""),
                 "title": str(item.get("title") or ""),
+                "request_ids": [],
+                "operations": [],
                 "item_count": 0,
                 "kinds": [],
                 "intent_hints": [],
@@ -1068,8 +1227,19 @@ def _group_voice_input_by_document(items: list[Dict[str, Any]]) -> list[Dict[str
                 "combined_text": "",
             },
         )
+        if target_kind == "document" and document_path and not str(group_item.get("document_path") or "").strip():
+            group_item["document_path"] = document_path
+            group_item["filename"] = str(item.get("filename") or "")
+            group_item["title"] = str(item.get("title") or "")
         public_item = _voice_input_event_public(item)
         group_item["item_count"] = int(group_item.get("item_count") or 0) + 1
+        public_metadata = public_item.get("metadata") if isinstance(public_item.get("metadata"), dict) else {}
+        for field, target in (("request_id", "request_ids"), ("operation", "operations")):
+            value = str(public_metadata.get(field) or "").strip()
+            values = group_item.get(target) if isinstance(group_item.get(target), list) else []
+            if value and value not in values:
+                values.append(value)
+            group_item[target] = values
         for field, target in (
             ("kind", "kinds"),
             ("intent_hint", "intent_hints"),
@@ -1082,7 +1252,10 @@ def _group_voice_input_by_document(items: list[Dict[str, Any]]) -> list[Dict[str
                 values.append(value)
             group_item[target] = values
         text = str(public_item.get("text") or "")
-        group_item["combined_text"] = text if not group_item["combined_text"] else f"{group_item['combined_text']}\n{text}"
+        if target_kind == "composer" and request_id:
+            group_item["combined_text"] = text
+        else:
+            group_item["combined_text"] = text if not group_item["combined_text"] else f"{group_item['combined_text']}\n{text}"
     return list(grouped.values())
 
 
@@ -1090,21 +1263,28 @@ def _voice_input_batch_text(grouped: list[Dict[str, Any]], *, item_count: int) -
     if not grouped:
         return "No new Secretary input."
     blocks = [
-        f"Secretary input batch: {item_count} unread item{'s' if item_count != 1 else ''} grouped by document.",
-        "Edit the listed repository markdown files directly at Document path; do not send document bodies through MCP.",
+        f"Secretary input batch: {item_count} unread item{'s' if item_count != 1 else ''} grouped by target.",
+        "For document targets, edit repository markdown directly at Document path. For composer targets, submit the refined prompt through cccc_voice_secretary_composer.",
     ]
     for group_item in grouped:
+        target_kind = str(group_item.get("target_kind") or "secretary").strip()
         path = str(group_item.get("document_path") or "").strip()
         title = str(group_item.get("title") or "").strip()
         languages = ", ".join(str(item) for item in (group_item.get("languages") or []) if str(item).strip())
         intents = ", ".join(str(item) for item in (group_item.get("intent_hints") or []) if str(item).strip())
         kinds = ", ".join(str(item) for item in (group_item.get("kinds") or []) if str(item).strip())
+        request_ids = ", ".join(str(item) for item in (group_item.get("request_ids") or []) if str(item).strip())
+        operations = ", ".join(str(item) for item in (group_item.get("operations") or []) if str(item).strip())
         text = str(group_item.get("combined_text") or "").strip()
-        lines = []
+        lines = [f"Target: {target_kind}"]
         if path:
             lines.append(f"Document: {path}")
         if title:
             lines.append(f"Title: {title}")
+        if request_ids:
+            lines.append(f"Request id: {request_ids}")
+        if operations:
+            lines.append(f"Operation: {operations}")
         if languages:
             lines.append(f"Language: {languages}")
         if intents:
@@ -1119,12 +1299,13 @@ def _voice_input_batch_text(grouped: list[Dict[str, Any]], *, item_count: int) -
 
 def _voice_input_batch_public(group_item: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {
+        "target_kind": str(group_item.get("target_kind") or ""),
         "document_path": str(group_item.get("document_path") or ""),
         "filename": str(group_item.get("filename") or ""),
         "title": str(group_item.get("title") or ""),
         "item_count": max(0, int(group_item.get("item_count") or 0)),
     }
-    for key in ("kinds", "intent_hints", "languages", "sources"):
+    for key in ("request_ids", "operations", "kinds", "intent_hints", "languages", "sources"):
         values = [str(item).strip() for item in (group_item.get(key) if isinstance(group_item.get(key), list) else []) if str(item).strip()]
         if values:
             out[key] = values
@@ -2104,6 +2285,7 @@ def _infer_voice_transcript_intent(text: Any, trigger: Optional[Dict[str, Any]] 
 def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     assistant_id = _normalize_assistant_id(args.get("assistant_id"))
+    prompt_request_id = str(args.get("prompt_request_id") or args.get("request_id") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     group = load_group(group_id)
@@ -2126,6 +2308,11 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
         )
         active_document_path = _voice_document_path(active_record) if isinstance(active_record, dict) else ""
         input_state = _load_voice_input_state(group) if assistant_id == ASSISTANT_ID_VOICE_SECRETARY else {}
+        prompt_draft = (
+            _pending_voice_prompt_draft_by_request(group, request_id=prompt_request_id, runtime_state=runtime_state)
+            if assistant_id == ASSISTANT_ID_VOICE_SECRETARY
+            else {}
+        )
         return DaemonResponse(
             ok=True,
             result={
@@ -2139,6 +2326,7 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
                 "active_document_path": active_document_path,
                 "capture_target_document_path": active_document_path,
                 "new_input_available": int(input_state.get("latest_seq") or 0) > int(input_state.get("secretary_read_cursor") or 0),
+                "prompt_draft": prompt_draft,
             },
         )
     assistants = [
@@ -2150,6 +2338,7 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     active_document_id, active_record = _active_voice_document_from_index(group, document_index)
     active_document_path = _voice_document_path(active_record) if isinstance(active_record, dict) else ""
     input_state = _load_voice_input_state(group)
+    prompt_draft = _pending_voice_prompt_draft_by_request(group, request_id=prompt_request_id, runtime_state=runtime_state)
     return DaemonResponse(
         ok=True,
         result={
@@ -2164,6 +2353,7 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             "active_document_path": active_document_path,
             "capture_target_document_path": active_document_path,
             "new_input_available": int(input_state.get("latest_seq") or 0) > int(input_state.get("secretary_read_cursor") or 0),
+            "prompt_draft": prompt_draft,
         },
     )
 
@@ -2940,7 +3130,7 @@ def handle_assistant_voice_document_input_read(args: Dict[str, Any]) -> DaemonRe
                 state["retry_count"] = 0
             _save_voice_input_state(group, state)
         public_items = [_voice_input_event_public(item) for item in items]
-        grouped = _group_voice_input_by_document(items)
+        grouped = _group_voice_input_by_target(items)
         input_text = _voice_input_batch_text(grouped, item_count=len(public_items))
         input_batches = [_voice_input_batch_public(item) for item in grouped]
         referenced_paths = {str(item.get("document_path") or "").strip() for item in grouped if str(item.get("document_path") or "").strip()}
@@ -3052,6 +3242,229 @@ def handle_assistant_voice_document_save(args: Dict[str, Any]) -> DaemonResponse
         )
     except Exception as exc:
         return _error("assistant_voice_document_save_failed", str(exc))
+
+
+def _voice_composer_context_lines(value: Any) -> list[str]:
+    context = value if isinstance(value, dict) else {}
+    lines: list[str] = []
+    recipients = context.get("recipients")
+    if isinstance(recipients, list):
+        clean_recipients = [str(item).strip() for item in recipients if str(item).strip()]
+        if clean_recipients:
+            lines.append(f"Recipients: {', '.join(clean_recipients[:12])}")
+    else:
+        recipient_text = str(context.get("recipients") or "").strip()
+        if recipient_text:
+            lines.append(f"Recipients: {recipient_text[:240]}")
+    for label, key in (
+        ("Message mode", "message_mode"),
+        ("Priority", "priority"),
+        ("Reply required", "reply_required"),
+        ("Reply target", "reply_target"),
+        ("Quoted reference", "quoted_reference"),
+    ):
+        raw = context.get(key)
+        if raw in (None, "", []):
+            continue
+        lines.append(f"{label}: {str(raw)[:240]}")
+    return lines
+
+
+def _voice_prompt_refine_input_text(
+    *,
+    composer_text: str,
+    voice_transcript: str,
+    operation: str,
+    composer_context: Any,
+) -> str:
+    parts = [
+        "Task: refine the user's chat composer prompt.",
+        f"Operation: {operation or 'replace_with_refined_prompt'}",
+    ]
+    context_lines = _voice_composer_context_lines(composer_context)
+    if context_lines:
+        parts.extend(["", "Composer context:", *context_lines])
+    parts.extend(
+        [
+            "",
+            "Current composer draft:",
+            composer_text or "(empty)",
+            "",
+            "Spoken input:",
+            voice_transcript,
+            "",
+            "Return a ready-to-send prompt. Preserve the user's intent, make it clear and actionable, and do not send it as chat.",
+        ]
+    )
+    return _clean_multiline_text("\n".join(parts), max_len=_MAX_PROMPT_REFINE_CHARS)
+
+
+def handle_assistant_voice_input_append(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    input_kind = str(args.get("kind") or args.get("input_kind") or "").strip().lower()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if input_kind not in {"voice_instruction", "prompt_refine"}:
+        return _error("invalid_voice_input_kind", "kind must be voice_instruction or prompt_refine")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        _require_confirmation_permission(group, by=by)
+    except Exception as exc:
+        return _error("assistant_voice_input_append_failed", str(exc))
+    assistant = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
+    if not bool(assistant.get("enabled")):
+        return _error("assistant_disabled", "voice_secretary is disabled")
+
+    raw_trigger = dict(args.get("trigger")) if isinstance(args.get("trigger"), dict) else {}
+    language = str(args.get("language") or raw_trigger.get("language") or (assistant.get("config") or {}).get("recognition_language") or "").strip()
+    document: Dict[str, Any] = {}
+    document_path = str(args.get("document_path") or args.get("workspace_path") or raw_trigger.get("document_path") or "").strip()
+    if input_kind == "voice_instruction" and document_path:
+        try:
+            _, record = _find_voice_document_by_path(group, document_path=document_path, create=False)
+            if str(record.get("status") or "active").strip().lower() != "active":
+                return _error(
+                    "assistant_voice_input_append_failed",
+                    "voice secretary document is archived; choose an active document or send a general secretary instruction",
+                )
+            document = _voice_document_public_record(group, record)
+        except Exception as exc:
+            return _error("assistant_voice_input_append_failed", str(exc))
+
+    request_id = _clean_voice_prompt_request_id(args.get("request_id"))
+    metadata: Dict[str, Any] = {}
+    event_kind = input_kind
+    source = "secretary_panel"
+    session_id = "voice-secretary-user-instruction"
+    segment_id = f"instruction-{uuid.uuid4().hex}"
+    if input_kind == "prompt_refine":
+        voice_transcript = _clean_multiline_text(args.get("voice_transcript") or args.get("text"), max_len=8_000)
+        composer_text = _clean_multiline_text(args.get("composer_text"), max_len=8_000)
+        if not voice_transcript and not composer_text:
+            return _error("empty_prompt_refine_input", "voice_transcript or composer_text is required")
+        operation = str(args.get("operation") or "replace_with_refined_prompt").strip() or "replace_with_refined_prompt"
+        composer_context = args.get("composer_context") if isinstance(args.get("composer_context"), dict) else {}
+        composer_snapshot_hash = str(args.get("composer_snapshot_hash") or "").strip()
+        now = utc_now_iso()
+        runtime_state = _load_runtime_state(group)
+        prompt_request = _merge_voice_prompt_request(
+            runtime_state,
+            group=group,
+            request_id=request_id,
+            composer_text=composer_text,
+            voice_transcript=voice_transcript,
+            operation=operation,
+            composer_context=composer_context,
+            composer_snapshot_hash=composer_snapshot_hash,
+            now=now,
+        )
+        prompt_draft_staled = _stale_pending_voice_prompt_draft_in_state(runtime_state, request_id=request_id, now=now)
+        _save_runtime_state(group, runtime_state)
+        merged_voice_transcript = "\n\n".join(
+            str(item).strip()
+            for item in (prompt_request.get("voice_transcripts") if isinstance(prompt_request.get("voice_transcripts"), list) else [])
+            if str(item).strip()
+        )
+        text = _voice_prompt_refine_input_text(
+            composer_text=str(prompt_request.get("composer_text") or composer_text),
+            voice_transcript=merged_voice_transcript or voice_transcript,
+            operation=operation,
+            composer_context=prompt_request.get("composer_context") if isinstance(prompt_request.get("composer_context"), dict) else composer_context,
+        )
+        raw_trigger.setdefault("trigger_kind", "prompt_refine")
+        raw_trigger.setdefault("mode", "prompt")
+        raw_trigger.setdefault("intent_hint", "prompt_refine")
+        metadata = {
+            "target_kind": "composer",
+            "request_id": request_id,
+            "operation": operation,
+            "composer_snapshot_hash": composer_snapshot_hash,
+            "prompt_request_append_count": len(prompt_request.get("voice_transcripts") or []),
+            "prompt_draft_staled": prompt_draft_staled,
+        }
+        source = "composer_prompt_refine"
+        session_id = "voice-secretary-prompt-refine"
+        segment_id = request_id
+        intent_hint = "prompt_refine"
+    else:
+        instruction = _clean_multiline_text(args.get("instruction") or args.get("text"), max_len=8_000)
+        source_text = _clean_multiline_text(args.get("source_text"), max_len=_MAX_TRANSCRIPT_CHARS)
+        if not instruction and not source_text:
+            return _error("empty_voice_instruction", "instruction or source_text is required")
+        intent_hint = _infer_voice_transcript_intent(instruction or source_text, raw_trigger)
+        raw_trigger.setdefault("trigger_kind", "voice_instruction")
+        raw_trigger.setdefault("mode", "voice_instruction")
+        raw_trigger.setdefault("intent_hint", intent_hint)
+        parts = []
+        if instruction:
+            parts.append(f"User instruction:\n{instruction}")
+        if source_text:
+            parts.append(f"Additional source:\n{source_text}")
+        text = "\n\n".join(parts).strip()
+        metadata = {"target_kind": "document" if document else "secretary"}
+
+    raw_trigger.setdefault("recognition_backend", str((assistant.get("config") or {}).get("recognition_backend") or "browser_asr"))
+    raw_trigger.setdefault("language", language)
+    raw_trigger.setdefault("instruction_policy", _voice_instruction_policy())
+    try:
+        input_event = _append_voice_input_event(
+            group,
+            kind=event_kind,
+            text=text,
+            document=document,
+            language=language,
+            intent_hint=intent_hint,
+            source=source,
+            session_id=session_id,
+            segment_id=segment_id,
+            by=by,
+            trigger=raw_trigger,
+            metadata=metadata,
+        )
+        event = append_event(
+            group.ledger_path,
+            kind="assistant.voice.input",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={
+                "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+                "input_kind": event_kind,
+                "target_kind": str(metadata.get("target_kind") or ""),
+                "request_id": request_id if input_kind == "prompt_refine" else "",
+                "document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
+                "input_preview": _clean_multiline_text(text, max_len=240),
+            },
+        )
+        assistant_after = _set_voice_assistant_runtime(
+            group,
+            lifecycle="working",
+            health={
+                "status": "prompt_refine_requested" if input_kind == "prompt_refine" else "instruction_requested",
+                "last_input_kind": event_kind,
+                "last_prompt_request_id": request_id if input_kind == "prompt_refine" else "",
+                "last_document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
+                "last_input_at": utc_now_iso(),
+            },
+        )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "assistant": assistant_after,
+                "document": document,
+                "input_event": input_event,
+                "input_event_created": True,
+                "input_notify_emitted": True,
+                "event": event,
+                "request_id": request_id if input_kind == "prompt_refine" else "",
+            },
+        )
+    except Exception as exc:
+        return _error("assistant_voice_input_append_failed", str(exc))
 
 
 def handle_assistant_voice_document_instruction(
@@ -3214,6 +3627,148 @@ def handle_assistant_voice_document_archive(args: Dict[str, Any]) -> DaemonRespo
         return _error("assistant_voice_document_archive_failed", str(exc))
 
 
+def handle_assistant_voice_prompt_draft_submit(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or VOICE_SECRETARY_ACTOR_ID).strip()
+    request_id = _clean_voice_prompt_request_id(args.get("request_id"))
+    draft_text = _clean_multiline_text(args.get("draft_text"), max_len=_MAX_PROMPT_DRAFT_CHARS)
+    summary = _clean_multiline_text(args.get("summary"), max_len=800)
+    operation = str(args.get("operation") or "replace_with_refined_prompt").strip() or "replace_with_refined_prompt"
+    composer_snapshot_hash = str(args.get("composer_snapshot_hash") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if by not in {VOICE_SECRETARY_ACTOR_ID, _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY), "assistant:voice_secretary"}:
+        return _error("assistant_voice_prompt_draft_forbidden", "prompt drafts can only be submitted by voice-secretary")
+    if not draft_text:
+        return _error("empty_voice_prompt_draft", "draft_text is required")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    assistant = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
+    if not bool(assistant.get("enabled")):
+        return _error("assistant_disabled", "voice_secretary is disabled")
+    try:
+        now = utc_now_iso()
+        state = _load_runtime_state(group)
+        drafts = state.setdefault("voice_prompt_drafts", {})
+        existing = drafts.get(request_id) if isinstance(drafts.get(request_id), dict) else {}
+        record = {
+            "schema": 1,
+            "group_id": group.group_id,
+            "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+            "request_id": request_id,
+            "status": "pending",
+            "operation": operation,
+            "draft_text": draft_text,
+            "draft_preview": _clean_multiline_text(draft_text, max_len=240),
+            "summary": summary,
+            "composer_snapshot_hash": composer_snapshot_hash,
+            "created_at": str(existing.get("created_at") or now) if isinstance(existing, dict) else now,
+            "updated_at": now,
+            "by": _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY),
+        }
+        drafts[request_id] = record
+        state["voice_prompt_drafts"] = _trim_voice_prompt_drafts(drafts)
+        _save_runtime_state(group, state)
+        event = append_event(
+            group.ledger_path,
+            kind="assistant.voice.prompt_draft",
+            group_id=group.group_id,
+            scope_key="",
+            by=_assistant_principal(ASSISTANT_ID_VOICE_SECRETARY),
+            data={
+                "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+                "request_id": request_id,
+                "action": "submit",
+                "status": "pending",
+                "draft_preview": str(record.get("draft_preview") or ""),
+            },
+        )
+        assistant_after = _set_voice_assistant_runtime(
+            group,
+            lifecycle="waiting",
+            health={
+                "status": "prompt_draft_ready",
+                "last_prompt_request_id": request_id,
+                "last_prompt_draft_at": now,
+            },
+        )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "assistant": assistant_after,
+                "prompt_draft": _voice_prompt_draft_public(record),
+                "event": event,
+            },
+        )
+    except Exception as exc:
+        return _error("assistant_voice_prompt_draft_submit_failed", str(exc))
+
+
+def handle_assistant_voice_prompt_draft_ack(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    request_id = str(args.get("request_id") or "").strip()
+    status = str(args.get("status") or "").strip().lower()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not request_id:
+        return _error("missing_request_id", "missing request_id")
+    if status not in {"applied", "dismissed", "stale"}:
+        return _error("invalid_prompt_draft_status", "status must be applied, dismissed, or stale")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        _require_confirmation_permission(group, by=by)
+        state = _load_runtime_state(group)
+        drafts = state.setdefault("voice_prompt_drafts", {})
+        record = drafts.get(request_id) if isinstance(drafts.get(request_id), dict) else {}
+        if not record:
+            return _error("prompt_draft_not_found", f"prompt draft not found: {request_id}")
+        record = dict(record)
+        record["status"] = status
+        record["updated_at"] = utc_now_iso()
+        drafts[request_id] = record
+        state["voice_prompt_drafts"] = _trim_voice_prompt_drafts(drafts)
+        _save_runtime_state(group, state)
+        event = append_event(
+            group.ledger_path,
+            kind="assistant.voice.prompt_draft",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={
+                "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+                "request_id": request_id,
+                "action": "ack",
+                "status": status,
+                "draft_preview": str(record.get("draft_preview") or ""),
+            },
+        )
+        assistant_after = _set_voice_assistant_runtime(
+            group,
+            lifecycle="idle",
+            health={
+                "status": f"prompt_draft_{status}",
+                "last_prompt_request_id": request_id,
+                "last_prompt_draft_ack_at": utc_now_iso(),
+            },
+        )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "assistant": assistant_after,
+                "prompt_draft": _voice_prompt_draft_public(record),
+                "event": event,
+            },
+        )
+    except Exception as exc:
+        return _error("assistant_voice_prompt_draft_ack_failed", str(exc))
+
+
 def handle_assistant_voice_request(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or VOICE_SECRETARY_ACTOR_ID).strip()
@@ -3362,10 +3917,16 @@ def try_handle_assistant_op(
         return handle_assistant_voice_document_input_read(args)
     if op == "assistant_voice_document_save":
         return handle_assistant_voice_document_save(args)
+    if op == "assistant_voice_input_append":
+        return handle_assistant_voice_input_append(args)
     if op == "assistant_voice_document_instruction":
         return handle_assistant_voice_document_instruction(args)
     if op == "assistant_voice_document_archive":
         return handle_assistant_voice_document_archive(args)
+    if op == "assistant_voice_prompt_draft_submit":
+        return handle_assistant_voice_prompt_draft_submit(args)
+    if op == "assistant_voice_prompt_draft_ack":
+        return handle_assistant_voice_prompt_draft_ack(args)
     if op == "assistant_voice_request":
         return handle_assistant_voice_request(args)
     return None

@@ -68,3 +68,24 @@ class AssistantVoiceRequestData(BaseModel):
     notify_event_id: str = ""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class AssistantVoiceInputData(BaseModel):
+    assistant_id: str
+    input_kind: str
+    target_kind: str = ""
+    request_id: str = ""
+    document_path: str = ""
+    input_preview: str = ""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AssistantVoicePromptDraftData(BaseModel):
+    assistant_id: str
+    request_id: str
+    action: str
+    status: str = ""
+    draft_preview: str = ""
+
+    model_config = ConfigDict(extra="forbid")

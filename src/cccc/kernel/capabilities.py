@@ -55,6 +55,7 @@ PET_CORE_TOOLS: Tuple[str, ...] = (
 
 VOICE_SECRETARY_CORE_TOOLS: Tuple[str, ...] = PET_CORE_TOOLS + (
     "cccc_voice_secretary_document",
+    "cccc_voice_secretary_composer",
     "cccc_voice_secretary_request",
 )
 

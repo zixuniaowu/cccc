@@ -689,6 +689,7 @@ export type AssistantStateResult = {
   capture_target_document_path?: string;
   documents_by_path?: Record<string, AssistantVoiceDocument>;
   new_input_available?: boolean;
+  prompt_draft?: AssistantVoicePromptDraft;
 };
 
 export type AssistantVoiceTrigger = {
@@ -757,6 +758,36 @@ export type AssistantVoiceDocumentMutationResult = {
   input_event?: Record<string, unknown>;
   input_event_created?: boolean;
   input_notify_emitted?: boolean;
+  event?: unknown;
+};
+
+export type AssistantVoicePromptDraft = {
+  request_id: string;
+  status: "pending" | "applied" | "dismissed" | "stale" | string;
+  operation?: string;
+  draft_text: string;
+  draft_preview?: string;
+  summary?: string;
+  composer_snapshot_hash?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AssistantVoiceInputResult = {
+  group_id: string;
+  assistant?: BuiltinAssistant;
+  document?: AssistantVoiceDocument;
+  input_event?: Record<string, unknown>;
+  input_event_created?: boolean;
+  input_notify_emitted?: boolean;
+  event?: unknown;
+  request_id?: string;
+};
+
+export type AssistantVoicePromptDraftMutationResult = {
+  group_id: string;
+  assistant?: BuiltinAssistant;
+  prompt_draft?: AssistantVoicePromptDraft;
   event?: unknown;
 };
 

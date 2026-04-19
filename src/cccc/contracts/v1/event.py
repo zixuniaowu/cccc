@@ -11,6 +11,8 @@ from .assistant import (
     AssistantSettingsUpdateData,
     AssistantStatusUpdateData,
     AssistantVoiceDocumentData,
+    AssistantVoiceInputData,
+    AssistantVoicePromptDraftData,
     AssistantVoiceRequestData,
 )
 from .message import ChatMessageData, ChatReactionData, ChatStreamData
@@ -48,6 +50,8 @@ EventKind = Literal[
     "assistant.settings_update",
     "assistant.status_update",
     "assistant.voice.document",
+    "assistant.voice.input",
+    "assistant.voice.prompt_draft",
     "assistant.voice.request",
     "presentation.publish",
     "presentation.clear",
@@ -272,6 +276,8 @@ _KIND_TO_MODEL = {
     "assistant.settings_update": AssistantSettingsUpdateData,
     "assistant.status_update": AssistantStatusUpdateData,
     "assistant.voice.document": AssistantVoiceDocumentData,
+    "assistant.voice.input": AssistantVoiceInputData,
+    "assistant.voice.prompt_draft": AssistantVoicePromptDraftData,
     "assistant.voice.request": AssistantVoiceRequestData,
     "presentation.publish": PresentationPublishData,
     "presentation.clear": PresentationClearData,

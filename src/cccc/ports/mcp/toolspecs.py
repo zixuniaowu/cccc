@@ -105,7 +105,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_message_send",
-        "description": "Send a visible chat message.",
+        "description": "Send a visible chat message. Choose `to` deliberately; use @all only when the whole group needs it.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -127,7 +127,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_message_reply",
-        "description": "Reply to a visible chat message (by event_id/reply_to).",
+        "description": "Reply to a visible chat message (by event_id/reply_to). Use only for the thread you are answering; set `to` explicitly if the audience differs.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -193,6 +193,26 @@ MCP_TOOLS = [
                 "requires_ack": {"type": "boolean", "default": True},
             },
             required=["target", "request_text"],
+        ),
+    },
+    {
+        "name": "cccc_voice_secretary_composer",
+        "description": (
+            "Voice Secretary-only composer result surface. Use action=submit_prompt_draft only after reading a prompt_refine "
+            "input from read_new_input; submit the polished prompt draft here instead of sending chat."
+        ),
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_ACTOR,
+                "action": {"type": "string", "enum": ["submit_prompt_draft"], "default": "submit_prompt_draft"},
+                "request_id": {"type": "string", "description": "Request id from the prompt_refine input batch."},
+                "draft_text": {"type": "string", "description": "Ready-to-send refined prompt text."},
+                "summary": {"type": "string", "description": "Optional one-line summary of what changed."},
+                "operation": {"type": "string", "default": "replace_with_refined_prompt"},
+                "composer_snapshot_hash": {"type": "string"},
+            },
+            required=["request_id", "draft_text"],
         ),
     },
     {

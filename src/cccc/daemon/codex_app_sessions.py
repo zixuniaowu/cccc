@@ -423,6 +423,8 @@ class CodexAppSession:
             self._session_state.current_task_id = None
             self._session_state.updated_at = utc_now_iso()
             self._active_control_kind = ""
+            self._active_event_id = ""
+            self._active_turn_id = ""
         self._persist_state()
         self._turn_done.set()
         try:
@@ -656,6 +658,30 @@ class CodexAppSession:
             with self._lock:
                 self._active_control_kind = str(payload.control_kind or "").strip().lower()
             turn_text = str(payload.text or "")
+
+            def _handle_turn_start_failed(exc_obj: BaseException) -> None:
+                timed_out = _is_codex_request_timeout(exc_obj, method="turn/start")
+                logger.warning("codex turn start failed: group=%s actor=%s err=%s", self.group_id, self.actor_id, exc_obj)
+                if not timed_out:
+                    with self._lock:
+                        self._session_state.status = "idle"
+                        self._active_event_id = ""
+                        self._active_control_kind = ""
+                        self._session_state.current_task_id = None
+                        self._session_state.updated_at = utc_now_iso()
+                    self._persist_state()
+                self._emit(
+                    "headless.control.failed" if payload.control_kind else "headless.turn.failed",
+                    {
+                        "turn_id": turn_id,
+                        "event_id": payload.event_id,
+                        "control_kind": payload.control_kind or None,
+                        "error": str(exc_obj),
+                    },
+                )
+                if timed_out:
+                    self.stop()
+
             try:
                 input_items = self._build_turn_input_items(payload, text_override=turn_text)
                 response = self._request(
@@ -679,46 +705,10 @@ class CodexAppSession:
                             timeout=30.0,
                         )
                     except Exception as retry_exc:
-                        if _is_codex_request_timeout(retry_exc, method="turn/start"):
-                            self.stop()
-                        logger.warning("codex turn start failed: group=%s actor=%s err=%s", self.group_id, self.actor_id, retry_exc)
-                        with self._lock:
-                            self._session_state.status = "idle"
-                            self._active_event_id = ""
-                            self._active_control_kind = ""
-                            self._session_state.current_task_id = None
-                            self._session_state.updated_at = utc_now_iso()
-                        self._persist_state()
-                        self._emit(
-                            "headless.control.failed" if payload.control_kind else "headless.turn.failed",
-                            {
-                                "turn_id": turn_id,
-                                "event_id": payload.event_id,
-                                "control_kind": payload.control_kind or None,
-                                "error": str(retry_exc),
-                            },
-                        )
+                        _handle_turn_start_failed(retry_exc)
                         continue
                 else:
-                    if _is_codex_request_timeout(exc, method="turn/start"):
-                        self.stop()
-                    logger.warning("codex turn start failed: group=%s actor=%s err=%s", self.group_id, self.actor_id, exc)
-                    with self._lock:
-                        self._session_state.status = "idle"
-                        self._active_event_id = ""
-                        self._active_control_kind = ""
-                        self._session_state.current_task_id = None
-                        self._session_state.updated_at = utc_now_iso()
-                    self._persist_state()
-                    self._emit(
-                        "headless.control.failed" if payload.control_kind else "headless.turn.failed",
-                        {
-                            "turn_id": turn_id,
-                            "event_id": payload.event_id,
-                            "control_kind": payload.control_kind or None,
-                            "error": str(exc),
-                        },
-                    )
+                    _handle_turn_start_failed(exc)
                     continue
             try:
                 turn = response.get("turn") if isinstance(response, dict) else {}

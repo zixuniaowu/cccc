@@ -8,5 +8,6 @@ export { useInboxStore } from "./useInboxStore";
 export { useFormStore } from "./useFormStore";
 export { useObservabilityStore } from "./useObservabilityStore";
 export { useWebPetStore } from "./useWebPetStore";
+export { useBuiltInAssistantStore } from "./useBuiltInAssistantStore";
 export { useBrandingStore } from "./useBrandingStore";
 export { useTerminalSignalsStore, getTerminalSignalKey } from "./useTerminalSignalsStore";

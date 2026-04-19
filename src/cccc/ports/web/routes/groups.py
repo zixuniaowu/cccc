@@ -56,6 +56,8 @@ from ..schemas import (
     AssistantStatusUpdateRequest,
     AssistantVoiceDocumentInstructionRequest,
     AssistantVoiceDocumentSaveRequest,
+    AssistantVoiceInputRequest,
+    AssistantVoicePromptDraftAckRequest,
     AssistantVoiceTranscriptSegmentRequest,
     AssistantVoiceTranscriptionRequest,
     CreateGroupRequest,
@@ -1704,11 +1706,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.daemon({"op": "assistant_state", "args": {"group_id": group_id}})
 
     @group_router.get("/assistants/{assistant_id}")
-    async def group_assistant_get(group_id: str, assistant_id: str) -> Dict[str, Any]:
+    async def group_assistant_get(group_id: str, assistant_id: str, prompt_request_id: str = "") -> Dict[str, Any]:
         return await ctx.daemon(
             {
                 "op": "assistant_state",
-                "args": {"group_id": group_id, "assistant_id": str(assistant_id or "").strip()},
+                "args": {
+                    "group_id": group_id,
+                    "assistant_id": str(assistant_id or "").strip(),
+                    "prompt_request_id": str(prompt_request_id or "").strip(),
+                },
             }
         )
 
@@ -1873,6 +1879,51 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "instruction": req.instruction,
                     "source_text": req.source_text,
                     "trigger": dict(req.trigger),
+                    "by": req.by,
+                },
+            }
+        )
+
+    @group_router.post("/assistants/voice_secretary/inputs")
+    async def group_voice_secretary_input_append(
+        group_id: str,
+        req: AssistantVoiceInputRequest,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "assistant_voice_input_append",
+                "args": {
+                    "group_id": group_id,
+                    "kind": req.kind,
+                    "text": req.text,
+                    "instruction": req.instruction,
+                    "source_text": req.source_text,
+                    "document_path": req.document_path,
+                    "voice_transcript": req.voice_transcript,
+                    "composer_text": req.composer_text,
+                    "request_id": req.request_id,
+                    "operation": req.operation,
+                    "composer_context": dict(req.composer_context),
+                    "composer_snapshot_hash": req.composer_snapshot_hash,
+                    "language": req.language,
+                    "trigger": dict(req.trigger),
+                    "by": req.by,
+                },
+            }
+        )
+
+    @group_router.post("/assistants/voice_secretary/prompt_drafts/ack")
+    async def group_voice_secretary_prompt_draft_ack(
+        group_id: str,
+        req: AssistantVoicePromptDraftAckRequest,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "assistant_voice_prompt_draft_ack",
+                "args": {
+                    "group_id": group_id,
+                    "request_id": req.request_id,
+                    "status": req.status,
                     "by": req.by,
                 },
             }

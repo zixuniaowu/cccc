@@ -262,6 +262,29 @@ class AssistantVoiceDocumentInstructionRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class AssistantVoiceInputRequest(BaseModel):
+    kind: str = Field(default="")
+    text: str = Field(default="")
+    instruction: str = Field(default="")
+    source_text: str = Field(default="")
+    document_path: str = Field(default="")
+    voice_transcript: str = Field(default="")
+    composer_text: str = Field(default="")
+    request_id: str = Field(default="")
+    operation: str = Field(default="")
+    composer_context: Dict[str, Any] = Field(default_factory=dict)
+    composer_snapshot_hash: str = Field(default="")
+    language: str = Field(default="")
+    trigger: Dict[str, Any] = Field(default_factory=dict)
+    by: str = Field(default="user")
+
+
+class AssistantVoicePromptDraftAckRequest(BaseModel):
+    request_id: str = Field(default="")
+    status: Literal["applied", "dismissed", "stale"]
+    by: str = Field(default="user")
+
+
 class PetDecisionOutcomeRequest(BaseModel):
     fingerprint: str
     outcome: Literal["executed", "dismissed"]
