@@ -188,11 +188,12 @@ export function ChatComposer({
 
   const chipBaseClass =
     "flex h-6 flex-shrink-0 items-center justify-center whitespace-nowrap rounded-lg border px-2 text-[10px] font-medium leading-none transition-all sm:px-2.5 sm:text-[11px]";
-  const chipActiveClass =
-    "border-[var(--glass-tab-border-active)] bg-[var(--glass-tab-bg-active)] text-[var(--color-text-primary)] shadow-[var(--glass-tab-shadow-active)]";
+  const chipActiveClass = isDark
+    ? "border-white bg-white text-[rgb(20,20,22)] shadow-none"
+    : "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white shadow-none";
   const chipInactiveClass = isDark
-    ? "bg-white/[0.06] text-[var(--color-text-secondary)] border-white/[0.08] hover:border-white/[0.16] hover:text-[var(--color-text-primary)]"
-    : "bg-black/[0.04] text-gray-600 border-transparent hover:border-black/10 hover:text-gray-800";
+    ? "bg-white/[0.06] text-[var(--color-text-secondary)] border-white/[0.08] hover:bg-white/[0.1] hover:border-white/[0.14] hover:text-[var(--color-text-primary)]"
+    : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)] border-transparent hover:bg-[rgb(237,237,237)] hover:border-black/5 hover:text-[rgb(20,20,22)]";
 
   // Get display name for reply target
   const replyByDisplayName = useMemo(() => {
@@ -215,6 +216,9 @@ export function ChatComposer({
     }
     return map;
   }, [recipientActors]);
+  const renderRecipientChipContent = useCallback((label: string) => (
+    <span className="truncate">{label}</span>
+  ), []);
 
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -675,7 +679,7 @@ export function ChatComposer({
                         disabled={!selectedGroupId || busy === "send"}
                         aria-pressed={active}
                       >
-                        {tok}
+                        {renderRecipientChipContent(tok)}
                       </button>
                     );
                   })}
@@ -696,7 +700,7 @@ export function ChatComposer({
                         disabled={!selectedGroupId || busy === "send" || !!recipientActorsBusy}
                         aria-pressed={active}
                       >
-                        {actor.title || id}
+                        {renderRecipientChipContent(actor.title || id)}
                       </button>
                     );
                   })}

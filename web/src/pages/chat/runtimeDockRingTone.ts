@@ -16,12 +16,12 @@ export function getRuntimeRingTone(
   // Live-work transcript state can lag during reconnect/catch-up, so don't let
   // stale pending/streaming cards light the ring after the actor is idle.
   if (item.runner === "headless") {
-    if (actorState === "working" || actorState === "waiting") return "active";
+    if (actorState === "working") return "active";
     return "stopped";
   }
 
   if (item.liveWorkCard?.phase === "pending") return "active";
   if (item.liveWorkCard?.phase === "streaming") return "active";
-  if (actorState === "working" || actorState === "waiting") return "active";
+  if (actorState === "working") return "active";
   return "stopped";
 }

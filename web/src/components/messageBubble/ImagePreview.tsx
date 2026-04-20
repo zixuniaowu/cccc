@@ -10,6 +10,20 @@ const LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE = {
   filter: "contrast(1.16) brightness(0.97) saturate(1.01)",
   boxShadow: "0 1px 0 rgba(15,23,42,0.03), 0 0 0 1px rgba(15,23,42,0.04)",
 } as const;
+const LIGHT_IMAGE_CANVAS_STYLE = {
+  backgroundColor: "rgb(245, 245, 245)",
+  backgroundImage:
+    "linear-gradient(45deg, rgba(15,23,42,0.035) 25%, transparent 25%, transparent 75%, rgba(15,23,42,0.035) 75%), linear-gradient(45deg, rgba(15,23,42,0.035) 25%, transparent 25%, transparent 75%, rgba(15,23,42,0.035) 75%)",
+  backgroundPosition: "0 0, 8px 8px",
+  backgroundSize: "16px 16px",
+} as const;
+const DARK_IMAGE_CANVAS_STYLE = {
+  backgroundColor: "rgb(22, 24, 29)",
+  backgroundImage:
+    "linear-gradient(45deg, rgba(255,255,255,0.035) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.035) 75%), linear-gradient(45deg, rgba(255,255,255,0.035) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.035) 75%)",
+  backgroundPosition: "0 0, 8px 8px",
+  backgroundSize: "16px 16px",
+} as const;
 
 export function ImagePreview({
   href,
@@ -34,6 +48,7 @@ export function ImagePreview({
   const [displaySrc, setDisplaySrc] = useState<string>(isSvg ? "" : href);
   const { t } = useTranslation("chat");
   const isGridLayout = layout === "grid";
+  const rasterCanvasStyle = isDark ? DARK_IMAGE_CANVAS_STYLE : LIGHT_IMAGE_CANVAS_STYLE;
 
   useEffect(() => {
     let cancelled = false;
@@ -241,9 +256,10 @@ export function ImagePreview({
                 : {
                     aspectRatio: isGridLayout ? "4 / 3" : (aspectRatio ?? "4 / 3"),
                     maxHeight: isGridLayout ? "11rem" : "20rem",
-                    ...(isUserMessage || isDark
-                      ? null
-                      : LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE),
+                    ...rasterCanvasStyle,
+                    ...(!isUserMessage && !isDark
+                      ? LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE
+                      : null),
                   }
             }
             loading={isSvg ? "lazy" : "eager"}

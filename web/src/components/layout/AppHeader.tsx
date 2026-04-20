@@ -74,9 +74,11 @@ export function AppHeader({
   const headerIconButtonBaseClass =
     "flex items-center justify-center h-10 w-10 rounded-[14px] transition-all shrink-0";
   const headerRailClass =
-    "flex items-center gap-1 rounded-[18px] bg-[var(--glass-panel-bg)] p-[3px] shadow-sm backdrop-blur-xl";
+    "flex items-center gap-1 p-[3px]";
   const headerUtilityRailClass =
-    "flex items-center gap-0.5 rounded-[16px] bg-[var(--glass-bg)]/55 p-[3px] shadow-[0_8px_20px_rgba(15,23,42,0.04)] backdrop-blur-xl";
+    "flex items-center gap-0.5 p-[3px]";
+  const headerMinorActionClass =
+    "hidden md:inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent text-[var(--color-text-tertiary)] transition-all hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]";
   const headerRailButtonClass =
     "flex items-center justify-center h-9 w-9 rounded-[14px] transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]";
   const headerUtilityButtonClass =
@@ -184,9 +186,9 @@ export function AppHeader({
   };
   return (
     <header
-      className="z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 pt-1 glass-header md:px-5"
+      className="z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 glass-header md:px-5"
     >
-      <div className="flex items-center gap-3 min-w-0">
+      <div className="flex min-w-0 items-center gap-2">
         <button
           className={classNames(
             "md:hidden -ml-1",
@@ -200,15 +202,15 @@ export function AppHeader({
           <MenuIcon size={18} />
         </button>
 
-        <div className="min-w-0 flex flex-col">
-          <div className="flex items-center gap-2">
+        <div className="min-w-0 flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
             <h1 className="truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]">
               {groupDoc?.title || (selectedGroupId ? selectedGroupId : t('selectGroup'))}
             </h1>
             {selectedGroupId && sseStatus !== "connected" && (
               <span
                 className={classNames(
-                  "flex-shrink-0 w-2 h-2 rounded-full",
+                  "h-2 w-2 flex-shrink-0 rounded-full",
                   sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500"
                 )}
                 title={sseStatus === "connecting" ? t('reconnecting') : t('disconnected')}
@@ -217,28 +219,25 @@ export function AppHeader({
             {selectedStatus && (
               <span
                 className={classNames(
-                  "w-2.5 h-2.5 rounded-full",
+                  "h-2.5 w-2.5 flex-shrink-0 rounded-full",
                   selectedStatus.dotClass
                 )}
                 title={selectedStatus.label}
               />
             )}
           </div>
-        </div>
 
-        {selectedGroupId && !webReadOnly && onOpenGroupEdit && (
+          {selectedGroupId && !webReadOnly && onOpenGroupEdit && (
           <button
-            className={classNames(
-              "hidden md:inline-flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-all glass-btn border-0 shadow-none",
-              "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-            )}
+            className={headerMinorActionClass}
             onClick={onOpenGroupEdit}
             title={t('editGroup')}
             aria-label={t('editGroup')}
           >
             <EditIcon size={14} />
           </button>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Right Actions */}
