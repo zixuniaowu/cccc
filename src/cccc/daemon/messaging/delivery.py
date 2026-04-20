@@ -1016,7 +1016,7 @@ def emit_system_notify(
             event_id=event_id,
             notify_kind=str(notify.kind),
             title=str(notify.title),
-            message=_render_system_notify_message_for_delivery(notify=notify),
+            message=_render_system_notify_message_for_delivery(notify=notify, group=group),
             ts=event_ts,
         )
         flush_pending_messages(group, actor_id=aid)

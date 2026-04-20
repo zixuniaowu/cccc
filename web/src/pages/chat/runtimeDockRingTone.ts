@@ -1,6 +1,6 @@
 import type { RuntimeDockItem } from "./runtimeDockItems";
 
-export type RuntimeRingTone = "stopped" | "active" | "attention";
+export type RuntimeRingTone = "stopped" | "idle" | "active" | "attention";
 
 export function getRuntimeRingTone(
   item: Pick<RuntimeDockItem, "liveWorkCard" | "runner">,
@@ -17,11 +17,11 @@ export function getRuntimeRingTone(
   // stale pending/streaming cards light the ring after the actor is idle.
   if (item.runner === "headless") {
     if (actorState === "working") return "active";
-    return "stopped";
+    return "idle";
   }
 
   if (item.liveWorkCard?.phase === "pending") return "active";
   if (item.liveWorkCard?.phase === "streaming") return "active";
   if (actorState === "working") return "active";
-  return "stopped";
+  return "idle";
 }

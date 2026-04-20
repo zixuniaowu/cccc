@@ -1088,7 +1088,6 @@ def _append_voice_input_event(
         raise ValueError("voice secretary input text is empty")
     now = utc_now_iso()
     state = _load_voice_input_state(group)
-    was_caught_up = int(state.get("latest_seq") or 0) <= int(state.get("secretary_read_cursor") or 0)
     seq = int(state.get("latest_seq") or 0) + 1
     document_path = _voice_document_path(document)
     event = {

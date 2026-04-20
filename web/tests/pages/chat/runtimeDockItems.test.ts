@@ -757,6 +757,12 @@ describe("runtimeDockItems", () => {
         streamPhase: "final_answer",
       }),
     });
+    const headlessItem = makeRuntimeDockItem({
+      actorId: "headless",
+      actorLabel: "Headless",
+      liveWorkCard: null,
+      runner: "headless",
+    });
     const ptyItem = makeRuntimeDockItem({
       actorId: "pty",
       actorLabel: "PTY",
@@ -766,13 +772,15 @@ describe("runtimeDockItems", () => {
 
     expect(getRuntimeRingTone(failedItem, false, "idle")).toBe("attention");
     expect(getRuntimeRingTone(pendingItem, false, "idle")).toBe("stopped");
-    expect(getRuntimeRingTone(pendingItem, true, "idle")).toBe("stopped");
+    expect(getRuntimeRingTone(pendingItem, true, "idle")).toBe("idle");
     expect(getRuntimeRingTone(streamingFinalAnswerItem, true, "working")).toBe("active");
-    expect(getRuntimeRingTone(completedFinalAnswerItem, true, "idle")).toBe("stopped");
+    expect(getRuntimeRingTone(completedFinalAnswerItem, true, "idle")).toBe("idle");
+    expect(getRuntimeRingTone(headlessItem, true, "working")).toBe("active");
+    expect(getRuntimeRingTone(headlessItem, true, "waiting")).toBe("idle");
     expect(getRuntimeRingTone(ptyItem, true, "working")).toBe("active");
-    expect(getRuntimeRingTone(ptyItem, true, "waiting")).toBe("active");
+    expect(getRuntimeRingTone(ptyItem, true, "waiting")).toBe("idle");
     expect(getRuntimeRingTone(ptyItem, true, "stuck")).toBe("attention");
-    expect(getRuntimeRingTone(ptyItem, true, "idle")).toBe("stopped");
+    expect(getRuntimeRingTone(ptyItem, true, "idle")).toBe("idle");
     expect(getRuntimeRingTone(ptyItem, false, "working")).toBe("stopped");
   });
 });

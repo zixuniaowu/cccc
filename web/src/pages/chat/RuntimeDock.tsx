@@ -22,8 +22,13 @@ type RuntimeRingPresentation = {
   ringClassName: string;
   ringStyle: CSSProperties;
   unreadBadgeClassName: string;
+  avatarClassName?: string;
   customRing?: ReactNode;
 };
+
+const RUNTIME_RING_GEOMETRY_CLASS = "absolute -inset-[0.5px] rounded-full";
+const RUNTIME_RING_STROKE_PX = 4;
+const RUNTIME_STATIC_RING_STROKE_CLASS = "border-[4px]";
 
 function getRuntimeStatusLabel(
   isRunning: boolean,
@@ -61,8 +66,8 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
         ringStyle: {},
         customRing: (
           <ShineBorder
-            className="absolute -inset-[1px] rounded-full"
-            borderWidth={1}
+            className={RUNTIME_RING_GEOMETRY_CLASS}
+            borderWidth={RUNTIME_RING_STROKE_PX}
             duration={6.2}
             shineColor={["#A07CFE", "#FE8FB5", "#FFBE7B"]}
             topGlow={true}
@@ -76,8 +81,8 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
         ringStyle: {},
         customRing: (
           <ShineBorder
-            className="absolute -inset-[1px] rounded-full"
-            borderWidth={1}
+            className={RUNTIME_RING_GEOMETRY_CLASS}
+            borderWidth={RUNTIME_RING_STROKE_PX}
             duration={5.4}
             shineColor={["#fb7185", "#ef4444", "#fda4af"]}
             topGlow={true}
@@ -85,12 +90,29 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
         ),
         unreadBadgeClassName: isDark ? "bg-rose-300/[0.18] text-rose-50" : "bg-rose-500/[0.14] text-rose-700",
       };
+    case "idle":
+      return {
+        ringClassName: classNames(
+          RUNTIME_RING_GEOMETRY_CLASS,
+          RUNTIME_STATIC_RING_STROKE_CLASS,
+          "transition-colors duration-200",
+          isDark ? "border-emerald-300/75" : "border-emerald-500/75",
+        ),
+        ringStyle: {},
+        unreadBadgeClassName: isDark ? "bg-emerald-300/[0.12] text-emerald-50" : "bg-emerald-500/[0.10] text-emerald-700",
+      };
     case "stopped":
     default:
       return {
-        ringClassName: "hidden",
+        ringClassName: classNames(
+          RUNTIME_RING_GEOMETRY_CLASS,
+          RUNTIME_STATIC_RING_STROKE_CLASS,
+          "transition-colors duration-200",
+          isDark ? "border-slate-400/50" : "border-slate-500/50",
+        ),
         ringStyle: {},
         unreadBadgeClassName: isDark ? "bg-white/10 text-slate-100" : "bg-black/[0.08] text-gray-800",
+        avatarClassName: "opacity-45 grayscale saturate-50",
       };
   }
 }
@@ -266,12 +288,13 @@ function RuntimeDockActorButton({
             sizeClassName={isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]"}
             className={classNames(
               "relative z-10 border-transparent shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
-            item.runner === "headless"
-              ? isDark
-                ? "bg-slate-900"
-                : "bg-slate-50"
-              : undefined
-          )}
+              ringPresentation.avatarClassName,
+              item.runner === "headless"
+                ? isDark
+                  ? "bg-slate-900"
+                  : "bg-slate-50"
+                : undefined
+            )}
           accentRingClassName={isInspectorOpen ? (isDark ? "ring-white/10" : "ring-black/10") : null}
         />
 

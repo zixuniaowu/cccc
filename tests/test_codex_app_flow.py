@@ -1154,6 +1154,7 @@ class TestCodexAppFlow(unittest.TestCase):
                     "before_latest_seq": 8,
                     "before_secretary_read_cursor": 5,
                     "composer_request_ids": ["voice-prompt-1"],
+                    "input_target_kinds": ["composer"],
                     "before_prompt_drafts": {
                         "voice-prompt-1": {
                             "updated_at": "",
@@ -1165,6 +1166,60 @@ class TestCodexAppFlow(unittest.TestCase):
             )
 
             self.assertTrue(consumed)
+
+            (voice_state_dir / "input_state.json").write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": group_id,
+                        "latest_seq": 8,
+                        "secretary_read_cursor": 8,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            missing_draft_consumed = _voice_secretary_control_consumed_input(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 5,
+                    "composer_request_ids": ["voice-prompt-missing"],
+                    "input_target_kinds": ["composer"],
+                    "before_prompt_drafts": {},
+                },
+            )
+            self.assertFalse(missing_draft_consumed)
+
+            (voice_state_dir / "input_state.json").write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": group_id,
+                        "latest_seq": 8,
+                        "secretary_read_cursor": 5,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            mixed_batch_consumed = _voice_secretary_control_consumed_input(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 5,
+                    "composer_request_ids": ["voice-prompt-1"],
+                    "input_target_kinds": ["document", "composer"],
+                    "before_prompt_drafts": {
+                        "voice-prompt-1": {
+                            "updated_at": "",
+                            "draft_text": "",
+                            "status": "",
+                        }
+                    },
+                },
+            )
+            self.assertFalse(mixed_batch_consumed)
         finally:
             cleanup()
 

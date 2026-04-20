@@ -114,19 +114,27 @@ def _voice_secretary_control_snapshot(*, group_id: str, actor_id: str, event_id:
         from .assistants.assistant_ops import _peek_voice_input_batch
 
         preview = _peek_voice_input_batch(group)
+        input_batches = preview.get("input_batches") if isinstance(preview.get("input_batches"), list) else []
         composer_request_ids = [
             str(item).strip()
             for item in ((preview or {}).get("composer_request_ids") if isinstance((preview or {}).get("composer_request_ids"), list) else [])
             if str(item).strip()
         ]
+        input_target_kinds = [
+            str(item.get("target_kind") or "").strip().lower()
+            for item in input_batches
+            if isinstance(item, dict) and str(item.get("target_kind") or "").strip()
+        ]
     except Exception:
         composer_request_ids = []
+        input_target_kinds = []
     return {
         "kind": "voice_secretary_input",
         "event_id": str(event_id or "").strip(),
         "before_latest_seq": int(state.get("latest_seq") or 0),
         "before_secretary_read_cursor": int(state.get("secretary_read_cursor") or 0),
         "composer_request_ids": composer_request_ids,
+        "input_target_kinds": input_target_kinds,
         "before_prompt_drafts": _voice_secretary_prompt_draft_state(group.group_id, request_ids=composer_request_ids),
     }
 
@@ -138,16 +146,20 @@ def _voice_secretary_control_consumed_input(*, group_id: str, snapshot: Dict[str
     before_cursor = int((snapshot or {}).get("before_secretary_read_cursor") or 0)
     if before_latest <= before_cursor:
         return True
-    state = _voice_secretary_input_state(group_id)
-    if int(state.get("secretary_read_cursor") or 0) > before_cursor:
-        return True
     composer_request_ids = [
         str(item).strip()
         for item in ((snapshot or {}).get("composer_request_ids") if isinstance((snapshot or {}).get("composer_request_ids"), list) else [])
         if str(item).strip()
     ]
+    input_target_kinds = [
+        str(item).strip().lower()
+        for item in ((snapshot or {}).get("input_target_kinds") if isinstance((snapshot or {}).get("input_target_kinds"), list) else [])
+        if str(item).strip()
+    ]
+    state = _voice_secretary_input_state(group_id)
+    cursor_advanced = int(state.get("secretary_read_cursor") or 0) > before_cursor
     if not composer_request_ids:
-        return False
+        return cursor_advanced
     before_prompt_drafts = (snapshot or {}).get("before_prompt_drafts") if isinstance((snapshot or {}).get("before_prompt_drafts"), dict) else {}
     current_prompt_drafts = _voice_secretary_prompt_draft_state(group_id, request_ids=composer_request_ids)
     for request_id in composer_request_ids:
@@ -157,7 +169,8 @@ def _voice_secretary_control_consumed_input(*, group_id: str, snapshot: Dict[str
             return False
         if str(current.get("updated_at") or "").strip() == str(before.get("updated_at") or "").strip():
             return False
-    return True
+    requires_cursor_advance = any(kind != "composer" for kind in input_target_kinds)
+    return cursor_advanced or not requires_cursor_advance
 
 
 @dataclass
