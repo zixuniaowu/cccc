@@ -537,6 +537,103 @@ class TestChatOps(unittest.TestCase):
         })
         return group_id, cleanup
 
+    def test_tracked_send_creates_task_and_linked_message(self) -> None:
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            resp, _ = self._call("tracked_send", {
+                "group_id": group_id,
+                "by": "user",
+                "to": ["peer1"],
+                "title": "Investigate routing bug",
+                "text": "Please investigate the routing bug and reply with evidence.",
+                "outcome": "Root cause and evidence are reported.",
+                "checklist": [{"text": "Find root cause"}, {"text": "Report evidence"}],
+                "idempotency_key": "tracked-1",
+            })
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result or {}
+            self.assertTrue(result.get("message_sent"), result)
+            task_id = str(result.get("task_id") or "").strip()
+            self.assertTrue(task_id)
+            event = result.get("event") or {}
+            refs = event.get("data", {}).get("refs", [])
+            self.assertEqual(refs[0].get("kind"), "task_ref")
+            self.assertEqual(refs[0].get("task_id"), task_id)
+            self.assertEqual(event.get("data", {}).get("reply_required"), True)
+
+            task_resp, _ = self._call("task_list", {"group_id": group_id, "task_id": task_id})
+            self.assertTrue(task_resp.ok, getattr(task_resp, "error", None))
+            task = (task_resp.result or {}).get("task") or {}
+            self.assertEqual(task.get("assignee"), "peer1")
+            self.assertEqual(task.get("waiting_on"), "actor")
+            self.assertEqual(task.get("task_type"), "standard")
+        finally:
+            cleanup()
+
+    def test_tracked_send_replay_does_not_duplicate_successful_request(self) -> None:
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            payload = {
+                "group_id": group_id,
+                "by": "user",
+                "to": ["peer1"],
+                "title": "Idempotent tracked send",
+                "text": "Please claim this once.",
+                "idempotency_key": "same-request",
+            }
+            first, _ = self._call("tracked_send", dict(payload))
+            second, _ = self._call("tracked_send", dict(payload))
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            self.assertTrue(second.ok, getattr(second, "error", None))
+            self.assertEqual((first.result or {}).get("task_id"), (second.result or {}).get("task_id"))
+            self.assertTrue((second.result or {}).get("replayed"))
+
+            tasks_resp, _ = self._call("task_list", {"group_id": group_id})
+            self.assertTrue(tasks_resp.ok, getattr(tasks_resp, "error", None))
+            tasks = (tasks_resp.result or {}).get("tasks") or []
+            self.assertEqual(len(tasks), 1)
+        finally:
+            cleanup()
+
+    def test_tracked_send_peer_cannot_assign_other_peer_and_sends_no_message(self) -> None:
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            resp, _ = self._call("tracked_send", {
+                "group_id": group_id,
+                "by": "peer2",
+                "to": ["peer1"],
+                "title": "Peer should not assign peer",
+                "text": "Please do this.",
+            })
+            self.assertFalse(resp.ok)
+            self.assertEqual(resp.error.code, "context_sync_error")
+
+            tasks_resp, _ = self._call("task_list", {"group_id": group_id})
+            self.assertTrue(tasks_resp.ok, getattr(tasks_resp, "error", None))
+            self.assertEqual((tasks_resp.result or {}).get("tasks") or [], [])
+        finally:
+            cleanup()
+
+    def test_tracked_send_invalid_message_priority_creates_no_task(self) -> None:
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            resp, _ = self._call("tracked_send", {
+                "group_id": group_id,
+                "by": "user",
+                "to": ["peer1"],
+                "title": "Bad priority",
+                "text": "This must fail before task creation.",
+                "priority": "urgent",
+            })
+            self.assertFalse(resp.ok)
+            self.assertEqual(resp.error.code, "invalid_priority")
+
+            tasks_resp, _ = self._call("task_list", {"group_id": group_id})
+            self.assertTrue(tasks_resp.ok, getattr(tasks_resp, "error", None))
+            self.assertEqual((tasks_resp.result or {}).get("tasks") or [], [])
+        finally:
+            cleanup()
+
     def test_send_to_string_is_routed_correctly(self) -> None:
         """T067 scenario 1: LLM passes `to` as string instead of array."""
         group_id, cleanup = self._setup_group_with_actors()

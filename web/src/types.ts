@@ -88,6 +88,13 @@ export type PresentationMessageRef = MessageRef & {
   snapshot?: PresentationRefSnapshot;
 };
 
+export type TaskMessageRef = MessageRef & {
+  kind: "task_ref";
+  task_id: string;
+  title?: string;
+  status?: string;
+};
+
 export type StreamingActivity = {
   id: string;
   kind: "queued" | "thinking" | "plan" | "search" | "command" | "patch" | "tool" | "reply" | string;
@@ -690,6 +697,8 @@ export type AssistantStateResult = {
   documents_by_path?: Record<string, AssistantVoiceDocument>;
   new_input_available?: boolean;
   prompt_draft?: AssistantVoicePromptDraft;
+  ask_requests?: AssistantVoiceAskFeedback[];
+  latest_ask_request?: AssistantVoiceAskFeedback;
 };
 
 export type AssistantVoiceTrigger = {
@@ -759,6 +768,7 @@ export type AssistantVoiceDocumentMutationResult = {
   input_event_created?: boolean;
   input_notify_emitted?: boolean;
   event?: unknown;
+  request_id?: string;
 };
 
 export type AssistantVoicePromptDraft = {
@@ -771,6 +781,24 @@ export type AssistantVoicePromptDraft = {
   composer_snapshot_hash?: string;
   created_at?: string;
   updated_at?: string;
+};
+
+export type AssistantVoiceAskFeedback = {
+  request_id: string;
+  status: "pending" | "working" | "done" | "needs_user" | "failed" | "handed_off" | string;
+  request_text?: string;
+  request_preview?: string;
+  reply_text?: string;
+  document_path?: string;
+  target_kind?: string;
+  intent_hint?: string;
+  language?: string;
+  handoff_target?: string;
+  handoff_request_id?: string;
+  target_actor_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  cleared_at?: string;
 };
 
 export type AssistantVoiceInputResult = {

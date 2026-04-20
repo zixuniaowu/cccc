@@ -94,6 +94,58 @@ def message_send(
     )
 
 
+def tracked_send(
+    *,
+    group_id: str,
+    actor_id: str,
+    title: str,
+    text: str,
+    to: Optional[List[str]] = None,
+    outcome: str = "",
+    checklist: Optional[List[Dict[str, Any]]] = None,
+    assignee: str = "",
+    waiting_on: str = "",
+    handoff_to: str = "",
+    notes: str = "",
+    priority: str = "normal",
+    reply_required: bool = True,
+    idempotency_key: str = "",
+    refs: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Create a task and send one visible task-linked delegation message."""
+    text = _normalize_runtime_escaped_text(group_id=group_id, actor_id=actor_id, text=text)
+    title = str(title or "").strip()
+    if not title:
+        raise MCPError(code="missing_title", message="cccc_tracked_send requires title")
+    if not text.strip():
+        raise MCPError(code="empty_message", message="cccc_tracked_send message text cannot be empty")
+    prio = str(priority or "normal").strip() or "normal"
+    if prio not in ("normal", "attention"):
+        raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
+    return _call_daemon_or_raise(
+        {
+            "op": "tracked_send",
+            "args": {
+                "group_id": group_id,
+                "by": actor_id,
+                "title": title,
+                "text": text,
+                "to": to if to is not None else [],
+                "outcome": str(outcome or "").strip(),
+                "checklist": checklist if checklist is not None else [],
+                "assignee": str(assignee or "").strip(),
+                "waiting_on": str(waiting_on or "").strip(),
+                "handoff_to": str(handoff_to or "").strip(),
+                "notes": str(notes or "").strip(),
+                "priority": prio,
+                "reply_required": coerce_bool(reply_required, default=True),
+                "idempotency_key": str(idempotency_key or "").strip(),
+                "refs": refs if refs is not None else [],
+            },
+        }
+    )
+
+
 def message_reply(
     *,
     group_id: str,

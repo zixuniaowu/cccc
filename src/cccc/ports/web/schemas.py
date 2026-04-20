@@ -53,6 +53,23 @@ class SendCrossGroupRequest(BaseModel):
     reply_required: bool = False
 
 
+class TrackedSendRequest(BaseModel):
+    title: str
+    text: str
+    by: str = Field(default="user")
+    to: list[str] = Field(default_factory=list)
+    outcome: str = Field(default="")
+    checklist: list[dict[str, Any]] = Field(default_factory=list)
+    assignee: str = Field(default="")
+    waiting_on: Literal["none", "user", "actor", "external"] | str = "actor"
+    handoff_to: str = Field(default="")
+    notes: str = Field(default="")
+    priority: Literal["normal", "attention"] = "normal"
+    reply_required: bool = True
+    idempotency_key: str = Field(default="")
+    refs: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class ReplyRequest(BaseModel):
     text: str
     by: str = Field(default="user")
@@ -282,6 +299,11 @@ class AssistantVoiceInputRequest(BaseModel):
 class AssistantVoicePromptDraftAckRequest(BaseModel):
     request_id: str = Field(default="")
     status: Literal["applied", "dismissed", "stale"]
+    by: str = Field(default="user")
+
+
+class AssistantVoiceAskRequestsClearRequest(BaseModel):
+    keep_active: bool = Field(default=False)
     by: str = Field(default="user")
 
 

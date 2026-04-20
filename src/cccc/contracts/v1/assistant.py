@@ -51,6 +51,7 @@ class AssistantVoiceDocumentData(BaseModel):
     document_path: str = ""
     action: str
     input_kind: str = ""
+    request_id: str = ""
     status: str = "active"
     workspace_path: str = ""
     title: str = ""
@@ -62,9 +63,13 @@ class AssistantVoiceRequestData(BaseModel):
     assistant_id: str
     request_id: str
     target_actor_id: str
+    action: str = "handoff"
+    status: str = ""
+    source_request_id: str = ""
     document_path: str = ""
     source_event_id: str = ""
     request_preview: str = ""
+    reply_text: str = ""
     notify_event_id: str = ""
 
     model_config = ConfigDict(extra="forbid")

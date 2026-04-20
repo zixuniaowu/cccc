@@ -253,6 +253,8 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("cccc_context_get", prompt)
             self.assertIn("your first action must be cccc_voice_secretary_document(action=\"read_new_input\")", prompt)
             self.assertIn("do not call cccc_bootstrap, cccc_help, cccc_context_get, cccc_project_info", prompt)
+            self.assertIn("reply_text", prompt)
+            self.assertIn("Console text alone is never delivered to the user", prompt)
             self.assertIn("avoid exploration loops", prompt)
             self.assertNotIn("daemon-provided", prompt)
             self.assertNotIn("first instruction after cold start or resume", prompt)
@@ -1752,6 +1754,18 @@ class TestAssistantOps(unittest.TestCase):
                 ("voice-prompt-first", "第一条优化结果"),
                 ("voice-prompt-second", "第二条优化结果"),
             ):
+                enqueue, _ = self._call(
+                    "assistant_voice_input_append",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "prompt_refine",
+                        "request_id": request_id,
+                        "composer_text": "请帮我润色这个提示词",
+                        "voice_transcript": f"{request_id} 的补充说明",
+                    },
+                )
+                self.assertTrue(enqueue.ok, getattr(enqueue, "error", None))
                 submit, _ = self._call(
                     "assistant_voice_prompt_draft_submit",
                     {
@@ -1782,6 +1796,31 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_prompt_draft_submit_rejects_orphan_request_id(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            submit, _ = self._call(
+                "assistant_voice_prompt_draft_submit",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "request_id": "voice-prompt-missing",
+                    "draft_text": "不会被任何 composer 接收的草稿",
+                },
+            )
+
+            self.assertFalse(submit.ok)
+            self.assertIsNotNone(submit.error)
+            self.assertEqual(submit.error.code if submit.error else "", "prompt_request_not_found")
+        finally:
+            cleanup()
+
     def test_voice_secretary_general_instruction_does_not_require_document(self) -> None:
         home, cleanup = self._with_home()
         try:
@@ -1806,6 +1845,9 @@ class TestAssistantOps(unittest.TestCase):
             self.assertEqual(input_event.get("kind"), "voice_instruction")
             self.assertEqual(str(input_event.get("document_path") or ""), "")
             self.assertEqual(((input_event.get("metadata") or {}).get("target_kind")), "secretary")
+            request_id = str((enqueue.result or {}).get("request_id") or "")
+            self.assertTrue(request_id.startswith("voice-ask-"))
+            self.assertEqual(((input_event.get("metadata") or {}).get("request_id")), request_id)
 
             read, _ = self._call(
                 "assistant_voice_document_input_read",
@@ -1814,7 +1856,83 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(read.ok, getattr(read, "error", None))
             input_text = str((read.result or {}).get("input_text") or "")
             self.assertIn("Target: secretary", input_text)
+            self.assertIn(f"Request id: {request_id}", input_text)
+            self.assertIn("Required output: answer this Ask request", input_text)
+            self.assertIn("Do not answer only in the console", input_text)
             self.assertIn("刚才的总结有没有遗漏", input_text)
+
+            state, _ = self._call(
+                "assistant_state",
+                {"group_id": group_id, "assistant_id": "voice_secretary"},
+            )
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            ask_requests = (state.result or {}).get("ask_requests") if isinstance(state.result, dict) else []
+            self.assertTrue(ask_requests)
+            self.assertEqual(ask_requests[0].get("request_id"), request_id)
+            self.assertEqual(ask_requests[0].get("status"), "working")
+
+            feedback, _ = self._call(
+                "assistant_voice_instruction_feedback",
+                {
+                    "group_id": group_id,
+                    "by": "voice-secretary",
+                    "request_id": request_id,
+                    "status": "done",
+                    "reply_text": "Checked the recent summary and found no obvious omission.",
+                },
+            )
+            self.assertTrue(feedback.ok, getattr(feedback, "error", None))
+            feedback_request = (feedback.result or {}).get("ask_request") if isinstance(feedback.result, dict) else {}
+            self.assertEqual(feedback_request.get("status"), "done")
+            self.assertIn("no obvious omission", str(feedback_request.get("reply_text") or ""))
+            self.assertNotIn("result_summary", feedback_request)
+
+            enqueue_active, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "voice_instruction",
+                    "instruction": "继续帮我留意后续问题。",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(enqueue_active.ok, getattr(enqueue_active, "error", None))
+            active_request_id = str((enqueue_active.result or {}).get("request_id") or "")
+            self.assertTrue(active_request_id.startswith("voice-ask-"))
+
+            cleared, _ = self._call(
+                "assistant_voice_ask_requests_clear",
+                {"group_id": group_id, "by": "user"},
+            )
+            self.assertTrue(cleared.ok, getattr(cleared, "error", None))
+            remaining_requests = (cleared.result or {}).get("ask_requests") if isinstance(cleared.result, dict) else []
+            remaining_ids = {str(item.get("request_id") or "") for item in remaining_requests if isinstance(item, dict)}
+            self.assertNotIn(request_id, remaining_ids)
+            self.assertNotIn(active_request_id, remaining_ids)
+
+            late_feedback, _ = self._call(
+                "assistant_voice_instruction_feedback",
+                {
+                    "group_id": group_id,
+                    "by": "voice-secretary",
+                    "request_id": active_request_id,
+                    "status": "done",
+                    "reply_text": "后续问题已整理。",
+                },
+            )
+            self.assertTrue(late_feedback.ok, getattr(late_feedback, "error", None))
+
+            state_after_feedback, _ = self._call(
+                "assistant_state",
+                {"group_id": group_id, "assistant_id": "voice_secretary"},
+            )
+            self.assertTrue(state_after_feedback.ok, getattr(state_after_feedback, "error", None))
+            after_requests = (state_after_feedback.result or {}).get("ask_requests") if isinstance(state_after_feedback.result, dict) else []
+            after_by_id = {str(item.get("request_id") or ""): item for item in after_requests if isinstance(item, dict)}
+            self.assertIn(active_request_id, after_by_id)
+            self.assertIn("后续问题", str(after_by_id[active_request_id].get("reply_text") or ""))
+            self.assertNotIn("cleared_at", after_by_id[active_request_id])
         finally:
             cleanup()
 
@@ -1836,6 +1954,7 @@ class TestAssistantOps(unittest.TestCase):
                     "request_text": "Please review the weather-plan request and decide who should execute it.",
                     "summary": "Voice Secretary detected a spoken action request.",
                     "document_path": "docs/voice-secretary/weather-plan.md",
+                    "source_request_id": "voice-ask-weather-plan",
                     "requires_ack": True,
                 },
             )
@@ -1844,7 +1963,11 @@ class TestAssistantOps(unittest.TestCase):
             result = request.result or {}
             request_payload = result.get("request") if isinstance(result.get("request"), dict) else {}
             self.assertEqual(request_payload.get("target_actor_id"), "lead")
+            self.assertEqual(request_payload.get("source_request_id"), "voice-ask-weather-plan")
             self.assertTrue(bool(request_payload.get("requires_ack")))
+            ask_request = result.get("ask_request") if isinstance(result.get("ask_request"), dict) else {}
+            self.assertEqual(ask_request.get("status"), "handed_off")
+            self.assertEqual(ask_request.get("handoff_target"), "@foreman")
 
             group = load_group(group_id)
             self.assertIsNotNone(group)
@@ -1864,6 +1987,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(bool(data.get("requires_ack")))
             context = data.get("context") if isinstance(data.get("context"), dict) else {}
             self.assertEqual(context.get("document_path"), "docs/voice-secretary/weather-plan.md")
+            self.assertEqual(context.get("source_request_id"), "voice-ask-weather-plan")
             self.assertNotIn("document_id", context)
             self.assertNotIn("job_id", context)
             self.assertIn("weather-plan", str(context.get("request_text") or ""))

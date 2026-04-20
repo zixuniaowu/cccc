@@ -3,7 +3,7 @@
 
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import { BookmarkIcon, CompassIcon } from "../../components/Icons";
-import { Actor, GroupMeta, HeadlessPreviewSession, LedgerEvent, PresentationMessageRef, StreamingActivity } from "../../types";
+import { Actor, GroupMeta, HeadlessPreviewSession, LedgerEvent, PresentationMessageRef, StreamingActivity, TaskMessageRef } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
@@ -198,6 +198,7 @@ export function ChatTab({
   const setPresentationViewer = useModalStore((state) => state.setPresentationViewer);
   const setPresentationPin = useModalStore((state) => state.setPresentationPin);
   const clearPresentationSlotAttention = useModalStore((state) => state.clearPresentationSlotAttention);
+  const openContextTask = useModalStore((state) => state.openContextTask);
   const mobileSurface = useUIStore((state) =>
     selectedGroupId ? getChatSession(selectedGroupId, state.chatSessions).mobileSurface : "messages"
   );
@@ -339,6 +340,12 @@ export function ChatTab({
       focusEventId: String(event.id || "").trim() || null,
     });
   }, [preferredPresentationSurface, selectedGroupId, setChatPresentationDockOpen, setPresentationViewer]);
+
+  const openTaskRef = useCallback((ref: TaskMessageRef, _event?: LedgerEvent) => {
+    const taskId = String(ref.task_id || "").trim();
+    if (!taskId) return;
+    openContextTask(taskId);
+  }, [openContextTask]);
 
   const pinPresentationSlot = useCallback((slotId: string) => {
     if (!selectedGroupId || !slotId || readOnly) return;
@@ -697,6 +704,7 @@ export function ChatTab({
                   onRelay={relayMessage}
                   onOpenSource={openSourceMessage}
                   onOpenPresentationRef={openPresentationRef}
+                  onOpenTaskRef={openTaskRef}
                   showScrollButton={showScrollButton}
                   onScrollButtonClick={handleScrollButtonClick}
                   chatUnreadCount={chatUnreadCount}

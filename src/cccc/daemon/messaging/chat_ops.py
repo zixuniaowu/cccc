@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 import re
 import uuid
 from pathlib import Path
@@ -12,7 +14,7 @@ from ...contracts.v1 import ChatMessageData, ChatStreamData, DaemonError, Daemon
 from ...kernel.actors import find_actor, list_actors, resolve_recipient_tokens
 from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.inbox import find_event_with_chat_ack, is_message_for_actor
-from ...kernel.ledger import append_event
+from ...kernel.ledger import append_event, read_last_lines
 from ...kernel.messaging import (
     default_reply_recipients,
     enabled_recipient_actor_ids,
@@ -43,6 +45,7 @@ from .actor_delivery_planner import (
 from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 from ..pet.review_scheduler import request_pet_review
 from ..pet.profile_refresh import record_user_chat_message
+from ..context.context_ops import handle_context_sync
 
 logger = logging.getLogger("cccc.daemon.server")
 
@@ -187,6 +190,22 @@ def _render_delivery_refs(refs: list[dict[str, Any]]) -> list[str]:
         if not isinstance(ref, dict):
             continue
         kind = str(ref.get("kind") or "").strip()
+        if kind == "task_ref":
+            task_id = _compact_delivery_text(ref.get("task_id"), limit=40)
+            title = _compact_delivery_text(ref.get("title"), limit=72)
+            status = _compact_delivery_text(ref.get("status"), limit=24)
+            if task_id:
+                label = f"- Task {task_id}"
+                if status:
+                    label += f" [{status}]"
+                if title:
+                    label += f" — {title}"
+                lines.append(label)
+                rendered += 1
+                if rendered >= 4:
+                    break
+                continue
+
         if kind == "presentation_ref":
             slot_id = _compact_delivery_text(ref.get("slot_id"), limit=32)
             label = _presentation_slot_label(
@@ -268,6 +287,106 @@ def _normalize_refs(raw: Any) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             refs.append(item)
     return refs
+
+
+def _normalize_to_tokens(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if isinstance(item, str) and str(item).strip()]
+    if isinstance(raw, str):
+        token = raw.strip()
+        return [token] if token else []
+    return []
+
+
+def _tracked_send_client_id(*, group_id: str, by: str, idempotency_key: str) -> str:
+    basis = "\0".join([str(group_id or ""), str(by or ""), str(idempotency_key or "")])
+    digest = hashlib.sha256(basis.encode("utf-8", errors="replace")).hexdigest()[:32]
+    return f"tracked-send:{digest}"
+
+
+def _tracked_send_existing_result(group: Any, *, client_id: str) -> Optional[Dict[str, Any]]:
+    if not client_id:
+        return None
+    try:
+        lines = read_last_lines(group.ledger_path, 800)
+    except Exception:
+        return None
+    for raw_line in reversed(lines):
+        try:
+            event = json.loads(raw_line)
+        except Exception:
+            continue
+        if not isinstance(event, dict) or str(event.get("kind") or "") != "chat.message":
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if str(data.get("client_id") or "").strip() != client_id:
+            continue
+        refs = data.get("refs") if isinstance(data.get("refs"), list) else []
+        task_ref = next(
+            (
+                ref
+                for ref in refs
+                if isinstance(ref, dict)
+                and str(ref.get("kind") or "").strip() == "task_ref"
+                and str(ref.get("task_id") or "").strip()
+            ),
+            None,
+        )
+        task_id = str((task_ref or {}).get("task_id") or "").strip()
+        return {
+            "event": event,
+            "event_id": str(event.get("id") or "").strip(),
+            "task_id": task_id,
+            "task_ref": task_ref,
+            "replayed": True,
+            "task_created": False,
+            "message_sent": True,
+            "partial_failure": False,
+        }
+    return None
+
+
+def _derive_tracked_send_assignee(args: Dict[str, Any]) -> str:
+    explicit = str(args.get("assignee") or "").strip()
+    if explicit:
+        return explicit
+    to_tokens = _normalize_to_tokens(args.get("to"))
+    if len(to_tokens) != 1:
+        return ""
+    token = to_tokens[0].strip()
+    if not token or token.startswith("@") or token == "user":
+        return ""
+    return token
+
+
+def _normalize_tracked_checklist(raw: Any) -> Any:
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        out: list[Any] = []
+        for item in raw:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+                if text:
+                    out.append({**item, "text": text})
+            else:
+                text = str(item or "").strip()
+                if text:
+                    out.append({"text": text})
+        return out
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    return [{"text": line.strip()} for line in text.splitlines() if line.strip()]
+
+
+def _task_ref(*, task_id: str, title: str, status: str = "planned") -> dict[str, Any]:
+    return {
+        "kind": "task_ref",
+        "task_id": task_id,
+        "title": str(title or "").strip(),
+        "status": str(status or "planned").strip() or "planned",
+    }
 
 
 def _quote_text_from_message_data(data: dict[str, Any], *, max_len: int = 100) -> Optional[str]:
@@ -603,6 +722,147 @@ def handle_send(
     return DaemonResponse(ok=True, result={"event": event})
 
 
+def handle_tracked_send(
+    args: Dict[str, Any],
+    *,
+    coerce_bool: Callable[[Any], bool],
+    normalize_attachments: Callable[[Any, Any], list[dict[str, Any]]],
+    effective_runner_kind: Callable[[str], str],
+    auto_wake_recipients: Callable[[Any, list[str], str], list[str]],
+    automation_on_resume: Callable[[Any], None],
+    automation_on_new_message: Callable[[Any], None],
+    clear_pending_system_notifies: Callable[[str, set[str]], None],
+) -> DaemonResponse:
+    """Create a task and send the linked chat message as one daemon-owned operation."""
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip() or "user"
+    title = str(args.get("title") or "").strip()
+    text = str(args.get("text") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not title:
+        title = _compact_delivery_text(text, limit=120)
+    if not title:
+        return _error("missing_title", "tracked_send requires a title or non-empty text")
+    if not text:
+        return _error("empty_message", "tracked_send message text cannot be empty")
+    message_priority = str(args.get("message_priority") or args.get("priority") or "normal").strip() or "normal"
+    if message_priority not in ("normal", "attention"):
+        return _error("invalid_priority", "priority must be 'normal' or 'attention'")
+
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+
+    idempotency_key = str(args.get("idempotency_key") or args.get("client_request_id") or "").strip()
+    client_id = _tracked_send_client_id(group_id=group_id, by=by, idempotency_key=idempotency_key) if idempotency_key else ""
+    if client_id:
+        existing = _tracked_send_existing_result(group, client_id=client_id)
+        if existing is not None:
+            return DaemonResponse(ok=True, result=existing)
+
+    assignee = _derive_tracked_send_assignee(args)
+    outcome = str(args.get("outcome") or args.get("goal") or "").strip() or text
+    status = str(args.get("status") or "planned").strip() or "planned"
+    waiting_on = str(args.get("waiting_on") or ("actor" if assignee else "none")).strip() or "none"
+    priority = str(args.get("task_priority") or message_priority).strip() or "normal"
+    task_type = str(args.get("task_type") or "standard").strip() or "standard"
+    checklist = _normalize_tracked_checklist(args.get("checklist"))
+    task_op: dict[str, Any] = {
+        "op": "task.create",
+        "title": title,
+        "outcome": outcome,
+        "status": status,
+        "priority": priority,
+        "waiting_on": waiting_on,
+        "task_type": task_type,
+    }
+    if assignee:
+        task_op["assignee"] = assignee
+    notes = str(args.get("notes") or "").strip()
+    if notes:
+        task_op["notes"] = notes
+    blocked_by = args.get("blocked_by")
+    if blocked_by is not None:
+        task_op["blocked_by"] = blocked_by
+    handoff_to = str(args.get("handoff_to") or "").strip()
+    if handoff_to:
+        task_op["handoff_to"] = handoff_to
+    if checklist is not None:
+        task_op["checklist"] = checklist
+
+    task_resp = handle_context_sync({"group_id": group_id, "by": by, "ops": [task_op]})
+    if not task_resp.ok:
+        return task_resp
+    task_result = task_resp.result if isinstance(task_resp.result, dict) else {}
+    changes = task_result.get("changes") if isinstance(task_result.get("changes"), list) else []
+    task_id = ""
+    for change in changes:
+        if isinstance(change, dict) and str(change.get("op") or "") == "task.create":
+            task_id = str(change.get("task_id") or "").strip()
+            if task_id:
+                break
+    if not task_id:
+        return _error("tracked_send_task_missing", "task.create succeeded but did not return a task_id")
+
+    refs = _normalize_refs(args.get("refs"))
+    ref = _task_ref(task_id=task_id, title=title, status=status)
+    refs = [*refs, ref]
+    message_args = {
+        "group_id": group_id,
+        "text": text,
+        "by": by,
+        "to": _normalize_to_tokens(args.get("to")),
+        "path": str(args.get("path") or ""),
+        "priority": message_priority,
+        "reply_required": coerce_bool(args.get("reply_required"), default=True) if "reply_required" in args else True,
+        "refs": refs,
+    }
+    if client_id:
+        message_args["client_id"] = client_id
+
+    send_resp = handle_send(
+        message_args,
+        coerce_bool=coerce_bool,
+        normalize_attachments=normalize_attachments,
+        effective_runner_kind=effective_runner_kind,
+        auto_wake_recipients=auto_wake_recipients,
+        automation_on_resume=automation_on_resume,
+        automation_on_new_message=automation_on_new_message,
+        clear_pending_system_notifies=clear_pending_system_notifies,
+    )
+    if not send_resp.ok:
+        err = send_resp.error.model_dump() if send_resp.error is not None else None
+        return DaemonResponse(
+            ok=True,
+            result={
+                "task_id": task_id,
+                "task_ref": ref,
+                "context_result": task_result,
+                "task_created": True,
+                "message_sent": False,
+                "partial_failure": True,
+                "message_error": err,
+            },
+        )
+    send_result = send_resp.result if isinstance(send_resp.result, dict) else {}
+    event = send_result.get("event") if isinstance(send_result.get("event"), dict) else {}
+    return DaemonResponse(
+        ok=True,
+        result={
+            "task_id": task_id,
+            "task_ref": ref,
+            "context_result": task_result,
+            "event": event,
+            "event_id": str(event.get("id") or "").strip(),
+            "task_created": True,
+            "message_sent": True,
+            "partial_failure": False,
+            "replayed": False,
+        },
+    )
+
+
 def handle_reply(
     args: Dict[str, Any],
     *,
@@ -930,6 +1190,17 @@ def try_handle_chat_op(
         return handle_stream_emit(args)
     if op == "send":
         return handle_send(
+            args,
+            coerce_bool=coerce_bool,
+            normalize_attachments=normalize_attachments,
+            effective_runner_kind=effective_runner_kind,
+            auto_wake_recipients=auto_wake_recipients,
+            automation_on_resume=automation_on_resume,
+            automation_on_new_message=automation_on_new_message,
+            clear_pending_system_notifies=clear_pending_system_notifies,
+        )
+    if op == "tracked_send":
+        return handle_tracked_send(
             args,
             coerce_bool=coerce_bool,
             normalize_attachments=normalize_attachments,

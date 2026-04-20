@@ -70,6 +70,8 @@ interface ContextModalProps {
   onClose: () => void;
   groupId: string;
   context: GroupContext | null;
+  initialTaskId?: string | null;
+  onInitialTaskHandled?: () => void;
   onOpenContext: () => Promise<void>;
   onSyncContext: () => Promise<void>;
   isDark: boolean;
@@ -80,6 +82,8 @@ export function ContextModal({
   onClose,
   groupId,
   context,
+  initialTaskId,
+  onInitialTaskHandled,
   onOpenContext,
   onSyncContext,
   isDark,
@@ -516,6 +520,23 @@ export function ContextModal({
     setSyncError("");
     setActiveView("coordination");
   }, [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const targetTaskId = String(initialTaskId || "").trim();
+    if (!targetTaskId) return;
+    if (selectedTaskId === targetTaskId && taskEditorMode === "edit") return;
+    const task = taskMap.get(targetTaskId);
+    if (!task) return;
+    if (taskStatus(task) === "archived") {
+      setArchivedExpanded(true);
+    }
+    setTaskFilter("all");
+    setAssigneeFilter("__all__");
+    setTaskQuery("");
+    selectTask(task);
+    onInitialTaskHandled?.();
+  }, [initialTaskId, isOpen, onInitialTaskHandled, selectTask, selectedTaskId, taskEditorMode, taskMap]);
 
   const closeTaskEditor = useCallback(() => {
     if (!confirmDiscardTaskChanges()) return;

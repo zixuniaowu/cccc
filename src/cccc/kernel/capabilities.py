@@ -21,6 +21,7 @@ CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_inbox_list",
     "cccc_inbox_mark_read",
     "cccc_message_send",
+    "cccc_tracked_send",
     "cccc_message_reply",
     "cccc_file",
     "cccc_presentation",

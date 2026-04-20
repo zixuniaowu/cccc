@@ -52,7 +52,7 @@ export function MarkdownDocumentSurface({
           placeholder={editPlaceholder}
           aria-label={editAriaLabel}
           className={classNames(
-            "block h-full w-full resize-y rounded-3xl border-0 bg-transparent p-5 font-mono text-[12px] leading-5 outline-none",
+            "block h-full w-full resize-y overflow-y-auto rounded-3xl border-0 bg-transparent p-5 font-mono text-[12px] leading-5 outline-none scrollbar-subtle",
             minHeightClassName,
             isDark ? "text-slate-100 placeholder:text-slate-500" : "text-gray-900 placeholder:text-gray-400",
           )}

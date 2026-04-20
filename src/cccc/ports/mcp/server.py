@@ -63,6 +63,7 @@ from .handlers.cccc_messaging import (  # noqa: F401
     file_send,
     message_reply,
     message_send,
+    tracked_send,
 )
 from .handlers.presentation import (  # noqa: F401
     presentation_clear,
@@ -345,6 +346,33 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             refs=refs_val,
         )
 
+    if name == "cccc_tracked_send":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        to_raw = arguments.get("to")
+        refs_raw = arguments.get("refs")
+        checklist_raw = arguments.get("checklist")
+        to_val = _normalize_to_arg(to_raw)
+        refs_val = [item for item in refs_raw if isinstance(item, dict)] if isinstance(refs_raw, list) else None
+        checklist_val = [item for item in checklist_raw if isinstance(item, dict)] if isinstance(checklist_raw, list) else None
+        return tracked_send(
+            group_id=gid,
+            actor_id=aid,
+            title=str(arguments.get("title") or ""),
+            text=str(arguments.get("text") or ""),
+            to=to_val,
+            outcome=str(arguments.get("outcome") or ""),
+            checklist=checklist_val,
+            assignee=str(arguments.get("assignee") or ""),
+            waiting_on=str(arguments.get("waiting_on") or ""),
+            handoff_to=str(arguments.get("handoff_to") or ""),
+            notes=str(arguments.get("notes") or ""),
+            priority=str(arguments.get("priority") or "normal"),
+            reply_required=coerce_bool(arguments.get("reply_required"), default=True),
+            idempotency_key=str(arguments.get("idempotency_key") or ""),
+            refs=refs_val,
+        )
+
     if name == "cccc_message_reply":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
@@ -456,6 +484,23 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         aid = _resolve_self_actor_id(arguments)
         if aid != VOICE_SECRETARY_ACTOR_ID:
             raise MCPError(code="permission_denied", message="cccc_voice_secretary_request is only available to the voice-secretary actor")
+        action = str(arguments.get("action") or "handoff").strip().lower()
+        if action == "report":
+            return _call_daemon_or_raise(
+                {
+                    "op": "assistant_voice_instruction_feedback",
+                    "args": {
+                        "group_id": gid,
+                        "request_id": str(arguments.get("request_id") or arguments.get("source_request_id") or ""),
+                        "status": str(arguments.get("status") or ""),
+                        "reply_text": str(arguments.get("reply_text") or arguments.get("result_text") or arguments.get("message") or ""),
+                        "document_path": str(arguments.get("document_path") or arguments.get("workspace_path") or ""),
+                        "by": VOICE_SECRETARY_ACTOR_ID,
+                    },
+                }
+            )
+        if action != "handoff":
+            raise MCPError(code="invalid_request", message="cccc_voice_secretary_request action must be handoff or report")
         target = str(arguments.get("target") or "").strip()
         if not target:
             raise MCPError(code="invalid_request", message="cccc_voice_secretary_request target is required; use @foreman or one concrete actor id")
@@ -464,11 +509,13 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 "op": "assistant_voice_request",
                 "args": {
                     "group_id": gid,
+                    "action": "handoff",
                     "target": target,
                     "request_text": str(arguments.get("request_text") or ""),
                     "summary": str(arguments.get("summary") or ""),
                     "document_path": str(arguments.get("document_path") or arguments.get("workspace_path") or ""),
                     "source_event_id": str(arguments.get("source_event_id") or ""),
+                    "source_request_id": str(arguments.get("source_request_id") or ""),
                     "priority": str(arguments.get("priority") or "normal"),
                     "requires_ack": coerce_bool(arguments.get("requires_ack"), default=True),
                     "by": VOICE_SECRETARY_ACTOR_ID,

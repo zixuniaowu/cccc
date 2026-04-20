@@ -3,11 +3,12 @@ import type { CSSProperties } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
 import { useCopyFeedback } from "../hooks/useCopyFeedback";
-import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef } from "../types";
+import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef, TaskMessageRef } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getReplyEventId } from "../utils/chatReply";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
+import { getTaskMessageRefs, getTaskRefChipLabel } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { MessageFooter, MessageMetadataHeader } from "./messageBubble/MessageBubbleChrome";
@@ -81,11 +82,13 @@ function buildMessageCopyText({
     quoteText,
     messageText,
     presentationRefs,
+    taskRefs,
     attachments,
 }: {
     quoteText?: string;
     messageText: string;
     presentationRefs: PresentationMessageRef[];
+    taskRefs: TaskMessageRef[];
     attachments: { title: string; path: string }[];
 }): string {
     const sections: string[] = [];
@@ -102,6 +105,12 @@ function buildMessageCopyText({
         sections.push([
             "Presentation refs:",
             ...presentationRefs.map((ref) => `- ${getPresentationRefChipLabel(ref)}`),
+        ].join("\n"));
+    }
+    if (taskRefs.length > 0) {
+        sections.push([
+            "Tasks:",
+            ...taskRefs.map((ref) => `- ${getTaskRefChipLabel(ref)}`),
         ].join("\n"));
     }
     if (attachments.length > 0) {
@@ -135,6 +144,7 @@ function MessageBubbleBody({
     quoteText,
     replyToEventId,
     presentationRefs,
+    taskRefs,
     messageText,
     shouldRenderMarkdown,
     blobAttachments,
@@ -142,6 +152,7 @@ function MessageBubbleBody({
     stableMessageAttachmentKey,
     onOpenSource,
     onOpenPresentationRef,
+    onOpenTaskRef,
     onOpenReplyTarget,
 }: {
     event: LedgerEvent;
@@ -159,6 +170,7 @@ function MessageBubbleBody({
     quoteText?: string;
     replyToEventId?: string;
     presentationRefs: PresentationMessageRef[];
+    taskRefs: TaskMessageRef[];
     messageText: string;
     shouldRenderMarkdown: boolean;
     blobAttachments: Array<{
@@ -173,6 +185,7 @@ function MessageBubbleBody({
     stableMessageAttachmentKey: string;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
     onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+    onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
     onOpenReplyTarget?: (replyToEventId: string) => void;
 }) {
     const { t } = useTranslation("chat");
@@ -287,6 +300,31 @@ function MessageBubbleBody({
                             <span className="truncate">{getPresentationRefChipLabel(ref)}</span>
                         </button>
                     ))}
+                    </div>
+                </div>
+            ) : null}
+
+            {taskRefs.length > 0 ? (
+                <div className={supportingSectionClass}>
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-50">
+                        {t("task", { defaultValue: "Task" })}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                        {taskRefs.map((ref, index) => (
+                            <button
+                                key={`${String(event.id || "message")}:task-ref:${index}:${String(ref.task_id || "")}`}
+                                type="button"
+                                onClick={() => onOpenTaskRef?.(ref, event)}
+                                className={classNames(
+                                    "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                                    "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                                )}
+                                title={getTaskRefChipLabel(ref)}
+                            >
+                                <span className="h-1.5 w-1.5 rounded-full bg-[rgb(69,141,104)]" aria-hidden="true" />
+                                <span className="truncate">{getTaskRefChipLabel(ref)}</span>
+                            </button>
+                        ))}
                     </div>
                 </div>
             ) : null}
@@ -457,6 +495,7 @@ export interface MessageBubbleProps {
     onRelay?: (ev: LedgerEvent) => void;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
     onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+    onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
     onOpenReplyTarget?: (replyToEventId: string) => void;
 }
 
@@ -479,6 +518,7 @@ export const MessageBubble = memo(function MessageBubble({
     onRelay,
     onOpenSource,
     onOpenPresentationRef,
+    onOpenTaskRef,
     onOpenReplyTarget,
 }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
@@ -564,6 +604,7 @@ export const MessageBubble = memo(function MessageBubble({
         return messageText;
     }, [blobAttachments, messageText, sourcePlatform]);
     const presentationRefs = useMemo(() => getPresentationMessageRefs(msgData?.refs), [msgData?.refs]);
+    const taskRefs = useMemo(() => getTaskMessageRefs(msgData?.refs), [msgData?.refs]);
     const shouldRenderMarkdown = useMemo(() => !isStreaming && mayContainMarkdown(displayMessageText), [displayMessageText, isStreaming]);
     const streamPhase = String((msgData as { stream_phase?: unknown } | undefined)?.stream_phase || "").trim().toLowerCase();
     const stableMessageAttachmentKey = useMemo(() => {
@@ -588,12 +629,13 @@ export const MessageBubble = memo(function MessageBubble({
                 quoteText,
                 messageText: displayMessageText,
                 presentationRefs,
+                taskRefs,
                 attachments: blobAttachments.map((attachment) => ({
                     title: attachment.title,
                     path: attachment.path || attachment.local_preview_url,
                 })),
             }),
-        [blobAttachments, displayMessageText, presentationRefs, quoteText]
+        [blobAttachments, displayMessageText, presentationRefs, quoteText, taskRefs]
     );
     const messageTimestamp = formatMessageTimestamp(ev.ts);
     const fullMessageTimestamp = formatFullTime(ev.ts);
@@ -837,6 +879,7 @@ export const MessageBubble = memo(function MessageBubble({
                         quoteText={quoteText}
                         replyToEventId={replyToEventId}
                         presentationRefs={presentationRefs}
+                        taskRefs={taskRefs}
                         messageText={displayMessageText}
                         shouldRenderMarkdown={shouldRenderMarkdown}
                         blobAttachments={blobAttachments}
@@ -844,6 +887,7 @@ export const MessageBubble = memo(function MessageBubble({
                         stableMessageAttachmentKey={stableMessageAttachmentKey}
                         onOpenSource={onOpenSource}
                         onOpenPresentationRef={onOpenPresentationRef}
+                        onOpenTaskRef={onOpenTaskRef}
                         onOpenReplyTarget={onOpenReplyTarget}
                     />
                 </div>
@@ -887,6 +931,7 @@ export const MessageBubble = memo(function MessageBubble({
         prevProps.onRelay === nextProps.onRelay &&
         prevProps.onOpenSource === nextProps.onOpenSource &&
         prevProps.onOpenPresentationRef === nextProps.onOpenPresentationRef &&
+        prevProps.onOpenTaskRef === nextProps.onOpenTaskRef &&
         prevProps.onOpenReplyTarget === nextProps.onOpenReplyTarget
     );
 });

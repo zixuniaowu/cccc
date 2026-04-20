@@ -427,6 +427,45 @@ export async function sendMessage(
   });
 }
 
+export async function trackedSendMessage(
+  groupId: string,
+  payload: {
+    title: string;
+    text: string;
+    to: string[];
+    outcome?: string;
+    checklist?: Array<{ text: string; status?: string }>;
+    assignee?: string;
+    waiting_on?: "none" | "user" | "actor" | "external" | string;
+    handoff_to?: string;
+    notes?: string;
+    priority?: "normal" | "attention";
+    reply_required?: boolean;
+    idempotency_key?: string;
+    refs?: MessageRef[];
+  },
+) {
+  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/tracked_send`, {
+    method: "POST",
+    body: JSON.stringify({
+      title: payload.title,
+      text: payload.text,
+      by: "user",
+      to: payload.to || [],
+      outcome: payload.outcome || "",
+      checklist: payload.checklist || [],
+      assignee: payload.assignee || "",
+      waiting_on: payload.waiting_on || "actor",
+      handoff_to: payload.handoff_to || "",
+      notes: payload.notes || "",
+      priority: payload.priority || "normal",
+      reply_required: payload.reply_required !== false,
+      idempotency_key: payload.idempotency_key || "",
+      refs: payload.refs || [],
+    }),
+  });
+}
+
 export async function replyMessage(
   groupId: string,
   text: string,

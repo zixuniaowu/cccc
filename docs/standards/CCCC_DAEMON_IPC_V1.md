@@ -2222,6 +2222,7 @@ Args (core):
   priority?: "normal" | "attention"
   path?: string                 // optional filesystem path to attribute scope_key
   attachments?: unknown[]       // attachment refs (implementation-defined)
+  refs?: ReferenceV1[]          // structured message refs, e.g. presentation_ref/task_ref
   src_group_id?: string         // relay provenance (both required if either is set)
   src_event_id?: string
   dst_group_id?: string         // optional "send record" metadata (source messages)
@@ -2248,6 +2249,7 @@ Args:
   to?: string[]                 // defaults to original sender if omitted
   priority?: "normal" | "attention"
   attachments?: unknown[]
+  refs?: ReferenceV1[]
 }
 ```
 
@@ -2255,6 +2257,52 @@ Result:
 ```ts
 { event: CCCSEventV1 } // kind="chat.message"
 ```
+
+#### `tracked_send`
+
+Create a durable task and send one linked visible delegation message. This is an
+explicit composite write; the daemon MUST NOT infer it from arbitrary chat text.
+
+Args:
+```ts
+{
+  group_id: string
+  title: string
+  text: string
+  by?: string
+  to?: string[]
+  outcome?: string
+  checklist?: { text: string; status?: "pending" | "in_progress" | "done" | string }[]
+  assignee?: string             // defaults from one concrete to actor when possible
+  waiting_on?: "none" | "user" | "actor" | "external"
+  handoff_to?: string
+  notes?: string
+  priority?: "normal" | "attention"
+  reply_required?: boolean      // default true
+  idempotency_key?: string
+  refs?: ReferenceV1[]
+}
+```
+
+Result:
+```ts
+{
+  task_id: string
+  task_ref: ReferenceV1          // kind="task_ref"
+  event?: CCCSEventV1            // present when message_sent=true
+  event_id?: string
+  task_created: boolean
+  message_sent: boolean
+  partial_failure: boolean
+  replayed?: boolean
+}
+```
+
+Notes:
+- `task_ref` in the emitted `chat.message.data.refs` is the canonical message-task link.
+- If task creation fails, no message is sent.
+- If message delivery fails after task creation, the response MUST report `partial_failure=true`.
+- Successful retries SHOULD use `idempotency_key` / `client_request_id` to avoid duplicate task/message pairs.
 
 #### `send_cross_group`
 

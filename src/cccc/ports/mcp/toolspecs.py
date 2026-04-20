@@ -126,6 +126,45 @@ MCP_TOOLS = [
         ),
     },
     {
+        "name": "cccc_tracked_send",
+        "description": "Create a durable task and send one linked visible delegation message. Use only when owner/scope/done/evidence must survive chat; do not use for ordinary discussion or quick solo work.",
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_ACTOR,
+                "title": {"type": "string", "description": "Short task title"},
+                "text": {"type": "string", "description": "Visible message to send to the recipient"},
+                "to": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ]
+                },
+                "outcome": {"type": "string", "description": "Done criterion; defaults to text when omitted"},
+                "checklist": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "status": {"type": "string", "enum": ["pending", "in_progress", "done"]},
+                        },
+                        "required": ["text"],
+                    },
+                },
+                "assignee": {"type": "string", "description": "Optional explicit owner; defaults from a single concrete `to` actor"},
+                "waiting_on": {"type": "string", "enum": ["none", "user", "actor", "external"], "default": "actor"},
+                "handoff_to": {"type": "string"},
+                "notes": {"type": "string"},
+                "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
+                "reply_required": {"type": "boolean", "default": True},
+                "idempotency_key": {"type": "string", "description": "Stable caller retry key to avoid duplicate successful sends"},
+                "refs": {"type": "array", "items": {"type": "object"}},
+            },
+            required=["title", "text"],
+        ),
+    },
+    {
         "name": "cccc_message_reply",
         "description": "Reply to a visible chat message (by event_id/reply_to). Use only for the thread you are answering; set `to` explicitly if the audience differs.",
         "inputSchema": _obj(
@@ -177,22 +216,27 @@ MCP_TOOLS = [
     {
         "name": "cccc_voice_secretary_request",
         "description": (
-            "Voice Secretary-only handoff surface. Use it only when a task is outside secretary scope and must go to foreman "
-            "or one concrete actor through system.notify; do not use it for work the secretary can safely handle itself."
+            "Voice Secretary-only request surface. For Target: secretary / Ask input, action=report is the user-visible reply channel; "
+            "ordinary console text is not delivered to the user. Use action=handoff only when a task is outside secretary scope and "
+            "must go to foreman or one concrete actor through system.notify."
         ),
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 **_COMMON_ACTOR,
-                "target": {"type": "string", "description": "Required explicit handoff target: @foreman or one concrete actor id. Do not omit it."},
+                "action": {"type": "string", "enum": ["handoff", "report"], "default": "handoff"},
+                "target": {"type": "string", "description": "Required for action=handoff: @foreman or one concrete actor id. Do not omit it for handoff."},
                 "request_text": {"type": "string", "description": "Short actionable handoff request. Do not include raw transcript dumps or secretary-scope work."},
-                "summary": {"type": "string", "description": "Optional one-line context summary."},
+                "summary": {"type": "string", "description": "For action=handoff only: optional one-line context summary for the receiving peer."},
+                "request_id": {"type": "string", "description": "Required for action=report: Request id from Target: secretary/document input."},
+                "source_request_id": {"type": "string", "description": "For action=handoff, the original Ask request id being handed off."},
+                "status": {"type": "string", "enum": ["working", "done", "needs_user", "failed"], "description": "Required for action=report."},
+                "reply_text": {"type": "string", "description": "For action=report, the concise user-visible reply shown near the composer."},
                 "document_path": {"type": "string"},
                 "source_event_id": {"type": "string"},
                 "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
                 "requires_ack": {"type": "boolean", "default": True},
             },
-            required=["target", "request_text"],
         ),
     },
     {

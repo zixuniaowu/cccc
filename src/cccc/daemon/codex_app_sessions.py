@@ -18,6 +18,7 @@ from ..kernel.group import load_group
 from ..kernel.inbox import find_event
 from ..kernel.system_prompt import render_system_prompt
 from ..paths import ensure_home
+from .actors.actor_exit_ops import persist_actor_process_exit_stopped
 from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from ..util.fs import atomic_write_json, read_json
@@ -102,6 +103,30 @@ def _voice_secretary_prompt_draft_state(group_id: str, *, request_ids: list[str]
     return out
 
 
+def _voice_secretary_ask_request_state(group_id: str, *, request_ids: list[str]) -> Dict[str, Dict[str, Any]]:
+    if not request_ids:
+        return {}
+    group = load_group(group_id)
+    if group is None:
+        return {}
+    payload = read_json(group.path / "state" / "assistants.json")
+    if not isinstance(payload, dict):
+        return {}
+    requests = payload.get("voice_ask_requests") if isinstance(payload.get("voice_ask_requests"), dict) else {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for request_id in request_ids:
+        normalized = str(request_id or "").strip()
+        if not normalized:
+            continue
+        request = requests.get(normalized) if isinstance(requests.get(normalized), dict) else {}
+        out[normalized] = {
+            "updated_at": str(request.get("updated_at") or "").strip(),
+            "reply_text": str(request.get("reply_text") or ""),
+            "status": str(request.get("status") or "").strip(),
+        }
+    return out
+
+
 def _voice_secretary_control_snapshot(*, group_id: str, actor_id: str, event_id: str, control_kind: str) -> Dict[str, Any]:
     if str(actor_id or "").strip() != "voice-secretary":
         return {}
@@ -121,6 +146,7 @@ def _voice_secretary_control_snapshot(*, group_id: str, actor_id: str, event_id:
         return {}
     state = _voice_secretary_input_state(group.group_id)
     composer_request_ids: list[str] = []
+    secretary_request_ids: list[str] = []
     try:
         from .assistants.assistant_ops import _peek_voice_input_batch
 
@@ -131,6 +157,11 @@ def _voice_secretary_control_snapshot(*, group_id: str, actor_id: str, event_id:
             for item in ((preview or {}).get("composer_request_ids") if isinstance((preview or {}).get("composer_request_ids"), list) else [])
             if str(item).strip()
         ]
+        secretary_request_ids = [
+            str(item).strip()
+            for item in ((preview or {}).get("secretary_request_ids") if isinstance((preview or {}).get("secretary_request_ids"), list) else [])
+            if str(item).strip()
+        ]
         input_target_kinds = [
             str(item.get("target_kind") or "").strip().lower()
             for item in input_batches
@@ -138,6 +169,7 @@ def _voice_secretary_control_snapshot(*, group_id: str, actor_id: str, event_id:
         ]
     except Exception:
         composer_request_ids = []
+        secretary_request_ids = []
         input_target_kinds = []
     return {
         "kind": "voice_secretary_input",
@@ -145,8 +177,10 @@ def _voice_secretary_control_snapshot(*, group_id: str, actor_id: str, event_id:
         "before_latest_seq": int(state.get("latest_seq") or 0),
         "before_secretary_read_cursor": int(state.get("secretary_read_cursor") or 0),
         "composer_request_ids": composer_request_ids,
+        "secretary_request_ids": secretary_request_ids,
         "input_target_kinds": input_target_kinds,
         "before_prompt_drafts": _voice_secretary_prompt_draft_state(group.group_id, request_ids=composer_request_ids),
+        "before_ask_requests": _voice_secretary_ask_request_state(group.group_id, request_ids=secretary_request_ids),
     }
 
 
@@ -162,6 +196,11 @@ def _voice_secretary_control_consumed_input(*, group_id: str, snapshot: Dict[str
         for item in ((snapshot or {}).get("composer_request_ids") if isinstance((snapshot or {}).get("composer_request_ids"), list) else [])
         if str(item).strip()
     ]
+    secretary_request_ids = [
+        str(item).strip()
+        for item in ((snapshot or {}).get("secretary_request_ids") if isinstance((snapshot or {}).get("secretary_request_ids"), list) else [])
+        if str(item).strip()
+    ]
     input_target_kinds = [
         str(item).strip().lower()
         for item in ((snapshot or {}).get("input_target_kinds") if isinstance((snapshot or {}).get("input_target_kinds"), list) else [])
@@ -169,6 +208,20 @@ def _voice_secretary_control_consumed_input(*, group_id: str, snapshot: Dict[str
     ]
     state = _voice_secretary_input_state(group_id)
     cursor_advanced = int(state.get("secretary_read_cursor") or 0) > before_cursor
+    if secretary_request_ids:
+        if not cursor_advanced:
+            return False
+        before_ask_requests = (snapshot or {}).get("before_ask_requests") if isinstance((snapshot or {}).get("before_ask_requests"), dict) else {}
+        current_ask_requests = _voice_secretary_ask_request_state(group_id, request_ids=secretary_request_ids)
+        for request_id in secretary_request_ids:
+            current = current_ask_requests.get(request_id) if isinstance(current_ask_requests.get(request_id), dict) else {}
+            before = before_ask_requests.get(request_id) if isinstance(before_ask_requests.get(request_id), dict) else {}
+            if str(current.get("status") or "").strip() not in {"done", "needs_user", "failed", "handed_off"}:
+                return False
+            if not str(current.get("reply_text") or "").strip():
+                return False
+            if str(current.get("updated_at") or "").strip() == str(before.get("updated_at") or "").strip():
+                return False
     if not composer_request_ids:
         return cursor_advanced
     before_prompt_drafts = (snapshot or {}).get("before_prompt_drafts") if isinstance((snapshot or {}).get("before_prompt_drafts"), dict) else {}
@@ -225,6 +278,7 @@ class CodexAppSession:
         self._pending: Dict[int, "queue.Queue[Dict[str, Any]]"] = {}
         self._next_request_id = 1
         self._running = False
+        self._stop_requested = False
         self._session_state = CodexSessionState(status="idle")
         self._turn_queue: "queue.Queue[Optional[_PendingTurn]]" = queue.Queue()
         self._turn_done = threading.Event()
@@ -481,6 +535,7 @@ class CodexAppSession:
         with self._lock:
             if self._running:
                 return
+            self._stop_requested = False
             env = os.environ.copy()
             env.update(self.env)
             self._proc = subprocess.Popen(
@@ -536,9 +591,10 @@ class CodexAppSession:
             self.stop()
             raise
 
-    def stop(self) -> None:
+    def stop(self, *, persist_actor_stopped: bool = False) -> None:
         with self._lock:
             proc = self._proc
+            self._stop_requested = True
             self._running = False
             self._proc = None
             self._session_state.status = "stopped"
@@ -566,6 +622,8 @@ class CodexAppSession:
                 except Exception:
                     pass
         self._emit("headless.session.stopped", {})
+        if persist_actor_stopped:
+            persist_actor_process_exit_stopped(group_id=self.group_id, actor_id=self.actor_id, runner="headless")
 
     def is_running(self) -> bool:
         with self._lock:
@@ -730,7 +788,9 @@ class CodexAppSession:
         except Exception:
             logger.exception("codex stdout loop failed: %s/%s", self.group_id, self.actor_id)
         finally:
-            self.stop()
+            with self._lock:
+                persist_actor_stopped = not self._stop_requested
+            self.stop(persist_actor_stopped=persist_actor_stopped)
 
     def _stderr_loop(self) -> None:
         proc = self._proc

@@ -166,7 +166,9 @@ export function AppModals({
     setPresentationPin,
     clearPresentationSlotAttention,
     setEditingActor,
+    clearContextTask,
   } = useModalStore();
+  const contextTaskId = useModalStore((state) => state.contextTaskId);
 
   const { inboxActorId, inboxMessages, setInboxMessages } = useInboxStore();
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
@@ -1571,6 +1573,8 @@ export function AppModals({
             onClose={() => closeModal("context")}
             groupId={selectedGroupId}
             context={groupContext}
+            initialTaskId={contextTaskId}
+            onInitialTaskHandled={clearContextTask}
             onOpenContext={() => openContextModalData(fetchContext, selectedGroupId)}
             onSyncContext={() => syncContextModalData(fetchContext, selectedGroupId)}
             isDark={isDark}

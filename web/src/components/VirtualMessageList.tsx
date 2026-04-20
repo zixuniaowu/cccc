@@ -2,7 +2,7 @@ import { memo, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useStat
 import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
-import { LedgerEvent, Actor, AgentState, PresentationMessageRef } from "../types";
+import { LedgerEvent, Actor, AgentState, PresentationMessageRef, TaskMessageRef } from "../types";
 import { ArrowDownIcon, MessageSquareTextIcon } from "./Icons";
 import { MessageBubble } from "./MessageBubble";
 import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
@@ -58,6 +58,7 @@ export interface VirtualMessageListProps {
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+  onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
   showScrollButton: boolean;
   onScrollButtonClick: () => void;
   chatUnreadCount: number;
@@ -95,6 +96,7 @@ type VirtualMessageRowProps = {
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+  onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
   onOpenReplyTarget?: (replyToEventId: string) => void;
   measureElement: (node: Element | null) => void;
 };
@@ -120,6 +122,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
   onRelay,
   onOpenSource,
   onOpenPresentationRef,
+  onOpenTaskRef,
   onOpenReplyTarget,
   measureElement,
 }: VirtualMessageRowProps) {
@@ -165,6 +168,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
         onRelay={onRelay}
         onOpenSource={onOpenSource}
         onOpenPresentationRef={onOpenPresentationRef}
+        onOpenTaskRef={onOpenTaskRef}
         onOpenReplyTarget={onOpenReplyTarget}
       />
     </div>
@@ -192,6 +196,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onRelay,
   onOpenSource,
   onOpenPresentationRef,
+  onOpenTaskRef,
   showScrollButton,
   onScrollButtonClick,
   chatUnreadCount,
@@ -1024,6 +1029,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     onRelay={onRelay}
                     onOpenSource={onOpenSource}
                     onOpenPresentationRef={onOpenPresentationRef}
+                    onOpenTaskRef={onOpenTaskRef}
                     onOpenReplyTarget={handleOpenReplyTarget}
                     measureElement={measureElement}
                   />
@@ -1065,6 +1071,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                       onRelay={onRelay}
                       onOpenSource={onOpenSource}
                       onOpenPresentationRef={onOpenPresentationRef}
+                      onOpenTaskRef={onOpenTaskRef}
                       onOpenReplyTarget={handleOpenReplyTarget}
                     />
                   </div>

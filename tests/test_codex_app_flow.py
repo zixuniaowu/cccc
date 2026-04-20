@@ -1120,6 +1120,7 @@ class TestCodexAppFlow(unittest.TestCase):
                         "group_id": group_id,
                         "assistants": {},
                         "voice_sessions": {},
+                        "voice_ask_requests": {},
                         "voice_prompt_requests": {},
                         "voice_prompt_drafts": {
                             "voice-prompt-1": {
@@ -1220,6 +1221,89 @@ class TestCodexAppFlow(unittest.TestCase):
                 },
             )
             self.assertFalse(mixed_batch_consumed)
+
+            (voice_state_dir / "input_state.json").write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": group_id,
+                        "latest_seq": 9,
+                        "secretary_read_cursor": 9,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            missing_ask_report_consumed = _voice_secretary_control_consumed_input(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 9,
+                    "before_secretary_read_cursor": 5,
+                    "secretary_request_ids": ["voice-ask-1"],
+                    "input_target_kinds": ["secretary"],
+                    "before_ask_requests": {},
+                },
+            )
+            self.assertFalse(missing_ask_report_consumed)
+
+            assistants_path.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": group_id,
+                        "assistants": {},
+                        "voice_sessions": {},
+                        "voice_prompt_requests": {},
+                        "voice_prompt_drafts": {},
+                        "voice_ask_requests": {
+                            "voice-ask-1": {
+                                "request_id": "voice-ask-1",
+                                "updated_at": "2026-04-20T10:00:03Z",
+                                "reply_text": "已检查，没有明显遗漏。",
+                                "status": "done",
+                            },
+                            "voice-ask-empty": {
+                                "request_id": "voice-ask-empty",
+                                "updated_at": "2026-04-20T10:00:04Z",
+                                "reply_text": "",
+                                "status": "done",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            ask_report_consumed = _voice_secretary_control_consumed_input(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 9,
+                    "before_secretary_read_cursor": 5,
+                    "secretary_request_ids": ["voice-ask-1"],
+                    "input_target_kinds": ["secretary"],
+                    "before_ask_requests": {
+                        "voice-ask-1": {
+                            "updated_at": "2026-04-20T10:00:01Z",
+                            "reply_text": "",
+                            "status": "working",
+                        }
+                    },
+                },
+            )
+            self.assertTrue(ask_report_consumed)
+
+            ask_report_without_reply_consumed = _voice_secretary_control_consumed_input(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 9,
+                    "before_secretary_read_cursor": 5,
+                    "secretary_request_ids": ["voice-ask-empty"],
+                    "input_target_kinds": ["secretary"],
+                    "before_ask_requests": {},
+                },
+            )
+            self.assertFalse(ask_report_without_reply_consumed)
         finally:
             cleanup()
 

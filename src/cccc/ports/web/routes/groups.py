@@ -54,6 +54,7 @@ from ..schemas import (
     AttachRequest,
     AssistantSettingsUpdateRequest,
     AssistantStatusUpdateRequest,
+    AssistantVoiceAskRequestsClearRequest,
     AssistantVoiceDocumentInstructionRequest,
     AssistantVoiceDocumentSaveRequest,
     AssistantVoiceInputRequest,
@@ -1924,6 +1925,22 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "group_id": group_id,
                     "request_id": req.request_id,
                     "status": req.status,
+                    "by": req.by,
+                },
+            }
+        )
+
+    @group_router.post("/assistants/voice_secretary/ask_requests/clear")
+    async def group_voice_secretary_ask_requests_clear(
+        group_id: str,
+        req: AssistantVoiceAskRequestsClearRequest,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "assistant_voice_ask_requests_clear",
+                "args": {
+                    "group_id": group_id,
+                    "keep_active": req.keep_active,
                     "by": req.by,
                 },
             }

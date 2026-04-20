@@ -2,6 +2,7 @@ import type {
   AssistantStateResult,
   AssistantVoiceDocument,
   AssistantVoiceDocumentMutationResult,
+  AssistantVoiceAskFeedback,
   AssistantVoiceInputResult,
   AssistantVoicePromptDraft,
   AssistantVoicePromptDraftMutationResult,
@@ -128,6 +129,30 @@ function normalizeAssistantVoicePromptDraft(value: unknown): AssistantVoicePromp
   };
 }
 
+function normalizeAssistantVoiceAskFeedback(value: unknown): AssistantVoiceAskFeedback | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const requestId = asString(record.request_id).trim();
+  if (!requestId) return undefined;
+  return {
+    request_id: requestId,
+    status: asOptionalString(record.status) || "pending",
+    request_text: asOptionalString(record.request_text) || undefined,
+    request_preview: asOptionalString(record.request_preview) || undefined,
+    reply_text: asOptionalString(record.reply_text) || undefined,
+    document_path: asOptionalString(record.document_path) || undefined,
+    target_kind: asOptionalString(record.target_kind) || undefined,
+    intent_hint: asOptionalString(record.intent_hint) || undefined,
+    language: asOptionalString(record.language) || undefined,
+    handoff_target: asOptionalString(record.handoff_target) || undefined,
+    handoff_request_id: asOptionalString(record.handoff_request_id) || undefined,
+    target_actor_id: asOptionalString(record.target_actor_id) || undefined,
+    created_at: asOptionalString(record.created_at) || undefined,
+    updated_at: asOptionalString(record.updated_at) || undefined,
+    cleared_at: asOptionalString(record.cleared_at) || undefined,
+  };
+}
+
 function normalizeAssistantStateResult(groupId: string, result: unknown): AssistantStateResult {
   const record = asRecord(result) ?? {};
   const assistants = Array.isArray(record.assistants)
@@ -179,6 +204,11 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
       }
     }
   }
+  const askRequests = Array.isArray(record.ask_requests)
+    ? record.ask_requests
+        .map((item) => normalizeAssistantVoiceAskFeedback(item))
+        .filter((item): item is AssistantVoiceAskFeedback => !!item)
+    : [];
   return {
     group_id: asString(record.group_id).trim() || groupId,
     assistants: Object.values(assistantsById).sort((a, b) => a.assistant_id.localeCompare(b.assistant_id)),
@@ -200,6 +230,8 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
       asOptionalString(record.capture_target_document_path) || asOptionalString(record.active_document_path) || undefined,
     new_input_available: Boolean(record.new_input_available),
     prompt_draft: normalizeAssistantVoicePromptDraft(record.prompt_draft),
+    ask_requests: askRequests,
+    latest_ask_request: normalizeAssistantVoiceAskFeedback(record.latest_ask_request) || askRequests[0],
   };
 }
 
@@ -259,6 +291,7 @@ function normalizeAssistantVoiceDocumentMutationResult(groupId: string, result: 
     input_event_created: Boolean(record.input_event_created),
     input_notify_emitted: Boolean(record.input_notify_emitted),
     event: record.event,
+    request_id: asOptionalString(record.request_id) || undefined,
   };
 }
 
@@ -598,6 +631,27 @@ export async function ackVoiceAssistantPromptDraft(
   clearAssistantStateRequest(gid);
   if (!resp.ok) return resp as ApiResponse<AssistantVoicePromptDraftMutationResult>;
   return { ok: true, result: normalizeAssistantVoicePromptDraftMutationResult(gid, resp.result) };
+}
+
+export async function clearVoiceAssistantAskRequests(
+  groupId: string,
+  payload: { keepActive?: boolean; by?: string } = {},
+): Promise<ApiResponse<AssistantStateResult>> {
+  const gid = String(groupId || "").trim();
+  clearAssistantStateRequest(gid);
+  const resp = await apiJson<unknown>(
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/ask_requests/clear`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        keep_active: Boolean(payload.keepActive),
+        by: String(payload.by || "user").trim() || "user",
+      }),
+    },
+  );
+  clearAssistantStateRequest(gid);
+  if (!resp.ok) return resp as ApiResponse<AssistantStateResult>;
+  return { ok: true, result: normalizeAssistantStateResult(gid, resp.result) };
 }
 
 export async function archiveVoiceAssistantDocument(

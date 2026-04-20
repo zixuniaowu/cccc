@@ -17,7 +17,7 @@ logger = logging.getLogger("cccc.daemon.server")
 from .. import __version__
 from ..contracts.v1 import DaemonError, DaemonRequest, DaemonResponse
 from ..kernel.group import get_group_state, load_group
-from ..kernel.actors import find_actor, find_foreman, update_actor, get_effective_role
+from ..kernel.actors import find_actor, find_foreman, get_effective_role, update_actor
 from ..kernel.actor_avatar_assets import delete_actor_avatar as _delete_actor_avatar
 from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.ledger_retention import compact as compact_ledger
@@ -39,6 +39,7 @@ from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
 from ..util.time import utc_now_iso
 from .automation import AutomationManager
+from .actors.actor_exit_ops import persist_actor_process_exit_stopped
 from .claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from .codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .im.bootstrap_im_ops import autostart_enabled_im_bridges
@@ -600,6 +601,16 @@ def _best_effort_killpg(pid: int, sig: signal.Signals) -> None:
     best_effort_signal_pid(pid, sig, include_group=True)
 
 
+def _handle_pty_session_exit(session: pty_runner.PtySession, *, persist_actor_stopped: bool = True) -> None:
+    """Persist user-visible PTY exits as stopped so daemon autostart does not resurrect them."""
+    removed_current_state = bool(_remove_pty_state_if_pid(session.group_id, session.actor_id, pid=session.pid))
+    if not persist_actor_stopped:
+        return
+    if not removed_current_state:
+        return
+    persist_actor_process_exit_stopped(group_id=session.group_id, actor_id=session.actor_id, runner="pty")
+
+
 def _maybe_autostart_enabled_im_bridges() -> None:
     """Autostart IM bridges that are marked enabled in group settings."""
     autostart_enabled_im_bridges(ensure_home())
@@ -938,14 +949,6 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     except Exception:
         pass
 
-    def _on_session_exit(session: pty_runner.PtySession) -> None:
-        _remove_pty_state_if_pid(session.group_id, session.actor_id, pid=session.pid)
-
-    try:
-        pty_runner.SUPERVISOR.set_exit_hook(_on_session_exit)
-    except Exception:
-        pass
-
     try:
         p.sock_path.unlink(missing_ok=True)
     except Exception:
@@ -956,6 +959,14 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         pass
 
     stop_event = threading.Event()
+
+    try:
+        pty_runner.SUPERVISOR.set_exit_hook(
+            lambda session: _handle_pty_session_exit(session, persist_actor_stopped=not stop_event.is_set())
+        )
+    except Exception:
+        pass
+
     _SPACE_SYNC_RUN_QUEUE = GroupSpaceSyncRunQueue()
 
     # Best-effort: enable in-process event streaming for SDKs (daemon-owned only).

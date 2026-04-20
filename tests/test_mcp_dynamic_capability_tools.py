@@ -240,6 +240,33 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
         self.assertEqual(args.get("document_path"), "docs/voice-secretary/notes.md")
         self.assertEqual(args.get("by"), "voice-secretary")
 
+    def test_voice_secretary_request_report_routes_to_feedback_op(self) -> None:
+        from cccc.ports.mcp.server import handle_tool_call
+
+        with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "voice-secretary"}, clear=False), patch(
+            "cccc.ports.mcp.server._call_daemon_or_raise",
+            return_value={"ok": True},
+        ) as daemon_call:
+            handle_tool_call(
+                "cccc_voice_secretary_request",
+                {
+                    "action": "report",
+                    "request_id": "voice-ask-123",
+                    "status": "done",
+                    "reply_text": "Handled directly.",
+                    "document_path": "docs/voice-secretary/notes.md",
+                },
+            )
+
+        req = daemon_call.call_args.args[0]
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(req.get("op"), "assistant_voice_instruction_feedback")
+        self.assertEqual(args.get("request_id"), "voice-ask-123")
+        self.assertEqual(args.get("status"), "done")
+        self.assertEqual(args.get("reply_text"), "Handled directly.")
+        self.assertNotIn("result_summary", args)
+        self.assertEqual(args.get("by"), "voice-secretary")
+
     def test_voice_secretary_request_rejects_non_voice_actor(self) -> None:
         from cccc.ports.mcp.server import handle_tool_call
 
