@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
+import { BodyPortal } from "../../ui/BodyPortal";
 import {
   Actor,
   CapabilityImportRecord,
@@ -1517,8 +1517,10 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       </section>
       ) : null}
 
-      {managingCandidate && typeof document !== "undefined" ? createPortal(
+      {managingCandidate ? (
+        <BodyPortal>
         <div
+          key={manageCapabilityId}
           ref={manageDialogRef}
           className="fixed inset-0 z-[1000] flex items-end justify-center bg-black/35 px-3 py-4 sm:items-center"
           role="dialog"
@@ -1814,8 +1816,8 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               </div>
             </div>
           </div>
-        </div>,
-        document.body
+        </div>
+        </BodyPortal>
       ) : null}
     </div>
   );

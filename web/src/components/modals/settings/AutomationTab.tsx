@@ -670,6 +670,7 @@ export function AutomationTab(props: AutomationTabProps) {
         errorMessage={rulesErr}
         saveBusy={rulesBusy}
         snippetIds={snippetIds}
+        snippets={{ ...builtinSnippetDefaults, ...(draft.snippets || {}) }}
         actorTargetOptions={actorTargetOptions}
         oneShotMode={editingOneShotMode}
         oneShotAfterMinutes={editingOneShotAfterMinutes}

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { GroupMeta, RemoteAccessState, WebAccessSession } from "../../../types";
 import { InfoIcon } from "../../Icons";
+import { BodyPortal } from "../../ui/BodyPortal";
 import { InfoPopover } from "./InfoPopover";
 import * as api from "../../../services/api";
 import {
@@ -1688,8 +1688,8 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         </div>
       </section>
 
-      {createDialog && typeof document !== "undefined" ? createPortal(createDialog, document.body) : createDialog}
-      {restartRequiredDialog && typeof document !== "undefined" ? createPortal(restartRequiredDialog, document.body) : restartRequiredDialog}
+      {createDialog ? <BodyPortal>{createDialog}</BodyPortal> : null}
+      {restartRequiredDialog ? <BodyPortal>{restartRequiredDialog}</BodyPortal> : null}
 
       <section className={settingsWorkspaceShellClass(isDark)}>
         <div className={settingsWorkspaceHeaderClass(isDark)}>

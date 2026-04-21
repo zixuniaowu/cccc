@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
 import * as api from "../../../services/api";
@@ -7,6 +6,7 @@ import type { GroupPromptInfo } from "../../../services/api";
 import type { AssistantStateResult, BuiltinAssistant } from "../../../types";
 import { parseHelpMarkdown, updatePetHelpNote, updateVoiceSecretaryHelpNote } from "../../../utils/helpMarkdown";
 import { getDefaultPetPersonaSeed } from "../../../utils/rolePresets";
+import { BodyPortal } from "../../ui/BodyPortal";
 import {
   inputClass,
   labelClass,
@@ -904,9 +904,11 @@ export function AssistantsTab({
         </div>
       </div>
 
-      {expandedPromptBlock && typeof document !== "undefined"
-        ? createPortal(
+      {expandedPromptBlock
+        ? (
+          <BodyPortal>
             <div
+              key={expandedPromptBlock}
               className="fixed inset-0 z-[1000] animate-fade-in"
               role="dialog"
               aria-modal="true"
@@ -925,8 +927,8 @@ export function AssistantsTab({
                   {expandedPromptBlock === "voice_secretary" ? renderVoiceGuidanceEditor(true) : renderPetPersonaEditor(true)}
                 </div>
               </div>
-            </div>,
-            document.body,
+            </div>
+          </BodyPortal>
           )
         : null}
     </div>

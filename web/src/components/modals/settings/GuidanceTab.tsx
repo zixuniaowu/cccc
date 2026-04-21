@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import { Trans, useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import type { Actor } from "../../../types";
 import { buildHelpMarkdown, parseHelpMarkdown, type HelpChangedBlock, type ParsedHelpMarkdown } from "../../../utils/helpMarkdown";
+import { BodyPortal } from "../../ui/BodyPortal";
 import {
   cardClass,
   inputClass,
@@ -699,9 +699,11 @@ export function GuidanceTab({ isDark, groupId }: {
       {renderPreambleCard()}
       {renderHelpCard()}
 
-      {expandedKind && typeof document !== "undefined"
-        ? createPortal(
+      {expandedKind
+        ? (
+          <BodyPortal>
             <div
+              key={expandedKind}
               className="fixed inset-0 z-[1000] animate-fade-in"
               role="dialog"
               aria-modal="true"
@@ -720,8 +722,8 @@ export function GuidanceTab({ isDark, groupId }: {
                   {expandedKind === "help" ? renderHelpCard(true) : renderPreambleCard(true)}
                 </div>
               </div>
-            </div>,
-            document.body
+            </div>
+          </BodyPortal>
           )
         : null}
     </div>
