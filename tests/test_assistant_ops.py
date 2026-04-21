@@ -578,6 +578,18 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(save.ok, getattr(save, "error", None))
             self.assertIn("Updated through", imported_path.read_text(encoding="utf-8"))
 
+            external_content = "# Imported Memo\n\nEdited directly by an agent.\n"
+            imported_path.write_text(external_content, encoding="utf-8")
+            lightweight, _ = self._call(
+                "assistant_voice_document_list",
+                {"group_id": group_id, "include_content": False, "document_path": imported_rel},
+            )
+            self.assertTrue(lightweight.ok, getattr(lightweight, "error", None))
+            lightweight_documents = (lightweight.result or {}).get("documents") if isinstance(lightweight.result, dict) else []
+            self.assertEqual(len(lightweight_documents), 1)
+            self.assertNotIn("content", lightweight_documents[0])
+            self.assertEqual(lightweight_documents[0].get("content_chars"), len(external_content))
+
             archive, _ = self._call(
                 "assistant_voice_document_archive",
                 {"group_id": group_id, "by": "user", "document_path": imported_rel},
@@ -607,6 +619,16 @@ class TestAssistantOps(unittest.TestCase):
             repo.mkdir()
             self._attach_scope(group_id, str(repo))
             self._enable_voice_secretary(group_id)
+            created_doc, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "title": "Existing Notes",
+                    "create_new": True,
+                },
+            )
+            self.assertTrue(created_doc.ok, getattr(created_doc, "error", None))
 
             created, _ = self._call(
                 "assistant_voice_document_save",
@@ -689,7 +711,7 @@ class TestAssistantOps(unittest.TestCase):
                     "flush": True,
                     "trigger": {
                         "mode": "meeting",
-                        "trigger_kind": "push_to_talk_stop",
+                        "trigger_kind": "meeting_window",
                         "capture_mode": "browser",
                         "recognition_backend": "browser_asr",
                         "client_session_id": "session-1",
@@ -857,6 +879,44 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(revisions_path.exists(), revisions_path)
             document = (save_from_input.result or {}).get("document") if isinstance(save_from_input.result, dict) else document
             self.assertEqual(str(document.get("title") or ""), original_document_title)
+
+            followup, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "doc-session-2",
+                    "segment_id": "seg-doc-2",
+                    "document_path": str(document.get("document_path") or ""),
+                    "text": "then connect the cutover checklist to support escalation and rollback ownership",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "doc-session-2",
+                        "language": "en-US",
+                    },
+                },
+            )
+            self.assertTrue(followup.ok, getattr(followup, "error", None))
+            followup_read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(followup_read.ok, getattr(followup_read, "error", None))
+            followup_result = followup_read.result or {}
+            followup_input_text = str(followup_result.get("input_text") or "")
+            self.assertEqual(followup_result.get("item_count"), 1)
+            self.assertIn("Previous input tail", followup_input_text)
+            self.assertIn("billing API migration plan", followup_input_text)
+            self.assertIn("cutover checklist", followup_input_text)
+            followup_batches = followup_result.get("input_batches") if isinstance(followup_result, dict) else []
+            self.assertTrue(followup_batches)
+            self.assertIn("billing API migration plan", str((followup_batches[0] or {}).get("previous_input_tail") or ""))
 
             state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
             self.assertTrue(state.ok, getattr(state, "error", None))
@@ -1446,7 +1506,11 @@ class TestAssistantOps(unittest.TestCase):
                     "composer_text": "请帮我检查这个方案",
                     "voice_transcript": "重点看看风险和副作用，语气专业一点",
                     "composer_snapshot_hash": "abc123",
-                    "composer_context": {"recipients": ["@foreman"], "message_mode": "normal"},
+                    "composer_context": {
+                        "recipients": ["@foreman"],
+                        "message_mode": "normal",
+                        "recent_chat_excerpt": "user: 之前这个方案主要担心回滚成本。\nforeman: 需要补验收标准。",
+                    },
                     "language": "zh-CN",
                 },
             )
@@ -1468,6 +1532,8 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("Request id: voice-prompt-test", input_text)
             self.assertIn("请帮我检查这个方案", input_text)
             self.assertIn("重点看看风险和副作用", input_text)
+            self.assertIn("Recent conversation", input_text)
+            self.assertIn("需要补验收标准", input_text)
 
             submit, _ = self._call(
                 "assistant_voice_prompt_draft_submit",
@@ -1504,6 +1570,58 @@ class TestAssistantOps(unittest.TestCase):
             state_after, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
             self.assertTrue(state_after.ok, getattr(state_after, "error", None))
             self.assertFalse(bool((state_after.result or {}).get("prompt_draft")))
+        finally:
+            cleanup()
+
+    def test_voice_secretary_prompt_refine_replacement_requests_complete_draft(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            enqueue, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "prompt_refine",
+                    "request_id": "voice-prompt-replace",
+                    "composer_text": "请帮我检查这个方案",
+                    "voice_transcript": "重点看看风险和副作用，补上验收标准。",
+                    "operation": "replace_with_refined_prompt",
+                    "composer_snapshot_hash": "replace-hash",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(enqueue.ok, getattr(enqueue, "error", None))
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            input_text = str((read.result or {}).get("input_text") or "")
+            self.assertIn("Operation: replace_with_refined_prompt", input_text)
+            self.assertIn("Return a complete ready-to-send prompt", input_text)
+            self.assertIn("Do not return only an incremental addition", input_text)
+            self.assertNotIn("return only an append-ready addition", input_text)
+
+            submit, _ = self._call(
+                "assistant_voice_prompt_draft_submit",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "request_id": "voice-prompt-replace",
+                    "composer_snapshot_hash": "replace-hash",
+                    "draft_text": "请检查这个方案，重点评估风险、副作用，并补上验收标准。",
+                },
+            )
+            self.assertTrue(submit.ok, getattr(submit, "error", None))
+            draft = (submit.result or {}).get("prompt_draft") if isinstance(submit.result, dict) else {}
+            self.assertEqual(draft.get("operation"), "replace_with_refined_prompt")
         finally:
             cleanup()
 
@@ -1856,10 +1974,19 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(read.ok, getattr(read, "error", None))
             input_text = str((read.result or {}).get("input_text") or "")
             self.assertIn("Target: secretary", input_text)
+            self.assertIn("Request kind: ask_request", input_text)
             self.assertIn(f"Request id: {request_id}", input_text)
+            self.assertIn("Requires report: true", input_text)
+            self.assertIn("Report channel: cccc_voice_secretary_request(action=\"report\")", input_text)
             self.assertIn("Required output: answer this Ask request", input_text)
             self.assertIn("Do not answer only in the console", input_text)
             self.assertIn("刚才的总结有没有遗漏", input_text)
+            self.assertEqual((read.result or {}).get("documents"), [])
+            batches = (read.result or {}).get("input_batches") if isinstance(read.result, dict) else []
+            self.assertTrue(batches)
+            self.assertEqual(batches[0].get("request_kind"), "ask_request")
+            self.assertTrue(batches[0].get("requires_report"))
+            self.assertEqual(batches[0].get("report_channel"), 'cccc_voice_secretary_request(action="report")')
 
             state, _ = self._call(
                 "assistant_state",
@@ -1879,12 +2006,21 @@ class TestAssistantOps(unittest.TestCase):
                     "request_id": request_id,
                     "status": "done",
                     "reply_text": "Checked the recent summary and found no obvious omission.",
+                    "document_path": "docs/voice-secretary/ask-answer.md",
+                    "artifact_paths": [
+                        "docs/voice-secretary/ask-answer.md",
+                        "docs/voice-secretary/evidence.md",
+                    ],
                 },
             )
             self.assertTrue(feedback.ok, getattr(feedback, "error", None))
             feedback_request = (feedback.result or {}).get("ask_request") if isinstance(feedback.result, dict) else {}
             self.assertEqual(feedback_request.get("status"), "done")
             self.assertIn("no obvious omission", str(feedback_request.get("reply_text") or ""))
+            self.assertEqual(
+                feedback_request.get("artifact_paths"),
+                ["docs/voice-secretary/ask-answer.md", "docs/voice-secretary/evidence.md"],
+            )
             self.assertNotIn("result_summary", feedback_request)
 
             enqueue_active, _ = self._call(
@@ -2492,8 +2628,18 @@ class TestAssistantOps(unittest.TestCase):
                 {"group_id": group_id, "by": "assistant:voice_secretary"},
             )
             self.assertTrue(read.ok, getattr(read, "error", None))
+            self.assertIn("Request kind: document_request", str((read.result or {}).get("input_text") or ""))
+            self.assertIn("Requires report: true", str((read.result or {}).get("input_text") or ""))
+            self.assertIn(
+                "Report channel: cccc_voice_secretary_request(action=\"report\")",
+                str((read.result or {}).get("input_text") or ""),
+            )
             self.assertIn("User instruction:", str((read.result or {}).get("input_text") or ""))
             self.assertIn("concise launch-risk summary", str((read.result or {}).get("input_text") or ""))
+            batches = (read.result or {}).get("input_batches") if isinstance(read.result, dict) else []
+            self.assertTrue(batches)
+            self.assertEqual(batches[0].get("request_kind"), "document_request")
+            self.assertTrue(batches[0].get("requires_report"))
 
             group = load_group(group_id)
             self.assertIsNotNone(group)
@@ -2586,6 +2732,7 @@ class TestAssistantOps(unittest.TestCase):
                 self.assertIn("without lossy compression", idle_text)
                 self.assertIn("Preserve useful concrete details", idle_text)
                 self.assertIn("Do not replace detail-rich material with a short executive summary", idle_text)
+                self.assertIn("Pending Inputs", idle_text)
                 self.assertIn("Never include transcript segment ids", idle_text)
                 self.assertNotIn("items", batch.result or {})
 

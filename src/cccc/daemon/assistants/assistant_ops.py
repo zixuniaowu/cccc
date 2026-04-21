@@ -72,6 +72,9 @@ _VOICE_INPUT_NUDGE_RETRY_SECONDS = (180, 360, 720)
 _VOICE_IDLE_REVIEW_FLUSH_THRESHOLD = 8
 _VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS = 300
 _VOICE_IDLE_REVIEW_STOP_TRIGGER_KINDS = {"push_to_talk_stop"}
+_VOICE_PREVIOUS_INPUT_TAIL_MAX_CHARS = 240
+_VOICE_PREVIOUS_INPUT_TAIL_MAX_FRAGMENTS = 3
+_VOICE_PREVIOUS_INPUT_TAIL_SCAN_ITEMS = 80
 _VOICE_SECRETARY_TASK_INTENTS = {"document_instruction", "secretary_task", "peer_task", "task_instruction", "action_request", "mixed"}
 _VOICE_DOCUMENT_MODES = {"meeting_minutes", "speech_summary", "interview_notes", "research_brief", "general_notes"}
 _VOICE_TRANSCRIPT_TINY_FILLERS = {
@@ -456,7 +459,7 @@ def _voice_prompt_draft_public(record: Dict[str, Any]) -> Dict[str, Any]:
         "schema": 1,
         "request_id": str(record.get("request_id") or ""),
         "status": str(record.get("status") or "pending"),
-        "operation": str(record.get("operation") or "replace_with_refined_prompt"),
+        "operation": str(record.get("operation") or "append_to_composer_end"),
         "draft_text": str(record.get("draft_text") or ""),
         "draft_preview": str(record.get("draft_preview") or ""),
         "summary": str(record.get("summary") or ""),
@@ -464,7 +467,7 @@ def _voice_prompt_draft_public(record: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": str(record.get("created_at") or ""),
         "updated_at": str(record.get("updated_at") or ""),
     }
-    return {key: value for key, value in out.items() if value not in ("", None)}
+    return {key: value for key, value in out.items() if value not in ("", None, [])}
 
 
 def _latest_pending_voice_prompt_draft(group: Group, *, runtime_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -516,7 +519,33 @@ def _trim_voice_ask_requests(requests: Dict[str, Any], *, keep: int = 30) -> Dic
     return {key: value for key, value in items[-keep:]}
 
 
+def _clean_voice_artifact_paths(value: Any, *, document_path: str = "", existing: Any = None) -> list[str]:
+    raw_items: list[Any] = []
+    if isinstance(existing, (list, tuple, set)):
+        raw_items.extend(existing)
+    elif isinstance(existing, str) and existing.strip():
+        raw_items.append(existing)
+    if isinstance(value, (list, tuple, set)):
+        raw_items.extend(value)
+    elif isinstance(value, str) and value.strip():
+        raw_items.extend(line.strip() for line in value.replace(",", "\n").splitlines())
+    clean_document_path = str(document_path or "").strip()
+    if clean_document_path:
+        raw_items.append(clean_document_path)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        text = str(raw or "").strip().replace("\\", "/")
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text[:512])
+    return out[:12]
+
+
 def _voice_ask_request_public(record: Dict[str, Any]) -> Dict[str, Any]:
+    artifact_paths = _clean_voice_artifact_paths(record.get("artifact_paths"), document_path=str(record.get("document_path") or ""))
     out = {
         "schema": 1,
         "request_id": str(record.get("request_id") or ""),
@@ -525,6 +554,7 @@ def _voice_ask_request_public(record: Dict[str, Any]) -> Dict[str, Any]:
         "request_preview": str(record.get("request_preview") or ""),
         "reply_text": str(record.get("reply_text") or ""),
         "document_path": str(record.get("document_path") or ""),
+        "artifact_paths": artifact_paths,
         "target_kind": str(record.get("target_kind") or "secretary"),
         "intent_hint": str(record.get("intent_hint") or ""),
         "language": str(record.get("language") or ""),
@@ -561,6 +591,7 @@ def _upsert_voice_ask_request(
     intent_hint: str = "",
     language: str = "",
     reply_text: str = "",
+    artifact_paths: Any = None,
     handoff_target: str = "",
     handoff_request_id: str = "",
     target_actor_id: str = "",
@@ -586,6 +617,11 @@ def _upsert_voice_ask_request(
         "request_preview": _clean_multiline_text(text, max_len=240),
         "reply_text": reply,
         "document_path": str(document_path or existing.get("document_path") or ""),
+        "artifact_paths": _clean_voice_artifact_paths(
+            artifact_paths,
+            document_path=str(document_path or existing.get("document_path") or ""),
+            existing=existing.get("artifact_paths") if isinstance(existing, dict) else None,
+        ),
         "target_kind": str(target_kind or existing.get("target_kind") or "secretary"),
         "intent_hint": str(intent_hint or existing.get("intent_hint") or ""),
         "language": str(language or existing.get("language") or ""),
@@ -629,6 +665,7 @@ def _mark_voice_ask_requests_working(group: Group, *, request_ids: list[str], no
                 "status": "working",
                 "source_request_id": request_id,
                 "document_path": str(updated.get("document_path") or ""),
+                "artifact_paths": _clean_voice_artifact_paths(updated.get("artifact_paths")),
                 "request_preview": str(updated.get("request_preview") or ""),
             },
         )
@@ -866,6 +903,16 @@ def _read_voice_document_content(group: Group, record: Dict[str, Any]) -> str:
     return ""
 
 
+def _read_voice_document_content_for_metadata(group: Group, record: Dict[str, Any]) -> str | None:
+    try:
+        path = _resolve_voice_document_storage_path(group, record)
+        if path.exists() and path.is_file():
+            return path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    return None
+
+
 def _voice_document_content_sha(content: str) -> str:
     return hashlib.sha256(str(content or "").encode("utf-8")).hexdigest()
 
@@ -882,10 +929,15 @@ def _voice_document_public_record(group: Group, record: Dict[str, Any], *, inclu
         out["content_chars"] = len(content)
     else:
         out.pop("content", None)
-        try:
-            out["content_chars"] = max(0, int(out.get("content_chars") or 0))
-        except Exception:
-            out["content_chars"] = 0
+        content = _read_voice_document_content_for_metadata(group, record)
+        if content is not None:
+            out["content_sha256"] = _voice_document_content_sha(content)
+            out["content_chars"] = len(content)
+        else:
+            try:
+                out["content_chars"] = max(0, int(out.get("content_chars") or 0))
+            except Exception:
+                out["content_chars"] = 0
     # Keep low-level transcript provenance in sidecars/revisions. User-facing
     # document surfaces should not tempt the secretary to copy segment ids into
     # polished markdown.
@@ -1336,6 +1388,96 @@ def _voice_input_target_kind(item: Dict[str, Any]) -> str:
     return "document" if str(item.get("document_path") or "").strip() else "secretary"
 
 
+def _voice_previous_input_fragments(text: Any) -> list[str]:
+    clean = _clean_multiline_text(text, max_len=1_000).replace("\n", " ").strip()
+    if not clean:
+        return []
+    parts = [part.strip() for part in re.split(r"(?<=[。！？!?\.])\s*|\n+", clean) if part.strip()]
+    if not parts:
+        parts = [clean]
+    return parts[-_VOICE_PREVIOUS_INPUT_TAIL_MAX_FRAGMENTS:]
+
+
+def _voice_document_previous_input_tail(group: Group, *, document_path: str, before_seq: int) -> str:
+    clean_path = str(document_path or "").strip()
+    if not clean_path or before_seq <= 0:
+        return ""
+    path = _voice_input_stream_path(group)
+    if not path.exists():
+        return ""
+    candidates: list[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(item, dict):
+                continue
+            try:
+                seq = int(item.get("seq") or 0)
+            except Exception:
+                seq = 0
+            if seq <= 0 or seq >= before_seq:
+                continue
+            if _voice_input_target_kind(item) != "document":
+                continue
+            if str(item.get("document_path") or "").strip() != clean_path:
+                continue
+            if str(item.get("kind") or "").strip() == "idle_review":
+                continue
+            text = _clean_multiline_text(item.get("text"), max_len=1_000)
+            if not text or _is_voice_transcript_tiny_filler(text):
+                continue
+            candidates.append({"seq": seq, "text": text})
+            if len(candidates) > _VOICE_PREVIOUS_INPUT_TAIL_SCAN_ITEMS:
+                candidates = candidates[-_VOICE_PREVIOUS_INPUT_TAIL_SCAN_ITEMS:]
+    fragments: list[str] = []
+    remaining = _VOICE_PREVIOUS_INPUT_TAIL_MAX_CHARS
+    for item in reversed(candidates):
+        for fragment in reversed(_voice_previous_input_fragments(item.get("text"))):
+            clean = _clean_multiline_text(fragment, max_len=160).replace("\n", " ").strip()
+            if not clean:
+                continue
+            if len(clean) > remaining:
+                clean = clean[-remaining:].lstrip()
+                if fragments and not clean.startswith("..."):
+                    clean = f"...{clean}"[-remaining:]
+            fragments.append(clean)
+            remaining -= len(clean)
+            if len(fragments) >= _VOICE_PREVIOUS_INPUT_TAIL_MAX_FRAGMENTS or remaining <= 0:
+                return "\n".join(reversed(fragments)).strip()
+    return "\n".join(reversed(fragments)).strip()
+
+
+def _annotate_voice_input_previous_tails(group: Group, grouped: list[Dict[str, Any]], items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    first_seq_by_document: Dict[str, int] = {}
+    for item in items:
+        if _voice_input_target_kind(item) != "document":
+            continue
+        document_path = str(item.get("document_path") or "").strip()
+        if not document_path:
+            continue
+        try:
+            seq = int(item.get("seq") or 0)
+        except Exception:
+            seq = 0
+        if seq <= 0:
+            continue
+        existing = int(first_seq_by_document.get(document_path) or 0)
+        if existing <= 0 or seq < existing:
+            first_seq_by_document[document_path] = seq
+    for group_item in grouped:
+        if str(group_item.get("target_kind") or "").strip() != "document":
+            continue
+        document_path = str(group_item.get("document_path") or "").strip()
+        before_seq = int(first_seq_by_document.get(document_path) or 0)
+        tail = _voice_document_previous_input_tail(group, document_path=document_path, before_seq=before_seq)
+        if tail:
+            group_item["previous_input_tail"] = tail
+    return grouped
+
+
 def _group_voice_input_by_target(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
     grouped: Dict[str, Dict[str, Any]] = {}
     for item in items:
@@ -1354,9 +1496,12 @@ def _group_voice_input_by_target(items: list[Dict[str, Any]]) -> list[Dict[str, 
             key,
             {
                 "target_kind": target_kind,
+                "request_kind": "",
                 "document_path": document_path,
                 "filename": str(item.get("filename") or ""),
                 "title": str(item.get("title") or ""),
+                "requires_report": False,
+                "report_channel": "",
                 "request_ids": [],
                 "operations": [],
                 "item_count": 0,
@@ -1396,6 +1541,19 @@ def _group_voice_input_by_target(items: list[Dict[str, Any]]) -> list[Dict[str, 
             group_item["combined_text"] = text
         else:
             group_item["combined_text"] = text if not group_item["combined_text"] else f"{group_item['combined_text']}\n{text}"
+    for group_item in grouped.values():
+        target_kind = str(group_item.get("target_kind") or "").strip()
+        request_ids = group_item.get("request_ids") if isinstance(group_item.get("request_ids"), list) else []
+        has_request = any(str(item or "").strip() for item in request_ids)
+        if target_kind == "secretary":
+            group_item["request_kind"] = "ask_request" if has_request else "secretary_input"
+        elif target_kind == "composer":
+            group_item["request_kind"] = "prompt_refine" if has_request else "composer_input"
+        elif target_kind == "document":
+            group_item["request_kind"] = "document_request" if has_request else "document_input"
+        if target_kind in {"secretary", "document"} and has_request:
+            group_item["requires_report"] = True
+            group_item["report_channel"] = "cccc_voice_secretary_request(action=\"report\")"
     return list(grouped.values())
 
 
@@ -1404,7 +1562,7 @@ def _voice_input_batch_text(grouped: list[Dict[str, Any]], *, item_count: int) -
         return "No new Secretary input."
     blocks = [
         f"Secretary input batch: {item_count} unread item{'s' if item_count != 1 else ''} grouped by target.",
-        "Output channels: document -> edit repository markdown directly; secretary -> call cccc_voice_secretary_request(action=\"report\", request_id=..., reply_text=...); composer -> call cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=..., draft_text=...). Console text is not delivered to the user.",
+        "Output channels: document -> edit repository markdown directly; secretary -> call cccc_voice_secretary_request(action=\"report\", request_id=..., reply_text=...); composer -> call cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=..., draft_text=...) with composer text to insert. Console text is not delivered to the user.",
     ]
     for group_item in grouped:
         target_kind = str(group_item.get("target_kind") or "secretary").strip()
@@ -1416,13 +1574,21 @@ def _voice_input_batch_text(grouped: list[Dict[str, Any]], *, item_count: int) -
         request_ids = ", ".join(str(item) for item in (group_item.get("request_ids") or []) if str(item).strip())
         operations = ", ".join(str(item) for item in (group_item.get("operations") or []) if str(item).strip())
         text = str(group_item.get("combined_text") or "").strip()
+        previous_tail = str(group_item.get("previous_input_tail") or "").strip()
         lines = [f"Target: {target_kind}"]
         if path:
             lines.append(f"Document: {path}")
         if title:
             lines.append(f"Title: {title}")
+        request_kind = str(group_item.get("request_kind") or "").strip()
+        if request_kind:
+            lines.append(f"Request kind: {request_kind}")
         if request_ids:
             lines.append(f"Request id: {request_ids}")
+        if bool(group_item.get("requires_report")):
+            report_channel = str(group_item.get("report_channel") or "cccc_voice_secretary_request(action=\"report\")").strip()
+            lines.append("Requires report: true")
+            lines.append(f"Report channel: {report_channel}")
         if operations:
             lines.append(f"Operation: {operations}")
         if languages:
@@ -1434,11 +1600,17 @@ def _voice_input_batch_text(grouped: list[Dict[str, Any]], *, item_count: int) -
         if target_kind == "secretary" and request_ids:
             lines.append("Required output: answer this Ask request with cccc_voice_secretary_request(action=\"report\", request_id=\"...\", status=\"done\"|\"needs_user\"|\"failed\", reply_text=\"...\"). Do not answer only in the console.")
         elif target_kind == "composer" and request_ids:
-            lines.append("Required output: submit a prompt draft with cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"...\", draft_text=\"...\").")
+            lines.append("Required output: submit composer text to insert with cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"...\", draft_text=\"...\"). If the composer already had text, do not repeat it unless the user explicitly asked for a full rewrite.")
         elif target_kind == "document":
             lines.append("Required output: edit the repository markdown document directly. If this is an explicit document request with Request id, also report a brief completion with cccc_voice_secretary_request(action=\"report\", request_id=\"...\", status=\"done\", reply_text=\"...\").")
+        if previous_tail:
+            lines.extend([
+                "",
+                "Previous input tail (continuity only; do not copy verbatim):",
+                previous_tail,
+            ])
         if text:
-            lines.extend(["", text])
+            lines.extend(["", "Current input:", text] if previous_tail else ["", text])
         blocks.append("\n".join(lines).strip())
     return "\n\n".join(block for block in blocks if block.strip()).strip()
 
@@ -1448,6 +1620,7 @@ def _peek_voice_input_batch(group: Group, *, max_items: int = 100, max_chars: in
     cursor = int(state.get("secretary_read_cursor") or 0)
     items = _read_voice_input_events(group, after_seq=cursor, max_items=max_items, max_chars=max_chars)
     grouped = _group_voice_input_by_target(items)
+    grouped = _annotate_voice_input_previous_tails(group, grouped, items)
     composer_request_ids: list[str] = []
     secretary_request_ids: list[str] = []
     for group_item in grouped:
@@ -1481,12 +1654,19 @@ def _voice_input_batch_public(group_item: Dict[str, Any]) -> Dict[str, Any]:
         "document_path": str(group_item.get("document_path") or ""),
         "filename": str(group_item.get("filename") or ""),
         "title": str(group_item.get("title") or ""),
+        "request_kind": str(group_item.get("request_kind") or ""),
         "item_count": max(0, int(group_item.get("item_count") or 0)),
     }
+    if bool(group_item.get("requires_report")):
+        out["requires_report"] = True
+        out["report_channel"] = str(group_item.get("report_channel") or "cccc_voice_secretary_request(action=\"report\")")
     for key in ("request_ids", "operations", "kinds", "intent_hints", "languages", "sources"):
         values = [str(item).strip() for item in (group_item.get(key) if isinstance(group_item.get(key), list) else []) if str(item).strip()]
         if values:
             out[key] = values
+    previous_tail = str(group_item.get("previous_input_tail") or "").strip()
+    if previous_tail:
+        out["previous_input_tail"] = previous_tail
     return {key: value for key, value in out.items() if value not in ("", [], None)}
 
 
@@ -2245,6 +2425,7 @@ def _voice_idle_review_source_text(record: Dict[str, Any], *, reasons: set[str])
         "Use evidence-bounded reconstruction from transcript, document context, group context, common knowledge, and verified lightweight research when needed; do not fabricate facts.\n"
         "Correct likely ASR term errors from context, merge fragmented points into themes, and compactly mark low-confidence entities, numbers, quotations, or dates.\n"
         "Preserve useful concrete details: named people, organizations, dates, numbers, examples, quoted claims, causal links, opposing views, constraints, risks, and follow-up needs.\n"
+        "If the document has Pending Inputs, Open Questions, or 待核事项, resolve what can be resolved from current context or lightweight verified research, and keep only real user-decision items.\n"
         "Do not replace detail-rich material with a short executive summary; reorganize, enrich, de-duplicate, and fix structure instead.\n"
         "Never include transcript segment ids, source ranges, job ids, cursor/sequence ids, ASR chunk ids, or tool-processing notes in visible markdown.\n"
         "Skip only if the document is already polished, coherent, detail-rich, useful, and free of internal refs/logs.\n"
@@ -3315,6 +3496,7 @@ def handle_assistant_voice_document_input_read(args: Dict[str, Any]) -> DaemonRe
             _save_voice_input_state(group, state)
         public_items = [_voice_input_event_public(item) for item in items]
         grouped = _group_voice_input_by_target(items)
+        grouped = _annotate_voice_input_previous_tails(group, grouped, items)
         ask_request_ids: list[str] = []
         for group_item in grouped:
             if str(group_item.get("target_kind") or "").strip() == "composer":
@@ -3330,8 +3512,8 @@ def handle_assistant_voice_document_input_read(args: Dict[str, Any]) -> DaemonRe
         documents = [
             item
             for item in _retained_voice_documents(group, include_content=False)
-            if not referenced_paths or str(item.get("document_path") or "").strip() in referenced_paths
-        ]
+            if str(item.get("document_path") or "").strip() in referenced_paths
+        ] if referenced_paths else []
         return DaemonResponse(
             ok=True,
             result={
@@ -3521,7 +3703,7 @@ def handle_assistant_voice_input_append(
         composer_text = _clean_multiline_text(args.get("composer_text"), max_len=8_000)
         if not voice_transcript and not composer_text:
             return _error("empty_prompt_refine_input", "voice_transcript or composer_text is required")
-        operation = str(args.get("operation") or "replace_with_refined_prompt").strip() or "replace_with_refined_prompt"
+        operation = str(args.get("operation") or "append_to_composer_end").strip() or "append_to_composer_end"
         composer_context = args.get("composer_context") if isinstance(args.get("composer_context"), dict) else {}
         composer_snapshot_hash = str(args.get("composer_snapshot_hash") or "").strip()
         now = utc_now_iso()
@@ -3546,10 +3728,10 @@ def handle_assistant_voice_input_append(
         )
         text = _clean_multiline_text(
             build_voice_prompt_refine_input_text(
-            composer_text=str(prompt_request.get("composer_text") or composer_text),
-            voice_transcript=merged_voice_transcript or voice_transcript,
-            operation=operation,
-            composer_context=prompt_request.get("composer_context") if isinstance(prompt_request.get("composer_context"), dict) else composer_context,
+                composer_text=str(prompt_request.get("composer_text") or composer_text),
+                voice_transcript=merged_voice_transcript or voice_transcript,
+                operation=operation,
+                composer_context=prompt_request.get("composer_context") if isinstance(prompt_request.get("composer_context"), dict) else composer_context,
             ),
             max_len=_MAX_PROMPT_REFINE_CHARS,
         )
@@ -3857,7 +4039,7 @@ def handle_assistant_voice_prompt_draft_submit(args: Dict[str, Any]) -> DaemonRe
     raw_request_id = str(args.get("request_id") or "").strip()
     draft_text = _clean_multiline_text(args.get("draft_text"), max_len=_MAX_PROMPT_DRAFT_CHARS)
     summary = _clean_multiline_text(args.get("summary"), max_len=800)
-    operation = str(args.get("operation") or "replace_with_refined_prompt").strip() or "replace_with_refined_prompt"
+    raw_operation = str(args.get("operation") or "").strip()
     composer_snapshot_hash = str(args.get("composer_snapshot_hash") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -3878,8 +4060,10 @@ def handle_assistant_voice_prompt_draft_submit(args: Dict[str, Any]) -> DaemonRe
         now = utc_now_iso()
         state = _load_runtime_state(group)
         requests = state.get("voice_prompt_requests") if isinstance(state.get("voice_prompt_requests"), dict) else {}
-        if not isinstance(requests.get(request_id), dict):
+        request_record = requests.get(request_id) if isinstance(requests.get(request_id), dict) else {}
+        if not request_record:
             return _error("prompt_request_not_found", f"prompt request not found: {request_id}")
+        operation = raw_operation or str(request_record.get("operation") or "").strip() or "append_to_composer_end"
         drafts = state.setdefault("voice_prompt_drafts", {})
         existing = drafts.get(request_id) if isinstance(drafts.get(request_id), dict) else {}
         record = {
@@ -4006,6 +4190,7 @@ def handle_assistant_voice_instruction_feedback(args: Dict[str, Any]) -> DaemonR
     status = str(args.get("status") or "").strip().lower()
     reply_text = _clean_multiline_text(args.get("reply_text") or args.get("result_text") or args.get("message"), max_len=4_000)
     document_path = str(args.get("document_path") or args.get("workspace_path") or "").strip()
+    artifact_paths = _clean_voice_artifact_paths(args.get("artifact_paths"), document_path=document_path)
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     if by not in {VOICE_SECRETARY_ACTOR_ID, _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY), "assistant:voice_secretary"}:
@@ -4034,6 +4219,7 @@ def handle_assistant_voice_instruction_feedback(args: Dict[str, Any]) -> DaemonR
             request_id=request_id,
             status=status,
             document_path=document_path,
+            artifact_paths=artifact_paths,
             reply_text=reply_text,
             now=now,
         )
@@ -4052,6 +4238,7 @@ def handle_assistant_voice_instruction_feedback(args: Dict[str, Any]) -> DaemonR
                 "status": status,
                 "source_request_id": request_id,
                 "document_path": str(record.get("document_path") or ""),
+                "artifact_paths": _clean_voice_artifact_paths(record.get("artifact_paths")),
                 "request_preview": str(record.get("request_preview") or ""),
                 "reply_text": str(record.get("reply_text") or ""),
             },

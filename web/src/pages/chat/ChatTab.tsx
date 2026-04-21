@@ -852,6 +852,7 @@ export function ChatTab({
             setDestGroupId={setDestGroupId}
             destGroupScopeLabel={destGroupScopeLabel}
             busy={busy}
+            recentMessages={chatMessages}
             replyTarget={replyTarget}
             onCancelReply={cancelReply}
             quotedPresentationRef={quotedPresentationRef}

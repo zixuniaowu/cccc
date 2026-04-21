@@ -495,6 +495,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                         "status": str(arguments.get("status") or ""),
                         "reply_text": str(arguments.get("reply_text") or arguments.get("result_text") or arguments.get("message") or ""),
                         "document_path": str(arguments.get("document_path") or arguments.get("workspace_path") or ""),
+                        "artifact_paths": arguments.get("artifact_paths") or [],
                         "by": VOICE_SECRETARY_ACTOR_ID,
                     },
                 }
@@ -539,7 +540,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                     "request_id": str(arguments.get("request_id") or ""),
                     "draft_text": str(arguments.get("draft_text") or ""),
                     "summary": str(arguments.get("summary") or ""),
-                    "operation": str(arguments.get("operation") or "replace_with_refined_prompt"),
+                    "operation": str(arguments.get("operation") or ""),
                     "composer_snapshot_hash": str(arguments.get("composer_snapshot_hash") or ""),
                     "by": VOICE_SECRETARY_ACTOR_ID,
                 },

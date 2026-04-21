@@ -141,6 +141,7 @@ function normalizeAssistantVoiceAskFeedback(value: unknown): AssistantVoiceAskFe
     request_preview: asOptionalString(record.request_preview) || undefined,
     reply_text: asOptionalString(record.reply_text) || undefined,
     document_path: asOptionalString(record.document_path) || undefined,
+    artifact_paths: asStringArray(record.artifact_paths),
     target_kind: asOptionalString(record.target_kind) || undefined,
     intent_hint: asOptionalString(record.intent_hint) || undefined,
     language: asOptionalString(record.language) || undefined,

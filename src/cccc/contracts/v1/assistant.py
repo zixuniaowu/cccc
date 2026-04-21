@@ -67,6 +67,7 @@ class AssistantVoiceRequestData(BaseModel):
     status: str = ""
     source_request_id: str = ""
     document_path: str = ""
+    artifact_paths: List[str] = Field(default_factory=list)
     source_event_id: str = ""
     request_preview: str = ""
     reply_text: str = ""

@@ -1,7 +1,7 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Actor, GroupMeta, PresentationMessageRef, ReplyTarget } from "../../types";
+import { Actor, GroupMeta, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon, PetIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
@@ -11,6 +11,27 @@ import { VoiceSecretaryComposerControl, type VoiceSecretaryCaptureMode } from ".
 import { GroupCombobox } from "../../components/GroupCombobox";
 import { updateSettings } from "../../services/api";
 import { useBuiltInAssistantStore, useGroupStore, useUIStore } from "../../stores";
+
+function cleanVoicePromptContextText(value: unknown, maxLen = 240): string {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, Math.max(1, maxLen - 1)).trimEnd()}…`;
+}
+
+function buildRecentChatExcerptForVoicePrompt(events: LedgerEvent[]): string {
+  const rows: string[] = [];
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (String(event?.kind || "") !== "chat.message") continue;
+    const data = event?.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
+    const text = cleanVoicePromptContextText(data.text, 220);
+    if (!text) continue;
+    const by = cleanVoicePromptContextText(event.by || data.by || "unknown", 40) || "unknown";
+    rows.push(`${by}: ${text}`);
+    if (rows.length >= 4) break;
+  }
+  return rows.reverse().join("\n").slice(0, 1000);
+}
 
 export interface ChatComposerProps {
   isDark: boolean;
@@ -24,6 +45,7 @@ export interface ChatComposerProps {
   setDestGroupId: (groupId: string) => void;
   destGroupScopeLabel?: string;
   busy: string;
+  recentMessages?: LedgerEvent[];
 
   // Reply
   replyTarget: ReplyTarget;
@@ -75,6 +97,7 @@ export function ChatComposer({
   setDestGroupId,
   destGroupScopeLabel: _destGroupScopeLabel,
   busy,
+  recentMessages = [],
   replyTarget,
   onCancelReply,
   quotedPresentationRef,
@@ -438,6 +461,8 @@ export function ChatComposer({
       ? t('modeNoticeImportant')
       : "";
 
+  const recentChatExcerpt = useMemo(() => buildRecentChatExcerptForVoicePrompt(recentMessages), [recentMessages]);
+
   const composerAssistantContext = useMemo<Record<string, unknown>>(() => ({
     recipients: toTokens,
     message_mode: messageMode,
@@ -447,7 +472,8 @@ export function ChatComposer({
       ? `${replyTarget.by || "unknown"}: ${String(replyTarget.text || "").slice(0, 240)}`
       : "",
     quoted_reference: quotedPresentationRef ? getPresentationRefChipLabel(quotedPresentationRef) : "",
-  }), [messageMode, priority, quotedPresentationRef, replyRequired, replyTarget, toTokens]);
+    recent_chat_excerpt: recentChatExcerpt,
+  }), [messageMode, priority, quotedPresentationRef, recentChatExcerpt, replyRequired, replyTarget, toTokens]);
 
   const fillPromptDraftFromSpeech = useCallback((draft: string, opts?: { mode?: "replace" | "append" }) => {
     const text = String(draft || "").trim();

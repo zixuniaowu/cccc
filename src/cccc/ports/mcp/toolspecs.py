@@ -233,6 +233,7 @@ MCP_TOOLS = [
                 "status": {"type": "string", "enum": ["working", "done", "needs_user", "failed"], "description": "Required for action=report."},
                 "reply_text": {"type": "string", "description": "For action=report, the concise user-visible reply shown near the composer."},
                 "document_path": {"type": "string"},
+                "artifact_paths": {"type": "array", "items": {"type": "string"}, "description": "For action=report, optional repo-relative document/artifact paths to show as links instead of repeating them in reply_text."},
                 "source_event_id": {"type": "string"},
                 "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
                 "requires_ack": {"type": "boolean", "default": True},
@@ -243,7 +244,7 @@ MCP_TOOLS = [
         "name": "cccc_voice_secretary_composer",
         "description": (
             "Voice Secretary-only composer result surface. Use action=submit_prompt_draft only after reading a prompt_refine "
-            "input from read_new_input; submit the polished prompt draft here instead of sending chat."
+            "input from read_new_input; submit composer text to insert here instead of sending chat."
         ),
         "inputSchema": _obj(
             {
@@ -251,9 +252,9 @@ MCP_TOOLS = [
                 **_COMMON_ACTOR,
                 "action": {"type": "string", "enum": ["submit_prompt_draft"], "default": "submit_prompt_draft"},
                 "request_id": {"type": "string", "description": "Request id from the prompt_refine input batch."},
-                "draft_text": {"type": "string", "description": "Ready-to-send refined prompt text."},
+                "draft_text": {"type": "string", "description": "Composer text to insert. Follow the prompt_refine Operation: append operations return an addition; replace operations return a complete replacement."},
                 "summary": {"type": "string", "description": "Optional one-line summary of what changed."},
-                "operation": {"type": "string", "default": "replace_with_refined_prompt"},
+                "operation": {"type": "string", "description": "Optional; omit to inherit the Operation from the prompt_refine input."},
                 "composer_snapshot_hash": {"type": "string"},
             },
             required=["request_id", "draft_text"],

@@ -158,11 +158,12 @@ class TestSystemNotifyOps(unittest.TestCase):
         )
 
         self.assertIn("read_new_input", text)
-        self.assertIn("Your first action in this turn must be cccc_voice_secretary_document(action=\"read_new_input\")", text)
-        self.assertIn("This notification is only a pointer", text)
-        self.assertIn("Do not bootstrap", text)
-        self.assertIn("cccc_voice_secretary_composer", text)
-        self.assertIn("Do not finish this turn with only a plan", text)
+        self.assertIn("First action: cccc_voice_secretary_document(action=\"read_new_input\")", text)
+        self.assertIn("Pointer only", text)
+        self.assertIn("reason=new_input", text)
+        self.assertNotIn("Do not bootstrap", text)
+        self.assertNotIn("cccc_voice_secretary_composer", text)
+        self.assertNotIn("Do not finish this turn with only a plan", text)
         self.assertNotIn("alpha beta transcript", text)
         self.assertIn("cccc_voice_secretary_document", text)
         self.assertNotIn("source_chars", text)
@@ -240,7 +241,7 @@ class TestSystemNotifyOps(unittest.TestCase):
                 group=group,
             )
 
-            self.assertIn("This notification is only a pointer", text)
+            self.assertIn("Pointer only", text)
             self.assertIn("read_new_input", text)
             self.assertNotIn("Attached batch:", text)
             self.assertNotIn("Secretary input batch:", text)

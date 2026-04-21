@@ -140,6 +140,7 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
         self.assertEqual(req.get("op"), "assistant_voice_prompt_draft_submit")
         self.assertEqual(args.get("by"), "voice-secretary")
         self.assertEqual(args.get("request_id"), "voice-prompt-1")
+        self.assertEqual(args.get("operation"), "")
 
     def test_voice_secretary_document_list_defaults_to_compact_content(self) -> None:
         from cccc.ports.mcp.server import handle_tool_call
@@ -255,6 +256,7 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
                     "status": "done",
                     "reply_text": "Handled directly.",
                     "document_path": "docs/voice-secretary/notes.md",
+                    "artifact_paths": ["docs/voice-secretary/notes.md", "docs/voice-secretary/report.md"],
                 },
             )
 
@@ -264,6 +266,7 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
         self.assertEqual(args.get("request_id"), "voice-ask-123")
         self.assertEqual(args.get("status"), "done")
         self.assertEqual(args.get("reply_text"), "Handled directly.")
+        self.assertEqual(args.get("artifact_paths"), ["docs/voice-secretary/notes.md", "docs/voice-secretary/report.md"])
         self.assertNotIn("result_summary", args)
         self.assertEqual(args.get("by"), "voice-secretary")
 

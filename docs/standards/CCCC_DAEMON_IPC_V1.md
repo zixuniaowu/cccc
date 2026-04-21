@@ -1691,6 +1691,7 @@ Args:
   request_text: string           // concise actionable handoff, not raw transcript
   summary?: string
   document_path?: string
+  artifact_paths?: string[]      // repo-relative produced docs/artifacts for user-visible links
   source_event_id?: string
   priority?: "low" | "normal" | "high" | "urgent"
   requires_ack?: boolean

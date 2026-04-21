@@ -792,6 +792,7 @@ export type AssistantVoiceAskFeedback = {
   request_preview?: string;
   reply_text?: string;
   document_path?: string;
+  artifact_paths?: string[];
   target_kind?: string;
   intent_hint?: string;
   language?: string;

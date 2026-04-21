@@ -595,14 +595,14 @@ def _render_system_notify_message_for_delivery(*, notify: SystemNotifyData, grou
         blocks.append("Action: handle the request from your inbox; acknowledge or reply according to the requested work.")
         return "\n\n".join(blocks).strip()
     if context_kind == "voice_secretary_input":
+        reason = str(context.get("reason") or "").strip()
         blocks = [
-            "Secretary input is ready.",
-            "Your first action in this turn must be cccc_voice_secretary_document(action=\"read_new_input\").",
-            "This notification is only a pointer; the input text is available only through read_new_input.",
-            "Do not bootstrap, list resources, or research how to respond before processing the batch.",
-            "If the batch target is composer, submit the refined prompt through cccc_voice_secretary_composer in the same turn.",
-            "Do not finish this turn with only a plan, summary, or acknowledgement.",
+            "Secretary input ready.",
+            "First action: cccc_voice_secretary_document(action=\"read_new_input\").",
+            "Pointer only; fetch the input text through read_new_input.",
         ]
+        if reason:
+            blocks.append(f"reason={reason}")
         return "\n".join(blocks).strip()
     return message
 

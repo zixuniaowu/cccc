@@ -111,6 +111,8 @@ type VoiceTranscriptPreview = {
   id: string;
   phase: VoiceTranscriptPreviewPhase;
   text: string;
+  pendingFinalText?: string;
+  interimText?: string;
   mode: VoiceSecretaryCaptureMode;
   documentTitle?: string;
   documentPath?: string;
@@ -158,12 +160,18 @@ const VOICE_ASK_ACTIVE_TIMEOUT_MS = 90_000;
 const VOICE_LIVE_TRANSCRIPT_VISIBLE_MS = 15_000;
 const VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS = 15_000;
 const VOICE_ACTIVITY_FEED_LIMIT = 10;
+const VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS = 72;
 const TWO_LINE_STATUS_STYLE = {
   display: "-webkit-box",
   WebkitLineClamp: 2,
   WebkitBoxOrient: "vertical",
   overflow: "hidden",
 } as const;
+function promptDraftApplyMode(draft: AssistantVoicePromptDraft): "append" | "replace" {
+  const operation = String(draft.operation || "").trim().toLowerCase();
+  if (operation === "replace_with_refined_prompt" || operation === "replace") return "replace";
+  return "append";
+}
 const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
   "嗯",
   "嗯嗯",
@@ -192,6 +200,26 @@ function assistantVoiceTimestampMs(value?: string): number {
   if (!text) return 0;
   const parsed = Date.parse(text);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatVoiceActivityTimeMs(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function formatVoiceActivityFullTimeMs(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString();
+}
+
+function compactVoiceTranscriptSummaryText(value: string): string {
+  const text = normalizeBrowserTranscriptChunk(value);
+  if (text.length <= VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS) return text;
+  return `…${text.slice(-(VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS - 1)).trimStart()}`;
 }
 
 function isActiveAskFeedbackStatus(status: string): boolean {
@@ -569,7 +597,7 @@ export function VoiceSecretaryComposerControl({
   const [showAssistantModeMenu, setShowAssistantModeMenu] = useState(false);
   const [showAssistantLanguageMenu, setShowAssistantLanguageMenu] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [actionBusy, setActionBusy] = useState<"" | "enable" | "voice_language" | "transcribe" | "save_doc" | "new_doc" | "instruct_doc" | "archive_doc" | "capture_target" | "clear_ask">("");
+  const [actionBusy, setActionBusy] = useState<"" | "enable" | "voice_language" | "transcribe" | "save_doc" | "new_doc" | "instruct_doc" | "instruct_ask" | "archive_doc" | "capture_target" | "clear_ask">("");
   const [assistant, setAssistant] = useState<BuiltinAssistant | null>(null);
   const [documents, setDocuments] = useState<AssistantVoiceDocument[]>([]);
   const [activeDocumentId, setActiveDocumentId] = useState("");
@@ -901,10 +929,19 @@ export function VoiceSecretaryComposerControl({
     const clean = normalizeBrowserTranscriptChunk(text);
     if (!clean) return;
     const now = Date.now();
+    const pendingFinalText = normalizeBrowserTranscriptChunk(browserFinalTranscriptBufferRef.current);
+    const interimText = phase === "interim" ? clean : "";
+    const previewText = pendingFinalText
+      ? interimText
+        ? `${pendingFinalText}\n${interimText}`
+        : pendingFinalText
+      : clean;
     setLiveTranscriptPreview({
       id: "live",
       phase,
-      text: clean,
+      text: previewText,
+      pendingFinalText,
+      interimText,
       mode: captureMode,
       documentTitle: captureTargetDocumentTitle,
       documentPath: captureTargetDocumentPath,
@@ -1109,16 +1146,21 @@ export function VoiceSecretaryComposerControl({
     pendingPromptComposerHashRef.current = "";
     setPendingPromptRequestId("");
     setPendingPromptDraft(null);
-    onPromptDraft?.(text, { mode: "replace" });
+    const applyMode = promptDraftApplyMode(draft);
+    onPromptDraft?.(text, { mode: applyMode });
     try {
       await acknowledgePromptDraft(draft, "applied");
     } catch {
       // Applying locally is the critical path; ack retry is non-critical.
     }
     showNotice({
-      message: t("voiceSecretaryPromptDraftFilled", {
-        defaultValue: "Refined prompt filled into the composer.",
-      }),
+      message: applyMode === "replace"
+        ? t("voiceSecretaryPromptDraftReplaced", {
+            defaultValue: "Refined prompt replaced the composer.",
+          })
+        : t("voiceSecretaryPromptDraftFilled", {
+            defaultValue: "Refined prompt appended to the composer.",
+          }),
     });
   }, [acknowledgePromptDraft, onPromptDraft, showNotice, t]);
 
@@ -1358,10 +1400,10 @@ export function VoiceSecretaryComposerControl({
   const sendInstructionTranscript = useCallback(async (
     text: string,
     opts?: { triggerKind?: string },
-  ) => {
+  ): Promise<boolean> => {
     const gid = String(selectedGroupId || "").trim();
     const instruction = normalizeBrowserTranscriptChunk(text);
-    if (!gid || !assistantEnabled || !instruction) return;
+    if (!gid || !assistantEnabled || !instruction) return false;
     const requestId = `voice-ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const currentDocumentPath = String(captureTargetDocumentIdRef.current || activeDocumentKey || activeDocumentId || "").trim();
     try {
@@ -1381,7 +1423,7 @@ export function VoiceSecretaryComposerControl({
       });
       if (!resp.ok) {
         showError(resp.error.message);
-        return;
+        return false;
       }
       const nextRequestId = String(resp.result.request_id || requestId).trim();
       localVoiceReplyRequestIdsRef.current.add(nextRequestId);
@@ -1405,8 +1447,10 @@ export function VoiceSecretaryComposerControl({
         message: t("voiceSecretaryDocumentInstructionQueued", { defaultValue: "Request sent to Voice Secretary." }),
       });
       void refreshAssistant({ quiet: true });
+      return true;
     } catch {
       showError(t("voiceSecretaryDocumentInstructionFailed", { defaultValue: "Failed to send the request to Voice Secretary." }));
+      return false;
     }
   }, [
     activeDocumentId,
@@ -1439,7 +1483,7 @@ export function VoiceSecretaryComposerControl({
         voiceTranscript,
         composerText: snapshot,
         requestId,
-        operation: "replace_with_refined_prompt",
+        operation: "append_to_composer_end",
         composerSnapshotHash: snapshotHash,
         composerContext,
         language: effectiveRecognitionLanguage,
@@ -1826,8 +1870,8 @@ export function VoiceSecretaryComposerControl({
             updateLiveTranscriptPreview(cleanInterimText, "interim");
           }
           if (hasFinalText) {
-            updateLiveTranscriptPreview(finalText, "final");
             queueBrowserFinalTranscript(finalText);
+            updateLiveTranscriptPreview(finalText, "final");
           }
           if (hasFinalText || cleanInterimText) {
             scheduleTranscriptFlush("result_idle");
@@ -2358,10 +2402,21 @@ export function VoiceSecretaryComposerControl({
     t,
   ]);
 
-  const sendDocumentInstruction = useCallback(async () => {
+  const sendPanelRequest = useCallback(async () => {
     const gid = String(selectedGroupId || "").trim();
     const instruction = documentInstruction.trim();
     if (!gid || !instruction) return;
+    if (captureMode === "prompt") return;
+    if (captureMode === "instruction") {
+      setActionBusy("instruct_ask");
+      try {
+        const sent = await sendInstructionTranscript(instruction, { triggerKind: "typed_voice_instruction" });
+        if (sent) setDocumentInstruction("");
+      } finally {
+        setActionBusy("");
+      }
+      return;
+    }
     if (documentHasUnsavedEdits) {
       showError(t("voiceSecretaryDocumentUnsavedBeforeRequest", {
         defaultValue: "Save or discard local document edits before sending a request to Voice Secretary.",
@@ -2429,6 +2484,7 @@ export function VoiceSecretaryComposerControl({
     activeDocumentId,
     applyDocumentMutationResult,
     captureTargetDocumentId,
+    captureMode,
     documentHasUnsavedEdits,
     documentInstruction,
     documents,
@@ -2436,6 +2492,7 @@ export function VoiceSecretaryComposerControl({
     recognitionBackend,
     refreshAssistant,
     selectedGroupId,
+    sendInstructionTranscript,
     showError,
     showNotice,
     t,
@@ -2641,8 +2698,22 @@ export function VoiceSecretaryComposerControl({
   const liveTranscriptPhaseLabel = currentLiveTranscript?.phase === "interim"
     ? t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })
     : t("voiceSecretaryTranscriptHeard", { defaultValue: "Heard" });
+  const liveTranscriptSummaryPreview = currentLiveTranscript
+    ? compactVoiceTranscriptSummaryText(
+      currentLiveTranscript.interimText
+        || currentLiveTranscript.pendingFinalText
+        || currentLiveTranscript.text,
+    )
+    : "";
   const liveTranscriptSummaryText = currentLiveTranscript
-    ? `${voiceModeLabel(currentLiveTranscript.mode)} · ${currentLiveTranscript.text}`
+    && liveTranscriptSummaryPreview
+    ? `${voiceModeLabel(currentLiveTranscript.mode)} · ${liveTranscriptSummaryPreview}`
+    : "";
+  const liveTranscriptTimeLabel = currentLiveTranscript
+    ? formatVoiceActivityTimeMs(currentLiveTranscript.updatedAt)
+    : "";
+  const liveTranscriptFullTimeLabel = currentLiveTranscript
+    ? formatVoiceActivityFullTimeMs(currentLiveTranscript.updatedAt)
     : "";
   const recentDocumentActivity = documentActivityItems.find(
     (item) => activityClockMs - item.createdAt <= VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS,
@@ -2652,6 +2723,31 @@ export function VoiceSecretaryComposerControl({
       recentDocumentActivity.documentTitle || recentDocumentActivity.documentPath || voiceModeLabel(recentDocumentActivity.mode)
     }`
     : "";
+  const panelRequestInactive = captureMode === "prompt";
+  const panelRequestSending = actionBusy === "instruct_doc" || actionBusy === "instruct_ask";
+  const panelRequestTitle = captureMode === "document"
+    ? t("voiceSecretaryDocumentRequestLabel", { defaultValue: "Ask about this document" })
+    : captureMode === "instruction"
+      ? t("voiceSecretaryAskRequestLabel", { defaultValue: "Ask Voice Secretary" })
+      : t("voiceSecretaryPromptRequestLabel", { defaultValue: "Prompt mode" });
+  const panelRequestPlaceholder = captureMode === "document"
+    ? t("voiceSecretaryDocumentRequestPlaceholder", {
+      defaultValue: "Tell Voice Secretary how to refine, split, summarize, or send this document.",
+    })
+    : captureMode === "instruction"
+      ? t("voiceSecretaryAskRequestPlaceholder", {
+        defaultValue: "Ask a question or give Voice Secretary a task. This is not tied to the current document.",
+      })
+      : t("voiceSecretaryPromptRequestDisabledPlaceholder", {
+        defaultValue: "Prompt mode uses the record button to add refined text to the message composer.",
+      });
+  const panelRequestButtonLabel = panelRequestInactive
+    ? t("voiceSecretaryPromptRequestDisabledButton", { defaultValue: "Use record button for prompt" })
+    : panelRequestSending
+      ? t("voiceSecretaryApplyingInstruction", { defaultValue: "Sending..." })
+      : captureMode === "instruction"
+        ? t("voiceSecretaryAskRequestButton", { defaultValue: "Send ask" })
+        : t("voiceSecretaryApplyInstruction", { defaultValue: "Send request" });
   const pendingAskFeedback = pendingAskRequestId
     ? askFeedbackItems.find((item) => item.request_id === pendingAskRequestId) || null
     : askFeedbackItems.find((item) => isActiveAskFeedbackStatus(item.status)) || null;
@@ -3476,19 +3572,22 @@ export function VoiceSecretaryComposerControl({
                 )}
               >
                 <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
-                  {t("voiceSecretaryInstructionLabel", { defaultValue: "Ask Voice Secretary" })}
+                  {panelRequestTitle}
                 </div>
                 <textarea
                   value={documentInstruction}
                   onChange={(event) => setDocumentInstruction(event.target.value)}
-                  placeholder={t("voiceSecretaryInstructionPlaceholder", {
-                    defaultValue: "Tell Voice Secretary how to refine, split, summarize, or send this document.",
-                  })}
+                  placeholder={panelRequestPlaceholder}
+                  disabled={panelRequestInactive}
                   className={classNames(
                     "mt-3 min-h-[96px] w-full resize-y rounded-2xl border px-3 py-2 text-xs leading-5 outline-none transition-colors",
                     isDark
-                      ? "border-white/10 bg-white/[0.06] text-slate-100 placeholder:text-slate-500 focus:border-white/30"
-                      : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/25",
+                      ? panelRequestInactive
+                        ? "border-white/10 bg-white/[0.03] text-slate-500 placeholder:text-slate-600"
+                        : "border-white/10 bg-white/[0.06] text-slate-100 placeholder:text-slate-500 focus:border-white/30"
+                      : panelRequestInactive
+                        ? "border-black/10 bg-gray-50 text-gray-400 placeholder:text-gray-400"
+                        : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/25",
                   )}
                 />
                 <button
@@ -3499,12 +3598,10 @@ export function VoiceSecretaryComposerControl({
                       ? "border-white bg-white text-[rgb(20,20,22)] hover:bg-white/90"
                       : "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:bg-black",
                   )}
-                  onClick={() => void sendDocumentInstruction()}
-                  disabled={!!actionBusy || !documentInstruction.trim()}
+                  onClick={() => void sendPanelRequest()}
+                  disabled={!!actionBusy || panelRequestInactive || !documentInstruction.trim()}
                 >
-                  {actionBusy === "instruct_doc"
-                    ? t("voiceSecretaryApplyingInstruction", { defaultValue: "Sending..." })
-                    : t("voiceSecretaryApplyInstruction", { defaultValue: "Send request" })}
+                  {panelRequestButtonLabel}
                 </button>
               </div>
 
@@ -3557,12 +3654,37 @@ export function VoiceSecretaryComposerControl({
                         )}>
                           {liveTranscriptPhaseLabel}
                         </span>
-                        <span className="truncate text-[10px] text-[var(--color-text-muted)]">
-                          {voiceModeLabel(currentLiveTranscript.mode)}
+                        <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                          <span className="min-w-0 truncate">{voiceModeLabel(currentLiveTranscript.mode)}</span>
+                          {liveTranscriptTimeLabel ? (
+                            <time
+                              className="shrink-0 tabular-nums"
+                              dateTime={new Date(currentLiveTranscript.updatedAt).toISOString()}
+                              title={liveTranscriptFullTimeLabel}
+                            >
+                              {liveTranscriptTimeLabel}
+                            </time>
+                          ) : null}
                         </span>
                       </div>
-                      <div className={classNames("mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-cyan-50" : "text-cyan-950")}>
-                        {currentLiveTranscript.text}
+                      <div className={classNames(
+                        "mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-words pr-1 text-[11px] leading-4 scrollbar-subtle",
+                        isDark ? "text-cyan-50" : "text-cyan-950",
+                      )}>
+                        {currentLiveTranscript.pendingFinalText ? (
+                          <div>{currentLiveTranscript.pendingFinalText}</div>
+                        ) : null}
+                        {currentLiveTranscript.interimText ? (
+                          <div className={classNames(
+                            currentLiveTranscript.pendingFinalText ? "mt-1.5 border-t pt-1.5" : "",
+                            isDark ? "border-cyan-200/15 text-cyan-100/75" : "border-cyan-900/10 text-cyan-900/70",
+                          )}>
+                            {currentLiveTranscript.interimText}
+                          </div>
+                        ) : null}
+                        {!currentLiveTranscript.pendingFinalText && !currentLiveTranscript.interimText ? (
+                          currentLiveTranscript.text
+                        ) : null}
                       </div>
                       {currentLiveTranscript.documentTitle || currentLiveTranscript.documentPath ? (
                         <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
@@ -3573,6 +3695,8 @@ export function VoiceSecretaryComposerControl({
                   ) : null}
                   {activityFeedItems.map((feedItem) => {
                     if (feedItem.kind === "prompt") {
+                      const timeLabel = formatVoiceActivityTimeMs(feedItem.sortAt);
+                      const fullTimeLabel = formatVoiceActivityFullTimeMs(feedItem.sortAt);
                       return (
                         <div
                           key={feedItem.id}
@@ -3590,8 +3714,17 @@ export function VoiceSecretaryComposerControl({
                             )}>
                               {feedItem.status === "ready" ? promptDraftReadyTitle : promptDraftWaitingTitle}
                             </span>
-                            <span className="truncate text-[10px] text-[var(--color-text-muted)]">
-                              {voiceModeLabel("prompt")}
+                            <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                              <span className="min-w-0 truncate">{voiceModeLabel("prompt")}</span>
+                              {timeLabel ? (
+                                <time
+                                  className="shrink-0 tabular-nums"
+                                  dateTime={new Date(feedItem.sortAt).toISOString()}
+                                  title={fullTimeLabel}
+                                >
+                                  {timeLabel}
+                                </time>
+                              ) : null}
                             </span>
                           </div>
                           {feedItem.text ? (
@@ -3605,6 +3738,8 @@ export function VoiceSecretaryComposerControl({
                     if (feedItem.kind === "document") {
                       const item = feedItem.item;
                       const title = String(item.documentTitle || item.documentPath || "").trim();
+                      const timeLabel = formatVoiceActivityTimeMs(feedItem.sortAt);
+                      const fullTimeLabel = formatVoiceActivityFullTimeMs(feedItem.sortAt);
                       return (
                         <div
                           key={feedItem.id}
@@ -3622,8 +3757,17 @@ export function VoiceSecretaryComposerControl({
                             )}>
                               {documentActivityStatusLabel(item.status)}
                             </span>
-                            <span className="truncate text-[10px] text-[var(--color-text-muted)]">
-                              {voiceModeLabel(item.mode)}
+                            <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                              <span className="min-w-0 truncate">{voiceModeLabel(item.mode)}</span>
+                              {timeLabel ? (
+                                <time
+                                  className="shrink-0 tabular-nums"
+                                  dateTime={new Date(feedItem.sortAt).toISOString()}
+                                  title={fullTimeLabel}
+                                >
+                                  {timeLabel}
+                                </time>
+                              ) : null}
                             </span>
                           </div>
                           {item.preview ? (
@@ -3643,6 +3787,19 @@ export function VoiceSecretaryComposerControl({
                     const displayStatus = displayAskFeedbackStatus(item, askFeedbackClockMs);
                     const requestPreview = String(item.request_preview || item.request_text || "").trim();
                     const replyPreview = String(item.reply_text || "").trim();
+                    const artifactPaths = [
+                      String(item.document_path || "").trim(),
+                      ...((item.artifact_paths || []).map((path) => String(path || "").trim())),
+                    ].filter((path, index, paths) => path && paths.indexOf(path) === index);
+                    const artifactItems = artifactPaths.map((path) => {
+                      const linkedDocument = documents.find((document) => (
+                        voiceDocumentKey(document) === path
+                        || String(document.document_path || document.workspace_path || "").trim() === path
+                      )) || null;
+                      return { path, linkedDocument };
+                    });
+                    const timeLabel = formatVoiceActivityTimeMs(feedItem.sortAt);
+                    const fullTimeLabel = formatVoiceActivityFullTimeMs(feedItem.sortAt);
                     return (
                       <div
                         key={item.request_id}
@@ -3651,20 +3808,31 @@ export function VoiceSecretaryComposerControl({
                           isDark ? "border-white/10 bg-black/10" : "border-black/[0.08] bg-[rgb(248,248,248)]",
                         )}
                       >
-                        {displayStatus || item.handoff_target ? (
-                          <div className="flex items-center justify-between gap-2">
-                            {displayStatus ? (
-                              <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-semibold", askFeedbackStatusClassName(displayStatus))}>
-                                {askFeedbackStatusLabel(displayStatus)}
-                              </span>
-                            ) : <span />}
+                        <div className="flex items-center justify-between gap-2">
+                          {displayStatus ? (
+                            <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-semibold", askFeedbackStatusClassName(displayStatus))}>
+                              {askFeedbackStatusLabel(displayStatus)}
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)] dark:bg-white/10">
+                              {t("voiceSecretaryRequestLabel", { defaultValue: "Request" })}
+                            </span>
+                          )}
+                          <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
                             {item.handoff_target ? (
-                              <span className="truncate text-[10px] text-[var(--color-text-muted)]">
-                                {item.handoff_target}
-                              </span>
+                              <span className="min-w-0 truncate">{item.handoff_target}</span>
                             ) : null}
-                          </div>
-                        ) : null}
+                            {timeLabel ? (
+                              <time
+                                className="shrink-0 tabular-nums"
+                                dateTime={new Date(feedItem.sortAt).toISOString()}
+                                title={fullTimeLabel}
+                              >
+                                {timeLabel}
+                              </time>
+                            ) : null}
+                          </span>
+                        </div>
                         {requestPreview ? (
                           <div className="mt-1.5">
                             <div className="text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
@@ -3685,9 +3853,34 @@ export function VoiceSecretaryComposerControl({
                             </div>
                           </div>
                         ) : null}
-                        {item.document_path ? (
-                          <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
-                            {item.document_path}
+                        {artifactItems.length ? (
+                          <div className="mt-1.5 flex min-w-0 flex-wrap gap-1">
+                            {artifactItems.map(({ path, linkedDocument }) => (
+                              <button
+                                key={path}
+                                type="button"
+                                disabled={!linkedDocument}
+                                onClick={() => {
+                                  if (!linkedDocument) return;
+                                  void selectDocument(linkedDocument);
+                                }}
+                                className={classNames(
+                                  "max-w-full truncate rounded-full border px-2 py-0.5 text-[10px] transition-colors disabled:cursor-default disabled:opacity-70",
+                                  linkedDocument
+                                    ? isDark
+                                      ? "border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/16"
+                                      : "border-cyan-200 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
+                                    : isDark
+                                      ? "border-white/10 bg-white/[0.04] text-slate-400"
+                                      : "border-black/10 bg-black/[0.03] text-gray-500",
+                                )}
+                                title={linkedDocument
+                                  ? t("voiceSecretaryOpenLinkedDocument", { defaultValue: "Open linked document" })
+                                  : path}
+                              >
+                                {path}
+                              </button>
+                            ))}
                           </div>
                         ) : null}
                       </div>
