@@ -85,7 +85,7 @@ export function SettingsModal({
   const [idleSeconds, setIdleSeconds] = useState(0);
   const [keepaliveSeconds, setKeepaliveSeconds] = useState(120);
   const [keepaliveMax, setKeepaliveMax] = useState(3);
-  const [silenceSeconds, setSilenceSeconds] = useState(600);
+  const [silenceSeconds, setSilenceSeconds] = useState(0);
   const [helpNudgeIntervalSeconds, setHelpNudgeIntervalSeconds] = useState(600);
   const [helpNudgeMinMessages, setHelpNudgeMinMessages] = useState(10);
   const [autoMarkOnDelivery, setAutoMarkOnDelivery] = useState(false);
@@ -464,6 +464,22 @@ export function SettingsModal({
       help_nudge_interval_seconds: helpNudgeIntervalSeconds,
       help_nudge_min_messages: helpNudgeMinMessages,
     });
+  };
+
+  const handleResetAutomationSettingsDraft = () => {
+    setNudgeSeconds(300);
+    setReplyRequiredNudgeSeconds(300);
+    setAttentionAckNudgeSeconds(600);
+    setUnreadNudgeSeconds(900);
+    setNudgeDigestMinIntervalSeconds(120);
+    setNudgeMaxRepeatsPerObligation(3);
+    setNudgeEscalateAfterRepeats(2);
+    setIdleSeconds(0);
+    setKeepaliveSeconds(120);
+    setKeepaliveMax(3);
+    setSilenceSeconds(0);
+    setHelpNudgeIntervalSeconds(600);
+    setHelpNudgeMinMessages(10);
   };
 
   const handleAutoSave = async (field: string, value: number | boolean) => {
@@ -1075,6 +1091,7 @@ export function SettingsModal({
                   helpNudgeMinMessages={helpNudgeMinMessages}
                   setHelpNudgeMinMessages={setHelpNudgeMinMessages}
                   onSavePolicies={handleSaveAutomationSettings}
+                  onResetPolicies={handleResetAutomationSettingsDraft}
                 />
               )}
 

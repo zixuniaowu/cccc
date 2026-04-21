@@ -61,6 +61,7 @@ interface AutomationTabProps {
   helpNudgeMinMessages: number;
   setHelpNudgeMinMessages: (v: number) => void;
   onSavePolicies: () => void;
+  onResetPolicies: () => void;
 }
 
 type PersistCopy = {
@@ -585,6 +586,7 @@ export function AutomationTab(props: AutomationTabProps) {
         silenceSeconds={props.silenceSeconds}
         setSilenceSeconds={props.setSilenceSeconds}
         onSavePolicies={props.onSavePolicies}
+        onResetPolicies={props.onResetPolicies}
       />
 
       <Section
