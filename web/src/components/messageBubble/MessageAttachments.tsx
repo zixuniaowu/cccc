@@ -88,7 +88,12 @@ export function MessageAttachments({
                 download
               >
                 <FileIcon size={13} className="opacity-60 flex-shrink-0" />
-                <span className="truncate">{label}</span>
+                <span
+                  className="truncate font-medium"
+                  style={{ color: "var(--color-text-primary)" }}
+                >
+                  {label}
+                </span>
               </a>
             );
           })}

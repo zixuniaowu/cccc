@@ -63,7 +63,7 @@ export function SettingsNavigation({
         className={`hidden border-r border-[var(--glass-border-subtle)] sm:flex sm:w-60 lg:w-[16.5rem] sm:flex-col shrink-0 ${
           isDark
             ? "bg-[linear-gradient(180deg,rgba(20,22,26,0.96),rgba(14,15,18,0.92))]"
-            : "bg-[linear-gradient(180deg,rgba(252,251,249,0.98),rgba(246,244,240,0.92))]"
+            : "bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(247,249,252,0.94))]"
         }`}
       >
         <div className="border-b border-[var(--glass-border-subtle)] px-4 pb-3 pt-4 lg:px-4">

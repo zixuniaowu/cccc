@@ -268,7 +268,7 @@ export function GuidanceTab({ isDark, groupId }: {
   const promptShellClass = `overflow-hidden rounded-[22px] border backdrop-blur-xl ${
     isDark
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(19,20,24,0.88),rgba(10,11,14,0.96))] shadow-[0_28px_100px_rgba(0,0,0,0.36)]"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(250,249,247,0.96))] shadow-[0_28px_100px_rgba(15,23,42,0.06)]"
+      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))] shadow-[0_28px_100px_rgba(15,23,42,0.06)]"
   }`;
   const promptHeaderClass = `flex items-start justify-between gap-4 px-4 py-4 sm:px-5 sm:py-4 ${
     isDark ? "border-b border-white/8 bg-white/[0.025]" : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
@@ -284,7 +284,7 @@ export function GuidanceTab({ isDark, groupId }: {
   const editorSurfaceSoftClass = `rounded-[18px] border px-4 py-3 sm:px-4 sm:py-4 ${
     isDark
       ? "border-white/8 bg-white/[0.025]"
-      : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(249,248,246,0.86))]"
+      : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(246,248,251,0.88))]"
   }`;
   const editorTextareaClass = `${inputClass(isDark)} min-h-[320px] resize-y border-0 bg-transparent px-0 py-0 shadow-none focus-visible:ring-0`;
   const editorMetaBadgeClass = `inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
@@ -296,12 +296,12 @@ export function GuidanceTab({ isDark, groupId }: {
   const navigationPanelClass = `rounded-[18px] border p-3 ${
     isDark
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.86),rgba(14,15,19,0.96))]"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,246,243,0.92))]"
+      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(246,248,251,0.92))]"
   }`;
   const workspacePanelClass = `rounded-[18px] border p-3.5 sm:p-4 ${
     isDark
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.9),rgba(13,14,18,0.98))]"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(250,248,245,0.96))]"
+      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))]"
   }`;
   const navSectionTitleClass = `mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] ${
     isDark ? "text-white/36" : "text-gray-500"
@@ -309,7 +309,7 @@ export function GuidanceTab({ isDark, groupId }: {
   const overridesHintClass = `rounded-[18px] border px-4 py-3 text-[11px] leading-5 ${
     isDark
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] text-white/50"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,245,240,0.9))] text-[rgb(91,92,97)]"
+      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(245,248,252,0.9))] text-[rgb(91,92,97)]"
   }`;
 
   const renderSourceBadge = (kind: PromptKind) => {

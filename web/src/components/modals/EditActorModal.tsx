@@ -67,6 +67,7 @@ export interface EditActorModalProps {
   linkedProfileOwner?: string;
   actorProfiles: ActorProfile[];
   actorProfilesBusy: boolean;
+  onRequestActorProfiles?: () => Promise<void> | void;
   onSaveAsProfile: () => Promise<SaveActorProfileResult | void>;
   onAvatarChanged?: () => Promise<void>;
   inlineNotice?: string;
@@ -147,6 +148,7 @@ export function EditActorModal({
   linkedProfileOwner,
   actorProfiles,
   actorProfilesBusy,
+  onRequestActorProfiles,
   onSaveAsProfile,
   onAvatarChanged,
   inlineNotice,
@@ -167,6 +169,8 @@ export function EditActorModal({
   const [localNotice, setLocalNotice] = useState("");
   const [secretSource, setSecretSource] = useState<SecretSource>("none");
   const [avatarBusy, setAvatarBusy] = useState<"" | "upload" | "clear">("");
+  const [secretsPrimed, setSecretsPrimed] = useState(false);
+  const [capabilitiesPrimed, setCapabilitiesPrimed] = useState(false);
   const secretFetchSeqRef = useRef(0);
   const modalStateRef = useRef<{
     groupId: string;
@@ -328,7 +332,6 @@ export function EditActorModal({
     setSecretsClearAll(false);
     setSecretKeys([]);
     setSecretSource("none");
-    if (!hasLinked) void refreshSecretKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId, actorId, isOpen, linkedProfileId, linkedProfileOwner, linkedProfileScope]);
 
@@ -341,9 +344,15 @@ export function EditActorModal({
       setSecretSource("none");
       return;
     }
-    if (!effectiveLinked) void refreshSecretKeys();
+    if (!effectiveLinked && secretsPrimed) void refreshSecretKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, effectiveLinked]);
+  }, [editMode, effectiveLinked, secretsPrimed]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSecretsPrimed(false);
+    setCapabilitiesPrimed(false);
+  }, [isOpen, groupId, actorId]);
 
   if (!isOpen) return null;
 
@@ -623,6 +632,9 @@ export function EditActorModal({
                       setEditMode("profile");
                       setPendingConvertToCustom(false);
                       setLocalNotice("");
+                      if (!actorProfilesBusy && actorProfiles.length <= 0) {
+                        void onRequestActorProfiles?.();
+                      }
                     }}
                   >
                     {t("fromActorProfile")}
@@ -802,7 +814,15 @@ export function EditActorModal({
                 ) : null}
 
                 {editMode === "custom" ? (
-                  <details className={nestedCardClass}>
+                  <details
+                    className={nestedCardClass}
+                    onToggle={(event) => {
+                      const open = (event.currentTarget as HTMLDetailsElement).open;
+                      if (!open || secretsPrimed) return;
+                      setSecretsPrimed(true);
+                      void refreshSecretKeys();
+                    }}
+                  >
                     <summary className={collapsibleSummaryClass}>
                       <div>
                         <div className={collapsibleLabelClass}>{t("secretsSection", "Secrets & Environment")}</div>
@@ -880,7 +900,14 @@ export function EditActorModal({
                   </details>
                 ) : null}
 
-                <details className={nestedCardClass}>
+                <details
+                  className={nestedCardClass}
+                  onToggle={(event) => {
+                    const open = (event.currentTarget as HTMLDetailsElement).open;
+                    if (!open || capabilitiesPrimed) return;
+                    setCapabilitiesPrimed(true);
+                  }}
+                >
                   <summary className={collapsibleSummaryClass}>
                     <div>
                       <div className={collapsibleLabelClass}>{t("capabilitiesSection", "Capabilities")}</div>
@@ -894,6 +921,7 @@ export function EditActorModal({
                       value={parseCapabilityIdInput(capabilityAutoloadText)}
                       onChange={(next) => onChangeCapabilityAutoloadText(formatCapabilityIdInput(next))}
                       disabled={busy === "actor-update"}
+                      active={capabilitiesPrimed}
                       label={t("autoloadCapabilities")}
                       hint={t("autoloadCapabilitiesHint")}
                     />

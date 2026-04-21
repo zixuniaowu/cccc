@@ -78,7 +78,7 @@ function createIcon(Icon: LucideIcon, defaultStrokeWidth = 1.5) {
   return WrappedIcon;
 }
 
-function createFilledControlIcon(Icon: LucideIcon, defaultStrokeWidth = 1.5, fillOpacity = 0.15) {
+function createControlIcon(Icon: LucideIcon, defaultStrokeWidth = 1.75) {
   function WrappedIcon({
     size = 18,
     strokeWidth = defaultStrokeWidth,
@@ -90,14 +90,13 @@ function createFilledControlIcon(Icon: LucideIcon, defaultStrokeWidth = 1.5, fil
         size={size}
         strokeWidth={strokeWidth}
         absoluteStrokeWidth={absoluteStrokeWidth}
-        fill="currentColor"
-        fillOpacity={fillOpacity}
+        fill="none"
         {...props}
       />
     );
   }
 
-  WrappedIcon.displayName = `Filled${Icon.displayName || "Icon"}`;
+  WrappedIcon.displayName = `Control${Icon.displayName || "Icon"}`;
   return WrappedIcon;
 }
 
@@ -105,9 +104,9 @@ export const ClipboardIcon = createIcon(Clipboard);
 export const CheckIcon = createIcon(Check, 2);
 export const CopyIcon = createIcon(Copy);
 export const RocketIcon = createIcon(Rocket);
-export const PlayIcon = createFilledControlIcon(Play);
-export const PauseIcon = createFilledControlIcon(Pause);
-export const StopIcon = createFilledControlIcon(Square);
+export const PlayIcon = createControlIcon(Play);
+export const PauseIcon = createControlIcon(Pause);
+export const StopIcon = createControlIcon(Square);
 export const ClockIcon = createIcon(Clock3);
 export const SettingsIcon = createIcon(Settings2);
 export const EditIcon = createIcon(Pencil);

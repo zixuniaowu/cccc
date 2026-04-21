@@ -228,14 +228,14 @@ export function AppHeader({
           </div>
 
           {selectedGroupId && !webReadOnly && onOpenGroupEdit && (
-          <button
-            className={headerMinorActionClass}
-            onClick={onOpenGroupEdit}
-            title={t('editGroup')}
-            aria-label={t('editGroup')}
-          >
-            <EditIcon size={14} />
-          </button>
+            <button
+              className={headerMinorActionClass}
+              onClick={onOpenGroupEdit}
+              title={t('editGroup')}
+              aria-label={t('editGroup')}
+            >
+              <EditIcon size={14} />
+            </button>
           )}
         </div>
       </div>

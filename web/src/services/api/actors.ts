@@ -275,9 +275,8 @@ export async function deleteProfile(profileId: string, opts?: ProfileDeleteOptio
 }
 
 export async function listActorProfiles(): Promise<ApiResponse<{ profiles: ActorProfile[] }>> {
-  const globalRes = await listProfiles("global");
+  const [globalRes, myRes] = await Promise.all([listProfiles("global"), listProfiles("my")]);
   if (!globalRes.ok) return globalRes;
-  const myRes = await listProfiles("my");
   if (!myRes.ok) return myRes;
   const seen = new Set<string>();
   const profiles: ActorProfile[] = [];

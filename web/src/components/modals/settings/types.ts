@@ -15,7 +15,7 @@ export type GlobalTabId = "capabilities" | "actorProfiles" | "myProfiles" | "bra
 
 // Shared style class helpers — glass design system
 export const inputClass = (_isDark?: boolean) =>
-  `glass-input w-full rounded-xl px-4 py-3 pr-5 text-[var(--color-text-primary)] text-sm leading-6 min-h-[44px] placeholder:text-[var(--color-text-muted)]`;
+  `glass-input w-full rounded-xl px-4 py-3 pr-5 text-[var(--color-text-primary)] text-sm leading-6 min-h-[44px] placeholder:text-[var(--color-text-muted)] focus-visible:outline-none focus-visible:border-[rgba(15,23,42,0.12)] focus-visible:shadow-[0_0_0_3px_rgba(148,163,184,0.16)] dark:focus-visible:border-white/12 dark:focus-visible:shadow-[0_0_0_3px_rgba(255,255,255,0.08)]`;
 
 export const labelClass = (_isDark?: boolean) =>
   `block text-xs mb-1 text-[var(--color-text-secondary)]`;
@@ -56,7 +56,7 @@ export const settingsWorkspaceShellClass = (_isDark?: boolean) =>
   `overflow-hidden rounded-[22px] border backdrop-blur-xl ${
     _isDark
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(19,20,24,0.88),rgba(10,11,14,0.96))] shadow-[0_28px_100px_rgba(0,0,0,0.36)]"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(250,249,247,0.96))] shadow-[0_28px_100px_rgba(15,23,42,0.06)]"
+      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))] shadow-[0_28px_100px_rgba(15,23,42,0.06)]"
   }`;
 
 export const settingsWorkspaceHeaderClass = (_isDark?: boolean) =>
@@ -71,14 +71,14 @@ export const settingsWorkspacePanelClass = (_isDark?: boolean) =>
   `rounded-[18px] border p-3.5 sm:p-4 ${
     _isDark
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.9),rgba(13,14,18,0.98))]"
-      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(250,248,245,0.96))]"
+      : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))]"
   }`;
 
 export const settingsWorkspaceSoftPanelClass = (_isDark?: boolean) =>
   `rounded-[18px] border px-4 py-3 sm:px-4 sm:py-4 ${
     _isDark
       ? "border-white/8 bg-white/[0.03]"
-      : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(249,248,246,0.86))]"
+      : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(246,248,251,0.88))]"
   }`;
 
 export const settingsWorkspaceActionBarClass = (_isDark?: boolean) =>

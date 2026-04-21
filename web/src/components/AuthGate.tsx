@@ -145,7 +145,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <Button
           type="submit"
           disabled={submitting || !token.trim()}
-          className="w-full mt-4 text-[var(--color-accent-primary)]"
+          className="mt-4 w-full disabled:opacity-70"
         >
           {submitting ? t('verifying') : t('signIn')}
         </Button>

@@ -10,6 +10,7 @@ interface CapabilityPickerProps {
   isDark: boolean;
   value: string[];
   onChange: (next: string[]) => void;
+  active?: boolean;
   disabled?: boolean;
   label?: string;
   hint?: string;
@@ -27,6 +28,7 @@ export function CapabilityPicker({
   isDark: _isDark,
   value,
   onChange,
+  active = true,
   disabled = false,
   label = "",
   hint = "",
@@ -50,6 +52,10 @@ export function CapabilityPicker({
   }, [query]);
 
   useEffect(() => {
+    if (!active) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     const run = async () => {
       setLoading(true);
@@ -79,7 +85,7 @@ export function CapabilityPicker({
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery]);
+  }, [active, debouncedQuery]);
 
   const candidateRows = useMemo(() => {
     const q = String(query || "").trim().toLowerCase();
@@ -166,7 +172,9 @@ export function CapabilityPicker({
         radius="md"
         className="mt-2 max-h-56 overflow-auto border-[var(--glass-border-subtle)]"
       >
-        {loading ? (
+        {!active ? (
+          <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">{t("capabilities.openToLoad", { defaultValue: "Open this section to load capabilities." })}</div>
+        ) : loading ? (
           <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">{t("capabilities.loading")}</div>
         ) : error ? (
           <div className="px-3 py-3 text-xs text-rose-700 dark:text-rose-300">{error}</div>

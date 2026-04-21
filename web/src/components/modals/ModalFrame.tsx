@@ -55,7 +55,7 @@ export function ModalFrame({
             className={`flex flex-shrink-0 items-start justify-between gap-4 border-b px-5 py-4 safe-area-inset-top sm:px-6 sm:py-5 border-[var(--glass-border-subtle)] ${
               isDark
                 ? "bg-[linear-gradient(180deg,rgba(24,26,31,0.96),rgba(16,18,22,0.9))]"
-                : "bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(248,246,242,0.94))]"
+                : "bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))]"
             }`}
           >
             <div id={titleId} className="min-w-0 flex-1 pr-3">
