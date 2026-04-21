@@ -110,9 +110,13 @@ cd /path/to/your/repo
 cccc attach .                              # bind this directory as a scope
 cccc setup --runtime claude                # configure MCP for your runtime
 cccc actor add foreman --runtime claude    # first actor becomes foreman
-cccc actor add reviewer --runtime codex    # add a peer
+cccc actor add implementer --runtime codex # add a peer
 cccc group start                           # start all actors
-cccc send "Split the task and begin." --to @all
+cccc send "Please inspect the repo and propose the first safe task." --to foreman
+cccc tracked-send "Please take the first concrete task and reply with validation evidence." \
+  --to implementer \
+  --title "First concrete task" \
+  --outcome "The change and validation evidence are reported"
 ```
 
 You now have two agents collaborating in a persistent group with full message history, delivery tracking, and a web dashboard. The daemon owns delivery and coordination, and runtime state stays in `CCCC_HOME` rather than inside your repo.
@@ -214,6 +218,8 @@ CCCC implements IM-grade messaging semantics, not just "paste text into a termin
 - **Reply-required obligations** — tracked until the recipient responds
 - **Auto-wake** — disabled agents are automatically started when they receive a message
 
+Use ordinary `send` for chat, questions, and quick requests. Use `tracked-send` when delegated work needs a durable owner, outcome, evidence, handoff, or acceptance trail. `@all` remains available for announcements or urgent shared coordination, but it should not be the default way to start concrete work.
+
 Messages are delivered to actor runtimes through the daemon-managed delivery pipeline, and the daemon tracks delivery state for every message.
 
 ## Automation & Policies
@@ -288,7 +294,7 @@ cccc im start
 
 > DingTalk and WeCom support streaming replies (AI Card and aibot streaming respectively); other platforms deliver final messages.
 
-From any supported platform, use `/send @all <message>` to talk to your agents, `/status` to check group health, and `/pause` / `/resume` to control operations — all from your phone.
+From any supported platform, use plain text or `/send @foreman <message>` for normal coordination, reserve `/send @all <message>` for true broadcasts, use `/status` to check group health, and use `/pause` / `/resume` to control operations — all from your phone.
 
 ## CLI Reference
 
@@ -308,7 +314,9 @@ cccc actor add <id> --runtime <runtime>
 cccc actor start|stop|restart <id>
 
 # Messaging
-cccc send "message" --to @all
+cccc send "message" --to foreman
+cccc tracked-send "delegated work" --to implementer --title "Task title" --outcome "Done criterion"
+cccc send "announcement" --to @all  # explicit broadcast
 cccc reply <event_id> "response"
 cccc tail -n 50 -f             # follow the ledger
 

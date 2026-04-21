@@ -572,26 +572,6 @@ def render_single_message(msg: PendingMessage) -> str:
     )
 
 
-def _voice_secretary_inline_batch_text(group: Optional[Group], *, notify: SystemNotifyData) -> str:
-    if group is None:
-        return ""
-    if str(notify.target_actor_id or "").strip() != "voice-secretary":
-        return ""
-    context = notify.context if isinstance(notify.context, dict) else {}
-    if str(context.get("kind") or "").strip() != "voice_secretary_input":
-        return ""
-    try:
-        from ..assistants.assistant_ops import _peek_voice_input_batch
-
-        preview = _peek_voice_input_batch(group)
-    except Exception:
-        return ""
-    input_text = str((preview or {}).get("input_text") or "").strip()
-    if not input_text or input_text == "No new Secretary input.":
-        return ""
-    return input_text
-
-
 def _render_system_notify_message_for_delivery(*, notify: SystemNotifyData, group: Optional[Group] = None) -> str:
     message = str(notify.message or "").strip()
     context = notify.context if isinstance(notify.context, dict) else {}
@@ -615,18 +595,14 @@ def _render_system_notify_message_for_delivery(*, notify: SystemNotifyData, grou
         blocks.append("Action: handle the request from your inbox; acknowledge or reply according to the requested work.")
         return "\n\n".join(blocks).strip()
     if context_kind == "voice_secretary_input":
-        inline_batch = _voice_secretary_inline_batch_text(group, notify=notify)
         blocks = [
             "Secretary input is ready.",
             "Your first action in this turn must be cccc_voice_secretary_document(action=\"read_new_input\").",
-            "Daemon has already attached the current unread Secretary batch below only as a preview; do not treat the preview as a substitute for read_new_input.",
-            "If read_new_input returns empty or inconsistent data, compare it against the attached preview before deciding the batch is invalid.",
+            "This notification is only a pointer; the input text is available only through read_new_input.",
             "Do not bootstrap, list resources, or research how to respond before processing the batch.",
             "If the batch target is composer, submit the refined prompt through cccc_voice_secretary_composer in the same turn.",
             "Do not finish this turn with only a plan, summary, or acknowledgement.",
         ]
-        if inline_batch:
-            blocks.extend(["", "Attached batch:", inline_batch])
         return "\n".join(blocks).strip()
     return message
 

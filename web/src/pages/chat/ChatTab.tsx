@@ -166,6 +166,7 @@ export function ChatTab({
 
     // Agent state
     agentStates,
+    taskById,
 
     // Actions
     sendMessage,
@@ -687,6 +688,7 @@ export function ChatTab({
                   messages={chatMessages}
                   actors={actors}
                   agentStates={agentStates}
+                  taskById={taskById}
                   isDark={isDark}
                   readOnly={readOnly}
                   groupId={selectedGroupId}

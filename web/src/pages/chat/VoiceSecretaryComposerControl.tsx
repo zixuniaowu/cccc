@@ -105,6 +105,36 @@ type VoiceCaptureChannelMessage = {
   sentAt?: number;
 };
 
+type VoiceTranscriptPreviewPhase = "interim" | "final";
+
+type VoiceTranscriptPreview = {
+  id: string;
+  phase: VoiceTranscriptPreviewPhase;
+  text: string;
+  mode: VoiceSecretaryCaptureMode;
+  documentTitle?: string;
+  documentPath?: string;
+  language?: string;
+  updatedAt: number;
+};
+
+type VoiceDocumentActivityStatus = "queued" | "updated";
+
+type VoiceDocumentActivityItem = {
+  id: string;
+  status: VoiceDocumentActivityStatus;
+  documentTitle?: string;
+  documentPath?: string;
+  preview?: string;
+  mode: VoiceSecretaryCaptureMode;
+  createdAt: number;
+};
+
+type VoiceActivityFeedItem =
+  | { kind: "ask"; id: string; sortAt: number; item: AssistantVoiceAskFeedback }
+  | { kind: "document"; id: string; sortAt: number; item: VoiceDocumentActivityItem }
+  | { kind: "prompt"; id: string; sortAt: number; status: "waiting" | "ready"; text: string };
+
 type BrowserMicrophoneSupportIssue = "" | "secure_context" | "get_user_media";
 type BrowserAudioSupportIssue = BrowserMicrophoneSupportIssue | "media_recorder";
 type BrowserSpeechSupportIssue = "" | "unsupported";
@@ -125,6 +155,9 @@ const BROWSER_SPEECH_MAX_TRANSIENT_ERRORS = 8;
 const BROWSER_SPEECH_RECOVERABLE_ERRORS = new Set(["no-speech", "aborted", "network", "audio-capture"]);
 const BROWSER_SPEECH_FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed"]);
 const VOICE_ASK_ACTIVE_TIMEOUT_MS = 90_000;
+const VOICE_LIVE_TRANSCRIPT_VISIBLE_MS = 15_000;
+const VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS = 15_000;
+const VOICE_ACTIVITY_FEED_LIMIT = 10;
 const TWO_LINE_STATUS_STYLE = {
   display: "-webkit-box",
   WebkitLineClamp: 2,
@@ -531,6 +564,7 @@ export function VoiceSecretaryComposerControl({
   const documentTitleDraftRef = useRef("");
   const documentDraftRef = useRef("");
   const archivedDocumentIdsRef = useRef<Set<string>>(new Set());
+  const documentUpdatedSignatureByPathRef = useRef<Map<string, string>>(new Map());
   const [open, setOpen] = useState(false);
   const [showAssistantModeMenu, setShowAssistantModeMenu] = useState(false);
   const [showAssistantLanguageMenu, setShowAssistantLanguageMenu] = useState(false);
@@ -560,6 +594,9 @@ export function VoiceSecretaryComposerControl({
   const [pendingPromptDraft, setPendingPromptDraft] = useState<AssistantVoicePromptDraft | null>(null);
   const [askFeedbackItems, setAskFeedbackItems] = useState<AssistantVoiceAskFeedback[]>([]);
   const [askFeedbackClockMs, setAskFeedbackClockMs] = useState(() => Date.now());
+  const [liveTranscriptPreview, setLiveTranscriptPreview] = useState<VoiceTranscriptPreview | null>(null);
+  const [documentActivityItems, setDocumentActivityItems] = useState<VoiceDocumentActivityItem[]>([]);
+  const [activityClockMs, setActivityClockMs] = useState(() => Date.now());
   const [voiceReplyBubbleRequestId, setVoiceReplyBubbleRequestId] = useState("");
   const [copiedVoiceReplyRequestId, setCopiedVoiceReplyRequestId] = useState("");
   const latestVoiceLedgerSignal = useGroupStore((state) => {
@@ -791,6 +828,17 @@ export function VoiceSecretaryComposerControl({
     const device = index >= 0 ? audioDevices[index] : null;
     return device?.label || `microphone_${index + 1 || "selected"}`;
   }, [audioDevices, selectedAudioDeviceId]);
+  const captureTargetDocument = useMemo(() => {
+    const targetId = String(captureTargetDocumentId || "").trim();
+    if (targetId) {
+      const match = documents.find((document) => voiceDocumentKey(document) === targetId || document.document_id === targetId);
+      if (match) return match;
+    }
+    return activeDocument;
+  }, [activeDocument, captureTargetDocumentId, documents]);
+  const captureTargetDocumentTitle =
+    String(captureTargetDocument?.title || "").trim() || documentDisplayTitle;
+  const captureTargetDocumentPath = voiceDocumentKey(captureTargetDocument) || String(captureTargetDocumentId || "").trim();
 
   useEffect(() => {
     activeDocumentIdRef.current = activeDocumentId;
@@ -825,6 +873,46 @@ export function VoiceSecretaryComposerControl({
     documentDraftRef.current = value;
     setDocumentDraft(value);
   }, []);
+
+  const pushDocumentActivity = useCallback((
+    item: Omit<VoiceDocumentActivityItem, "id" | "createdAt" | "mode"> & {
+      createdAt?: number;
+      mode?: VoiceSecretaryCaptureMode;
+    },
+  ) => {
+    const createdAt = item.createdAt || Date.now();
+    const id = `doc-activity-${createdAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    setDocumentActivityItems((prev) => [
+      {
+        id,
+        status: item.status,
+        documentTitle: item.documentTitle,
+        documentPath: item.documentPath,
+        preview: item.preview,
+        mode: item.mode || "document",
+        createdAt,
+      },
+      ...prev,
+    ].slice(0, 20));
+    setActivityClockMs(createdAt);
+  }, []);
+
+  const updateLiveTranscriptPreview = useCallback((text: string, phase: VoiceTranscriptPreviewPhase) => {
+    const clean = normalizeBrowserTranscriptChunk(text);
+    if (!clean) return;
+    const now = Date.now();
+    setLiveTranscriptPreview({
+      id: "live",
+      phase,
+      text: clean,
+      mode: captureMode,
+      documentTitle: captureTargetDocumentTitle,
+      documentPath: captureTargetDocumentPath,
+      language: effectiveRecognitionLanguage,
+      updatedAt: now,
+    });
+    setActivityClockMs(now);
+  }, [captureMode, captureTargetDocumentPath, captureTargetDocumentTitle, effectiveRecognitionLanguage]);
 
   const loadAudioDevices = useCallback(async () => {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
@@ -881,6 +969,29 @@ export function VoiceSecretaryComposerControl({
           resp.result.active_document_path ||
           "",
       ).trim();
+      const previousDocumentSignatures = documentUpdatedSignatureByPathRef.current;
+      const nextDocumentSignatures = new Map<string, string>();
+      nextDocuments.forEach((document) => {
+        const docKey = voiceDocumentKey(document);
+        if (!docKey) return;
+        const signature = [
+          String(document.updated_at || ""),
+          String(document.content_sha256 || ""),
+          String(document.revision_count || ""),
+          String(document.content_chars || ""),
+        ].join(":");
+        if (!signature.replace(/:/g, "")) return;
+        const previousSignature = previousDocumentSignatures.get(docKey);
+        if (previousSignature && previousSignature !== signature) {
+          pushDocumentActivity({
+            status: "updated",
+            documentTitle: String(document.title || "").trim(),
+            documentPath: docKey,
+          });
+        }
+        nextDocumentSignatures.set(docKey, signature);
+      });
+      documentUpdatedSignatureByPathRef.current = nextDocumentSignatures;
       setDocuments(nextDocuments);
       const currentCaptureTargetId = String(captureTargetDocumentIdRef.current || "").trim();
       const currentCaptureTargetExists = currentCaptureTargetId
@@ -918,7 +1029,7 @@ export function VoiceSecretaryComposerControl({
     } finally {
       if (seq === refreshSeq.current && !quiet) setLoading(false);
     }
-  }, [loadDocumentDraft, selectedGroupId, showError]);
+  }, [loadDocumentDraft, pushDocumentActivity, selectedGroupId, showError]);
 
   useEffect(() => {
     if (!open) return;
@@ -944,6 +1055,22 @@ export function VoiceSecretaryComposerControl({
       window.clearInterval(timer);
     };
   }, [askFeedbackItems]);
+
+  useEffect(() => {
+    const hasActiveAsk = askFeedbackItems.some((item) => isActiveAskFeedbackStatus(item.status));
+    const hasVisibleTranscript = liveTranscriptPreview
+      ? recording || Date.now() - liveTranscriptPreview.updatedAt < VOICE_LIVE_TRANSCRIPT_VISIBLE_MS
+      : false;
+    const hasVisibleDocumentActivity = documentActivityItems.some((item) => Date.now() - item.createdAt < VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS);
+    if (!hasActiveAsk && !hasVisibleTranscript && !hasVisibleDocumentActivity && !pendingPromptRequestId) return undefined;
+    if (typeof window === "undefined") return undefined;
+    const timer = window.setInterval(() => {
+      setActivityClockMs(Date.now());
+    }, 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [askFeedbackItems, documentActivityItems, liveTranscriptPreview, pendingPromptRequestId, recording]);
 
   useEffect(() => {
     if (!pendingPromptRequestId || pendingPromptDraft) return undefined;
@@ -1053,6 +1180,10 @@ export function VoiceSecretaryComposerControl({
     setPendingAskRequestId("");
     setPendingPromptDraft(null);
     setAskFeedbackItems([]);
+    setLiveTranscriptPreview(null);
+    setDocumentActivityItems([]);
+    setActivityClockMs(Date.now());
+    documentUpdatedSignatureByPathRef.current = new Map();
     setVoiceReplyBubbleRequestId("");
     setCopiedVoiceReplyRequestId("");
     releaseVoiceCaptureLock(voiceCaptureOwnerIdRef.current);
@@ -1193,6 +1324,18 @@ export function VoiceSecretaryComposerControl({
         return;
       }
       applyTranscriptAppendResult(resp.result);
+      const resultDocument = resp.result.document;
+      const resultDocumentPath = voiceDocumentKey(resultDocument) || targetDocumentPath;
+      const resultDocumentTitle = String(resultDocument?.title || captureTargetDocumentTitle || "").trim();
+      if (cleanText) {
+        pushDocumentActivity({
+          status: "queued",
+          documentTitle: resultDocumentTitle,
+          documentPath: resultDocumentPath,
+          preview: cleanText,
+        });
+        setLiveTranscriptPreview(null);
+      }
     } catch {
       showError(t("voiceSecretaryTranscriptAppendFailed", {
         defaultValue: "Failed to save Voice Secretary transcript segment.",
@@ -1201,7 +1344,9 @@ export function VoiceSecretaryComposerControl({
   }, [
     applyTranscriptAppendResult,
     assistantEnabled,
+    captureTargetDocumentTitle,
     effectiveRecognitionLanguage,
+    pushDocumentActivity,
     recognitionBackend,
     selectedAudioDeviceLabel,
     selectedGroupId,
@@ -1254,6 +1399,7 @@ export function VoiceSecretaryComposerControl({
         },
         ...prev.filter((item) => item.request_id !== nextRequestId),
       ].slice(0, 10));
+      setLiveTranscriptPreview(null);
       applyDocumentMutationResult(resp.result.document, resp.result.assistant);
       showNotice({
         message: t("voiceSecretaryDocumentInstructionQueued", { defaultValue: "Request sent to Voice Secretary." }),
@@ -1314,6 +1460,7 @@ export function VoiceSecretaryComposerControl({
       }
       setPendingPromptDraft(null);
       if (resp.result.assistant) setAssistant(resp.result.assistant);
+      setLiveTranscriptPreview(null);
       showNotice({
         message: t("voiceSecretaryPromptRefineQueued", {
           defaultValue: "Voice Secretary is refining the prompt.",
@@ -1675,7 +1822,11 @@ export function VoiceSecretaryComposerControl({
             browserSpeechTransientErrorCountRef.current = 0;
             clearTranscriptFlushTimer();
           }
+          if (cleanInterimText) {
+            updateLiveTranscriptPreview(cleanInterimText, "interim");
+          }
           if (hasFinalText) {
+            updateLiveTranscriptPreview(finalText, "final");
             queueBrowserFinalTranscript(finalText);
           }
           if (hasFinalText || cleanInterimText) {
@@ -1819,6 +1970,7 @@ export function VoiceSecretaryComposerControl({
     selectedGroupId,
     showError,
     t,
+    updateLiveTranscriptPreview,
   ]);
 
   const transcribeServiceAudio = useCallback(async (chunks: Blob[], mimeType: string, gid: string) => {
@@ -1853,6 +2005,7 @@ export function VoiceSecretaryComposerControl({
       }
       const text = String(resp.result.transcript || "").trim();
       if (text) {
+        updateLiveTranscriptPreview(text, "final");
         if (captureMode === "prompt") {
           await requestPromptRefine(text, "service_prompt_refine");
         } else if (captureMode === "instruction") {
@@ -1887,6 +2040,7 @@ export function VoiceSecretaryComposerControl({
     sendInstructionTranscript,
     showError,
     t,
+    updateLiveTranscriptPreview,
   ]);
 
   const startServiceAudio = useCallback(async () => {
@@ -2050,17 +2204,25 @@ export function VoiceSecretaryComposerControl({
 
   const clearAskFeedbackHistory = useCallback(async () => {
     const gid = String(selectedGroupId || "").trim();
-    if (!gid || !askFeedbackItems.length) return;
+    if (!gid) {
+      setDocumentActivityItems([]);
+      return;
+    }
+    if (!askFeedbackItems.length && !documentActivityItems.length) return;
     const previousItems = askFeedbackItems;
+    const previousDocumentActivityItems = documentActivityItems;
     setAskFeedbackItems([]);
+    setDocumentActivityItems([]);
     if (voiceReplyBubbleRequestId) {
       setVoiceReplyBubbleRequestId("");
     }
+    if (!askFeedbackItems.length) return;
     setActionBusy("clear_ask");
     try {
       const resp = await clearVoiceAssistantAskRequests(gid, { keepActive: false, by: "user" });
       if (!resp.ok) {
         setAskFeedbackItems(previousItems);
+        setDocumentActivityItems(previousDocumentActivityItems);
         showError(resp.error.message);
         return;
       }
@@ -2077,12 +2239,14 @@ export function VoiceSecretaryComposerControl({
       }
     } catch {
       setAskFeedbackItems(previousItems);
+      setDocumentActivityItems(previousDocumentActivityItems);
       showError(t("voiceSecretaryClearRequestsFailed", { defaultValue: "Failed to clear Voice Secretary requests." }));
     } finally {
       setActionBusy("");
     }
   }, [
     askFeedbackItems,
+    documentActivityItems,
     selectedGroupId,
     showError,
     t,
@@ -2404,7 +2568,7 @@ export function VoiceSecretaryComposerControl({
     : captureMode === "instruction"
       ? t("voiceSecretaryInstructionModeStartHint", { defaultValue: "Record a request for Voice Secretary" })
       : t("voiceSecretaryStartDictation", { defaultValue: "Start recording" });
-  const assistantRowModeOptions: Array<{ key: VoiceSecretaryCaptureMode; label: string; description: string }> = [
+  const assistantRowModeOptions: Array<{ key: VoiceSecretaryCaptureMode; label: string; description: string }> = useMemo(() => [
     {
       key: "document",
       label: t("voiceSecretaryModeDocument", { defaultValue: "Doc" }),
@@ -2420,7 +2584,7 @@ export function VoiceSecretaryComposerControl({
       label: t("voiceSecretaryModePrompt", { defaultValue: "Prompt" }),
       description: t("voiceSecretaryModePromptDesc", { defaultValue: "Fill the composer" }),
     },
-  ];
+  ], [t]);
   const statusLabel = recording
     ? t("voiceSecretaryRecording", { defaultValue: "Recording" })
     : assistantEnabled
@@ -2463,10 +2627,35 @@ export function VoiceSecretaryComposerControl({
     if (key === "handed_off") return isDark ? "bg-sky-400/14 text-sky-100" : "bg-sky-50 text-sky-800";
     return isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]";
   }, [isDark]);
+  const voiceModeLabel = useCallback((mode: VoiceSecretaryCaptureMode) => {
+    return assistantRowModeOptions.find((option) => option.key === mode)?.label || mode;
+  }, [assistantRowModeOptions]);
+  const documentActivityStatusLabel = useCallback((status: VoiceDocumentActivityStatus) => {
+    if (status === "updated") return t("voiceSecretaryDocumentActivityUpdated", { defaultValue: "Updated" });
+    return t("voiceSecretaryDocumentActivityQueued", { defaultValue: "Queued" });
+  }, [t]);
+  const currentLiveTranscript = liveTranscriptPreview
+    && (recording || activityClockMs - liveTranscriptPreview.updatedAt <= VOICE_LIVE_TRANSCRIPT_VISIBLE_MS)
+    ? liveTranscriptPreview
+    : null;
+  const liveTranscriptPhaseLabel = currentLiveTranscript?.phase === "interim"
+    ? t("voiceSecretaryTranscriptLive", { defaultValue: "Live" })
+    : t("voiceSecretaryTranscriptHeard", { defaultValue: "Heard" });
+  const liveTranscriptSummaryText = currentLiveTranscript
+    ? `${voiceModeLabel(currentLiveTranscript.mode)} · ${currentLiveTranscript.text}`
+    : "";
+  const recentDocumentActivity = documentActivityItems.find(
+    (item) => activityClockMs - item.createdAt <= VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS,
+  ) || null;
+  const documentActivitySummaryText = recentDocumentActivity
+    ? `${documentActivityStatusLabel(recentDocumentActivity.status)} · ${
+      recentDocumentActivity.documentTitle || recentDocumentActivity.documentPath || voiceModeLabel(recentDocumentActivity.mode)
+    }`
+    : "";
   const pendingAskFeedback = pendingAskRequestId
     ? askFeedbackItems.find((item) => item.request_id === pendingAskRequestId) || null
     : askFeedbackItems.find((item) => isActiveAskFeedbackStatus(item.status)) || null;
-  const canClearAskFeedbackHistory = askFeedbackItems.length > 0;
+  const canClearAskFeedbackHistory = askFeedbackItems.length > 0 || documentActivityItems.length > 0;
   const pendingAskFeedbackStatus = pendingAskFeedback
     ? displayAskFeedbackStatus(pendingAskFeedback, askFeedbackClockMs)
     : "";
@@ -2488,6 +2677,59 @@ export function VoiceSecretaryComposerControl({
           : pendingAskFeedbackStatusText
         : ""
     : "";
+  const showLiveTranscriptSummary = Boolean(
+    !pendingPromptDraft
+      && !promptDraftWaiting
+      && !(pendingAskFeedback && pendingAskFeedbackSummaryText)
+      && liveTranscriptSummaryText,
+  );
+  const showDocumentActivitySummary = Boolean(
+    !pendingPromptDraft
+      && !promptDraftWaiting
+      && !(pendingAskFeedback && pendingAskFeedbackSummaryText)
+      && !showLiveTranscriptSummary
+      && documentActivitySummaryText,
+  );
+  const activityFeedItems = useMemo<VoiceActivityFeedItem[]>(() => {
+    const items: VoiceActivityFeedItem[] = [];
+    if (pendingPromptRequestId || pendingPromptDraft) {
+      items.push({
+        kind: "prompt",
+        id: `prompt-${pendingPromptDraft?.request_id || pendingPromptRequestId}`,
+        sortAt: assistantVoiceTimestampMs(pendingPromptDraft?.updated_at) || activityClockMs,
+        status: pendingPromptDraft ? "ready" : "waiting",
+        text: pendingPromptDraft?.draft_preview || pendingPromptDraft?.draft_text || promptDraftWaitingTitle,
+      });
+    }
+    askFeedbackItems.forEach((item) => {
+      const timestamp = assistantVoiceTimestampMs(item.updated_at) || assistantVoiceTimestampMs(item.created_at) || activityClockMs;
+      items.push({
+        kind: "ask",
+        id: `ask-${item.request_id}`,
+        sortAt: timestamp,
+        item,
+      });
+    });
+    documentActivityItems.forEach((item) => {
+      items.push({
+        kind: "document",
+        id: item.id,
+        sortAt: item.createdAt,
+        item,
+      });
+    });
+    return items
+      .sort((left, right) => right.sortAt - left.sortAt)
+      .slice(0, VOICE_ACTIVITY_FEED_LIMIT);
+  }, [
+    activityClockMs,
+    askFeedbackItems,
+    documentActivityItems,
+    pendingPromptDraft,
+    pendingPromptRequestId,
+    promptDraftWaitingTitle,
+  ]);
+  const activityFeedCount = activityFeedItems.length + (currentLiveTranscript ? 1 : 0);
   const latestVoiceReplyFeedback = useMemo(
     () => askFeedbackItems.find((item) => String(item.reply_text || "").trim()) || null,
     [askFeedbackItems],
@@ -2541,6 +2783,14 @@ export function VoiceSecretaryComposerControl({
     : speechError.trim();
   const startAfterEnableRef = useRef(false);
   const assistantRowCurrentMode = assistantRowModeOptions.find((option) => option.key === captureMode) || assistantRowModeOptions[0];
+  const modeChangeDisabledReason = recording
+    ? t("voiceSecretaryModeChangeDisabledRecording", { defaultValue: "Stop recording before changing mode." })
+    : "";
+  const workspaceModeHint = captureMode === "prompt"
+    ? t("voiceSecretaryWorkspaceHintPrompt", { defaultValue: "Speech is refined into the message composer." })
+    : captureMode === "instruction"
+      ? t("voiceSecretaryWorkspaceHintInstruction", { defaultValue: "Speech is sent as a request to Voice Secretary." })
+      : t("voiceSecretaryWorkspaceHintDocument", { defaultValue: "Speech is written into the default document." });
   const assistantRowControlLabel = recording
     ? t("voiceSecretaryStopDictation", { defaultValue: "Stop recording" })
     : !assistantEnabled
@@ -2552,12 +2802,15 @@ export function VoiceSecretaryComposerControl({
     void startDictation();
   }, [assistantEnabled, startDictation]);
   const handleAssistantRowModeChange = useCallback((nextMode: VoiceSecretaryCaptureMode) => {
+    if (recording) return;
     onCaptureModeChange?.(nextMode);
     setShowAssistantModeMenu(false);
     if (nextMode === "document") {
       setOpen(true);
+    } else if (nextMode === "prompt") {
+      setOpen(false);
     }
-  }, [onCaptureModeChange]);
+  }, [onCaptureModeChange, recording]);
   const handleAssistantRowRecordClick = useCallback(async (event?: ReactMouseEvent<HTMLButtonElement>) => {
     event?.preventDefault();
     if (recording) {
@@ -2627,9 +2880,7 @@ export function VoiceSecretaryComposerControl({
                     {t("voiceSecretaryTitle", { defaultValue: "Voice Secretary" })}
                   </div>
                   <div className={classNames("mt-1 text-xs leading-5", isDark ? "text-slate-400" : "text-gray-500")}>
-                    {t("voiceSecretaryWorkspaceHint", {
-                      defaultValue: "Capture speech, maintain working documents, and ask the secretary to refine or send them.",
-                    })}
+                    {workspaceModeHint}
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button
@@ -2686,6 +2937,42 @@ export function VoiceSecretaryComposerControl({
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
+                  {onCaptureModeChange ? (
+                    <div
+                      className={classNames(
+                        "inline-flex min-h-[38px] items-center rounded-full border p-0.5",
+                        isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
+                      )}
+                      role="group"
+                      aria-label={t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}
+                    >
+                      {assistantRowModeOptions.map((option) => {
+                        const active = option.key === captureMode;
+                        return (
+                          <button
+                            key={option.key}
+                            type="button"
+                            className={classNames(
+                              "rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+                              active
+                                ? isDark
+                                  ? "bg-white text-slate-950 shadow-sm"
+                                  : "bg-[rgb(35,36,37)] text-white shadow-sm"
+                                : isDark
+                                  ? "text-slate-300 hover:bg-white/10 hover:text-white"
+                                  : "text-gray-600 hover:bg-black/5 hover:text-gray-900",
+                            )}
+                            onClick={() => handleAssistantRowModeChange(option.key)}
+                            disabled={recording || controlDisabled}
+                            aria-pressed={active}
+                            title={modeChangeDisabledReason || option.description}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   {assistantEnabled ? (
                     <>
                       <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)]">
@@ -3229,15 +3516,15 @@ export function VoiceSecretaryComposerControl({
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
-                    {t("voiceSecretaryRequestsTitle", { defaultValue: "Requests" })}
+                    {t("voiceSecretaryActivityFeedTitle", { defaultValue: "Activity" })}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    {askFeedbackItems.length ? (
+                    {activityFeedCount ? (
                       <span className="text-[10px] font-semibold text-[var(--color-text-muted)]">
-                        {t("voiceSecretaryRequestsCount", { count: askFeedbackItems.length, defaultValue: "{{count}} recent" })}
+                        {t("voiceSecretaryActivityFeedCount", { count: activityFeedCount, defaultValue: "{{count}} recent" })}
                       </span>
                     ) : null}
-                    {askFeedbackItems.length ? (
+                    {canClearAskFeedbackHistory ? (
                       <button
                         type="button"
                         className={classNames(
@@ -3256,7 +3543,103 @@ export function VoiceSecretaryComposerControl({
                   </div>
                 </div>
                 <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto scrollbar-subtle pr-1 [scrollbar-gutter:stable]">
-                  {askFeedbackItems.slice(0, 10).map((item) => {
+                  {currentLiveTranscript ? (
+                    <div
+                      className={classNames(
+                        "rounded-2xl border px-2.5 py-2",
+                        isDark ? "border-cyan-300/20 bg-cyan-400/10" : "border-cyan-200 bg-cyan-50/70",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={classNames(
+                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                          isDark ? "bg-cyan-300/15 text-cyan-100" : "bg-white text-cyan-800",
+                        )}>
+                          {liveTranscriptPhaseLabel}
+                        </span>
+                        <span className="truncate text-[10px] text-[var(--color-text-muted)]">
+                          {voiceModeLabel(currentLiveTranscript.mode)}
+                        </span>
+                      </div>
+                      <div className={classNames("mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-cyan-50" : "text-cyan-950")}>
+                        {currentLiveTranscript.text}
+                      </div>
+                      {currentLiveTranscript.documentTitle || currentLiveTranscript.documentPath ? (
+                        <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
+                          {currentLiveTranscript.documentTitle || currentLiveTranscript.documentPath}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {activityFeedItems.map((feedItem) => {
+                    if (feedItem.kind === "prompt") {
+                      return (
+                        <div
+                          key={feedItem.id}
+                          className={classNames(
+                            "rounded-2xl border px-2.5 py-2",
+                            isDark ? "border-indigo-300/15 bg-indigo-400/10" : "border-indigo-100 bg-indigo-50/70",
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={classNames(
+                              "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                              feedItem.status === "ready"
+                                ? isDark ? "bg-emerald-400/14 text-emerald-100" : "bg-emerald-50 text-emerald-800"
+                                : isDark ? "bg-amber-400/14 text-amber-100" : "bg-amber-50 text-amber-800",
+                            )}>
+                              {feedItem.status === "ready" ? promptDraftReadyTitle : promptDraftWaitingTitle}
+                            </span>
+                            <span className="truncate text-[10px] text-[var(--color-text-muted)]">
+                              {voiceModeLabel("prompt")}
+                            </span>
+                          </div>
+                          {feedItem.text ? (
+                            <div className={classNames("mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-200" : "text-gray-800")}>
+                              {feedItem.text}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    }
+                    if (feedItem.kind === "document") {
+                      const item = feedItem.item;
+                      const title = String(item.documentTitle || item.documentPath || "").trim();
+                      return (
+                        <div
+                          key={feedItem.id}
+                          className={classNames(
+                            "rounded-2xl border px-2.5 py-2",
+                            isDark ? "border-white/10 bg-black/10" : "border-black/[0.08] bg-[rgb(248,248,248)]",
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={classNames(
+                              "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                              item.status === "updated"
+                                ? isDark ? "bg-emerald-400/14 text-emerald-100" : "bg-emerald-50 text-emerald-800"
+                                : isDark ? "bg-cyan-400/14 text-cyan-100" : "bg-cyan-50 text-cyan-800",
+                            )}>
+                              {documentActivityStatusLabel(item.status)}
+                            </span>
+                            <span className="truncate text-[10px] text-[var(--color-text-muted)]">
+                              {voiceModeLabel(item.mode)}
+                            </span>
+                          </div>
+                          {item.preview ? (
+                            <div className={classNames("mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-4", isDark ? "text-slate-300" : "text-gray-700")}>
+                              {item.preview}
+                            </div>
+                          ) : null}
+                          {title ? (
+                            <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
+                              {title}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    }
+                    const item = feedItem.item;
                     const displayStatus = displayAskFeedbackStatus(item, askFeedbackClockMs);
                     const requestPreview = String(item.request_preview || item.request_text || "").trim();
                     const replyPreview = String(item.reply_text || "").trim();
@@ -3265,7 +3648,7 @@ export function VoiceSecretaryComposerControl({
                         key={item.request_id}
                         className={classNames(
                           "rounded-2xl border px-2.5 py-2",
-                          isDark ? "border-white/10 bg-black/10" : "border-black/8 bg-[rgb(248,248,248)]",
+                          isDark ? "border-white/10 bg-black/10" : "border-black/[0.08] bg-[rgb(248,248,248)]",
                         )}
                       >
                         {displayStatus || item.handoff_target ? (
@@ -3275,11 +3658,11 @@ export function VoiceSecretaryComposerControl({
                                 {askFeedbackStatusLabel(displayStatus)}
                               </span>
                             ) : <span />}
-                          {item.handoff_target ? (
-                            <span className="truncate text-[10px] text-[var(--color-text-muted)]">
-                              {item.handoff_target}
-                            </span>
-                          ) : null}
+                            {item.handoff_target ? (
+                              <span className="truncate text-[10px] text-[var(--color-text-muted)]">
+                                {item.handoff_target}
+                              </span>
+                            ) : null}
                           </div>
                         ) : null}
                         {requestPreview ? (
@@ -3310,9 +3693,9 @@ export function VoiceSecretaryComposerControl({
                       </div>
                     );
                   })}
-                  {!askFeedbackItems.length ? (
+                  {!activityFeedCount ? (
                     <div className="rounded-2xl border border-dashed border-[var(--glass-border-subtle)] px-2.5 py-3 text-center text-[11px] text-[var(--color-text-muted)]">
-                      {t("voiceSecretaryRequestsEmpty", { defaultValue: "Ask-mode requests and results will appear here." })}
+                      {t("voiceSecretaryActivityFeedEmpty", { defaultValue: "Live transcript, queued requests, and replies will appear here." })}
                     </div>
                   ) : null}
                 </div>
@@ -3349,7 +3732,7 @@ export function VoiceSecretaryComposerControl({
               <div
                 className={classNames(
                   "flex items-center justify-between gap-2 border-b px-3 py-2",
-                  isDark ? "border-white/8" : "border-black/6",
+                  isDark ? "border-white/[0.08]" : "border-black/[0.06]",
                 )}
               >
                 <div className="min-w-0">
@@ -3453,8 +3836,8 @@ export function VoiceSecretaryComposerControl({
                         ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
                         : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
                     )}
-                    disabled={controlDisabled}
-                    title={`${t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}: ${assistantRowCurrentMode.label}`}
+                    disabled={controlDisabled || recording}
+                    title={modeChangeDisabledReason || `${t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}: ${assistantRowCurrentMode.label}`}
                     aria-label={t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}
                   >
                     <span className="min-w-0 truncate">{assistantRowCurrentMode.label}</span>
@@ -3488,6 +3871,8 @@ export function VoiceSecretaryComposerControl({
                           )}
                           role="menuitemradio"
                           aria-checked={active}
+                          disabled={recording}
+                          title={modeChangeDisabledReason || option.description}
                           onPointerDown={(event) => {
                             event.preventDefault();
                             handleAssistantRowModeChange(option.key);
@@ -3687,6 +4072,50 @@ export function VoiceSecretaryComposerControl({
                 {pendingAskFeedbackSummaryText}
               </span>
             </button>
+          ) : null}
+          {showLiveTranscriptSummary && currentLiveTranscript ? (
+            <div
+              className={classNames(
+                "inline-flex max-w-[min(40rem,calc(100vw-10rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px]",
+                isDark ? "bg-cyan-400/12 text-cyan-100" : "bg-cyan-50 text-cyan-900",
+              )}
+              aria-live="polite"
+            >
+              <span
+                className="min-w-0 whitespace-normal break-words font-semibold leading-4"
+                style={TWO_LINE_STATUS_STYLE}
+              >
+                {currentLiveTranscript.phase === "interim" ? (
+                  <AnimatedShinyText
+                    className={classNames(
+                      isDark
+                        ? "bg-[linear-gradient(110deg,rgba(207,250,254,0.78)_18%,rgba(255,255,255,0.98)_48%,rgba(34,211,238,0.92)_68%,rgba(207,250,254,0.78)_84%)]"
+                        : "bg-[linear-gradient(110deg,rgb(21,94,117)_18%,rgb(8,145,178)_42%,rgb(255,255,255)_52%,rgb(14,116,144)_66%,rgb(21,94,117)_84%)]",
+                    )}
+                  >
+                    {liveTranscriptSummaryText}
+                  </AnimatedShinyText>
+                ) : (
+                  liveTranscriptSummaryText
+                )}
+              </span>
+            </div>
+          ) : null}
+          {showDocumentActivitySummary ? (
+            <div
+              className={classNames(
+                "inline-flex max-w-[min(34rem,calc(100vw-12rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px]",
+                isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
+              )}
+              aria-live="polite"
+            >
+              <span
+                className="min-w-0 whitespace-normal break-words font-semibold leading-4"
+                style={TWO_LINE_STATUS_STYLE}
+              >
+                {documentActivitySummaryText}
+              </span>
+            </div>
           ) : null}
         </div>
       ) : (

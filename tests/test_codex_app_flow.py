@@ -1101,8 +1101,11 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_voice_secretary_control_turn_completes_when_prompt_draft_submitted_without_cursor_advance(self) -> None:
-        from cccc.daemon.codex_app_sessions import _voice_secretary_control_consumed_input
+    def test_voice_secretary_control_turn_requires_read_new_input_for_prompt_draft(self) -> None:
+        from cccc.daemon.codex_app_sessions import (
+            _voice_secretary_control_consumed_input,
+            _voice_secretary_control_consumption_diagnostics,
+        )
 
         home, cleanup = self._with_home()
         try:
@@ -1148,7 +1151,7 @@ class TestCodexAppFlow(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            consumed = _voice_secretary_control_consumed_input(
+            draft_without_read_consumed = _voice_secretary_control_consumed_input(
                 group_id=group_id,
                 snapshot={
                     "kind": "voice_secretary_input",
@@ -1166,7 +1169,25 @@ class TestCodexAppFlow(unittest.TestCase):
                 },
             )
 
-            self.assertTrue(consumed)
+            self.assertFalse(draft_without_read_consumed)
+            diagnostics = _voice_secretary_control_consumption_diagnostics(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 5,
+                    "composer_request_ids": ["voice-prompt-1"],
+                    "input_target_kinds": ["composer"],
+                    "before_prompt_drafts": {
+                        "voice-prompt-1": {
+                            "updated_at": "",
+                            "draft_text": "",
+                            "status": "",
+                        }
+                    },
+                },
+            )
+            self.assertIn("read_new_input", diagnostics.get("missing") or [])
 
             (voice_state_dir / "input_state.json").write_text(
                 json.dumps(
@@ -1179,6 +1200,25 @@ class TestCodexAppFlow(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            consumed_after_read = _voice_secretary_control_consumed_input(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 5,
+                    "composer_request_ids": ["voice-prompt-1"],
+                    "input_target_kinds": ["composer"],
+                    "before_prompt_drafts": {
+                        "voice-prompt-1": {
+                            "updated_at": "",
+                            "draft_text": "",
+                            "status": "",
+                        }
+                    },
+                },
+            )
+            self.assertTrue(consumed_after_read)
+
             missing_draft_consumed = _voice_secretary_control_consumed_input(
                 group_id=group_id,
                 snapshot={

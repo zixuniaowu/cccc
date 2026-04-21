@@ -14,6 +14,7 @@ from ...contracts.v1 import ChatMessageData, ChatStreamData, DaemonError, Daemon
 from ...kernel.actors import find_actor, list_actors, resolve_recipient_tokens
 from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.inbox import find_event_with_chat_ack, is_message_for_actor
+from ...kernel.context import ContextStorage
 from ...kernel.ledger import append_event, read_last_lines
 from ...kernel.messaging import (
     default_reply_recipients,
@@ -346,6 +347,31 @@ def _tracked_send_existing_result(group: Any, *, client_id: str) -> Optional[Dic
     return None
 
 
+def _tracked_send_existing_task(group: Any, *, client_request_id: str) -> Optional[Any]:
+    if not client_request_id:
+        return None
+    try:
+        storage = ContextStorage(group)
+        tasks = storage.list_tasks()
+    except Exception:
+        return None
+    matches = [
+        task
+        for task in tasks
+        if str(getattr(task, "client_request_id", "") or "").strip() == client_request_id
+    ]
+    if not matches:
+        return None
+    matches.sort(
+        key=lambda task: (
+            str(getattr(task, "updated_at", "") or getattr(task, "created_at", "") or ""),
+            str(getattr(task, "id", "") or ""),
+        ),
+        reverse=True,
+    )
+    return matches[0]
+
+
 def _derive_tracked_send_assignee(args: Dict[str, Any]) -> str:
     explicit = str(args.get("assignee") or "").strip()
     if explicit:
@@ -380,13 +406,27 @@ def _normalize_tracked_checklist(raw: Any) -> Any:
     return [{"text": line.strip()} for line in text.splitlines() if line.strip()]
 
 
-def _task_ref(*, task_id: str, title: str, status: str = "planned") -> dict[str, Any]:
-    return {
+def _task_ref(
+    *,
+    task_id: str,
+    title: str,
+    status: str = "planned",
+    waiting_on: str = "none",
+    handoff_to: str = "",
+) -> dict[str, Any]:
+    ref = {
         "kind": "task_ref",
         "task_id": task_id,
         "title": str(title or "").strip(),
         "status": str(status or "planned").strip() or "planned",
     }
+    waiting_value = str(waiting_on or "").strip()
+    if waiting_value:
+        ref["waiting_on"] = waiting_value
+    handoff_value = str(handoff_to or "").strip()
+    if handoff_value:
+        ref["handoff_to"] = handoff_value
+    return ref
 
 
 def _quote_text_from_message_data(data: dict[str, Any], *, max_len: int = 100) -> Optional[str]:
@@ -760,6 +800,9 @@ def handle_tracked_send(
         existing = _tracked_send_existing_result(group, client_id=client_id)
         if existing is not None:
             return DaemonResponse(ok=True, result=existing)
+        existing_task = _tracked_send_existing_task(group, client_request_id=client_id)
+    else:
+        existing_task = None
 
     assignee = _derive_tracked_send_assignee(args)
     outcome = str(args.get("outcome") or args.get("goal") or "").strip() or text
@@ -768,6 +811,78 @@ def handle_tracked_send(
     priority = str(args.get("task_priority") or message_priority).strip() or "normal"
     task_type = str(args.get("task_type") or "standard").strip() or "standard"
     checklist = _normalize_tracked_checklist(args.get("checklist"))
+    notes = str(args.get("notes") or "").strip()
+    blocked_by = args.get("blocked_by")
+    handoff_to = str(args.get("handoff_to") or "").strip()
+    base_refs = _normalize_refs(args.get("refs"))
+    message_args = {
+        "group_id": group_id,
+        "text": text,
+        "by": by,
+        "to": _normalize_to_tokens(args.get("to")),
+        "path": str(args.get("path") or ""),
+        "priority": message_priority,
+        "reply_required": coerce_bool(args.get("reply_required"), default=True) if "reply_required" in args else True,
+        "refs": base_refs,
+    }
+    if client_id:
+        message_args["client_id"] = client_id
+
+    if existing_task is not None:
+        existing_task_id = str(getattr(existing_task, "id", "") or "").strip()
+        existing_title = str(getattr(existing_task, "title", "") or "").strip() or title
+        existing_status = str(getattr(getattr(existing_task, "status", ""), "value", getattr(existing_task, "status", "")) or "planned").strip() or "planned"
+        existing_waiting_on = str(getattr(getattr(existing_task, "waiting_on", ""), "value", getattr(existing_task, "waiting_on", "")) or "none").strip() or "none"
+        existing_handoff_to = str(getattr(existing_task, "handoff_to", "") or "").strip()
+        resumed_ref = _task_ref(
+            task_id=existing_task_id,
+            title=existing_title,
+            status=existing_status,
+            waiting_on=existing_waiting_on,
+            handoff_to=existing_handoff_to,
+        )
+        message_args["refs"] = [*base_refs, resumed_ref]
+        send_resp = handle_send(
+            message_args,
+            coerce_bool=coerce_bool,
+            normalize_attachments=normalize_attachments,
+            effective_runner_kind=effective_runner_kind,
+            auto_wake_recipients=auto_wake_recipients,
+            automation_on_resume=automation_on_resume,
+            automation_on_new_message=automation_on_new_message,
+            clear_pending_system_notifies=clear_pending_system_notifies,
+        )
+        if not send_resp.ok:
+            err = send_resp.error.model_dump() if send_resp.error is not None else None
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "task_id": existing_task_id,
+                    "task_ref": resumed_ref,
+                    "task_created": False,
+                    "message_sent": False,
+                    "partial_failure": True,
+                    "message_error": err,
+                    "recovered_from_partial_failure": False,
+                },
+            )
+        send_result = send_resp.result if isinstance(send_resp.result, dict) else {}
+        event = send_result.get("event") if isinstance(send_result.get("event"), dict) else {}
+        return DaemonResponse(
+            ok=True,
+            result={
+                "task_id": existing_task_id,
+                "task_ref": resumed_ref,
+                "event": event,
+                "event_id": str(event.get("id") or "").strip(),
+                "task_created": False,
+                "message_sent": True,
+                "partial_failure": False,
+                "replayed": False,
+                "recovered_from_partial_failure": True,
+            },
+        )
+
     task_op: dict[str, Any] = {
         "op": "task.create",
         "title": title,
@@ -777,15 +892,14 @@ def handle_tracked_send(
         "waiting_on": waiting_on,
         "task_type": task_type,
     }
+    if client_id:
+        task_op["client_request_id"] = client_id
     if assignee:
         task_op["assignee"] = assignee
-    notes = str(args.get("notes") or "").strip()
     if notes:
         task_op["notes"] = notes
-    blocked_by = args.get("blocked_by")
     if blocked_by is not None:
         task_op["blocked_by"] = blocked_by
-    handoff_to = str(args.get("handoff_to") or "").strip()
     if handoff_to:
         task_op["handoff_to"] = handoff_to
     if checklist is not None:
@@ -805,21 +919,14 @@ def handle_tracked_send(
     if not task_id:
         return _error("tracked_send_task_missing", "task.create succeeded but did not return a task_id")
 
-    refs = _normalize_refs(args.get("refs"))
-    ref = _task_ref(task_id=task_id, title=title, status=status)
-    refs = [*refs, ref]
-    message_args = {
-        "group_id": group_id,
-        "text": text,
-        "by": by,
-        "to": _normalize_to_tokens(args.get("to")),
-        "path": str(args.get("path") or ""),
-        "priority": message_priority,
-        "reply_required": coerce_bool(args.get("reply_required"), default=True) if "reply_required" in args else True,
-        "refs": refs,
-    }
-    if client_id:
-        message_args["client_id"] = client_id
+    ref = _task_ref(
+        task_id=task_id,
+        title=title,
+        status=status,
+        waiting_on=waiting_on,
+        handoff_to=handoff_to,
+    )
+    message_args["refs"] = [*base_refs, ref]
 
     send_resp = handle_send(
         message_args,

@@ -14,7 +14,7 @@ import {
 import { getEffectiveComposerDestGroupId } from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
-import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment } from "../types";
+import type { Actor, LedgerEvent, ChatMessageData, MessageRef, OptimisticAttachment, Task } from "../types";
 import * as api from "../services/api";
 import { buildReplyComposerState } from "../utils/chatReply";
 import { copyTextToClipboard } from "../utils/copy";
@@ -1054,6 +1054,18 @@ export function useChatTab({
     () => groupContext?.agent_states || [],
     [groupContext]
   );
+  const tasks = useMemo(
+    () => (Array.isArray(groupContext?.coordination?.tasks) ? groupContext.coordination.tasks : []),
+    [groupContext]
+  );
+  const taskById = useMemo(() => {
+    const map = new Map<string, Task>();
+    for (const task of tasks) {
+      const taskId = String(task?.id || "").trim();
+      if (taskId) map.set(taskId, task);
+    }
+    return map;
+  }, [tasks]);
 
   // ============ Actions ============
 
@@ -1568,6 +1580,7 @@ export function useChatTab({
 
     // Agent state
     agentStates,
+    taskById,
 
     // Actions
     sendMessage,

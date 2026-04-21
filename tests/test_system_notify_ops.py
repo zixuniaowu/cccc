@@ -159,8 +159,7 @@ class TestSystemNotifyOps(unittest.TestCase):
 
         self.assertIn("read_new_input", text)
         self.assertIn("Your first action in this turn must be cccc_voice_secretary_document(action=\"read_new_input\")", text)
-        self.assertIn("attached the current unread Secretary batch below only as a preview", text)
-        self.assertIn("If read_new_input returns empty or inconsistent data", text)
+        self.assertIn("This notification is only a pointer", text)
         self.assertIn("Do not bootstrap", text)
         self.assertIn("cccc_voice_secretary_composer", text)
         self.assertIn("Do not finish this turn with only a plan", text)
@@ -168,7 +167,7 @@ class TestSystemNotifyOps(unittest.TestCase):
         self.assertIn("cccc_voice_secretary_document", text)
         self.assertNotIn("source_chars", text)
 
-    def test_voice_secretary_input_notify_delivery_inlines_pending_batch_when_group_available(self) -> None:
+    def test_voice_secretary_input_notify_delivery_stays_pointer_only_when_group_available(self) -> None:
         from cccc.contracts.v1 import SystemNotifyData
         from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
         from cccc.daemon.messaging.delivery import render_system_notify_delivery_text
@@ -241,10 +240,12 @@ class TestSystemNotifyOps(unittest.TestCase):
                 group=group,
             )
 
-            self.assertIn("Attached batch:", text)
-            self.assertIn("Secretary input batch:", text)
-            self.assertIn("voice-prompt-inline", text)
-            self.assertIn("把按钮文案改得更直接", text)
+            self.assertIn("This notification is only a pointer", text)
+            self.assertIn("read_new_input", text)
+            self.assertNotIn("Attached batch:", text)
+            self.assertNotIn("Secretary input batch:", text)
+            self.assertNotIn("voice-prompt-inline", text)
+            self.assertNotIn("把按钮文案改得更直接", text)
         finally:
             cleanup()
 

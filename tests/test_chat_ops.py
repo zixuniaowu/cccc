@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import tempfile
@@ -592,6 +593,71 @@ class TestChatOps(unittest.TestCase):
             self.assertTrue(tasks_resp.ok, getattr(tasks_resp, "error", None))
             tasks = (tasks_resp.result or {}).get("tasks") or []
             self.assertEqual(len(tasks), 1)
+        finally:
+            cleanup()
+
+    def test_tracked_send_retries_partial_failure_without_duplicate_task(self) -> None:
+        from cccc.contracts.v1 import DaemonError, DaemonResponse
+        from cccc.daemon.messaging import chat_ops
+        from cccc.kernel.group import load_group
+        from cccc.kernel.ledger import read_last_lines
+
+        group_id, cleanup = self._setup_group_with_actors()
+        real_handle_send = chat_ops.handle_send
+        attempts = {"count": 0}
+
+        def fail_once(*args, **kwargs):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                return DaemonResponse(
+                    ok=False,
+                    error=DaemonError(code="send_failed", message="simulated send failure"),
+                )
+            return real_handle_send(*args, **kwargs)
+
+        try:
+            payload = {
+                "group_id": group_id,
+                "by": "user",
+                "to": ["peer1"],
+                "title": "Recover tracked send",
+                "text": "Please recover this tracked send.",
+                "idempotency_key": "resume-request",
+            }
+            with patch("cccc.daemon.messaging.chat_ops.handle_send", side_effect=fail_once):
+                first, _ = self._call("tracked_send", dict(payload))
+                second, _ = self._call("tracked_send", dict(payload))
+
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            self.assertTrue(second.ok, getattr(second, "error", None))
+
+            first_result = first.result or {}
+            second_result = second.result or {}
+            self.assertTrue(first_result.get("task_created"), first_result)
+            self.assertFalse(first_result.get("message_sent"), first_result)
+            self.assertTrue(first_result.get("partial_failure"), first_result)
+
+            self.assertFalse(second_result.get("task_created"), second_result)
+            self.assertTrue(second_result.get("message_sent"), second_result)
+            self.assertFalse(second_result.get("partial_failure"), second_result)
+            self.assertTrue(second_result.get("recovered_from_partial_failure"), second_result)
+            self.assertEqual(first_result.get("task_id"), second_result.get("task_id"))
+
+            tasks_resp, _ = self._call("task_list", {"group_id": group_id})
+            self.assertTrue(tasks_resp.ok, getattr(tasks_resp, "error", None))
+            tasks = (tasks_resp.result or {}).get("tasks") or []
+            self.assertEqual(len(tasks), 1)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            lines = read_last_lines(group.ledger_path, 50)
+            chat_events = []
+            for raw_line in lines:
+                event = json.loads(raw_line)
+                if isinstance(event, dict) and str(event.get("kind") or "") == "chat.message":
+                    chat_events.append(event)
+            self.assertEqual(len(chat_events), 1)
         finally:
             cleanup()
 

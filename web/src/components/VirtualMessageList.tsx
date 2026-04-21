@@ -2,7 +2,7 @@ import { memo, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useStat
 import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
-import { LedgerEvent, Actor, AgentState, PresentationMessageRef, TaskMessageRef } from "../types";
+import { LedgerEvent, Actor, AgentState, PresentationMessageRef, TaskMessageRef, Task } from "../types";
 import { ArrowDownIcon, MessageSquareTextIcon } from "./Icons";
 import { MessageBubble } from "./MessageBubble";
 import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
@@ -41,6 +41,7 @@ export interface VirtualMessageListProps {
   messages: LedgerEvent[];
   actors: Actor[];
   agentStates: AgentState[];
+  taskById: Map<string, Task>;
   isDark: boolean;
   readOnly?: boolean;
   groupId: string;
@@ -84,6 +85,7 @@ type VirtualMessageRowProps = {
   actors: Actor[];
   displayNameMap: Map<string, string>;
   agentState: AgentState | null;
+  taskById: Map<string, Task>;
   isDark: boolean;
   readOnly?: boolean;
   groupId: string;
@@ -110,6 +112,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
   actors,
   displayNameMap,
   agentState,
+  taskById,
   isDark,
   readOnly,
   groupId,
@@ -151,6 +154,7 @@ const VirtualMessageRow = memo(function VirtualMessageRow({
         actors={actors}
         displayNameMap={displayNameMap}
         agentState={agentState}
+        taskById={taskById}
         isDark={isDark}
         readOnly={readOnly}
         groupId={groupId}
@@ -179,6 +183,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   messages,
   actors,
   agentStates,
+  taskById,
   isDark,
   readOnly,
   groupId,
@@ -942,22 +947,39 @@ const VirtualMessageListInner = function VirtualMessageListInner({
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center pb-20 opacity-50">
+          <div className="flex flex-col items-center justify-center h-full text-center pb-20">
             <div
               className={`mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border ${
                 isDark
                   ? "border-white/10 bg-white/[0.04] text-white/55"
-                  : "border-black/8 bg-white/80 text-[rgb(35,36,37)]/55"
+                  : "border-black/[0.08] bg-white/80 text-[rgb(35,36,37)]/55"
               }`}
             >
               <MessageSquareTextIcon size={28} />
             </div>
             <p className={`text-sm font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-              No messages yet
+              {t("emptyStateTitle")}
             </p>
-            <p className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-              Start the conversation with your AI team.
+            <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              {t("emptyStateSubtitle")}
             </p>
+            <div className={`mt-4 w-full max-w-sm space-y-2 text-left text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              {[
+                [t("emptyStateQuickNoteTitle"), t("emptyStateQuickNoteBody")],
+                [t("emptyStateAskForemanTitle"), t("emptyStateAskForemanBody")],
+                [t("emptyStateDurableTitle"), t("emptyStateDurableBody")],
+              ].map(([title, body]) => (
+                <div
+                  key={title}
+                  className={`flex gap-2 border-t pt-2 ${
+                    isDark ? "border-white/[0.08]" : "border-black/[0.06]"
+                  }`}
+                >
+                  <span className={isDark ? "text-slate-300" : "text-gray-700"}>{title}</span>
+                  <span>{body}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )
       ) : (
@@ -1017,6 +1039,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                     actors={actors}
                     displayNameMap={displayNameMap}
                     agentState={agentStateById.get(String(message.by || "")) || null}
+                    taskById={taskById}
                     isDark={isDark}
                     readOnly={readOnly}
                     groupId={groupId}
@@ -1054,6 +1077,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                       actors={actors}
                       displayNameMap={displayNameMap}
                       agentState={agentStateById.get(String(message.by || "")) || null}
+                      taskById={taskById}
                       isDark={isDark}
                       readOnly={readOnly}
                       groupId={groupId}

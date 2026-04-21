@@ -93,6 +93,8 @@ export type TaskMessageRef = MessageRef & {
   task_id: string;
   title?: string;
   status?: string;
+  waiting_on?: TaskWaitingOn | null;
+  handoff_to?: string | null;
 };
 
 export type StreamingActivity = {

@@ -129,9 +129,20 @@ Send a message.
 
 ```bash
 cccc send "Hello"                  # No --to: default recipient policy applies (default: foreman)
-cccc send "Hello" --to @all        # Explicit broadcast
 cccc send "Hello" --to @foreman    # Send to foreman
 cccc send "Hello" --to peer-1      # Send to specific actor
+cccc send "Announcement" --to @all # Explicit broadcast
+```
+
+### `cccc tracked-send`
+
+Create a task and send one linked delegation message.
+
+```bash
+cccc tracked-send "Please implement this and reply with validation evidence." \
+  --to peer-1 \
+  --title "Implement feature" \
+  --outcome "Feature is implemented and validation evidence is reported"
 ```
 
 ### `cccc reply`

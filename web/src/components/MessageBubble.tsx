@@ -3,12 +3,12 @@ import type { CSSProperties } from "react";
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { useTranslation } from "react-i18next";
 import { useCopyFeedback } from "../hooks/useCopyFeedback";
-import { LedgerEvent, Actor, AgentState, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef, TaskMessageRef } from "../types";
+import { LedgerEvent, Actor, AgentState, Task, getActorAccentColor, ChatMessageData, MessageAttachment, PresentationMessageRef, TaskMessageRef } from "../types";
 import { formatFullTime, formatMessageTimestamp, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getReplyEventId } from "../utils/chatReply";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
-import { getTaskMessageRefs, getTaskRefChipLabel } from "../utils/taskRefs";
+import { getTaskMessageRefs, getTaskRefChipLabel, getTaskRefStateKey, type TaskRefStateKey } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { MessageFooter, MessageMetadataHeader } from "./messageBubble/MessageBubbleChrome";
@@ -30,6 +30,28 @@ import { LazyMarkdownRenderer } from "./LazyMarkdownRenderer";
 
 const ANIMATED_MESSAGE_BUBBLE_KEYS = new Set<string>();
 const NEW_MESSAGE_ANIMATION_WINDOW_MS = 12000;
+
+const TASK_REF_STATE_TONE_CLASS: Record<TaskRefStateKey, string> = {
+    planned: "border-slate-300/70 bg-slate-100/90 text-slate-700 dark:border-white/10 dark:bg-white/[0.08] dark:text-slate-300",
+    active: "border-emerald-300/70 bg-emerald-100/90 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/12 dark:text-emerald-300",
+    handoff: "border-sky-300/70 bg-sky-100/90 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/12 dark:text-sky-300",
+    waiting_user: "border-amber-300/70 bg-amber-100/90 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/12 dark:text-amber-300",
+    blocked: "border-rose-300/70 bg-rose-100/90 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/12 dark:text-rose-300",
+    done: "border-emerald-300/60 bg-emerald-50/95 text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300",
+    archived: "border-slate-300/70 bg-slate-100/90 text-slate-600 dark:border-white/10 dark:bg-white/[0.07] dark:text-slate-400",
+    linked: "border-slate-300/70 bg-slate-100/90 text-slate-700 dark:border-white/10 dark:bg-white/[0.08] dark:text-slate-300",
+};
+
+const TASK_REF_STATE_DOT_CLASS: Record<TaskRefStateKey, string> = {
+    planned: "bg-slate-400/90 dark:bg-slate-400",
+    active: "bg-emerald-500 dark:bg-emerald-400",
+    handoff: "bg-sky-500 dark:bg-sky-400",
+    waiting_user: "bg-amber-500 dark:bg-amber-400",
+    blocked: "bg-rose-500 dark:bg-rose-400",
+    done: "bg-emerald-500 dark:bg-emerald-400",
+    archived: "bg-slate-400/90 dark:bg-slate-500",
+    linked: "bg-slate-400/90 dark:bg-slate-400",
+};
 
 function buildSenderAvatarUrl(groupId: string, senderAvatarPath?: string): string {
     const gid = String(groupId || "").trim();
@@ -145,6 +167,7 @@ function MessageBubbleBody({
     replyToEventId,
     presentationRefs,
     taskRefs,
+    taskById,
     messageText,
     shouldRenderMarkdown,
     blobAttachments,
@@ -171,6 +194,7 @@ function MessageBubbleBody({
     replyToEventId?: string;
     presentationRefs: PresentationMessageRef[];
     taskRefs: TaskMessageRef[];
+    taskById: Map<string, Task>;
     messageText: string;
     shouldRenderMarkdown: boolean;
     blobAttachments: Array<{
@@ -203,6 +227,16 @@ function MessageBubbleBody({
         "mt-3 border-t pt-3",
         "border-[var(--glass-border-subtle)]"
     );
+    const taskStateLabels: Record<TaskRefStateKey, string> = {
+        planned: t("taskRefStatePlanned", { defaultValue: "Planned" }),
+        active: t("taskRefStateActive", { defaultValue: "Active" }),
+        handoff: t("taskRefStateHandoff", { defaultValue: "Handoff" }),
+        waiting_user: t("taskRefStateWaitingUser", { defaultValue: "Waiting user" }),
+        blocked: t("taskRefStateBlocked", { defaultValue: "Blocked" }),
+        done: t("taskRefStateDone", { defaultValue: "Done" }),
+        archived: t("taskRefStateArchived", { defaultValue: "Archived" }),
+        linked: t("taskRefStateLinked", { defaultValue: "Linked" }),
+    };
 
     return (
         <>
@@ -310,21 +344,36 @@ function MessageBubbleBody({
                         {t("task", { defaultValue: "Task" })}
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                        {taskRefs.map((ref, index) => (
-                            <button
-                                key={`${String(event.id || "message")}:task-ref:${index}:${String(ref.task_id || "")}`}
-                                type="button"
-                                onClick={() => onOpenTaskRef?.(ref, event)}
-                                className={classNames(
-                                    "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                                    "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                                )}
-                                title={getTaskRefChipLabel(ref)}
-                            >
-                                <span className="h-1.5 w-1.5 rounded-full bg-[rgb(69,141,104)]" aria-hidden="true" />
-                                <span className="truncate">{getTaskRefChipLabel(ref)}</span>
-                            </button>
-                        ))}
+                        {taskRefs.map((ref, index) => {
+                            const taskId = String(ref.task_id || "").trim();
+                            const liveTask = taskId ? (taskById.get(taskId) || null) : null;
+                            const stateKey = getTaskRefStateKey(ref, liveTask);
+                            const stateLabel = taskStateLabels[stateKey];
+                            const chipLabel = getTaskRefChipLabel(ref, liveTask);
+                            return (
+                                <button
+                                    key={`${String(event.id || "message")}:task-ref:${index}:${taskId}`}
+                                    type="button"
+                                    onClick={() => onOpenTaskRef?.(ref, event)}
+                                    className={classNames(
+                                        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                                        "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                                    )}
+                                    title={`${chipLabel} · ${stateLabel}`}
+                                >
+                                    <span className={classNames("h-1.5 w-1.5 rounded-full", TASK_REF_STATE_DOT_CLASS[stateKey])} aria-hidden="true" />
+                                    <span className="truncate">{chipLabel}</span>
+                                    <span
+                                        className={classNames(
+                                            "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                                            TASK_REF_STATE_TONE_CLASS[stateKey]
+                                        )}
+                                    >
+                                        {stateLabel}
+                                    </span>
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
             ) : null}
@@ -482,6 +531,7 @@ export interface MessageBubbleProps {
     actors: Actor[];
     displayNameMap: Map<string, string>;
     agentState: AgentState | null;
+    taskById: Map<string, Task>;
     isDark: boolean;
     readOnly?: boolean;
     groupId: string;
@@ -505,6 +555,7 @@ export const MessageBubble = memo(function MessageBubble({
     actors,
     displayNameMap,
     agentState,
+    taskById,
     isDark,
     readOnly,
     groupId,
@@ -880,6 +931,7 @@ export const MessageBubble = memo(function MessageBubble({
                         replyToEventId={replyToEventId}
                         presentationRefs={presentationRefs}
                         taskRefs={taskRefs}
+                        taskById={taskById}
                         messageText={displayMessageText}
                         shouldRenderMarkdown={shouldRenderMarkdown}
                         blobAttachments={blobAttachments}
@@ -923,6 +975,7 @@ export const MessageBubble = memo(function MessageBubble({
         prevProps.actors === nextProps.actors &&
         prevProps.displayNameMap === nextProps.displayNameMap &&
         prevProps.agentState === nextProps.agentState &&
+        prevProps.taskById === nextProps.taskById &&
         prevProps.isDark === nextProps.isDark &&
         prevProps.groupId === nextProps.groupId &&
         prevProps.groupLabelById === nextProps.groupLabelById &&

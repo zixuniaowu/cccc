@@ -187,10 +187,26 @@ def _voice_secretary_control_snapshot(*, group_id: str, actor_id: str, event_id:
 def _voice_secretary_control_consumed_input(*, group_id: str, snapshot: Dict[str, Any]) -> bool:
     if str((snapshot or {}).get("kind") or "").strip() != "voice_secretary_input":
         return True
+    diagnostics = _voice_secretary_control_consumption_diagnostics(group_id=group_id, snapshot=snapshot)
+    return not bool(diagnostics.get("missing") if isinstance(diagnostics, dict) else [])
+
+
+def _voice_secretary_control_consumption_diagnostics(*, group_id: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    if str((snapshot or {}).get("kind") or "").strip() != "voice_secretary_input":
+        return {}
     before_latest = int((snapshot or {}).get("before_latest_seq") or 0)
     before_cursor = int((snapshot or {}).get("before_secretary_read_cursor") or 0)
+    state = _voice_secretary_input_state(group_id)
+    current_cursor = int(state.get("secretary_read_cursor") or 0)
+    cursor_advanced = current_cursor > before_cursor
     if before_latest <= before_cursor:
-        return True
+        return {
+            "before_latest_seq": before_latest,
+            "before_secretary_read_cursor": before_cursor,
+            "current_secretary_read_cursor": current_cursor,
+            "cursor_advanced": cursor_advanced,
+            "missing": [],
+        }
     composer_request_ids = [
         str(item).strip()
         for item in ((snapshot or {}).get("composer_request_ids") if isinstance((snapshot or {}).get("composer_request_ids"), list) else [])
@@ -206,35 +222,44 @@ def _voice_secretary_control_consumed_input(*, group_id: str, snapshot: Dict[str
         for item in ((snapshot or {}).get("input_target_kinds") if isinstance((snapshot or {}).get("input_target_kinds"), list) else [])
         if str(item).strip()
     ]
-    state = _voice_secretary_input_state(group_id)
-    cursor_advanced = int(state.get("secretary_read_cursor") or 0) > before_cursor
+    missing: list[str] = []
+    if not cursor_advanced:
+        missing.append("read_new_input")
     if secretary_request_ids:
-        if not cursor_advanced:
-            return False
         before_ask_requests = (snapshot or {}).get("before_ask_requests") if isinstance((snapshot or {}).get("before_ask_requests"), dict) else {}
         current_ask_requests = _voice_secretary_ask_request_state(group_id, request_ids=secretary_request_ids)
         for request_id in secretary_request_ids:
             current = current_ask_requests.get(request_id) if isinstance(current_ask_requests.get(request_id), dict) else {}
             before = before_ask_requests.get(request_id) if isinstance(before_ask_requests.get(request_id), dict) else {}
             if str(current.get("status") or "").strip() not in {"done", "needs_user", "failed", "handed_off"}:
-                return False
+                missing.append(f"secretary_report:{request_id}")
+                continue
             if not str(current.get("reply_text") or "").strip():
-                return False
+                missing.append(f"secretary_reply_text:{request_id}")
+                continue
             if str(current.get("updated_at") or "").strip() == str(before.get("updated_at") or "").strip():
-                return False
-    if not composer_request_ids:
-        return cursor_advanced
-    before_prompt_drafts = (snapshot or {}).get("before_prompt_drafts") if isinstance((snapshot or {}).get("before_prompt_drafts"), dict) else {}
-    current_prompt_drafts = _voice_secretary_prompt_draft_state(group_id, request_ids=composer_request_ids)
-    for request_id in composer_request_ids:
-        current = current_prompt_drafts.get(request_id) if isinstance(current_prompt_drafts.get(request_id), dict) else {}
-        before = before_prompt_drafts.get(request_id) if isinstance(before_prompt_drafts.get(request_id), dict) else {}
-        if not str(current.get("draft_text") or "").strip():
-            return False
-        if str(current.get("updated_at") or "").strip() == str(before.get("updated_at") or "").strip():
-            return False
-    requires_cursor_advance = any(kind != "composer" for kind in input_target_kinds)
-    return cursor_advanced or not requires_cursor_advance
+                missing.append(f"secretary_report_updated_at:{request_id}")
+    if composer_request_ids:
+        before_prompt_drafts = (snapshot or {}).get("before_prompt_drafts") if isinstance((snapshot or {}).get("before_prompt_drafts"), dict) else {}
+        current_prompt_drafts = _voice_secretary_prompt_draft_state(group_id, request_ids=composer_request_ids)
+        for request_id in composer_request_ids:
+            current = current_prompt_drafts.get(request_id) if isinstance(current_prompt_drafts.get(request_id), dict) else {}
+            before = before_prompt_drafts.get(request_id) if isinstance(before_prompt_drafts.get(request_id), dict) else {}
+            if not str(current.get("draft_text") or "").strip():
+                missing.append(f"composer_draft:{request_id}")
+                continue
+            if str(current.get("updated_at") or "").strip() == str(before.get("updated_at") or "").strip():
+                missing.append(f"composer_draft_updated_at:{request_id}")
+    return {
+        "before_latest_seq": before_latest,
+        "before_secretary_read_cursor": before_cursor,
+        "current_secretary_read_cursor": current_cursor,
+        "cursor_advanced": cursor_advanced,
+        "input_target_kinds": input_target_kinds,
+        "composer_request_ids": composer_request_ids,
+        "secretary_request_ids": secretary_request_ids,
+        "missing": sorted(set(missing)),
+    }
 
 
 @dataclass
@@ -999,6 +1024,10 @@ class CodexAppSession:
                 group_id=self.group_id,
                 snapshot=(active_payload.validation_snapshot if isinstance(active_payload, _PendingTurn) else {}),
             )
+            consumption_diagnostics = _voice_secretary_control_consumption_diagnostics(
+                group_id=self.group_id,
+                snapshot=(active_payload.validation_snapshot if isinstance(active_payload, _PendingTurn) else {}),
+            )
             with self._lock:
                 self._active_turn_id = ""
                 self._active_event_id = ""
@@ -1035,6 +1064,7 @@ class CodexAppSession:
                                 "status": status,
                                 "reason": "voice_secretary_input_not_consumed",
                                 "retry_count": retry_payload.retry_count,
+                                "diagnostics": consumption_diagnostics,
                             },
                         )
                     except Exception as exc:
@@ -1048,6 +1078,7 @@ class CodexAppSession:
                                 "error": {
                                     "message": f"voice_secretary_input_not_consumed; requeue failed: {exc}",
                                 },
+                                "diagnostics": consumption_diagnostics,
                             },
                         )
                     self._turn_done.set()
@@ -1060,6 +1091,7 @@ class CodexAppSession:
                         "control_kind": control_kind,
                         "status": status,
                         "error": error or {"message": "voice_secretary_input_not_consumed"},
+                        "diagnostics": consumption_diagnostics,
                     },
                 )
                 self._turn_done.set()
