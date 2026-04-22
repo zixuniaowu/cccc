@@ -91,7 +91,7 @@ function PlainMessageText({
     return (
         <div
             className={classNames(
-                "break-words whitespace-pre-wrap [overflow-wrap:anywhere]",
+                "break-words whitespace-pre-wrap text-[var(--color-text-primary)] [overflow-wrap:anywhere]",
                 className
             )}
         >
@@ -382,7 +382,6 @@ function MessageBubbleBody({
                 fallbackText={messageText}
                 shouldRenderMarkdown={shouldRenderMarkdown}
                 isDark={isDark}
-                isUserMessage={isUserMessage}
             />
 
             <MessageAttachments
@@ -402,20 +401,18 @@ function MessageContent({
     fallbackText,
     shouldRenderMarkdown,
     isDark,
-    isUserMessage,
 }: {
     fallbackText: string;
     shouldRenderMarkdown: boolean;
     isDark: boolean;
-    isUserMessage: boolean;
 }) {
     if (shouldRenderMarkdown) {
         return (
             <LazyMarkdownRenderer
                 content={fallbackText}
                 isDark={isDark}
-                invertText={isUserMessage}
-                className="break-words [overflow-wrap:anywhere] max-w-full"
+                invertText={false}
+                className="max-w-full break-words text-[var(--color-text-primary)] [overflow-wrap:anywhere]"
                 fallback={
                     <PlainMessageText
                         text={fallbackText}
@@ -905,7 +902,7 @@ export const MessageBubble = memo(function MessageBubble({
                         isStreaming ? "opacity-95 translate-y-0" : "opacity-100 translate-y-0",
                         bubbleMotionClass,
                         isUserMessage
-                            ? "glass-bubble w-auto min-w-[min(18rem,70vw)] rounded-[22px] rounded-tr-md text-[var(--color-text-primary)]"
+                            ? "w-auto min-w-[min(18rem,70vw)] rounded-[22px] rounded-tr-md border border-[var(--glass-bubble-border)] shadow-[var(--glass-bubble-shadow)]"
                             : "w-full rounded-[22px] rounded-tl-md border border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-[0_10px_28px_rgba(15,23,42,0.06)]"
                         ,
                         isAttention ? "ring-1 ring-amber-400/40 dark:ring-amber-500/40" : ""
