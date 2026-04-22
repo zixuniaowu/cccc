@@ -114,7 +114,6 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
     description: String(snippets[snippetId] || "").trim().split("\n")[0] || t("ruleEditor.snippetPreviewEmpty", { defaultValue: "This snippet is empty." }),
   }));
   const availableRecipientOptions = actorTargetOptions.filter((option) => !recipients.includes(option.value));
-  const availableActorTargetOptions = actorTargetOptions.filter((option) => !actorTargets.includes(option.value));
   const message = String(kind === "notify" && ruleDraft.action && "message" in ruleDraft.action ? ruleDraft.action.message || "" : "");
   const contentMode: "snippet" | "custom" = snippetRef ? "snippet" : "custom";
   const groupStateValue = String(
@@ -126,6 +125,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
   const actorTargets = Array.isArray(kind === "actor_control" && ruleDraft.action && "targets" in ruleDraft.action ? ruleDraft.action.targets : [])
     ? (ruleDraft.action as { targets?: string[] }).targets?.map((item) => String(item || "").trim()).filter(Boolean) || []
     : [];
+  const availableActorTargetOptions = actorTargetOptions.filter((option) => !actorTargets.includes(option.value));
   const notifyAction =
     kind === "notify" && ruleDraft.action && ruleDraft.action.kind === "notify" ? ruleDraft.action : defaultNotifyAction();
   const enabled = ruleDraft.enabled !== false;
