@@ -793,6 +793,9 @@ export type AssistantVoiceAskFeedback = {
   reply_text?: string;
   document_path?: string;
   artifact_paths?: string[];
+  source_summary?: string;
+  checked_at?: string;
+  source_urls?: string[];
   target_kind?: string;
   intent_hint?: string;
   language?: string;

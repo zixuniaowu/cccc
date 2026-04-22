@@ -2011,6 +2011,12 @@ class TestAssistantOps(unittest.TestCase):
                         "docs/voice-secretary/ask-answer.md",
                         "docs/voice-secretary/evidence.md",
                     ],
+                    "source_summary": "Checked the current workspace notes and linked evidence document.",
+                    "checked_at": "2026-04-22T12:00:00Z",
+                    "source_urls": [
+                        "https://example.com/source-a",
+                        "https://example.com/source-b",
+                    ],
                 },
             )
             self.assertTrue(feedback.ok, getattr(feedback, "error", None))
@@ -2021,7 +2027,34 @@ class TestAssistantOps(unittest.TestCase):
                 feedback_request.get("artifact_paths"),
                 ["docs/voice-secretary/ask-answer.md", "docs/voice-secretary/evidence.md"],
             )
+            self.assertEqual(feedback_request.get("source_summary"), "Checked the current workspace notes and linked evidence document.")
+            self.assertEqual(feedback_request.get("checked_at"), "2026-04-22T12:00:00Z")
+            self.assertEqual(
+                feedback_request.get("source_urls"),
+                ["https://example.com/source-a", "https://example.com/source-b"],
+            )
             self.assertNotIn("result_summary", feedback_request)
+
+            correction, _ = self._call(
+                "assistant_voice_instruction_feedback",
+                {
+                    "group_id": group_id,
+                    "by": "voice-secretary",
+                    "request_id": request_id,
+                    "status": "done",
+                    "reply_text": "Correction: the linked evidence also notes one follow-up risk.",
+                    "source_summary": "Amended after rechecking the evidence document.",
+                },
+            )
+            self.assertTrue(correction.ok, getattr(correction, "error", None))
+            correction_request = (correction.result or {}).get("ask_request") if isinstance(correction.result, dict) else {}
+            self.assertEqual(correction_request.get("status"), "done")
+            self.assertIn("Correction", str(correction_request.get("reply_text") or ""))
+            self.assertEqual(correction_request.get("source_summary"), "Amended after rechecking the evidence document.")
+            self.assertEqual(
+                correction_request.get("artifact_paths"),
+                ["docs/voice-secretary/ask-answer.md", "docs/voice-secretary/evidence.md"],
+            )
 
             enqueue_active, _ = self._call(
                 "assistant_voice_input_append",
@@ -2796,6 +2829,64 @@ class TestAssistantOps(unittest.TestCase):
             finally:
                 assistant_ops._VOICE_IDLE_REVIEW_FLUSH_THRESHOLD = old_threshold
                 assistant_ops._VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS = old_cooldown
+        finally:
+            cleanup()
+
+    def test_voice_idle_review_does_not_advance_cursor_before_readable_input_exists(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.assistants import assistant_ops
+
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            append, _ = self._call(
+                "assistant_voice_transcript_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "idle-review-failure-session",
+                    "segment_id": "seg-idle-review-failure-1",
+                    "text": "capture the key launch risks and turn this into a polished working document",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": True,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "idle-review-failure-session",
+                        "language": "en-US",
+                    },
+                },
+            )
+            self.assertTrue(append.ok, getattr(append, "error", None))
+
+            with patch("cccc.daemon.assistants.assistant_ops._append_voice_input_event", side_effect=RuntimeError("append failed")):
+                dispatched = assistant_ops.dispatch_voice_idle_review(group_id, {"manual"}, "voice-input-1", "event")
+            self.assertFalse(dispatched)
+
+            group = assistant_ops.load_group(group_id)
+            self.assertIsNotNone(group)
+            state_after_failed_dispatch = assistant_ops._load_voice_input_state(group)
+            self.assertEqual(int(state_after_failed_dispatch.get("last_idle_review_input_seq") or 0), 0)
+
+            dispatched = assistant_ops.dispatch_voice_idle_review(group_id, {"manual"}, "voice-input-1", "event")
+            self.assertTrue(dispatched)
+
+            batch, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(batch.ok, getattr(batch, "error", None))
+            self.assertEqual((batch.result or {}).get("item_count"), 2, batch.result)
+            input_text = str((batch.result or {}).get("input_text") or "")
+            self.assertIn("capture the key launch risks", input_text)
+            self.assertIn("Publishable document refinement request", input_text)
         finally:
             cleanup()
 

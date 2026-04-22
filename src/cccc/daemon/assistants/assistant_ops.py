@@ -544,8 +544,36 @@ def _clean_voice_artifact_paths(value: Any, *, document_path: str = "", existing
     return out[:12]
 
 
+def _clean_voice_source_urls(value: Any, *, existing: Any = None) -> list[str]:
+    raw_items: list[Any] = []
+    if isinstance(existing, (list, tuple, set)):
+        raw_items.extend(existing)
+    elif isinstance(existing, str) and existing.strip():
+        raw_items.append(existing)
+    if isinstance(value, (list, tuple, set)):
+        raw_items.extend(value)
+    elif isinstance(value, str) and value.strip():
+        raw_items.extend(line.strip() for line in value.replace(",", "\n").splitlines())
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if not re.match(r"^https?://", text, flags=re.IGNORECASE):
+            continue
+        text = text[:1024]
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out[:12]
+
+
 def _voice_ask_request_public(record: Dict[str, Any]) -> Dict[str, Any]:
     artifact_paths = _clean_voice_artifact_paths(record.get("artifact_paths"), document_path=str(record.get("document_path") or ""))
+    source_urls = _clean_voice_source_urls(record.get("source_urls"))
     out = {
         "schema": 1,
         "request_id": str(record.get("request_id") or ""),
@@ -555,6 +583,9 @@ def _voice_ask_request_public(record: Dict[str, Any]) -> Dict[str, Any]:
         "reply_text": str(record.get("reply_text") or ""),
         "document_path": str(record.get("document_path") or ""),
         "artifact_paths": artifact_paths,
+        "source_summary": str(record.get("source_summary") or ""),
+        "checked_at": str(record.get("checked_at") or ""),
+        "source_urls": source_urls,
         "target_kind": str(record.get("target_kind") or "secretary"),
         "intent_hint": str(record.get("intent_hint") or ""),
         "language": str(record.get("language") or ""),
@@ -592,6 +623,9 @@ def _upsert_voice_ask_request(
     language: str = "",
     reply_text: str = "",
     artifact_paths: Any = None,
+    source_summary: str = "",
+    checked_at: str = "",
+    source_urls: Any = None,
     handoff_target: str = "",
     handoff_request_id: str = "",
     target_actor_id: str = "",
@@ -605,6 +639,8 @@ def _upsert_voice_ask_request(
     existing = requests.get(clean_request_id) if isinstance(requests.get(clean_request_id), dict) else {}
     text = _clean_multiline_text(request_text, max_len=4_000) or str(existing.get("request_text") or "")
     reply = _clean_multiline_text(reply_text, max_len=4_000) or str(existing.get("reply_text") or "")
+    clean_source_summary = _clean_multiline_text(source_summary, max_len=1_200) or str(existing.get("source_summary") or "")
+    clean_checked_at = str(checked_at or existing.get("checked_at") or "").strip()[:120]
     existing_cleared_at = str(existing.get("cleared_at") or "").strip() if isinstance(existing, dict) else ""
     should_reveal = bool(reply) or clean_status in {"needs_user", "failed", "handed_off"}
     record = {
@@ -621,6 +657,12 @@ def _upsert_voice_ask_request(
             artifact_paths,
             document_path=str(document_path or existing.get("document_path") or ""),
             existing=existing.get("artifact_paths") if isinstance(existing, dict) else None,
+        ),
+        "source_summary": clean_source_summary,
+        "checked_at": clean_checked_at,
+        "source_urls": _clean_voice_source_urls(
+            source_urls,
+            existing=existing.get("source_urls") if isinstance(existing, dict) else None,
         ),
         "target_kind": str(target_kind or existing.get("target_kind") or "secretary"),
         "intent_hint": str(intent_hint or existing.get("intent_hint") or ""),
@@ -2457,10 +2499,6 @@ def dispatch_voice_idle_review(
     state = _load_voice_input_state(group)
     if basis_input_seq <= 0:
         basis_input_seq = int(state.get("latest_seq") or 0)
-    state["last_idle_review_at"] = now
-    state["last_idle_review_input_seq"] = max(int(state.get("last_idle_review_input_seq") or 0), basis_input_seq)
-    state["flush_count_since_idle_review"] = 0
-    _save_voice_input_state(group, state)
     document = _voice_document_public_record(group, record)
     trigger = {
         "mode": "meeting",
@@ -2509,6 +2547,11 @@ def dispatch_voice_idle_review(
         )
     except Exception:
         return False
+    state = _load_voice_input_state(group)
+    state["last_idle_review_at"] = now
+    state["last_idle_review_input_seq"] = max(int(state.get("last_idle_review_input_seq") or 0), basis_input_seq)
+    state["flush_count_since_idle_review"] = 0
+    _save_voice_input_state(group, state)
     append_event(
         group.ledger_path,
         kind="assistant.voice.document",
@@ -4191,6 +4234,9 @@ def handle_assistant_voice_instruction_feedback(args: Dict[str, Any]) -> DaemonR
     reply_text = _clean_multiline_text(args.get("reply_text") or args.get("result_text") or args.get("message"), max_len=4_000)
     document_path = str(args.get("document_path") or args.get("workspace_path") or "").strip()
     artifact_paths = _clean_voice_artifact_paths(args.get("artifact_paths"), document_path=document_path)
+    source_summary = _clean_multiline_text(args.get("source_summary"), max_len=1_200)
+    checked_at = str(args.get("checked_at") or "").strip()[:120]
+    source_urls = _clean_voice_source_urls(args.get("source_urls"))
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     if by not in {VOICE_SECRETARY_ACTOR_ID, _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY), "assistant:voice_secretary"}:
@@ -4221,6 +4267,9 @@ def handle_assistant_voice_instruction_feedback(args: Dict[str, Any]) -> DaemonR
             document_path=document_path,
             artifact_paths=artifact_paths,
             reply_text=reply_text,
+            source_summary=source_summary,
+            checked_at=checked_at,
+            source_urls=source_urls,
             now=now,
         )
         _save_runtime_state(group, state)
@@ -4239,6 +4288,9 @@ def handle_assistant_voice_instruction_feedback(args: Dict[str, Any]) -> DaemonR
                 "source_request_id": request_id,
                 "document_path": str(record.get("document_path") or ""),
                 "artifact_paths": _clean_voice_artifact_paths(record.get("artifact_paths")),
+                "source_summary": str(record.get("source_summary") or ""),
+                "checked_at": str(record.get("checked_at") or ""),
+                "source_urls": _clean_voice_source_urls(record.get("source_urls")),
                 "request_preview": str(record.get("request_preview") or ""),
                 "reply_text": str(record.get("reply_text") or ""),
             },

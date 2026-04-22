@@ -3787,6 +3787,12 @@ export function VoiceSecretaryComposerControl({
                     const displayStatus = displayAskFeedbackStatus(item, askFeedbackClockMs);
                     const requestPreview = String(item.request_preview || item.request_text || "").trim();
                     const replyPreview = String(item.reply_text || "").trim();
+                    const sourceSummary = String(item.source_summary || "").trim();
+                    const checkedAt = String(item.checked_at || "").trim();
+                    const checkedAtMs = checkedAt ? Date.parse(checkedAt) : NaN;
+                    const checkedAtLabel = Number.isFinite(checkedAtMs) ? formatVoiceActivityTimeMs(checkedAtMs) : checkedAt;
+                    const checkedAtFullLabel = Number.isFinite(checkedAtMs) ? formatVoiceActivityFullTimeMs(checkedAtMs) : checkedAt;
+                    const sourceUrls = (item.source_urls || []).map((url) => String(url || "").trim()).filter((url, index, urls) => url && urls.indexOf(url) === index);
                     const artifactPaths = [
                       String(item.document_path || "").trim(),
                       ...((item.artifact_paths || []).map((path) => String(path || "").trim())),
@@ -3881,6 +3887,42 @@ export function VoiceSecretaryComposerControl({
                                 {path}
                               </button>
                             ))}
+                          </div>
+                        ) : null}
+                        {(sourceSummary || checkedAtLabel || sourceUrls.length) ? (
+                          <div className={classNames("mt-1.5 rounded-xl px-2 py-1.5 text-[10px] leading-4", isDark ? "bg-white/[0.04] text-slate-300" : "bg-black/[0.03] text-gray-600")}>
+                            <div className="mb-0.5 font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                              {t("voiceSecretarySourcesLabel", { defaultValue: "Sources" })}
+                            </div>
+                            {sourceSummary ? (
+                              <div className="whitespace-pre-wrap break-words">{sourceSummary}</div>
+                            ) : null}
+                            {checkedAtLabel ? (
+                              <div className="mt-0.5 text-[var(--color-text-muted)]" title={checkedAtFullLabel}>
+                                {t("voiceSecretaryCheckedAtLabel", { defaultValue: "Checked" })}: {checkedAtLabel}
+                              </div>
+                            ) : null}
+                            {sourceUrls.length ? (
+                              <div className="mt-1 flex min-w-0 flex-wrap gap-1">
+                                {sourceUrls.map((url) => (
+                                  <a
+                                    key={url}
+                                    href={url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className={classNames(
+                                      "max-w-full truncate rounded-full border px-1.5 py-0.5 transition-colors",
+                                      isDark
+                                        ? "border-white/10 bg-white/[0.04] text-cyan-100 hover:bg-white/[0.08]"
+                                        : "border-black/10 bg-white text-cyan-700 hover:bg-cyan-50",
+                                    )}
+                                    title={url}
+                                  >
+                                    {url.replace(/^https?:\/\//i, "")}
+                                  </a>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>

@@ -496,6 +496,9 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                         "reply_text": str(arguments.get("reply_text") or arguments.get("result_text") or arguments.get("message") or ""),
                         "document_path": str(arguments.get("document_path") or arguments.get("workspace_path") or ""),
                         "artifact_paths": arguments.get("artifact_paths") or [],
+                        "source_summary": str(arguments.get("source_summary") or ""),
+                        "checked_at": str(arguments.get("checked_at") or ""),
+                        "source_urls": arguments.get("source_urls") or [],
                         "by": VOICE_SECRETARY_ACTOR_ID,
                     },
                 }

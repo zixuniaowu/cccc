@@ -257,6 +257,9 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
                     "reply_text": "Handled directly.",
                     "document_path": "docs/voice-secretary/notes.md",
                     "artifact_paths": ["docs/voice-secretary/notes.md", "docs/voice-secretary/report.md"],
+                    "source_summary": "Checked current weather provider snapshot.",
+                    "checked_at": "2026-04-22T12:00:00Z",
+                    "source_urls": ["https://example.com/weather"],
                 },
             )
 
@@ -267,6 +270,9 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
         self.assertEqual(args.get("status"), "done")
         self.assertEqual(args.get("reply_text"), "Handled directly.")
         self.assertEqual(args.get("artifact_paths"), ["docs/voice-secretary/notes.md", "docs/voice-secretary/report.md"])
+        self.assertEqual(args.get("source_summary"), "Checked current weather provider snapshot.")
+        self.assertEqual(args.get("checked_at"), "2026-04-22T12:00:00Z")
+        self.assertEqual(args.get("source_urls"), ["https://example.com/weather"])
         self.assertNotIn("result_summary", args)
         self.assertEqual(args.get("by"), "voice-secretary")
 
