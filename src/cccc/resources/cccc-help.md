@@ -52,7 +52,7 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 
 - Visible coordination belongs in `cccc_message_send` / `cccc_message_reply`.
 - Targets: `@all`, `@foreman`, `@peers`, `user`, or one actor.
-- Route deliberately: use `reply` only for the thread you answer; set `to` explicitly when the audience differs; routine status, acknowledgements, and narrow coordination should not use `@all`.
+- Before sending, verify `reply_to` and `to`; make the audience explicit when it differs. Do not use `@all` for routine status, acknowledgements, or narrow updates.
 
 ### Coordination
 

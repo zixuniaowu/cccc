@@ -2849,7 +2849,8 @@ class TestGroupSpaceOps(unittest.TestCase):
 
         fake_context = _FakeContext()
         fake_session = _FakeBrowserSession(fake_context)
-        collect_calls: list[int] = []
+        peek_calls: list[int] = []
+        persisted_states: list[Dict[str, Any]] = []
         peek_results = iter(
             [
                 [],
@@ -2865,17 +2866,20 @@ class TestGroupSpaceOps(unittest.TestCase):
             fake_now["value"] += max(0.0, float(seconds))
 
         def _fake_peek(_context: Any) -> list[Dict[str, Any]]:
+            peek_calls.append(1)
             try:
                 return list(next(peek_results))
             except StopIteration:
                 return [{"name": "SID", "value": "fresh", "domain": ".google.com", "path": "/"}]
 
         def _fake_collect_storage(_context: Any) -> Dict[str, Any]:
-            collect_calls.append(1)
             return {
                 "cookies": [{"name": "SID", "value": "fresh", "domain": ".google.com", "path": "/"}],
                 "origins": [],
             }
+
+        def _fake_persist_storage(state: Dict[str, Any]) -> None:
+            persisted_states.append(dict(state))
 
         with patch.object(auth_flow, "_load_saved_storage_state", return_value=None), patch.object(
             auth_flow,
@@ -2904,7 +2908,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         ), patch.object(
             auth_flow,
             "_persist_storage_state",
-            return_value=None,
+            side_effect=_fake_persist_storage,
         ), patch.object(
             auth_flow,
             "get_space_provider_state",
@@ -2926,9 +2930,13 @@ class TestGroupSpaceOps(unittest.TestCase):
                 session_id="nbl_auth_cookie_peek_fallback",
                 timeout_seconds=120,
                 cancel_event=threading.Event(),
+                force_reauth=True,
             )
 
-        self.assertEqual(len(collect_calls), 1)
+        self.assertGreaterEqual(len(peek_calls), 2)
+        self.assertEqual(len(persisted_states), 1)
+        cookies = persisted_states[0].get("cookies") if isinstance(persisted_states[0], dict) else []
+        self.assertEqual(str((cookies[0] if cookies else {}).get("value") or ""), "fresh")
         self.assertTrue(fake_session.closed)
         state = auth_flow.get_notebooklm_auth_flow_status()
         self.assertEqual(str(state.get("state") or ""), "succeeded")
