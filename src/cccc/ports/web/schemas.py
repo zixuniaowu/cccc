@@ -99,7 +99,7 @@ WEB_MAX_TEMPLATE_BYTES = 2 * 1024 * 1024  # safety bound for template uploads
 
 class ActorCreateRequest(BaseModel):
     actor_id: str
-    # Note: role is auto-determined by position (first enabled = foreman)
+    # Note: role is auto-determined by stable position (first visible actor = foreman)
     runner: RunnerKind = Field(default_factory=_default_runner_kind)
     runtime: AgentRuntime = Field(default="codex")
     title: str = Field(default="")

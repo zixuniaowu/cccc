@@ -249,30 +249,26 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("Voice Secretary Runtime Actor", prompt)
             self.assertIn("not the foreman", prompt)
             self.assertIn("secretary-scope", prompt)
-            self.assertIn("Bootstrap/resume orientation path", prompt)
-            self.assertIn("cccc_context_get", prompt)
             self.assertIn("your first action must be cccc_voice_secretary_document(action=\"read_new_input\")", prompt)
-            self.assertIn("do not call cccc_bootstrap, cccc_help, cccc_context_get, cccc_project_info", prompt)
+            self.assertIn("do not call bootstrap/help/context/project-info", prompt)
             self.assertIn("reply_text", prompt)
-            self.assertIn("Console text alone is never delivered to the user", prompt)
-            self.assertIn("avoid exploration loops", prompt)
+            self.assertIn("Console text alone is not delivered", prompt)
+            self.assertIn("Latency matters", prompt)
             self.assertNotIn("daemon-provided", prompt)
             self.assertNotIn("first instruction after cold start or resume", prompt)
             self.assertNotIn("wait until the first runtime instruction", prompt)
-            self.assertIn("Do not become a normal peer", prompt)
+            self.assertIn("Do not edit project code", prompt)
             self.assertIn("cccc_voice_secretary_document", prompt)
             self.assertIn("cccc_voice_secretary_request", prompt)
-            self.assertIn("Never copy them into user-facing markdown", prompt)
-            self.assertIn("On every input batch, incrementally organize useful material", prompt)
-            self.assertIn("non-lossy editorial refinement pass", prompt)
+            self.assertIn("never copy them into user-facing markdown", prompt)
+            self.assertIn("Maintain the target document incrementally", prompt)
+            self.assertIn("non-lossy editorial pass", prompt)
             self.assertIn("evidence-bounded reconstructions", prompt)
             self.assertIn("Do not fabricate facts", prompt)
-            self.assertIn("professional publishable document", prompt)
-            self.assertIn("Summary does not mean brevity", prompt)
-            self.assertIn("Preserve useful concrete details", prompt)
-            self.assertIn("not a wholesale rewrite", prompt)
-            self.assertIn("Edit repository-backed markdown directly", prompt)
-            self.assertIn("intentionally has no save action", prompt)
+            self.assertIn("finished secretary work", prompt)
+            self.assertIn("preserve names, dates, numbers", prompt)
+            self.assertIn("edit repository markdown directly", prompt)
+            self.assertIn("has no save action", prompt)
             self.assertNotIn("Save full revised markdown", prompt)
         finally:
             cleanup()
@@ -357,6 +353,16 @@ class TestAssistantOps(unittest.TestCase):
                 },
             )
             self.assertTrue(add_foreman.ok, getattr(add_foreman, "error", None))
+            stop_foreman, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "lead",
+                    "patch": {"enabled": False},
+                },
+            )
+            self.assertTrue(stop_foreman.ok, getattr(stop_foreman, "error", None))
 
             update, _ = self._call(
                 "assistant_settings_update",
@@ -407,7 +413,7 @@ class TestAssistantOps(unittest.TestCase):
 
             self.assertFalse(update.ok)
             self.assertEqual(update.error.code, "assistant_settings_update_failed")
-            self.assertIn("voice secretary requires an enabled foreman actor", update.error.message)
+            self.assertIn("voice secretary requires a foreman actor", update.error.message)
         finally:
             cleanup()
 
@@ -851,7 +857,7 @@ class TestAssistantOps(unittest.TestCase):
             input_read_result = input_read.result or {}
             self.assertEqual(input_read_result.get("item_count"), 1)
             self.assertNotIn("items", input_read_result)
-            self.assertIn("Secretary input batch", str(input_read_result.get("input_text") or ""))
+            self.assertIn("Secretary input:", str(input_read_result.get("input_text") or ""))
             self.assertNotIn("combined_text", input_read_result)
             self.assertIn("summarize the billing API migration plan", str(input_read_result.get("input_text") or ""))
             self.assertNotIn("documents_by_path", input_read_result)
@@ -1302,6 +1308,12 @@ class TestAssistantOps(unittest.TestCase):
             read_result = read.result or {}
             batches = read_result.get("input_batches") if isinstance(read_result, dict) else []
             self.assertEqual(len(batches), 1)
+            input_timing = read_result.get("input_timing") if isinstance(read_result, dict) else {}
+            self.assertEqual(input_timing.get("latest_seq"), 1)
+            self.assertEqual(input_timing.get("secretary_read_cursor"), 1)
+            self.assertTrue(str(input_timing.get("last_input_appended_at") or ""))
+            self.assertTrue(str(input_timing.get("last_notify_emitted_at") or ""))
+            self.assertTrue(str(input_timing.get("last_read_new_input_at") or ""))
             group_item = batches[0] if isinstance(batches[0], dict) else {}
             self.assertIn("en-US", group_item.get("languages") or [])
             self.assertIn("mixed", group_item.get("intent_hints") or [])
@@ -1466,7 +1478,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertNotIn("segment_id", batches[0] or {})
             self.assertNotIn("source_segment_range", str(batches[0] or {}))
             input_text = str((read.result or {}).get("input_text") or "")
-            self.assertIn("Secretary input batch", input_text)
+            self.assertIn("Secretary input:", input_text)
             self.assertNotIn("--- Item", input_text)
             self.assertNotIn("source_segment_range", input_text)
 
@@ -1605,7 +1617,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(read.ok, getattr(read, "error", None))
             input_text = str((read.result or {}).get("input_text") or "")
             self.assertIn("Operation: replace_with_refined_prompt", input_text)
-            self.assertIn("Return a complete ready-to-send prompt", input_text)
+            self.assertIn("complete ready-to-send replacement prompt", input_text)
             self.assertIn("Do not return only an incremental addition", input_text)
             self.assertNotIn("return only an append-ready addition", input_text)
 
@@ -1622,6 +1634,43 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(submit.ok, getattr(submit, "error", None))
             draft = (submit.result or {}).get("prompt_draft") if isinstance(submit.result, dict) else {}
             self.assertEqual(draft.get("operation"), "replace_with_refined_prompt")
+        finally:
+            cleanup()
+
+    def test_voice_secretary_prompt_refine_can_optimize_composer_without_speech(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            enqueue, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "prompt_refine",
+                    "request_id": "voice-prompt-composer-only",
+                    "composer_text": "帮我让大家汇报进展",
+                    "operation": "replace_with_refined_prompt",
+                    "composer_snapshot_hash": "composer-only-hash",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(enqueue.ok, getattr(enqueue, "error", None))
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            input_text = str((read.result or {}).get("input_text") or "")
+            self.assertIn("Operation: replace_with_refined_prompt", input_text)
+            self.assertIn("帮我让大家汇报进展", input_text)
+            self.assertIn("optimize the current composer draft directly", input_text)
+            self.assertIn("complete ready-to-send replacement prompt", input_text)
         finally:
             cleanup()
 
@@ -1974,12 +2023,9 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(read.ok, getattr(read, "error", None))
             input_text = str((read.result or {}).get("input_text") or "")
             self.assertIn("Target: secretary", input_text)
-            self.assertIn("Request kind: ask_request", input_text)
             self.assertIn(f"Request id: {request_id}", input_text)
-            self.assertIn("Requires report: true", input_text)
-            self.assertIn("Report channel: cccc_voice_secretary_request(action=\"report\")", input_text)
-            self.assertIn("Required output: answer this Ask request", input_text)
-            self.assertIn("Do not answer only in the console", input_text)
+            self.assertIn("Required: report this Ask", input_text)
+            self.assertIn("cccc_voice_secretary_request(action=\"report\"", input_text)
             self.assertIn("刚才的总结有没有遗漏", input_text)
             self.assertEqual((read.result or {}).get("documents"), [])
             batches = (read.result or {}).get("input_batches") if isinstance(read.result, dict) else []
@@ -1997,6 +2043,8 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(ask_requests)
             self.assertEqual(ask_requests[0].get("request_id"), request_id)
             self.assertEqual(ask_requests[0].get("status"), "working")
+            self.assertTrue(str(ask_requests[0].get("input_appended_at") or ""))
+            self.assertTrue(str(ask_requests[0].get("first_read_at") or ""))
 
             feedback, _ = self._call(
                 "assistant_voice_instruction_feedback",
@@ -2105,6 +2153,60 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_working_reply_is_not_reused_as_final_reply(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            enqueue, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "voice_instruction",
+                    "instruction": "帮我查一下今天的日程。",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(enqueue.ok, getattr(enqueue, "error", None))
+            request_id = str((enqueue.result or {}).get("request_id") or "")
+            self.assertTrue(request_id)
+
+            working, _ = self._call(
+                "assistant_voice_instruction_feedback",
+                {
+                    "group_id": group_id,
+                    "by": "voice-secretary",
+                    "request_id": request_id,
+                    "status": "working",
+                    "reply_text": "正在整理日程。",
+                },
+            )
+            self.assertTrue(working.ok, getattr(working, "error", None))
+            working_request = (working.result or {}).get("ask_request") if isinstance(working.result, dict) else {}
+            self.assertEqual(working_request.get("status"), "working")
+            self.assertEqual(working_request.get("reply_text"), "正在整理日程。")
+
+            done_without_reply, _ = self._call(
+                "assistant_voice_instruction_feedback",
+                {
+                    "group_id": group_id,
+                    "by": "voice-secretary",
+                    "request_id": request_id,
+                    "status": "done",
+                },
+            )
+            self.assertTrue(done_without_reply.ok, getattr(done_without_reply, "error", None))
+            done_request = (done_without_reply.result or {}).get("ask_request") if isinstance(done_without_reply.result, dict) else {}
+            self.assertEqual(done_request.get("status"), "done")
+            self.assertNotIn("reply_text", done_request)
+        finally:
+            cleanup()
+
     def test_voice_secretary_request_uses_targeted_system_notify(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -2113,6 +2215,29 @@ class TestAssistantOps(unittest.TestCase):
 
             group_id = self._create_group()
             self._enable_voice_secretary(group_id)
+            add_peer, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "peer1",
+                    "title": "Peer",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(add_peer.ok, getattr(add_peer, "error", None))
+            stop_foreman, _ = self._call(
+                "actor_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "lead",
+                    "patch": {"enabled": False},
+                },
+            )
+            self.assertTrue(stop_foreman.ok, getattr(stop_foreman, "error", None))
 
             request, _ = self._call(
                 "assistant_voice_request",
@@ -2246,7 +2371,7 @@ class TestAssistantOps(unittest.TestCase):
             for text in texts:
                 self.assertIn(text, combined_text)
             input_text = str(read_result.get("input_text") or "")
-            self.assertIn("Secretary input batch", input_text)
+            self.assertIn("Secretary input:", input_text)
             self.assertNotIn("--- Item", input_text)
             self.assertEqual(input_text.count("Document:"), 1)
             batches = read_result.get("input_batches") if isinstance(read_result, dict) else []
@@ -2662,11 +2787,7 @@ class TestAssistantOps(unittest.TestCase):
             )
             self.assertTrue(read.ok, getattr(read, "error", None))
             self.assertIn("Request kind: document_request", str((read.result or {}).get("input_text") or ""))
-            self.assertIn("Requires report: true", str((read.result or {}).get("input_text") or ""))
-            self.assertIn(
-                "Report channel: cccc_voice_secretary_request(action=\"report\")",
-                str((read.result or {}).get("input_text") or ""),
-            )
+            self.assertIn("Required: edit the repository markdown directly, then report brief completion", str((read.result or {}).get("input_text") or ""))
             self.assertIn("User instruction:", str((read.result or {}).get("input_text") or ""))
             self.assertIn("concise launch-risk summary", str((read.result or {}).get("input_text") or ""))
             batches = (read.result or {}).get("input_batches") if isinstance(read.result, dict) else []

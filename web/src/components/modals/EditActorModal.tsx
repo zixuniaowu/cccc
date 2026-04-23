@@ -79,12 +79,12 @@ type SecretSource = "none" | "actor" | "profile-preview";
 /** Runtime-specific placeholder hints for secret environment variables */
 const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
   claude: {
-    set: 'ANTHROPIC_API_KEY="..."\nANTHROPIC_BASE_URL="..."',
-    unset: "ANTHROPIC_API_KEY\nANTHROPIC_BASE_URL",
+    set: 'ANTHROPIC_AUTH_TOKEN="..."\nANTHROPIC_BASE_URL="..."',
+    unset: "ANTHROPIC_AUTH_TOKEN\nANTHROPIC_BASE_URL",
   },
   codex: {
-    set: 'OPENAI_API_KEY="..."\nOPENAI_BASE_URL="..."',
-    unset: "OPENAI_API_KEY\nOPENAI_BASE_URL",
+    set: "# Configure OpenAI-compatible Codex providers with Codex config or command -c overrides.",
+    unset: "",
   },
   gemini: {
     set: 'GOOGLE_API_KEY="..."',
@@ -93,8 +93,8 @@ const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
 };
 
 const DEFAULT_SECRETS_PLACEHOLDER = {
-  set: 'OPENAI_API_KEY="..."\nANTHROPIC_API_KEY="..."\nANTHROPIC_BASE_URL="..."',
-  unset: "OPENAI_API_KEY\nANTHROPIC_API_KEY\nANTHROPIC_BASE_URL",
+  set: 'ANTHROPIC_AUTH_TOKEN="..."\nANTHROPIC_BASE_URL="..."',
+  unset: "ANTHROPIC_AUTH_TOKEN\nANTHROPIC_BASE_URL",
 };
 
 function commandPreview(command: string[] | undefined): string {

@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import BuiltinAssistant, DaemonError, DaemonResponse, SystemNotifyData
-from ...kernel.actors import list_visible_actors
+from ...kernel.actors import find_foreman, list_visible_actors
 from ...kernel.group import Group, load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
@@ -436,6 +436,7 @@ def _clean_multiline_text(value: Any, *, max_len: int = _MAX_TRANSCRIPT_CHARS) -
 
 
 _VOICE_ASK_REQUEST_STATUSES = {"pending", "working", "done", "needs_user", "failed", "handed_off"}
+_VOICE_ASK_FINAL_STATUSES = {"done", "needs_user", "failed", "handed_off"}
 
 
 def _clean_voice_request_id(value: Any, *, prefix: str) -> str:
@@ -592,6 +593,10 @@ def _voice_ask_request_public(record: Dict[str, Any]) -> Dict[str, Any]:
         "handoff_target": str(record.get("handoff_target") or ""),
         "handoff_request_id": str(record.get("handoff_request_id") or ""),
         "target_actor_id": str(record.get("target_actor_id") or ""),
+        "input_appended_at": str(record.get("input_appended_at") or ""),
+        "first_read_at": str(record.get("first_read_at") or ""),
+        "first_feedback_at": str(record.get("first_feedback_at") or ""),
+        "last_feedback_at": str(record.get("last_feedback_at") or ""),
         "created_at": str(record.get("created_at") or ""),
         "updated_at": str(record.get("updated_at") or ""),
         "cleared_at": str(record.get("cleared_at") or ""),
@@ -629,6 +634,9 @@ def _upsert_voice_ask_request(
     handoff_target: str = "",
     handoff_request_id: str = "",
     target_actor_id: str = "",
+    input_appended_at: str = "",
+    first_read_at: str = "",
+    feedback_at: str = "",
     now: str,
 ) -> Dict[str, Any]:
     clean_request_id = _clean_voice_ask_request_id(request_id)
@@ -638,11 +646,26 @@ def _upsert_voice_ask_request(
     requests = state.setdefault("voice_ask_requests", {})
     existing = requests.get(clean_request_id) if isinstance(requests.get(clean_request_id), dict) else {}
     text = _clean_multiline_text(request_text, max_len=4_000) or str(existing.get("request_text") or "")
-    reply = _clean_multiline_text(reply_text, max_len=4_000) or str(existing.get("reply_text") or "")
+    new_reply = _clean_multiline_text(reply_text, max_len=4_000)
+    existing_status = str(existing.get("status") or "").strip().lower() if isinstance(existing, dict) else ""
+    existing_reply = str(existing.get("reply_text") or "") if isinstance(existing, dict) else ""
+    if new_reply:
+        reply = new_reply
+    elif clean_status == existing_status and clean_status in _VOICE_ASK_FINAL_STATUSES:
+        reply = existing_reply
+    else:
+        reply = ""
     clean_source_summary = _clean_multiline_text(source_summary, max_len=1_200) or str(existing.get("source_summary") or "")
     clean_checked_at = str(checked_at or existing.get("checked_at") or "").strip()[:120]
     existing_cleared_at = str(existing.get("cleared_at") or "").strip() if isinstance(existing, dict) else ""
     should_reveal = bool(reply) or clean_status in {"needs_user", "failed", "handed_off"}
+    clean_input_appended_at = str(input_appended_at or existing.get("input_appended_at") or "").strip()
+    if not clean_input_appended_at and text:
+        clean_input_appended_at = now
+    clean_first_read_at = str(first_read_at or existing.get("first_read_at") or "").strip()
+    clean_feedback_at = str(feedback_at or "").strip()
+    clean_first_feedback_at = str(existing.get("first_feedback_at") or "").strip() or clean_feedback_at
+    clean_last_feedback_at = clean_feedback_at or str(existing.get("last_feedback_at") or "").strip()
     record = {
         "schema": 1,
         "group_id": group.group_id,
@@ -670,6 +693,10 @@ def _upsert_voice_ask_request(
         "handoff_target": str(handoff_target or existing.get("handoff_target") or ""),
         "handoff_request_id": str(handoff_request_id or existing.get("handoff_request_id") or ""),
         "target_actor_id": str(target_actor_id or existing.get("target_actor_id") or ""),
+        "input_appended_at": clean_input_appended_at,
+        "first_read_at": clean_first_read_at,
+        "first_feedback_at": clean_first_feedback_at,
+        "last_feedback_at": clean_last_feedback_at,
         "created_at": str(existing.get("created_at") or now) if isinstance(existing, dict) else now,
         "updated_at": now,
     }
@@ -692,7 +719,14 @@ def _mark_voice_ask_requests_working(group: Group, *, request_ids: list[str], no
         current = str(record.get("status") or "").strip().lower()
         if current not in {"pending", ""}:
             continue
-        updated = _upsert_voice_ask_request(state, group=group, request_id=request_id, status="working", now=now)
+        updated = _upsert_voice_ask_request(
+            state,
+            group=group,
+            request_id=request_id,
+            status="working",
+            first_read_at=now,
+            now=now,
+        )
         append_event(
             group.ledger_path,
             kind="assistant.voice.request",
@@ -772,14 +806,9 @@ def _stale_pending_voice_prompt_draft_in_state(state: Dict[str, Any], *, request
 
 
 def _voice_secretary_foreman_actor_id(group: Group) -> str:
-    for actor in list_visible_actors(group):
-        if not isinstance(actor, dict):
-            continue
-        if not coerce_bool(actor.get("enabled"), default=True):
-            continue
-        aid = str(actor.get("id") or "").strip()
-        if aid:
-            return aid
+    actor = find_foreman(group)
+    if isinstance(actor, dict):
+        return str(actor.get("id") or "").strip()
     return ""
 
 
@@ -1176,6 +1205,9 @@ def _load_voice_input_state(group: Group) -> Dict[str, Any]:
             "flush_count_since_idle_review": 0,
             "last_idle_review_at": "",
             "last_idle_review_input_seq": 0,
+            "last_input_appended_at": "",
+            "last_notify_emitted_at": "",
+            "last_read_new_input_at": "",
         }
     return {
         "schema": 1,
@@ -1187,6 +1219,9 @@ def _load_voice_input_state(group: Group) -> Dict[str, Any]:
         "flush_count_since_idle_review": max(0, int(payload.get("flush_count_since_idle_review") or 0)),
         "last_idle_review_at": str(payload.get("last_idle_review_at") or ""),
         "last_idle_review_input_seq": max(0, int(payload.get("last_idle_review_input_seq") or 0)),
+        "last_input_appended_at": str(payload.get("last_input_appended_at") or ""),
+        "last_notify_emitted_at": str(payload.get("last_notify_emitted_at") or ""),
+        "last_read_new_input_at": str(payload.get("last_read_new_input_at") or ""),
     }
 
 
@@ -1201,10 +1236,27 @@ def _save_voice_input_state(group: Group, state: Dict[str, Any]) -> None:
         "flush_count_since_idle_review": max(0, int(state.get("flush_count_since_idle_review") or 0)),
         "last_idle_review_at": str(state.get("last_idle_review_at") or ""),
         "last_idle_review_input_seq": max(0, int(state.get("last_idle_review_input_seq") or 0)),
+        "last_input_appended_at": str(state.get("last_input_appended_at") or ""),
+        "last_notify_emitted_at": str(state.get("last_notify_emitted_at") or ""),
+        "last_read_new_input_at": str(state.get("last_read_new_input_at") or ""),
     }
     path = _voice_input_state_path(group)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(path, normalized, indent=2)
+
+
+def _voice_input_timing_public(state: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in {
+            "latest_seq": max(0, int(state.get("latest_seq") or 0)),
+            "secretary_read_cursor": max(0, int(state.get("secretary_read_cursor") or 0)),
+            "last_input_appended_at": str(state.get("last_input_appended_at") or ""),
+            "last_notify_emitted_at": str(state.get("last_notify_emitted_at") or state.get("last_notify_at") or ""),
+            "last_read_new_input_at": str(state.get("last_read_new_input_at") or ""),
+        }.items()
+        if value not in ("", None)
+    }
 
 
 def _voice_idle_review_cooldown_elapsed(state: Dict[str, Any]) -> bool:
@@ -1353,6 +1405,7 @@ def _append_voice_input_event(
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
     state["latest_seq"] = seq
+    state["last_input_appended_at"] = now
     idle_review_requested = _maybe_request_voice_idle_review_for_input(group, event, state)
     if event["kind"] == "idle_review":
         _emit_voice_input_notify(group, reason="idle_review")
@@ -1603,8 +1656,7 @@ def _voice_input_batch_text(grouped: list[Dict[str, Any]], *, item_count: int) -
     if not grouped:
         return "No new Secretary input."
     blocks = [
-        f"Secretary input batch: {item_count} unread item{'s' if item_count != 1 else ''} grouped by target.",
-        "Output channels: document -> edit repository markdown directly; secretary -> call cccc_voice_secretary_request(action=\"report\", request_id=..., reply_text=...); composer -> call cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=..., draft_text=...) with composer text to insert. Console text is not delivered to the user.",
+        f"Secretary input: {item_count} unread item{'s' if item_count != 1 else ''}. Use the required channel for each target; console text is not delivered.",
     ]
     for group_item in grouped:
         target_kind = str(group_item.get("target_kind") or "secretary").strip()
@@ -1614,37 +1666,49 @@ def _voice_input_batch_text(grouped: list[Dict[str, Any]], *, item_count: int) -
         intents = ", ".join(str(item) for item in (group_item.get("intent_hints") or []) if str(item).strip())
         kinds = ", ".join(str(item) for item in (group_item.get("kinds") or []) if str(item).strip())
         request_ids = ", ".join(str(item) for item in (group_item.get("request_ids") or []) if str(item).strip())
-        operations = ", ".join(str(item) for item in (group_item.get("operations") or []) if str(item).strip())
+        operation_values = [
+            str(item).strip()
+            for item in (group_item.get("operations") or [])
+            if str(item).strip()
+        ]
+        operations = ", ".join(operation_values)
+        composer_replace_operation = any(
+            item.lower() in {"replace", "replace_with_refined_prompt"}
+            for item in operation_values
+        )
         text = str(group_item.get("combined_text") or "").strip()
         previous_tail = str(group_item.get("previous_input_tail") or "").strip()
-        lines = [f"Target: {target_kind}"]
-        if path:
-            lines.append(f"Document: {path}")
-        if title:
-            lines.append(f"Title: {title}")
         request_kind = str(group_item.get("request_kind") or "").strip()
-        if request_kind:
-            lines.append(f"Request kind: {request_kind}")
+        lines = [f"Target: {target_kind}"]
+        if target_kind == "document":
+            if path:
+                lines.append(f"Document: {path}")
+            if title:
+                lines.append(f"Title: {title}")
         if request_ids:
             lines.append(f"Request id: {request_ids}")
-        if bool(group_item.get("requires_report")):
-            report_channel = str(group_item.get("report_channel") or "cccc_voice_secretary_request(action=\"report\")").strip()
-            lines.append("Requires report: true")
-            lines.append(f"Report channel: {report_channel}")
         if operations:
             lines.append(f"Operation: {operations}")
         if languages:
             lines.append(f"Language: {languages}")
         if intents:
             lines.append(f"Intent: {intents}")
-        if kinds:
+        if kinds and target_kind == "document":
             lines.append(f"Input kind: {kinds}")
         if target_kind == "secretary" and request_ids:
-            lines.append("Required output: answer this Ask request with cccc_voice_secretary_request(action=\"report\", request_id=\"...\", status=\"done\"|\"needs_user\"|\"failed\", reply_text=\"...\"). Do not answer only in the console.")
+            lines.append("Required: report this Ask with cccc_voice_secretary_request(action=\"report\", request_id=\"...\", status=\"done\"|\"needs_user\"|\"failed\", reply_text=\"...\"). Use status=\"working\" first only for longer work.")
         elif target_kind == "composer" and request_ids:
-            lines.append("Required output: submit composer text to insert with cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"...\", draft_text=\"...\"). If the composer already had text, do not repeat it unless the user explicitly asked for a full rewrite.")
+            if composer_replace_operation:
+                lines.append("Required: submit a complete ready-to-send replacement prompt with cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"...\", draft_text=\"...\"). Preserve useful current composer text.")
+            else:
+                lines.append("Required: submit append-ready composer text with cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"...\", draft_text=\"...\"). Do not repeat useful existing draft text.")
         elif target_kind == "document":
-            lines.append("Required output: edit the repository markdown document directly. If this is an explicit document request with Request id, also report a brief completion with cccc_voice_secretary_request(action=\"report\", request_id=\"...\", status=\"done\", reply_text=\"...\").")
+            if request_kind:
+                lines.append(f"Request kind: {request_kind}")
+            if bool(group_item.get("requires_report")):
+                lines.append("Required: edit the repository markdown directly, then report brief completion with cccc_voice_secretary_request(action=\"report\", request_id=\"...\", status=\"done\", reply_text=\"...\").")
+            else:
+                lines.append("Required: edit the repository markdown directly.")
         if previous_tail:
             lines.extend([
                 "",
@@ -1734,6 +1798,7 @@ def _emit_voice_input_notify(group: Group, *, reason: str) -> None:
     )
     emit_system_notify(group, by="system", notify=notify)
     state["last_notify_at"] = now
+    state["last_notify_emitted_at"] = now
     if reason != "new_input":
         state["retry_count"] = int(state.get("retry_count") or 0) + 1
     else:
@@ -2729,6 +2794,7 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
                 "active_document_path": active_document_path,
                 "capture_target_document_path": active_document_path,
                 "new_input_available": int(input_state.get("latest_seq") or 0) > int(input_state.get("secretary_read_cursor") or 0),
+                "input_timing": _voice_input_timing_public(input_state),
                 "prompt_draft": prompt_draft,
                 "ask_requests": ask_requests,
                 "latest_ask_request": ask_requests[0] if ask_requests else {},
@@ -2759,6 +2825,7 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
             "active_document_path": active_document_path,
             "capture_target_document_path": active_document_path,
             "new_input_available": int(input_state.get("latest_seq") or 0) > int(input_state.get("secretary_read_cursor") or 0),
+            "input_timing": _voice_input_timing_public(input_state),
             "prompt_draft": prompt_draft,
             "ask_requests": ask_requests,
             "latest_ask_request": ask_requests[0] if ask_requests else {},
@@ -3463,6 +3530,7 @@ def handle_assistant_voice_document_list(args: Dict[str, Any]) -> DaemonResponse
         "active_document_path": active_document_path,
         "capture_target_document_path": active_document_path,
         "new_input_available": int(input_state.get("latest_seq") or 0) > int(input_state.get("secretary_read_cursor") or 0),
+        "input_timing": _voice_input_timing_public(input_state),
     }
     if include_documents_by_id:
         result["documents_by_id"] = {str(item.get("document_id")): item for item in documents}
@@ -3528,15 +3596,17 @@ def handle_assistant_voice_document_input_read(args: Dict[str, Any]) -> DaemonRe
         return _error("assistant_voice_document_input_read_failed", "read_new_input is only available to voice-secretary")
     try:
         _flush_stale_voice_session_windows(group)
+        read_at = utc_now_iso()
         state = _load_voice_input_state(group)
         cursor = int(state.get("secretary_read_cursor") or 0)
         items = _read_voice_input_events(group, after_seq=cursor)
+        state["last_read_new_input_at"] = read_at
         if items:
             state["secretary_read_cursor"] = max(int(item.get("seq") or 0) for item in items)
             if int(state.get("secretary_read_cursor") or 0) >= int(state.get("latest_seq") or 0):
                 state["last_notify_at"] = ""
                 state["retry_count"] = 0
-            _save_voice_input_state(group, state)
+        _save_voice_input_state(group, state)
         public_items = [_voice_input_event_public(item) for item in items]
         grouped = _group_voice_input_by_target(items)
         grouped = _annotate_voice_input_previous_tails(group, grouped, items)
@@ -3567,6 +3637,7 @@ def handle_assistant_voice_document_input_read(args: Dict[str, Any]) -> DaemonRe
                 "input_batches": input_batches,
                 "documents": documents,
                 "has_new_input": bool(public_items),
+                "input_timing": _voice_input_timing_public(state),
             },
         )
     except Exception as exc:
@@ -3841,6 +3912,7 @@ def handle_assistant_voice_input_append(
         )
         if input_kind == "voice_instruction":
             runtime_state = _load_runtime_state(group)
+            request_now = utc_now_iso()
             _upsert_voice_ask_request(
                 runtime_state,
                 group=group,
@@ -3851,7 +3923,8 @@ def handle_assistant_voice_input_append(
                 target_kind=str(metadata.get("target_kind") or "secretary"),
                 intent_hint=intent_hint,
                 language=language,
-                now=utc_now_iso(),
+                input_appended_at=request_now,
+                now=request_now,
             )
             _save_runtime_state(group, runtime_state)
         event = append_event(
@@ -3976,6 +4049,7 @@ def handle_assistant_voice_document_instruction(
             metadata={"target_kind": "document", "request_id": request_id},
         )
         runtime_state = _load_runtime_state(group)
+        request_now = utc_now_iso()
         _upsert_voice_ask_request(
             runtime_state,
             group=group,
@@ -3986,7 +4060,8 @@ def handle_assistant_voice_document_instruction(
             target_kind="document",
             intent_hint=intent_hint,
             language=str(raw_trigger.get("language") or ""),
-            now=utc_now_iso(),
+            input_appended_at=request_now,
+            now=request_now,
         )
         _save_runtime_state(group, runtime_state)
         event = append_event(
@@ -4270,6 +4345,7 @@ def handle_assistant_voice_instruction_feedback(args: Dict[str, Any]) -> DaemonR
             source_summary=source_summary,
             checked_at=checked_at,
             source_urls=source_urls,
+            feedback_at=now,
             now=now,
         )
         _save_runtime_state(group, state)

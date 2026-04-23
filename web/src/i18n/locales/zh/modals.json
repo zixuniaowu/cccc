@@ -229,7 +229,7 @@
     "desktopPetHint": "在网页角落显示一只浮动像素猫，实时反映该团队的工作状态。",
     "desktopPetTabHint": "每个启用的工作组都会在 Web UI 中显示自己的 Web 宠物。",
     "desktopPetSwitchLabel": "启用 Web 宠物",
-    "desktopPetRequiresForeman": "请先启用一个 foreman actor，再开启 Web 宠物。",
+    "desktopPetRequiresForeman": "请先添加一个 foreman actor，再开启 Web 宠物。",
     "desktopPetStartFailed": "启动 Web 宠物运行时失败。",
     "desktopPetStartFailedWithCause": "启动 Web 宠物运行时失败：{{cause}}",
     "desktopPetRollbackFailed": "Web 宠物启动失败，而且回滚重启也失败了。",

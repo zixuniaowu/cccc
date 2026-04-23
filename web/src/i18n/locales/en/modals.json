@@ -230,7 +230,7 @@
     "desktopPetTabHint": "Each enabled group shows its own Web Pet in the web UI.",
     "desktopPetSwitchLabel": "Enable Web Pet",
     "betaBadge": "Beta",
-    "desktopPetRequiresForeman": "Enable a foreman actor before turning on Web Pet.",
+    "desktopPetRequiresForeman": "Add a foreman actor before turning on Web Pet.",
     "desktopPetStartFailed": "Failed to start the Web Pet runtime.",
     "desktopPetStartFailedWithCause": "Failed to start the Web Pet runtime: {{cause}}",
     "desktopPetRollbackFailed": "Web Pet startup failed, and rollback restart also failed.",

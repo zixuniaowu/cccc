@@ -1,7 +1,9 @@
 import json
+import logging
 import os
 import shutil
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -1027,6 +1029,83 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_user_default_to_stopped_foreman_does_not_route_to_peer(self) -> None:
+        """Default @foreman routing must keep the stable foreman target even when stopped."""
+        from cccc.daemon.messaging.chat_ops import handle_send
+        from cccc.kernel.group import load_group
+        from cccc.util.conv import coerce_bool
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "stopped-foreman", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            for actor_id, enabled in (("fm1", False), ("peer1", True)):
+                add, _ = self._call(
+                    "actor_add",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "actor_id": actor_id,
+                        "title": actor_id,
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "enabled": enabled,
+                    },
+                )
+                self.assertTrue(add.ok, getattr(add, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            wake_calls: list[list[str]] = []
+
+            def wake(_group, to, _by):
+                wake_calls.append(list(to))
+                return ["fm1"]
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit,
+                patch("cccc.daemon.messaging.chat_ops.schedule_headless_post_wake_delivery", return_value=True) as schedule_post_wake,
+                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=["fm1"]),
+                patch("cccc.daemon.messaging.chat_ops.emit_system_notify") as emit_notify,
+            ):
+                resp = handle_send(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "text": "default to stopped foreman",
+                    },
+                    coerce_bool=coerce_bool,
+                    normalize_attachments=lambda _group, _raw: [],
+                    effective_runner_kind=lambda runner: str(runner or "headless"),
+                    auto_wake_recipients=wake,
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _kinds: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual(wake_calls, [["@foreman"]])
+            event = (resp.result or {}).get("event") if isinstance(resp.result, dict) else {}
+            self.assertIsInstance(event, dict)
+            assert isinstance(event, dict)
+            self.assertEqual(event.get("data", {}).get("to"), ["@foreman"])
+            submit.assert_not_called()
+            schedule_post_wake.assert_called_once()
+            schedule_kwargs = schedule_post_wake.call_args.kwargs
+            self.assertEqual(schedule_kwargs.get("group_id"), group_id)
+            self.assertEqual(schedule_kwargs.get("actor_id"), "fm1")
+            self.assertEqual(schedule_kwargs.get("runtime"), "codex")
+            self.assertEqual(schedule_kwargs.get("event_id"), event.get("id"))
+            self.assertIn("default to stopped foreman", str(schedule_kwargs.get("text") or ""))
+            emit_notify.assert_not_called()
+        finally:
+            cleanup()
+
     def test_foreman_send_explicit_foreman_returns_guided_error(self) -> None:
         """N015: foreman explicit `@foreman` should error with actionable guidance."""
         _, cleanup = self._with_home()
@@ -1063,6 +1142,127 @@ class TestChatOps(unittest.TestCase):
             self.assertIn("to=['peer-reviewer']", message)
         finally:
             cleanup()
+
+    def test_reply_to_stopped_headless_actor_schedules_post_wake_delivery(self) -> None:
+        from cccc.daemon.messaging.chat_ops import handle_reply
+        from cccc.kernel.group import load_group
+        from cccc.util.conv import coerce_bool
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "headless-reply-wake", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "enabled": False,
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            original, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["user"],
+                    "text": "original",
+                },
+            )
+            self.assertTrue(original.ok, getattr(original, "error", None))
+            original_event = (original.result or {}).get("event") if isinstance(original.result, dict) else {}
+            self.assertIsInstance(original_event, dict)
+            assert isinstance(original_event, dict)
+            reply_to = str(original_event.get("id") or "").strip()
+            self.assertTrue(reply_to)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            with (
+                patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit,
+                patch("cccc.daemon.messaging.chat_ops.schedule_headless_post_wake_delivery", return_value=True) as schedule_post_wake,
+                patch("cccc.daemon.messaging.chat_ops.get_headless_targets_for_message", return_value=["peer1"]),
+                patch("cccc.daemon.messaging.chat_ops.emit_system_notify") as emit_notify,
+            ):
+                resp = handle_reply(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "reply_to": reply_to,
+                        "to": ["peer1"],
+                        "text": "reply after wake",
+                    },
+                    coerce_bool=coerce_bool,
+                    normalize_attachments=lambda _group, _raw: [],
+                    effective_runner_kind=lambda runner: str(runner or "headless"),
+                    auto_wake_recipients=lambda _group, _to, _by: ["peer1"],
+                    automation_on_resume=lambda _group: None,
+                    automation_on_new_message=lambda _group: None,
+                    clear_pending_system_notifies=lambda _group_id, _kinds: None,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            event = (resp.result or {}).get("event") if isinstance(resp.result, dict) else {}
+            self.assertIsInstance(event, dict)
+            assert isinstance(event, dict)
+            submit.assert_not_called()
+            schedule_post_wake.assert_called_once()
+            schedule_kwargs = schedule_post_wake.call_args.kwargs
+            self.assertEqual(schedule_kwargs.get("group_id"), group_id)
+            self.assertEqual(schedule_kwargs.get("actor_id"), "peer1")
+            self.assertEqual(schedule_kwargs.get("runtime"), "codex")
+            self.assertEqual(schedule_kwargs.get("event_id"), event.get("id"))
+            self.assertEqual(schedule_kwargs.get("reply_to"), reply_to)
+            self.assertIn("reply after wake", str(schedule_kwargs.get("text") or ""))
+            emit_notify.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_auto_wake_reports_actor_already_being_woken_for_post_wake_delivery(self) -> None:
+        from cccc.daemon.messaging.chat_support_ops import auto_wake_recipients
+
+        group = type("G", (), {"group_id": "g1"})()
+        lock = threading.Lock()
+        in_progress = {("g1", "peer1")}
+        start_calls: list[str] = []
+
+        result = auto_wake_recipients(
+            group,
+            ["peer1"],
+            by="user",
+            disabled_recipient_actor_ids=lambda _group, _to: [],
+            enabled_recipient_actor_ids=lambda _group, _to: ["peer1"],
+            find_actor=lambda _group, _actor_id: {
+                "id": "peer1",
+                "enabled": True,
+                "runtime": "codex",
+                "runner": "headless",
+            },
+            coerce_bool=lambda value, default=True: bool(value) if value is not None else default,
+            is_actor_running=lambda _group, _actor_id: False,
+            start_actor_process=lambda *_args, **_kwargs: start_calls.append("start") or {"success": True},
+            update_actor=lambda *_args, **_kwargs: None,
+            runner_stop_actor=lambda *_args, **_kwargs: None,
+            request_flush_pending_messages=lambda *_args, **_kwargs: True,
+            logger=logging.getLogger("test"),
+            auto_wake_lock=lock,
+            auto_wake_in_progress=in_progress,
+        )
+
+        self.assertEqual(result, ["peer1"])
+        self.assertEqual(start_calls, [])
+        self.assertEqual(in_progress, {("g1", "peer1")})
 
     # -- T070: cccc_message_reply & cccc_file_send `to` string coercion tests --
 

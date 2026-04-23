@@ -902,7 +902,7 @@ export const MessageBubble = memo(function MessageBubble({
                         isStreaming ? "opacity-95 translate-y-0" : "opacity-100 translate-y-0",
                         bubbleMotionClass,
                         isUserMessage
-                            ? "w-auto min-w-[min(18rem,70vw)] rounded-[22px] rounded-tr-md border border-[var(--glass-bubble-border)] shadow-[var(--glass-bubble-shadow)]"
+                            ? "glass-bubble w-auto min-w-[min(18rem,70vw)] rounded-[22px] rounded-tr-md"
                             : "w-full rounded-[22px] rounded-tl-md border border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-[0_10px_28px_rgba(15,23,42,0.06)]"
                         ,
                         isAttention ? "ring-1 ring-amber-400/40 dark:ring-amber-500/40" : ""

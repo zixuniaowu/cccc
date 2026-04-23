@@ -95,6 +95,19 @@ function modeButtonClass(selected: boolean): string {
   ].join(" ");
 }
 
+function secretsPlaceholderForRuntime(runtime: SupportedRuntime): string {
+  if (runtime === "claude") {
+    return 'ANTHROPIC_AUTH_TOKEN="..."\nANTHROPIC_BASE_URL="..."';
+  }
+  if (runtime === "codex") {
+    return "# Configure OpenAI-compatible Codex providers with Codex config or command -c overrides.";
+  }
+  if (runtime === "gemini") {
+    return 'GOOGLE_API_KEY="..."';
+  }
+  return 'ANTHROPIC_AUTH_TOKEN="..."\nANTHROPIC_BASE_URL="..."';
+}
+
 export function AddActorModal({
   isOpen,
   isDark,
@@ -153,6 +166,7 @@ export function AddActorModal({
   const runtimeInfo = runtimes.find((r) => r.name === newActorRuntime);
   const runtimeAvailable = runtimeInfo?.available ?? false;
   const defaultCommand = runtimeInfo?.recommended_command || "";
+  const newActorSecretsPlaceholder = secretsPlaceholderForRuntime(newActorRuntime);
   const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim());
   const selectedProfileRuntime = String(selectedProfile?.runtime || "").trim() as SupportedRuntime;
   const selectedProfileCommand = commandPreview(selectedProfile?.command);
@@ -582,7 +596,7 @@ export function AddActorModal({
                         className="min-h-[112px] font-mono"
                         value={newActorSecretsSetText}
                         onChange={(e) => setNewActorSecretsSetText(e.target.value)}
-                        placeholder={'OPENAI_API_KEY="..."\nANTHROPIC_API_KEY="..."'}
+                        placeholder={newActorSecretsPlaceholder}
                         spellCheck={false}
                       />
                       <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">

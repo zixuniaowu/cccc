@@ -90,7 +90,7 @@ def autostart_running_groups(
             try:
                 restore_pet_actor_state(
                     group,
-                    None if str(e).strip() == "desktop pet requires an enabled foreman actor" else pet_state_before,
+                    None if str(e).strip() == "desktop pet requires a foreman actor" else pet_state_before,
                     update_actor_private_env=update_actor_private_env,
                     delete_actor_private_env=delete_actor_private_env,
                 )
@@ -112,7 +112,7 @@ def autostart_running_groups(
             try:
                 restore_voice_secretary_actor_state(
                     group,
-                    None if str(e).strip() == "voice secretary requires an enabled foreman actor" else voice_state_before,
+                    None if str(e).strip() == "voice secretary requires a foreman actor" else voice_state_before,
                     update_actor_private_env=update_actor_private_env,
                     delete_actor_private_env=delete_actor_private_env,
                 )

@@ -1378,8 +1378,9 @@ When `voice_secretary.enabled=true`, the daemon also materializes a hidden
 internal actor with `internal_kind="voice_secretary"` and `actor_id="voice-secretary"`.
 That actor is a distinct assistant identity, not the foreman and not a normal
 peer. Its startup runtime config (`runtime`, `runner`, `command`, env/secrets,
-scope, submit behavior) is copied from the current enabled foreman so the user
-does not configure a second runtime profile. If no enabled foreman exists,
+scope, submit behavior) is copied from the current stable foreman actor so the user
+does not configure a second runtime profile. The foreman's enabled/running state
+does not affect assistant config inheritance. If no foreman actor exists,
 enabling Voice Secretary fails. If the group is already running, the daemon
 starts or restarts this assistant actor as needed; disabling Voice Secretary
 stops/removes the actor and its private env.

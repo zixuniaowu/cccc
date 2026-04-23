@@ -10,7 +10,7 @@ import type {
   BuiltinAssistant,
 } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { ChevronDownIcon, CloseIcon, CopyIcon, MaximizeIcon, MicrophoneIcon, StopIcon } from "../../components/Icons";
+import { ChevronDownIcon, CloseIcon, CopyIcon, MaximizeIcon, MicrophoneIcon, SparklesIcon, StopIcon } from "../../components/Icons";
 import { MarkdownDocumentSurface } from "../../components/document/MarkdownDocumentSurface";
 import { GroupCombobox } from "../../components/GroupCombobox";
 import { LazyMarkdownRenderer } from "../../components/LazyMarkdownRenderer";
@@ -222,13 +222,35 @@ function compactVoiceTranscriptSummaryText(value: string): string {
   return `…${text.slice(-(VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS - 1)).trimStart()}`;
 }
 
+function askFeedbackStatusKey(status: string): string {
+  return String(status || "pending").trim().toLowerCase();
+}
+
 function isActiveAskFeedbackStatus(status: string): boolean {
-  const key = String(status || "pending").trim().toLowerCase();
+  const key = askFeedbackStatusKey(status);
   return key === "pending" || key === "working";
 }
 
+function isFinalAskFeedbackStatus(status: string): boolean {
+  const key = askFeedbackStatusKey(status);
+  return key === "done" || key === "needs_user" || key === "failed" || key === "handed_off";
+}
+
+function hasFinalAskReply(item?: AssistantVoiceAskFeedback | null): boolean {
+  return Boolean(item && isFinalAskFeedbackStatus(item.status) && String(item.reply_text || "").trim());
+}
+
+function voiceReplyDismissKey(item?: AssistantVoiceAskFeedback | null): string {
+  if (!item || !hasFinalAskReply(item)) return "";
+  return [
+    String(item.request_id || "").trim(),
+    askFeedbackStatusKey(item.status),
+    String(item.reply_text || "").trim(),
+  ].join("\u0001");
+}
+
 function displayAskFeedbackStatus(item: AssistantVoiceAskFeedback, nowMs: number): string {
-  const status = String(item.status || "pending").trim().toLowerCase();
+  const status = askFeedbackStatusKey(item.status);
   if (!isActiveAskFeedbackStatus(status)) {
     if (status === "done") return "";
     return status;
@@ -583,7 +605,7 @@ export function VoiceSecretaryComposerControl({
   const pendingAskRequestIdRef = useRef("");
   const pendingPromptComposerHashRef = useRef("");
   const lastVoiceLedgerSignalRef = useRef("");
-  const dismissedVoiceReplyRequestIdsRef = useRef<Set<string>>(new Set());
+  const dismissedVoiceReplyKeysRef = useRef<Set<string>>(new Set());
   const localVoiceReplyRequestIdsRef = useRef<Set<string>>(new Set());
   const activeDocumentIdRef = useRef("");
   const captureTargetDocumentIdRef = useRef("");
@@ -1216,7 +1238,7 @@ export function VoiceSecretaryComposerControl({
     pendingPromptRequestIdRef.current = "";
     pendingAskRequestIdRef.current = "";
     pendingPromptComposerHashRef.current = "";
-    dismissedVoiceReplyRequestIdsRef.current.clear();
+    dismissedVoiceReplyKeysRef.current.clear();
     localVoiceReplyRequestIdsRef.current.clear();
     setPendingPromptRequestId("");
     setPendingAskRequestId("");
@@ -1466,11 +1488,16 @@ export function VoiceSecretaryComposerControl({
     t,
   ]);
 
-  const requestPromptRefine = useCallback(async (text: string, triggerKind = "prompt_refine") => {
+  const requestPromptRefine = useCallback(async (
+    text: string,
+    triggerKind = "prompt_refine",
+    opts?: { operation?: "append_to_composer_end" | "replace_with_refined_prompt" },
+  ) => {
     const gid = String(selectedGroupId || "").trim();
     const voiceTranscript = normalizeBrowserTranscriptChunk(text);
-    if (!gid || !assistantEnabled || !voiceTranscript) return;
     const snapshot = String(composerText || "");
+    if (!gid || !assistantEnabled || (!voiceTranscript && !snapshot.trim())) return;
+    const operation = opts?.operation || "append_to_composer_end";
     const snapshotHash = hashComposerSnapshot(snapshot);
     const existingRequestId = String(pendingPromptRequestIdRef.current || pendingPromptRequestId || "").trim();
     const requestId = existingRequestId || `voice-prompt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1483,7 +1510,7 @@ export function VoiceSecretaryComposerControl({
         voiceTranscript,
         composerText: snapshot,
         requestId,
-        operation: "append_to_composer_end",
+        operation,
         composerSnapshotHash: snapshotHash,
         composerContext,
         language: effectiveRecognitionLanguage,
@@ -1506,9 +1533,13 @@ export function VoiceSecretaryComposerControl({
       if (resp.result.assistant) setAssistant(resp.result.assistant);
       setLiveTranscriptPreview(null);
       showNotice({
-        message: t("voiceSecretaryPromptRefineQueued", {
-          defaultValue: "Voice Secretary is refining the prompt.",
-        }),
+        message: operation === "replace_with_refined_prompt"
+          ? t("voiceSecretaryPromptOptimizeQueued", {
+              defaultValue: "Voice Secretary is optimizing the current prompt.",
+            })
+          : t("voiceSecretaryPromptRefineQueued", {
+              defaultValue: "Voice Secretary is refining the prompt.",
+            }),
       });
       void refreshAssistant({ quiet: true });
     } catch {
@@ -2278,7 +2309,7 @@ export function VoiceSecretaryComposerControl({
         setPendingAskRequestId("");
       }
       const replyRequestId = String(voiceReplyBubbleRequestId || "").trim();
-      if (replyRequestId && !nextItems.some((item) => item.request_id === replyRequestId && String(item.reply_text || "").trim())) {
+      if (replyRequestId && !nextItems.some((item) => item.request_id === replyRequestId && hasFinalAskReply(item))) {
         setVoiceReplyBubbleRequestId("");
       }
     } catch {
@@ -2621,9 +2652,9 @@ export function VoiceSecretaryComposerControl({
     ? t("voiceSecretaryStopShort", { defaultValue: "Stop" })
     : t("voiceSecretaryRecordShort", { defaultValue: "Record" });
   const captureStartTitle = captureMode === "prompt"
-    ? t("voiceSecretaryPromptModeStartHint", { defaultValue: "Click to record a prompt into the message composer" })
+    ? t("voiceSecretaryPromptModeStartHint", { defaultValue: "Click to quickly polish speech into a ready-to-send prompt" })
     : captureMode === "instruction"
-      ? t("voiceSecretaryInstructionModeStartHint", { defaultValue: "Record a request for Voice Secretary" })
+      ? t("voiceSecretaryInstructionModeStartHint", { defaultValue: "Record a request for Voice Secretary to handle directly" })
       : t("voiceSecretaryStartDictation", { defaultValue: "Start recording" });
   const assistantRowModeOptions: Array<{ key: VoiceSecretaryCaptureMode; label: string; description: string }> = useMemo(() => [
     {
@@ -2634,12 +2665,12 @@ export function VoiceSecretaryComposerControl({
     {
       key: "instruction",
       label: t("voiceSecretaryModeInstruction", { defaultValue: "Ask" }),
-      description: t("voiceSecretaryModeInstructionDesc", { defaultValue: "Ask the secretary" }),
+      description: t("voiceSecretaryModeInstructionDesc", { defaultValue: "Handle directly" }),
     },
     {
       key: "prompt",
       label: t("voiceSecretaryModePrompt", { defaultValue: "Prompt" }),
-      description: t("voiceSecretaryModePromptDesc", { defaultValue: "Fill the composer" }),
+      description: t("voiceSecretaryModePromptDesc", { defaultValue: "Polish composer" }),
     },
   ], [t]);
   const statusLabel = recording
@@ -2666,7 +2697,7 @@ export function VoiceSecretaryComposerControl({
     ? buttonSizePx
     : Math.max(20, Math.min(26, Math.round(buttonSizePx - 14)));
   const promptDraftWaiting = Boolean(pendingPromptRequestId && !pendingPromptDraft);
-  const promptDraftWaitingTitle = t("voiceSecretaryPromptDraftWaitingShort", { defaultValue: "Refining prompt..." });
+  const promptDraftWaitingTitle = t("voiceSecretaryPromptDraftWaitingShort", { defaultValue: "Polishing prompt..." });
   const promptDraftReadyTitle = t("voiceSecretaryPromptDraftReadyShort", { defaultValue: "Prompt ready" });
   const documentsCountLabel = t("voiceSecretaryDocumentsCount", { count: documents.length, defaultValue: "{{count}} docs" });
   const askFeedbackStatusLabel = useCallback((status: string) => {
@@ -2723,7 +2754,8 @@ export function VoiceSecretaryComposerControl({
       recentDocumentActivity.documentTitle || recentDocumentActivity.documentPath || voiceModeLabel(recentDocumentActivity.mode)
     }`
     : "";
-  const panelRequestInactive = captureMode === "prompt";
+  const promptOptimizePending = Boolean(pendingPromptRequestId && !pendingPromptDraft);
+  const canOptimizeComposerPrompt = captureMode === "prompt" && !!composerText.trim() && !promptOptimizePending && !pendingPromptDraft;
   const panelRequestSending = actionBusy === "instruct_doc" || actionBusy === "instruct_ask";
   const panelRequestTitle = captureMode === "document"
     ? t("voiceSecretaryDocumentRequestLabel", { defaultValue: "Ask about this document" })
@@ -2739,11 +2771,9 @@ export function VoiceSecretaryComposerControl({
         defaultValue: "Ask a question or give Voice Secretary a task. This is not tied to the current document.",
       })
       : t("voiceSecretaryPromptRequestDisabledPlaceholder", {
-        defaultValue: "Prompt mode uses the record button to add refined text to the message composer.",
+        defaultValue: "Use the sparkle button in the composer capsule to optimize the current input box, or use the record button to add spoken context.",
       });
-  const panelRequestButtonLabel = panelRequestInactive
-    ? t("voiceSecretaryPromptRequestDisabledButton", { defaultValue: "Use record button for prompt" })
-    : panelRequestSending
+  const panelRequestButtonLabel = panelRequestSending
       ? t("voiceSecretaryApplyingInstruction", { defaultValue: "Sending..." })
       : captureMode === "instruction"
         ? t("voiceSecretaryAskRequestButton", { defaultValue: "Send ask" })
@@ -2758,14 +2788,14 @@ export function VoiceSecretaryComposerControl({
   const pendingAskFeedbackText = pendingAskFeedback
     ? askFeedbackDisplayText(pendingAskFeedback)
     : "";
-  const pendingAskFeedbackHasReply = Boolean(String(pendingAskFeedback?.reply_text || "").trim());
+  const pendingAskFeedbackHasFinalReply = hasFinalAskReply(pendingAskFeedback);
   const pendingAskFeedbackStatusText = pendingAskFeedback
     ? pendingAskFeedbackStatus
       ? askFeedbackStatusLabel(pendingAskFeedbackStatus)
       : ""
     : "";
   const pendingAskFeedbackSummaryText = pendingAskFeedback
-    ? pendingAskFeedbackHasReply
+    ? pendingAskFeedbackHasFinalReply
       ? t("voiceSecretaryReplyReadyShort", { defaultValue: "Reply ready" })
       : pendingAskFeedbackStatusText
         ? pendingAskFeedbackText
@@ -2827,28 +2857,30 @@ export function VoiceSecretaryComposerControl({
   ]);
   const activityFeedCount = activityFeedItems.length + (currentLiveTranscript ? 1 : 0);
   const latestVoiceReplyFeedback = useMemo(
-    () => askFeedbackItems.find((item) => String(item.reply_text || "").trim()) || null,
+    () => askFeedbackItems.find((item) => hasFinalAskReply(item)) || null,
     [askFeedbackItems],
   );
   const latestVoiceReplyFeedbackId = latestVoiceReplyFeedback?.request_id || "";
   const latestVoiceReplyFeedbackText = latestVoiceReplyFeedback?.reply_text || "";
+  const latestVoiceReplyDismissKey = voiceReplyDismissKey(latestVoiceReplyFeedback);
   const voiceReplyBubbleFeedback = useMemo(() => {
     const targetId = String(voiceReplyBubbleRequestId || "").trim();
     if (!targetId || !askFeedbackItems.length) return null;
-    return askFeedbackItems.find((item) => item.request_id === targetId && String(item.reply_text || "").trim()) || null;
+    return askFeedbackItems.find((item) => item.request_id === targetId && hasFinalAskReply(item)) || null;
   }, [askFeedbackItems, voiceReplyBubbleRequestId]);
   const voiceReplyBubbleText = String(voiceReplyBubbleFeedback?.reply_text || "").trim();
   const openVoiceReplyBubble = useCallback((item?: AssistantVoiceAskFeedback | null) => {
     const requestId = String(item?.request_id || "").trim();
-    if (!requestId || !String(item?.reply_text || "").trim()) return;
-    dismissedVoiceReplyRequestIdsRef.current.delete(requestId);
+    const dismissKey = voiceReplyDismissKey(item);
+    if (!requestId || !dismissKey) return;
+    dismissedVoiceReplyKeysRef.current.delete(dismissKey);
     setVoiceReplyBubbleRequestId(requestId);
   }, []);
   const closeVoiceReplyBubble = useCallback(() => {
-    const requestId = String(voiceReplyBubbleFeedback?.request_id || "").trim();
-    if (requestId) dismissedVoiceReplyRequestIdsRef.current.add(requestId);
+    const dismissKey = voiceReplyDismissKey(voiceReplyBubbleFeedback);
+    if (dismissKey) dismissedVoiceReplyKeysRef.current.add(dismissKey);
     setVoiceReplyBubbleRequestId("");
-  }, [voiceReplyBubbleFeedback?.request_id]);
+  }, [voiceReplyBubbleFeedback]);
   const copyVoiceReplyBubble = useCallback(async () => {
     const requestId = String(voiceReplyBubbleFeedback?.request_id || "").trim();
     if (!voiceReplyBubbleText || !requestId) return;
@@ -2869,9 +2901,9 @@ export function VoiceSecretaryComposerControl({
     const requestId = String(latestVoiceReplyFeedbackId || "").trim();
     if (!requestId || !String(latestVoiceReplyFeedbackText || "").trim()) return;
     if (!localVoiceReplyRequestIdsRef.current.has(requestId)) return;
-    if (dismissedVoiceReplyRequestIdsRef.current.has(requestId)) return;
+    if (latestVoiceReplyDismissKey && dismissedVoiceReplyKeysRef.current.has(latestVoiceReplyDismissKey)) return;
     setVoiceReplyBubbleRequestId(requestId);
-  }, [latestVoiceReplyFeedbackId, latestVoiceReplyFeedbackText]);
+  }, [latestVoiceReplyDismissKey, latestVoiceReplyFeedbackId, latestVoiceReplyFeedbackText]);
   const headerStatusHint = !assistantEnabled
     ? t("voiceSecretaryDisabledHint", {
         defaultValue: "Voice Secretary is off for this group. Enable the assistant here or in Settings > Assistants before recording.",
@@ -2892,6 +2924,13 @@ export function VoiceSecretaryComposerControl({
     : !assistantEnabled
       ? t("voiceSecretaryTurnOnAndRecord", { defaultValue: "Turn on and start recording" })
       : captureStartTitle;
+  const promptOptimizeTitle = !assistantEnabled
+    ? t("voiceSecretaryEnableFirst", { defaultValue: "Enable Voice Secretary first." })
+    : promptOptimizePending
+      ? t("voiceSecretaryPromptOptimizingButton", { defaultValue: "Optimizing..." })
+      : !composerText.trim()
+        ? t("voiceSecretaryPromptOptimizeNeedsText", { defaultValue: "Type a prompt first" })
+        : t("voiceSecretaryPromptOptimizeButton", { defaultValue: "Optimize current prompt" });
   useEffect(() => {
     if (!assistantEnabled || !startAfterEnableRef.current) return;
     startAfterEnableRef.current = false;
@@ -2930,6 +2969,17 @@ export function VoiceSecretaryComposerControl({
     setAssistantEnabledForGroup,
     startDictation,
     stopCurrentRecording,
+  ]);
+  const handlePromptOptimizeClick = useCallback((event?: ReactMouseEvent<HTMLButtonElement>) => {
+    event?.preventDefault();
+    if (!canOptimizeComposerPrompt || controlDisabled || !assistantEnabled || !!actionBusy) return;
+    void requestPromptRefine("", "composer_prompt_refine", { operation: "replace_with_refined_prompt" });
+  }, [
+    actionBusy,
+    assistantEnabled,
+    canOptimizeComposerPrompt,
+    controlDisabled,
+    requestPromptRefine,
   ]);
   return (
     <div ref={rootRef} className={classNames("relative", isAssistantRow ? "w-auto shrink-0" : "self-end")}>
@@ -3574,35 +3624,43 @@ export function VoiceSecretaryComposerControl({
                 <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
                   {panelRequestTitle}
                 </div>
-                <textarea
-                  value={documentInstruction}
-                  onChange={(event) => setDocumentInstruction(event.target.value)}
-                  placeholder={panelRequestPlaceholder}
-                  disabled={panelRequestInactive}
-                  className={classNames(
-                    "mt-3 min-h-[96px] w-full resize-y rounded-2xl border px-3 py-2 text-xs leading-5 outline-none transition-colors",
-                    isDark
-                      ? panelRequestInactive
-                        ? "border-white/10 bg-white/[0.03] text-slate-500 placeholder:text-slate-600"
-                        : "border-white/10 bg-white/[0.06] text-slate-100 placeholder:text-slate-500 focus:border-white/30"
-                      : panelRequestInactive
-                        ? "border-black/10 bg-gray-50 text-gray-400 placeholder:text-gray-400"
+                {captureMode === "prompt" ? (
+                  <div
+                    className={classNames(
+                      "mt-3 rounded-2xl border px-3 py-2 text-xs leading-5",
+                      isDark ? "border-white/10 bg-white/[0.04] text-slate-300" : "border-black/10 bg-white text-gray-700",
+                    )}
+                  >
+                    {panelRequestPlaceholder}
+                  </div>
+                ) : (
+                  <textarea
+                    value={documentInstruction}
+                    onChange={(event) => setDocumentInstruction(event.target.value)}
+                    placeholder={panelRequestPlaceholder}
+                    className={classNames(
+                      "mt-3 min-h-[96px] w-full resize-y rounded-2xl border px-3 py-2 text-xs leading-5 outline-none transition-colors",
+                      isDark
+                        ? "border-white/10 bg-white/[0.06] text-slate-100 placeholder:text-slate-500 focus:border-white/30"
                         : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/25",
-                  )}
-                />
-                <button
-                  type="button"
-                  className={classNames(
-                    "mt-3 w-full rounded-2xl border px-3 py-2.5 text-xs font-semibold transition-colors disabled:opacity-60",
-                    isDark
-                      ? "border-white bg-white text-[rgb(20,20,22)] hover:bg-white/90"
-                      : "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:bg-black",
-                  )}
-                  onClick={() => void sendPanelRequest()}
-                  disabled={!!actionBusy || panelRequestInactive || !documentInstruction.trim()}
-                >
-                  {panelRequestButtonLabel}
-                </button>
+                    )}
+                  />
+                )}
+                {captureMode !== "prompt" ? (
+                  <button
+                    type="button"
+                    className={classNames(
+                      "mt-3 w-full rounded-2xl border px-3 py-2.5 text-xs font-semibold transition-colors disabled:opacity-60",
+                      isDark
+                        ? "border-white bg-white text-[rgb(20,20,22)] hover:bg-white/90"
+                        : "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:bg-black",
+                    )}
+                    onClick={() => void sendPanelRequest()}
+                    disabled={!!actionBusy || !documentInstruction.trim()}
+                  >
+                    {panelRequestButtonLabel}
+                  </button>
+                ) : null}
               </div>
 
               <div
@@ -4155,6 +4213,28 @@ export function VoiceSecretaryComposerControl({
                 </PopoverContent>
               </Popover>
             ) : null}
+            {captureMode === "prompt" ? (
+              <button
+                type="button"
+                className={classNames(
+                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                  promptOptimizePending
+                    ? isDark
+                      ? "bg-amber-400/12 text-amber-100"
+                      : "bg-amber-50 text-amber-800"
+                    : isDark
+                      ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+                      : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
+                  !controlDisabled && !actionBusy && canOptimizeComposerPrompt && "active:scale-[0.96]",
+                )}
+                onClick={(event) => handlePromptOptimizeClick(event)}
+                disabled={controlDisabled || !!actionBusy || !assistantEnabled || !canOptimizeComposerPrompt}
+                aria-label={promptOptimizeTitle}
+                title={promptOptimizeTitle}
+              >
+                <SparklesIcon size={15} aria-hidden="true" />
+              </button>
+            ) : null}
             <Popover open={showAssistantLanguageMenu} onOpenChange={setShowAssistantLanguageMenu}>
               <PopoverTrigger asChild>
                 <button
@@ -4289,14 +4369,14 @@ export function VoiceSecretaryComposerControl({
               className={classNames(
                 "inline-flex max-w-[min(34rem,calc(100vw-12rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px] transition-opacity",
                 askFeedbackStatusClassName(pendingAskFeedbackStatus),
-                pendingAskFeedbackHasReply
+                pendingAskFeedbackHasFinalReply
                   ? "cursor-pointer hover:opacity-85"
                   : "cursor-default",
               )}
               aria-live="polite"
               onClick={() => openVoiceReplyBubble(pendingAskFeedback)}
-              disabled={!pendingAskFeedbackHasReply}
-              title={pendingAskFeedbackHasReply
+              disabled={!pendingAskFeedbackHasFinalReply}
+              title={pendingAskFeedbackHasFinalReply
                 ? t("voiceSecretaryOpenReply", { defaultValue: "Open Voice Secretary reply" })
                 : undefined}
             >

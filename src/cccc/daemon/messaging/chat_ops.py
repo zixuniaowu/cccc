@@ -43,6 +43,7 @@ from .actor_delivery_planner import (
     event_with_effective_to,
     plan_actor_chat_delivery,
 )
+from .chat_support_ops import schedule_headless_post_wake_delivery
 from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 from ..pet.review_scheduler import request_pet_review
 from ..pet.profile_refresh import record_user_chat_message
@@ -571,6 +572,7 @@ def handle_send(
     if not to and not to_explicitly_set and get_default_send_to(group.doc) == "foreman":
         to = ["@foreman"]
 
+    woken: list[str] = []
     if targets_any_agent(to):
         matched_enabled = enabled_recipient_actor_ids(group, to)
         if by and by in matched_enabled:
@@ -723,6 +725,22 @@ def handle_send(
             )
             request_flush_pending_messages(group, actor_id=actor_id)
         else:
+            if actor_id in woken and decision.reason in {"codex_headless_not_running", "claude_headless_not_running"}:
+                if schedule_headless_post_wake_delivery(
+                    group_id=group.group_id,
+                    actor_id=actor_id,
+                    runtime=decision.runtime,
+                    text=headless_delivery_text,
+                    event_id=event_id,
+                    ts=event_ts,
+                    attachments=attachments,
+                    codex_actor_running=codex_app_supervisor.actor_running,
+                    claude_actor_running=claude_app_supervisor.actor_running,
+                    codex_submit_user_message=codex_app_supervisor.submit_user_message,
+                    claude_submit_user_message=claude_app_supervisor.submit_user_message,
+                    logger=logger,
+                ):
+                    skip_headless_notify_actor_ids.add(actor_id)
             logger.debug(f"[SEND] skip actor={actor_id} ({decision.reason})")
 
     _notify_headless_targets(
@@ -1040,6 +1058,7 @@ def handle_reply(
     except Exception as e:
         return _error("invalid_recipient", str(e))
 
+    woken: list[str] = []
     if targets_any_agent(to):
         matched_enabled = enabled_recipient_actor_ids(group, to)
         if by and by in matched_enabled:
@@ -1186,6 +1205,23 @@ def handle_reply(
                 ts=event_ts,
             )
             request_flush_pending_messages(group, actor_id=actor_id)
+        elif actor_id in woken and decision.reason in {"codex_headless_not_running", "claude_headless_not_running"}:
+            if schedule_headless_post_wake_delivery(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                runtime=decision.runtime,
+                text=headless_delivery_text,
+                event_id=event_id,
+                ts=event_ts,
+                reply_to=target_event_id or reply_to,
+                attachments=attachments,
+                codex_actor_running=codex_app_supervisor.actor_running,
+                claude_actor_running=claude_app_supervisor.actor_running,
+                codex_submit_user_message=codex_app_supervisor.submit_user_message,
+                claude_submit_user_message=claude_app_supervisor.submit_user_message,
+                logger=logger,
+            ):
+                skip_headless_notify_actor_ids.add(actor_id)
 
     _notify_headless_targets(
         group=group,

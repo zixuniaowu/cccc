@@ -31,7 +31,7 @@ def get_voice_secretary_actor(group: Group) -> Optional[Dict[str, Any]]:
 def require_voice_secretary_foreman(group: Group) -> Dict[str, Any]:
     foreman = find_foreman(group)
     if not isinstance(foreman, dict):
-        raise ValueError("voice secretary requires an enabled foreman actor")
+        raise ValueError("voice secretary requires a foreman actor")
     return foreman
 
 

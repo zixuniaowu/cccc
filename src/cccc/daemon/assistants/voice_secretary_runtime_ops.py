@@ -187,7 +187,7 @@ def sync_voice_secretary_actor_from_foreman(
     source = require_voice_secretary_foreman(group)
     source_id = str(source.get("id") or "").strip()
     if not source_id:
-        raise ValueError("voice secretary requires an enabled foreman actor")
+        raise ValueError("voice secretary requires a foreman actor")
 
     resolved_caller_id = str(caller_id or "").strip()
     if not resolved_caller_id:

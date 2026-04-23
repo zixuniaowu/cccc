@@ -201,7 +201,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_voice_secretary_document",
-        "description": "Voice Secretary-only input and document registry surface. On input notify, call action=read_new_input and work from input_text. Use list/create/archive for document orientation and lifecycle only. Edit repository-backed markdown directly at document_path with native file editing tools; this MCP tool intentionally has no save action.",
+        "description": "Voice Secretary-only input/document surface. Use read_new_input for input notifications; use list/create/archive for document lifecycle. Edit repo markdown directly; this tool has no save action.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -216,9 +216,8 @@ MCP_TOOLS = [
     {
         "name": "cccc_voice_secretary_request",
         "description": (
-            "Voice Secretary-only request surface. For Target: secretary / Ask input, action=report is the user-visible reply channel; "
-            "ordinary console text is not delivered to the user. Use action=handoff only when a task is outside secretary scope and "
-            "must go to foreman or one concrete actor through system.notify."
+            "Voice Secretary-only request surface. Use report for user-visible Ask replies; use handoff only for explicit non-secretary work "
+            "that must go to foreman or one concrete actor."
         ),
         "inputSchema": _obj(
             {
@@ -246,8 +245,7 @@ MCP_TOOLS = [
     {
         "name": "cccc_voice_secretary_composer",
         "description": (
-            "Voice Secretary-only composer result surface. Use action=submit_prompt_draft only after reading a prompt_refine "
-            "input from read_new_input; submit composer text to insert here instead of sending chat."
+            "Voice Secretary-only composer result surface. Use submit_prompt_draft for prompt_refine results instead of sending chat."
         ),
         "inputSchema": _obj(
             {

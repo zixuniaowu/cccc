@@ -44,6 +44,11 @@ class TestWebActorRoutesCache(unittest.TestCase):
         resp, _ = handle_request(request)
         return resp.model_dump(exclude_none=True)
 
+    def _daemon_unavailable_for_actor_list(self, req: dict):
+        if str(req.get("op") or "") == "actor_list":
+            return {"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}}
+        return self._local_call_daemon(req)
+
     def _create_group(self) -> str:
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry
@@ -103,16 +108,21 @@ class TestWebActorRoutesCache(unittest.TestCase):
             call_lock = threading.Lock()
             barrier = threading.Barrier(3)
 
-            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
+            def fake_call_daemon(req: dict):
                 nonlocal actor_list_reads
-                self.assertFalse(include_unread)
-                self.assertTrue(group_id)
+                self.assertEqual(str(req.get("op") or ""), "actor_list")
+                args = req.get("args") if isinstance(req.get("args"), dict) else {}
+                self.assertFalse(bool(args.get("include_unread")))
+                self.assertTrue(str(args.get("group_id") or ""))
                 with call_lock:
                     actor_list_reads += 1
                 time.sleep(0.12)
                 return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer 1"}]}}
 
-            with patch("cccc.ports.web.routes.actors._read_actor_list_local", side_effect=fake_read_actor_list_local):
+            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon), patch(
+                "cccc.ports.web.routes.actors._read_actor_list_local",
+                side_effect=AssertionError("actor list should use daemon before local fallback"),
+            ):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors"
 
@@ -147,14 +157,19 @@ class TestWebActorRoutesCache(unittest.TestCase):
             group_id = self._create_group()
             actor_list_reads = 0
 
-            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
+            def fake_call_daemon(req: dict):
                 nonlocal actor_list_reads
-                self.assertFalse(include_unread)
-                self.assertTrue(group_id)
+                self.assertEqual(str(req.get("op") or ""), "actor_list")
+                args = req.get("args") if isinstance(req.get("args"), dict) else {}
+                self.assertFalse(bool(args.get("include_unread")))
+                self.assertTrue(str(args.get("group_id") or ""))
                 actor_list_reads += 1
                 return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer 1"}]}}
 
-            with patch("cccc.ports.web.routes.actors._read_actor_list_local", side_effect=fake_read_actor_list_local):
+            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon), patch(
+                "cccc.ports.web.routes.actors._read_actor_list_local",
+                side_effect=AssertionError("actor list should use daemon before local fallback"),
+            ):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors"
                     first = client.get(path)
@@ -175,9 +190,13 @@ class TestWebActorRoutesCache(unittest.TestCase):
             actor_list_lock = threading.Lock()
             first_read_release = threading.Event()
 
-            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
+            def fake_call_daemon(req: dict):
                 nonlocal actor_list_reads
-                self.assertFalse(include_unread)
+                op = str(req.get("op") or "")
+                if op != "actor_list":
+                    return self._local_call_daemon(req)
+                args = req.get("args") if isinstance(req.get("args"), dict) else {}
+                self.assertFalse(bool(args.get("include_unread")))
                 with actor_list_lock:
                     actor_list_reads += 1
                     current = actor_list_reads
@@ -186,9 +205,9 @@ class TestWebActorRoutesCache(unittest.TestCase):
                     return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer stale"}]}}
                 return {"ok": True, "result": {"actors": [{"id": "peer-1", "title": "Peer fresh"}]}}
 
-            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
+            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon), patch(
                 "cccc.ports.web.routes.actors._read_actor_list_local",
-                side_effect=fake_read_actor_list_local,
+                side_effect=AssertionError("actor list should use daemon before local fallback"),
             ):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors"
@@ -210,7 +229,9 @@ class TestWebActorRoutesCache(unittest.TestCase):
                         self.assertEqual(stale_resp.status_code, 200)
                         self.assertEqual(stale_resp.json()["result"]["actors"][0]["title"], "Peer stale")
 
-                    self.assertEqual(actor_list_reads, 2)
+                    # Actor update performs one daemon actor_list read for runtime metadata,
+                    # in addition to the stale read and the post-invalidation fresh read.
+                    self.assertEqual(actor_list_reads, 3)
         finally:
             cleanup()
 
@@ -223,9 +244,15 @@ class TestWebActorRoutesCache(unittest.TestCase):
             actor_list_lock = threading.Lock()
             first_read_release = threading.Event()
 
-            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
+            def fake_call_daemon(req: dict):
                 nonlocal actor_list_reads
-                self.assertFalse(include_unread)
+                op = str(req.get("op") or "")
+                if op == "group_start":
+                    return {"ok": True, "result": {}}
+                if op != "actor_list":
+                    return self._local_call_daemon(req)
+                args = req.get("args") if isinstance(req.get("args"), dict) else {}
+                self.assertFalse(bool(args.get("include_unread")))
                 with actor_list_lock:
                     actor_list_reads += 1
                     current = actor_list_reads
@@ -234,14 +261,9 @@ class TestWebActorRoutesCache(unittest.TestCase):
                     return {"ok": True, "result": {"actors": [{"id": "peer-1", "running": False}]}}
                 return {"ok": True, "result": {"actors": [{"id": "peer-1", "running": True}]}}
 
-            def fake_call_daemon(req: dict):
-                if str(req.get("op") or "") == "group_start":
-                    return {"ok": True, "result": {}}
-                return self._local_call_daemon(req)
-
             with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon), patch(
                 "cccc.ports.web.routes.actors._read_actor_list_local",
-                side_effect=fake_read_actor_list_local,
+                side_effect=AssertionError("actor list should use daemon before local fallback"),
             ):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors"
@@ -276,9 +298,15 @@ class TestWebActorRoutesCache(unittest.TestCase):
             actor_list_lock = threading.Lock()
             first_read_release = threading.Event()
 
-            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
+            def fake_call_daemon(req: dict):
                 nonlocal actor_list_reads
-                self.assertFalse(include_unread)
+                op = str(req.get("op") or "")
+                if op == "group_start":
+                    return {"ok": True, "result": {}}
+                if op != "actor_list":
+                    return self._local_call_daemon(req)
+                args = req.get("args") if isinstance(req.get("args"), dict) else {}
+                self.assertFalse(bool(args.get("include_unread")))
                 with actor_list_lock:
                     actor_list_reads += 1
                     current = actor_list_reads
@@ -287,14 +315,9 @@ class TestWebActorRoutesCache(unittest.TestCase):
                     return {"ok": True, "result": {"actors": [{"id": "peer-1", "running": False}]}}
                 return {"ok": True, "result": {"actors": [{"id": "peer-1", "running": True}]}}
 
-            def fake_call_daemon(req: dict):
-                if str(req.get("op") or "") == "group_start":
-                    return {"ok": True, "result": {}}
-                return self._local_call_daemon(req)
-
             with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon), patch(
                 "cccc.ports.web.routes.actors._read_actor_list_local",
-                side_effect=fake_read_actor_list_local,
+                side_effect=AssertionError("actor list should use daemon before local fallback"),
             ):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors"
@@ -319,7 +342,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_actor_list_route_uses_local_effective_working_state_projection(self) -> None:
+    def test_actor_list_route_falls_back_to_local_effective_working_state_projection_when_daemon_unavailable(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.kernel.context import AgentState, AgentStateHot, AgentsData
@@ -330,7 +353,9 @@ class TestWebActorRoutesCache(unittest.TestCase):
 
             agent_state = AgentsData(agents=[AgentState(id="peer-1", hot=AgentStateHot(active_task_id="T123"))])
 
-            with patch("cccc.ports.web.routes.actors.ContextStorage.load_agents", return_value=agent_state), patch(
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._daemon_unavailable_for_actor_list), patch(
+                "cccc.ports.web.routes.actors.ContextStorage.load_agents", return_value=agent_state
+            ), patch(
                 "cccc.ports.web.routes.actors.pty_runner.SUPERVISOR.actor_running",
                 return_value=True,
             ), patch(
@@ -360,7 +385,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
             self._add_actor(group_id, runtime="claude")
             write_pty_state(group_id, "peer-1", pid=43210)
 
-            with patch(
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._daemon_unavailable_for_actor_list), patch(
                 "cccc.ports.web.routes.actors.pty_runner.SUPERVISOR.actor_running",
                 return_value=False,
             ), patch(
@@ -398,7 +423,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
             state_doc["pid"] = 43210
             state_path.write_text(json.dumps(state_doc), encoding="utf-8")
 
-            with patch(
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._daemon_unavailable_for_actor_list), patch(
                 "cccc.ports.web.routes.actors.pty_runner.SUPERVISOR.actor_running",
                 return_value=False,
             ), patch(
@@ -459,8 +484,9 @@ class TestWebActorRoutesCache(unittest.TestCase):
                 },
             )
 
-            with self._client() as client:
-                resp = client.get(f"/api/v1/groups/{group_id}/actors")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._daemon_unavailable_for_actor_list):
+                with self._client() as client:
+                    resp = client.get(f"/api/v1/groups/{group_id}/actors")
 
             self.assertEqual(resp.status_code, 200)
             actor = resp.json()["result"]["actors"][0]
@@ -495,7 +521,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
                 },
             )
 
-            with patch(
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._daemon_unavailable_for_actor_list), patch(
                 "cccc.ports.web.routes.actors.pty_runner.SUPERVISOR.actor_running",
                 return_value=True,
             ), patch(
@@ -526,16 +552,21 @@ class TestWebActorRoutesCache(unittest.TestCase):
             call_lock = threading.Lock()
             barrier = threading.Barrier(3)
 
-            def fake_read_actor_list_local(group_id: str, *, include_unread: bool):
+            def fake_call_daemon(req: dict):
                 nonlocal actor_list_reads
-                self.assertTrue(include_unread)
-                self.assertTrue(group_id)
+                self.assertEqual(str(req.get("op") or ""), "actor_list")
+                args = req.get("args") if isinstance(req.get("args"), dict) else {}
+                self.assertTrue(bool(args.get("include_unread")))
+                self.assertTrue(str(args.get("group_id") or ""))
                 with call_lock:
                     actor_list_reads += 1
                 time.sleep(0.12)
                 return {"ok": True, "result": {"actors": [{"id": "peer-1", "unread_count": 2}]}}
 
-            with patch("cccc.ports.web.routes.actors._read_actor_list_local", side_effect=fake_read_actor_list_local):
+            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon), patch(
+                "cccc.ports.web.routes.actors._read_actor_list_local",
+                side_effect=AssertionError("actor list should use daemon before local fallback"),
+            ):
                 with self._client() as client:
                     path = f"/api/v1/groups/{group_id}/actors?include_unread=1"
 

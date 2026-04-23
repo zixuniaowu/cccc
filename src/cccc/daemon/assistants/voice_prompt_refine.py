@@ -45,6 +45,7 @@ def build_voice_prompt_refine_input_text(
     composer_context: Any,
 ) -> str:
     clean_operation = str(operation or "append_to_composer_end").strip() or "append_to_composer_end"
+    clean_voice_transcript = str(voice_transcript or "").strip()
     replace_operation = is_prompt_refine_replace_operation(clean_operation)
     parts = [
         "Task: refine spoken input into composer-ready prompt text.",
@@ -52,6 +53,8 @@ def build_voice_prompt_refine_input_text(
         "",
         "Execution rules:",
         "- Output only text that should be inserted into the composer.",
+        "- This is prompt optimization only. Do not execute the task, answer the question, fetch live facts, or turn this into document work.",
+        "- Latency matters. Produce a strong composer-ready result promptly instead of exploring.",
     ]
     if replace_operation:
         parts.extend([
@@ -70,6 +73,7 @@ def build_voice_prompt_refine_input_text(
         "- Preserve the user's intent, constraints, tone, and any explicit asks.",
         "- Improve clarity, structure, completeness, and actionability.",
         "- If the spoken input adds missing constraints or corrections, integrate them into the final prompt naturally.",
+        "- If there is no spoken input, optimize the current composer draft directly without inventing new requirements.",
         "- If the composer already contains useful structure, keep and improve it instead of rewriting into a different task.",
         "- Use recent conversation only to recover missing context; do not assume current recipients or message mode are final.",
     ])
@@ -83,7 +87,7 @@ def build_voice_prompt_refine_input_text(
             composer_text or "(empty)",
             "",
             "Spoken input:",
-            voice_transcript,
+            clean_voice_transcript or "(none; optimize the current composer draft directly)",
             "",
             "Return only the composer text to insert.",
         ]
