@@ -696,7 +696,7 @@ export function useChatTab({
   composerRef,
   fileInputRef,
   chatAtBottomRef,
-  scrollRef: _scrollRef,
+  scrollRef,
 }: UseChatTabOptions) {
   const { t } = useTranslation(["chat", "common"]);
   const [forceStickToBottomToken, setForceStickToBottomToken] = useState(0);
@@ -723,6 +723,12 @@ export function useChatTab({
   const setChatScrollSnapshot = useUIStore((s) => s.setChatScrollSnapshot);
   const setChatMobileSurface = useUIStore((s) => s.setChatMobileSurface);
   const showError = useUIStore((s) => s.showError);
+
+  const isCurrentScrollAtBottom = useCallback(() => {
+    const el = scrollRef?.current;
+    if (!el) return chatAtBottomRef ? chatAtBottomRef.current : true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  }, [chatAtBottomRef, scrollRef]);
   const showNotice = useUIStore((s) => s.showNotice);
 
   const chatSession = useMemo(
@@ -1176,11 +1182,11 @@ export function useChatTab({
     };
 
     const applyImmediateComposerFeedback = () => {
-      const shouldLockBottom = chatAtBottomRef ? chatAtBottomRef.current : true;
+      const shouldLockBottom = isCurrentScrollAtBottom();
       clearComposer();
-      if (chatAtBottomRef) chatAtBottomRef.current = true;
+      if (chatAtBottomRef) chatAtBottomRef.current = shouldLockBottom;
       if (selectedGroupId) {
-        setShowScrollButton(selectedGroupId, false);
+        setShowScrollButton(selectedGroupId, !shouldLockBottom);
       }
       if (shouldLockBottom) {
         setForceStickToBottomToken((value) => value + 1);
@@ -1366,6 +1372,7 @@ export function useChatTab({
     closeChatWindow,
     fileInputRef,
     chatAtBottomRef,
+    isCurrentScrollAtBottom,
     setChatFilter,
     setChatMobileSurface,
     setShowScrollButton,
