@@ -880,6 +880,25 @@ class TestCodexAppFlow(unittest.TestCase):
 
             with (
                 patch("cccc.daemon.claude_app_sessions._voice_secretary_control_consumed_input", return_value=False),
+                patch(
+                    "cccc.daemon.claude_app_sessions._voice_secretary_control_consumption_diagnostics",
+                    return_value={"missing": ["secretary_report:req-1"]},
+                ),
+                patch(
+                    "cccc.daemon.claude_app_sessions._voice_secretary_prepare_repair_retry",
+                    return_value=(
+                        "\n".join(
+                            [
+                                "read secretary input",
+                                "",
+                                "[CCCC] SYSTEM REPAIR: read_new_input already ran before this retry.",
+                                "[CCCC] FETCHED INPUT:",
+                                "Target: secretary",
+                            ]
+                        ),
+                        {"missing": ["secretary_report:req-1"]},
+                    ),
+                ) as prepare_retry,
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit") as emit,
                 patch.object(session._turn_done, "set") as done_set,
@@ -892,10 +911,15 @@ class TestCodexAppFlow(unittest.TestCase):
             assert isinstance(queued, _PendingTurn)
             self.assertEqual(queued.retry_count, 1)
             self.assertEqual(queued.control_kind, "system_notify")
+            self.assertIn("SYSTEM REPAIR", queued.text)
+            self.assertIn("FETCHED INPUT", queued.text)
+            prepare_retry.assert_called_once()
             event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
             self.assertIn("headless.control.requeued", event_types)
             self.assertNotIn("headless.control.completed", event_types)
             self.assertNotIn("headless.control.failed", event_types)
+            requeued_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.control.requeued")
+            self.assertEqual(requeued_payload.get("status"), "requeued")
         finally:
             cleanup()
 
@@ -935,6 +959,8 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertIn("headless.control.failed", event_types)
             self.assertNotIn("headless.control.completed", event_types)
             self.assertNotIn("headless.control.requeued", event_types)
+            failed_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.control.failed")
+            self.assertEqual(failed_payload.get("status"), "failed")
         finally:
             cleanup()
 
@@ -1037,6 +1063,17 @@ class TestCodexAppFlow(unittest.TestCase):
 
             with (
                 patch("cccc.daemon.codex_app_sessions._voice_secretary_control_consumed_input", return_value=False),
+                patch(
+                    "cccc.daemon.codex_app_sessions._voice_secretary_control_consumption_diagnostics",
+                    return_value={"missing": ["secretary_report:req-1"]},
+                ),
+                patch(
+                    "cccc.daemon.codex_app_sessions._voice_secretary_prepare_repair_retry",
+                    return_value=(
+                        "\n".join(["read secretary input", "", "[CCCC] REPAIR HINT:", "- secretary_report:req-1"]),
+                        {"missing": ["secretary_report:req-1"]},
+                    ),
+                ) as prepare_retry,
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit") as emit,
                 patch.object(session._turn_done, "set") as done_set,
@@ -1052,10 +1089,146 @@ class TestCodexAppFlow(unittest.TestCase):
             assert isinstance(queued, _PendingTurn)
             self.assertEqual(queued.retry_count, 1)
             self.assertEqual(queued.control_kind, "system_notify")
+            self.assertIn("REPAIR HINT", queued.text)
+            self.assertIn("secretary_report:req-1", queued.text)
+            prepare_retry.assert_called_once()
             event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
             self.assertIn("headless.control.requeued", event_types)
             self.assertNotIn("headless.control.completed", event_types)
             self.assertNotIn("headless.control.failed", event_types)
+            requeued_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.control.requeued")
+            self.assertEqual(requeued_payload.get("status"), "requeued")
+        finally:
+            cleanup()
+
+    def test_voice_secretary_prepare_repair_retry_only_restates_missing_outputs(self) -> None:
+        from cccc.daemon.codex_app_sessions import (
+            _voice_secretary_control_failure_reason,
+            _voice_secretary_prepare_repair_retry,
+        )
+
+        text, diagnostics = _voice_secretary_prepare_repair_retry(
+            text="read secretary input",
+            diagnostics={"missing": ["secretary_report:req-1"]},
+        )
+
+        self.assertEqual(diagnostics, {"missing": ["secretary_report:req-1"]})
+        self.assertIn("REPAIR HINT", text)
+        self.assertIn("secretary_report:req-1", text)
+        self.assertNotIn("FETCHED INPUT", text)
+        self.assertEqual(_voice_secretary_control_failure_reason(diagnostics), "voice_secretary_output_not_completed")
+        self.assertEqual(
+            _voice_secretary_control_failure_reason({"missing": ["read_new_input"]}),
+            "voice_secretary_input_not_consumed",
+        )
+
+    def test_claude_voice_secretary_prepare_repair_retry_only_restates_missing_outputs(self) -> None:
+        from cccc.daemon.claude_app_sessions import (
+            _voice_secretary_control_failure_reason,
+            _voice_secretary_prepare_repair_retry,
+        )
+
+        text, diagnostics = _voice_secretary_prepare_repair_retry(
+            text="read secretary input",
+            diagnostics={"missing": ["secretary_report:req-1"]},
+        )
+
+        self.assertEqual(diagnostics, {"missing": ["secretary_report:req-1"]})
+        self.assertIn("REPAIR HINT", text)
+        self.assertIn("secretary_report:req-1", text)
+        self.assertNotIn("FETCHED INPUT", text)
+        self.assertEqual(_voice_secretary_control_failure_reason(diagnostics), "voice_secretary_output_not_completed")
+        self.assertEqual(
+            _voice_secretary_control_failure_reason({"missing": ["read_new_input"]}),
+            "voice_secretary_input_not_consumed",
+        )
+
+    def test_voice_secretary_control_turn_does_not_retry_missing_read_new_input(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-voice"
+            session._active_event_id = "event-voice"
+            session._active_control_kind = "system_notify"
+            session._active_payload = _PendingTurn(
+                text="read secretary input",
+                event_id="event-voice",
+                control_kind="system_notify",
+                validation_snapshot={"kind": "voice_secretary_input", "before_latest_seq": 8, "before_secretary_read_cursor": 5},
+            )
+
+            with (
+                patch("cccc.daemon.codex_app_sessions._voice_secretary_control_consumed_input", return_value=False),
+                patch(
+                    "cccc.daemon.codex_app_sessions._voice_secretary_control_consumption_diagnostics",
+                    return_value={"missing": ["read_new_input"]},
+                ),
+                patch("cccc.daemon.codex_app_sessions._voice_secretary_prepare_repair_retry") as prepare_retry,
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_notification(
+                    "turn/completed",
+                    {"turn": {"id": "turn-voice", "status": "completed"}},
+                )
+
+            done_set.assert_called_once()
+            prepare_retry.assert_not_called()
+            self.assertTrue(session._turn_queue.empty())
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.failed", event_types)
+            self.assertNotIn("headless.control.requeued", event_types)
+        finally:
+            cleanup()
+
+    def test_claude_voice_secretary_control_turn_does_not_retry_missing_read_new_input(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-voice"
+            session._active_event_id = "event-voice"
+            session._active_control_kind = "system_notify"
+            session._active_payload = _PendingTurn(
+                text="read secretary input",
+                event_id="event-voice",
+                control_kind="system_notify",
+                validation_snapshot={"kind": "voice_secretary_input", "before_latest_seq": 8, "before_secretary_read_cursor": 5},
+            )
+
+            with (
+                patch("cccc.daemon.claude_app_sessions._voice_secretary_control_consumed_input", return_value=False),
+                patch(
+                    "cccc.daemon.claude_app_sessions._voice_secretary_control_consumption_diagnostics",
+                    return_value={"missing": ["read_new_input"]},
+                ),
+                patch("cccc.daemon.claude_app_sessions._voice_secretary_prepare_repair_retry") as prepare_retry,
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_result_event({"type": "result", "subtype": "success"})
+
+            done_set.assert_called_once()
+            prepare_retry.assert_not_called()
+            self.assertTrue(session._turn_queue.empty())
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.failed", event_types)
+            self.assertNotIn("headless.control.requeued", event_types)
         finally:
             cleanup()
 
@@ -1098,6 +1271,8 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertIn("headless.control.failed", event_types)
             self.assertNotIn("headless.control.completed", event_types)
             self.assertNotIn("headless.control.requeued", event_types)
+            failed_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.control.failed")
+            self.assertEqual(failed_payload.get("status"), "failed")
         finally:
             cleanup()
 
@@ -1170,12 +1345,13 @@ class TestCodexAppFlow(unittest.TestCase):
             )
 
             self.assertFalse(draft_without_read_consumed)
-            diagnostics = _voice_secretary_control_consumption_diagnostics(
+            prefetched_consumed = _voice_secretary_control_consumed_input(
                 group_id=group_id,
                 snapshot={
                     "kind": "voice_secretary_input",
                     "before_latest_seq": 8,
-                    "before_secretary_read_cursor": 5,
+                    "before_secretary_read_cursor": 8,
+                    "prefetched_read_new_input": True,
                     "composer_request_ids": ["voice-prompt-1"],
                     "input_target_kinds": ["composer"],
                     "before_prompt_drafts": {
@@ -1187,7 +1363,26 @@ class TestCodexAppFlow(unittest.TestCase):
                     },
                 },
             )
-            self.assertIn("read_new_input", diagnostics.get("missing") or [])
+            self.assertTrue(prefetched_consumed)
+            diagnostics = _voice_secretary_control_consumption_diagnostics(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 8,
+                    "prefetched_read_new_input": True,
+                    "composer_request_ids": ["voice-prompt-1"],
+                    "input_target_kinds": ["composer"],
+                    "before_prompt_drafts": {
+                        "voice-prompt-1": {
+                            "updated_at": "",
+                            "draft_text": "",
+                            "status": "",
+                        }
+                    },
+                },
+            )
+            self.assertNotIn("read_new_input", diagnostics.get("missing") or [])
 
             (voice_state_dir / "input_state.json").write_text(
                 json.dumps(
@@ -1346,6 +1541,84 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertFalse(ask_report_without_reply_consumed)
         finally:
             cleanup()
+
+    def test_codex_voice_secretary_prepare_control_turn_prefetches_input(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.codex_app_sessions import _voice_secretary_prepare_control_turn
+
+        with (
+            patch(
+                "cccc.daemon.codex_app_sessions._voice_secretary_control_snapshot",
+                return_value={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 5,
+                },
+            ),
+            patch(
+                "cccc.daemon.assistants.assistant_ops.handle_assistant_voice_document_input_read",
+                return_value=DaemonResponse(
+                    ok=True,
+                    result={
+                        "input_text": "Target: secretary\nRequest ID: req-1",
+                        "input_batches": [{"target_kind": "secretary", "request_ids": ["req-1"]}],
+                        "input_timing": {"latest_seq": 8, "secretary_read_cursor": 8},
+                    },
+                ),
+            ) as read_input,
+        ):
+            payload_text, snapshot = _voice_secretary_prepare_control_turn(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                text="read secretary input",
+                event_id="evt-1",
+                control_kind="system_notify",
+            )
+
+        read_input.assert_called_once_with({"group_id": "g_test", "by": "voice-secretary"})
+        self.assertIn("SYSTEM PREFETCH", payload_text)
+        self.assertIn("FETCHED INPUT", payload_text)
+        self.assertIn("Target: secretary", payload_text)
+        self.assertTrue(snapshot.get("prefetched_read_new_input"))
+
+    def test_claude_voice_secretary_prepare_control_turn_prefetches_input(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.claude_app_sessions import _voice_secretary_prepare_control_turn
+
+        with (
+            patch(
+                "cccc.daemon.claude_app_sessions._voice_secretary_control_snapshot",
+                return_value={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 5,
+                },
+            ),
+            patch(
+                "cccc.daemon.assistants.assistant_ops.handle_assistant_voice_document_input_read",
+                return_value=DaemonResponse(
+                    ok=True,
+                    result={
+                        "input_text": "Target: secretary\nRequest ID: req-1",
+                        "input_batches": [{"target_kind": "secretary", "request_ids": ["req-1"]}],
+                        "input_timing": {"latest_seq": 8, "secretary_read_cursor": 8},
+                    },
+                ),
+            ) as read_input,
+        ):
+            payload_text, snapshot = _voice_secretary_prepare_control_turn(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                text="read secretary input",
+                event_id="evt-1",
+                control_kind="system_notify",
+            )
+
+        read_input.assert_called_once_with({"group_id": "g_test", "by": "voice-secretary"})
+        self.assertIn("SYSTEM PREFETCH", payload_text)
+        self.assertIn("FETCHED INPUT", payload_text)
+        self.assertIn("Target: secretary", payload_text)
+        self.assertTrue(snapshot.get("prefetched_read_new_input"))
 
     def test_emit_system_notify_routes_running_headless_codex_actor_to_control_turn(self) -> None:
         from cccc.contracts.v1 import SystemNotifyData
@@ -1810,6 +2083,74 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertEqual(stream_events, [])
             chat_messages = [event for event in ledger_events if str(event.get("kind") or "") == "chat.message"]
             self.assertEqual(chat_messages, [])
+        finally:
+            cleanup()
+
+    def test_claude_stream_control_turn_requeues_when_input_not_consumed(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-claude"
+            session._active_event_id = "evt-claude"
+            session._active_control_kind = "system_notify"
+            session._active_payload = _PendingTurn(
+                text="read secretary input",
+                event_id="evt-claude",
+                control_kind="system_notify",
+                validation_snapshot={"kind": "voice_secretary_input", "before_latest_seq": 8, "before_secretary_read_cursor": 5},
+            )
+
+            with (
+                patch("cccc.daemon.claude_app_sessions._voice_secretary_control_consumed_input", return_value=False),
+                patch(
+                    "cccc.daemon.claude_app_sessions._voice_secretary_control_consumption_diagnostics",
+                    return_value={"missing": ["secretary_report:req-1"]},
+                ),
+                patch(
+                    "cccc.daemon.claude_app_sessions._voice_secretary_prepare_repair_retry",
+                    return_value=(
+                        "\n".join(
+                            [
+                                "read secretary input",
+                                "",
+                                "[CCCC] SYSTEM REPAIR: read_new_input already ran before this retry.",
+                                "[CCCC] FETCHED INPUT:",
+                                "Target: secretary",
+                            ]
+                        ),
+                        {"missing": ["secretary_report:req-1"]},
+                    ),
+                ) as prepare_retry,
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_stream_event({"event": {"type": "message_start", "message": {"id": "msg-claude"}}})
+                session._handle_stream_event({"event": {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}})
+                session._handle_stream_event({"event": {"type": "message_stop"}})
+
+            done_set.assert_called_once()
+            self.assertEqual(session._turn_queue.qsize(), 1)
+            queued = session._turn_queue.get_nowait()
+            assert isinstance(queued, _PendingTurn)
+            self.assertEqual(queued.retry_count, 1)
+            self.assertEqual(queued.control_kind, "system_notify")
+            self.assertIn("SYSTEM REPAIR", queued.text)
+            self.assertIn("FETCHED INPUT", queued.text)
+            prepare_retry.assert_called_once()
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.requeued", event_types)
+            self.assertNotIn("headless.control.completed", event_types)
+            self.assertNotIn("headless.message.completed", event_types)
+            requeued_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.control.requeued")
+            self.assertEqual(requeued_payload.get("status"), "requeued")
         finally:
             cleanup()
 
@@ -2334,7 +2675,6 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertFalse(state_path.exists())
         finally:
             cleanup()
-
 
 if __name__ == "__main__":
     unittest.main()

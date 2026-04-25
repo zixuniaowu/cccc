@@ -69,6 +69,7 @@ _DEFAULT_AUTO_DOCUMENT_MAX_WINDOW_CHARS = 12_000
 _DEFAULT_AUTO_DOCUMENT_MIN_WINDOW_SEGMENTS = 3
 _DEFAULT_VOICE_DOCUMENT_DIR = "docs/voice-secretary"
 _VOICE_INPUT_NUDGE_RETRY_SECONDS = (180, 360, 720)
+_VOICE_PENDING_PROMPT_DRAFT_STALE_SECONDS = 1_800
 _VOICE_IDLE_REVIEW_FLUSH_THRESHOLD = 8
 _VOICE_IDLE_REVIEW_GROUP_COOLDOWN_SECONDS = 300
 _VOICE_IDLE_REVIEW_STOP_TRIGGER_KINDS = {"push_to_talk_stop"}
@@ -803,6 +804,37 @@ def _stale_pending_voice_prompt_draft_in_state(state: Dict[str, Any], *, request
     drafts[request_id] = updated
     state["voice_prompt_drafts"] = _trim_voice_prompt_drafts(drafts)
     return True
+
+
+def _stale_expired_voice_prompt_drafts_in_state(
+    state: Dict[str, Any],
+    *,
+    now: str,
+    stale_after_seconds: int = _VOICE_PENDING_PROMPT_DRAFT_STALE_SECONDS,
+) -> int:
+    drafts = state.setdefault("voice_prompt_drafts", {})
+    now_dt = parse_utc_iso(now)
+    if now_dt is None:
+        return 0
+    changed = 0
+    for request_id, raw_record in list(drafts.items()):
+        if not isinstance(raw_record, dict):
+            continue
+        if str(raw_record.get("status") or "").strip().lower() != "pending":
+            continue
+        updated_at = parse_utc_iso(str(raw_record.get("updated_at") or raw_record.get("created_at") or ""))
+        if updated_at is None:
+            continue
+        if (now_dt - updated_at).total_seconds() < max(60, int(stale_after_seconds or 0)):
+            continue
+        updated = dict(raw_record)
+        updated["status"] = "stale"
+        updated["updated_at"] = now
+        drafts[str(request_id)] = updated
+        changed += 1
+    if changed:
+        state["voice_prompt_drafts"] = _trim_voice_prompt_drafts(drafts)
+    return changed
 
 
 def _voice_secretary_foreman_actor_id(group: Group) -> str:
@@ -3619,6 +3651,9 @@ def handle_assistant_voice_document_input_read(args: Dict[str, Any]) -> DaemonRe
                 if request_id_text and request_id_text not in ask_request_ids:
                     ask_request_ids.append(request_id_text)
         _mark_voice_ask_requests_working(group, request_ids=ask_request_ids, now=utc_now_iso())
+        runtime_state = _load_runtime_state(group)
+        _stale_expired_voice_prompt_drafts_in_state(runtime_state, now=read_at)
+        _save_runtime_state(group, runtime_state)
         input_text = _voice_input_batch_text(grouped, item_count=len(public_items))
         input_batches = [_voice_input_batch_public(item) for item in grouped]
         referenced_paths = {str(item.get("document_path") or "").strip() for item in grouped if str(item.get("document_path") or "").strip()}

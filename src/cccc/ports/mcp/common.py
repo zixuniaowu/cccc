@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -101,6 +102,18 @@ def _proc_parent_pid(pid: int) -> int:
         for line in status_path.read_text(encoding="utf-8", errors="ignore").splitlines():
             if line.startswith("PPid:"):
                 return int(str(line.split(":", 1)[1] or "").strip() or "0")
+    except Exception:
+        pass
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        if result.returncode != 0:
+            return 0
+        return int(str(result.stdout or "").strip() or "0")
     except Exception:
         return 0
     return 0

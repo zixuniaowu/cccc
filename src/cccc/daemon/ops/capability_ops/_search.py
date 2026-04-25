@@ -1230,7 +1230,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
         actor_role = _resolve_actor_role(group, actor_id)
         actor = find_actor(group, actor_id) if actor_id and actor_id != "user" else None
         actor_is_pet = isinstance(actor, dict) and is_pet_actor(actor)
-        actor_is_voice_secretary = isinstance(actor, dict) and is_voice_secretary_actor(actor)
+        actor_is_voice_secretary = actor_id == "voice-secretary" or (isinstance(actor, dict) and is_voice_secretary_actor(actor))
         policy = _allowlist_policy()
         max_dynamic_tools_visible = _quota_limit(
             "CCCC_CAPABILITY_MAX_DYNAMIC_TOOLS_VISIBLE",
