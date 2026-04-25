@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -19,6 +20,27 @@ class TestMcpRuntimeContext(unittest.TestCase):
         ), patch(
             "cccc.ports.mcp.common._proc_parent_pid_windows",
             side_effect=lambda pid: chain.get(pid, 0),
+        ):
+            self.assertEqual(_iter_ancestor_pids(), [900, 700, 500])
+
+    def test_iter_ancestor_pids_uses_ps_parent_chain_when_proc_is_unavailable(self) -> None:
+        from cccc.ports.mcp.common import _iter_ancestor_pids
+
+        chain = {900: 700, 700: 500, 500: 0}
+
+        def _fake_run(argv: list[str], **_kwargs: object) -> object:
+            pid = int(argv[-1])
+            return SimpleNamespace(returncode=0, stdout=f"{chain.get(pid, 0)}\n")
+
+        with patch("cccc.ports.mcp.common.os.name", "posix"), patch(
+            "cccc.ports.mcp.common.os.getpid",
+            return_value=900,
+        ), patch(
+            "cccc.ports.mcp.common.Path.read_text",
+            side_effect=FileNotFoundError("/proc unavailable"),
+        ), patch(
+            "cccc.ports.mcp.common.subprocess.run",
+            side_effect=_fake_run,
         ):
             self.assertEqual(_iter_ancestor_pids(), [900, 700, 500])
 

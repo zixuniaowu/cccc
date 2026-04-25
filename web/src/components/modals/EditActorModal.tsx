@@ -113,7 +113,7 @@ function modeButtonClass(selected: boolean): string {
   return [
     "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-colors",
     selected
-      ? "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white dark:border-white dark:bg-white dark:text-[rgb(35,36,37)]"
+      ? "border-[rgb(35,36,37)] bg-[rgb(35,36,37)] text-white hover:bg-[rgb(35,36,37)] dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white"
       : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
   ].join(" ");
 }
@@ -332,7 +332,6 @@ export function EditActorModal({
     setSecretsClearAll(false);
     setSecretKeys([]);
     setSecretSource("none");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId, actorId, isOpen, linkedProfileId, linkedProfileOwner, linkedProfileScope]);
 
   useEffect(() => {

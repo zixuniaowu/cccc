@@ -25,6 +25,32 @@ export type HeadlessRawTraceEntry =
       live: boolean;
     };
 
+export type HeadlessRawTraceRenderGroup =
+  | {
+      kind: "message";
+      id: string;
+      order: number;
+      ts: string;
+      live: boolean;
+      entry: Extract<HeadlessRawTraceEntry, { kind: "message" }>;
+    }
+  | {
+      kind: "event";
+      id: string;
+      order: number;
+      ts: string;
+      live: boolean;
+      entry: Extract<HeadlessRawTraceEntry, { kind: "event" }>;
+    }
+  | {
+      kind: "event-band";
+      id: string;
+      order: number;
+      ts: string;
+      live: boolean;
+      entries: Array<Extract<HeadlessRawTraceEntry, { kind: "event" }>>;
+    };
+
 function normalizeText(value: unknown): string {
   return String(value || "").trim();
 }
@@ -85,7 +111,6 @@ function buildEventEntry(event: HeadlessStreamEvent, order: number): HeadlessRaw
   let live = false;
 
   if (eventType.startsWith("headless.activity.")) {
-    const activityId = normalizeText(data.activity_id);
     badge = mapActivityBadge(normalizeText(data.raw_item_type), normalizeText(data.kind));
     const command = normalizeText(data.command);
     const summary = normalizeText(data.summary);
@@ -217,4 +242,72 @@ export function buildHeadlessRawTraceEntries(events: HeadlessStreamEvent[]): Hea
   }
 
   return entries.sort((left, right) => left.order - right.order);
+}
+
+export function buildHeadlessRawTraceRenderGroups(
+  entries: HeadlessRawTraceEntry[],
+): HeadlessRawTraceRenderGroup[] {
+  const groups: HeadlessRawTraceRenderGroup[] = [];
+  let eventBand: Array<Extract<HeadlessRawTraceEntry, { kind: "event" }>> = [];
+
+  const flushEventBand = () => {
+    if (eventBand.length <= 0) return;
+    if (eventBand.length === 1) {
+      const [entry] = eventBand;
+      groups.push({
+        kind: "event",
+        id: entry.id,
+        order: entry.order,
+        ts: entry.ts,
+        live: entry.live,
+        entry,
+      });
+      eventBand = [];
+      return;
+    }
+    const first = eventBand[0];
+    const last = eventBand[eventBand.length - 1];
+    groups.push({
+      kind: "event-band",
+      id: `event-band:${first.id}:${last.id}`,
+      order: first.order,
+      ts: String(last.ts || first.ts || "").trim(),
+      live: eventBand.some((entry) => entry.live),
+      entries: eventBand,
+    });
+    eventBand = [];
+  };
+
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (entry.kind === "message") {
+      flushEventBand();
+      groups.push({
+        kind: "message",
+        id: entry.id,
+        order: entry.order,
+        ts: entry.ts,
+        live: entry.live,
+        entry,
+      });
+      continue;
+    }
+
+    if (entry.tone === "error") {
+      flushEventBand();
+      groups.push({
+        kind: "event",
+        id: entry.id,
+        order: entry.order,
+        ts: entry.ts,
+        live: entry.live,
+        entry,
+      });
+      continue;
+    }
+
+    eventBand.push(entry);
+  }
+
+  flushEventBand();
+  return groups.sort((left, right) => left.order - right.order);
 }

@@ -217,7 +217,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                         role = None
                 actor = _safe_find_actor(g, aid)
                 actor_is_pet = bool(isinstance(actor, dict) and is_pet_actor(actor))
-                actor_is_voice_secretary = bool(isinstance(actor, dict) and is_voice_secretary_actor(actor))
+                actor_is_voice_secretary = aid == "voice-secretary" or bool(isinstance(actor, dict) and is_voice_secretary_actor(actor))
                 if actor_is_voice_secretary:
                     role = "voice_secretary"
                 pf = read_group_prompt_file(g, HELP_FILENAME)
@@ -1135,13 +1135,14 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
     actor_is_voice_secretary = False
     builtin_enabled_fallback: List[str] = []
     if gid and aid and aid != "user":
+        actor_is_voice_secretary = aid == VOICE_SECRETARY_ACTOR_ID
         try:
             group = load_group(gid)
             actor_role = str(get_effective_role(group, aid) or "").strip().lower()
             actor = find_actor(group, aid)
             if isinstance(actor, dict):
                 actor_is_pet = is_pet_actor(actor)
-                actor_is_voice_secretary = is_voice_secretary_actor(actor)
+                actor_is_voice_secretary = actor_is_voice_secretary or is_voice_secretary_actor(actor)
                 autoload = actor.get("capability_autoload") if isinstance(actor.get("capability_autoload"), list) else []
                 builtin_enabled_fallback = [
                     str(cap_id or "").strip()

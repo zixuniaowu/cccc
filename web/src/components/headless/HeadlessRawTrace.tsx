@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { HeadlessStreamEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { formatTime } from "../../utils/time";
-import { buildHeadlessRawTraceEntries } from "../../utils/headlessRawTimeline";
+import {
+  buildHeadlessRawTraceEntries,
+  buildHeadlessRawTraceRenderGroups,
+  type HeadlessRawTraceEntry,
+} from "../../utils/headlessRawTimeline";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
-import { AlertIcon, ChevronDownIcon, ClockIcon, SparklesIcon } from "../Icons";
+import { AlertIcon, ClockIcon, SparklesIcon } from "../Icons";
 
 type HeadlessRawTraceProps = {
   events: HeadlessStreamEvent[];
@@ -13,6 +17,8 @@ type HeadlessRawTraceProps = {
   isDark: boolean;
   className?: string;
 };
+
+type EventTraceEntry = Extract<HeadlessRawTraceEntry, { kind: "event" }>;
 
 function isMarkdownPhase(streamPhase: string): boolean {
   return String(streamPhase || "").trim().toLowerCase() === "final_answer";
@@ -64,6 +70,39 @@ function messageStatusLabel(streamPhase: string, live: boolean): string {
   return "thinking";
 }
 
+function getEventBandBadge(entries: EventTraceEntry[]): string {
+  const badgeSet = new Set(entries.map((entry) => String(entry.badge || "").trim().toLowerCase()).filter(Boolean));
+  if (badgeSet.has("control")) return "control";
+  if (badgeSet.has("run")) return "run";
+  if (badgeSet.has("tool")) return "tool";
+  if (badgeSet.has("think")) return "think";
+  return "trace";
+}
+
+function getEventBandTitle(entries: EventTraceEntry[]): string {
+  const live = entries.some((entry) => entry.live);
+  const badges = new Set(entries.map((entry) => String(entry.badge || "").trim().toLowerCase()).filter(Boolean));
+  if (badges.has("control")) return live ? "Runtime trace" : "Runtime trace";
+  if (badges.has("run") || badges.has("tool")) return live ? "Execution trace" : "Execution trace";
+  return live ? "Trace stream" : "Trace stream";
+}
+
+function compactDetailLines(lines: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const line of lines) {
+    const text = String(line || "").replace(/\s+/g, " ").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    output.push(text);
+  }
+  return output;
+}
+
+function getEventStepLabel(entry: EventTraceEntry): string {
+  return entry.eventType.replace(/^headless\./, "");
+}
+
 export function HeadlessRawTrace({
   events,
   emptyLabel,
@@ -73,14 +112,16 @@ export function HeadlessRawTrace({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const entries = useMemo(() => buildHeadlessRawTraceEntries(events), [events]);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const renderGroups = useMemo(() => buildHeadlessRawTraceRenderGroups(entries), [entries]);
+  const firstEventId = events[0]?.id || "";
+  const lastEventId = events.length > 0 ? events[events.length - 1]?.id || "" : "";
 
   useEffect(() => {
     const node = scrollRef.current;
     shouldStickToBottomRef.current = true;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [events[0]?.id, events.length > 0 ? events[events.length - 1]?.id : ""]);
+  }, [firstEventId, lastEventId]);
 
   useEffect(() => {
     const node = scrollRef.current;
@@ -88,20 +129,7 @@ export function HeadlessRawTrace({
     node.scrollTop = node.scrollHeight;
   }, [entries]);
 
-  useEffect(() => {
-    setExpandedIds((current) => {
-      const next = new Set<string>();
-      for (const id of current) {
-        if (entries.some((entry) => entry.id === id && entry.kind === "event")) next.add(id);
-      }
-      for (const entry of entries) {
-        if (entry.kind === "event" && (entry.live || entry.tone === "error")) next.add(entry.id);
-      }
-      return next;
-    });
-  }, [entries]);
-
-  if (entries.length <= 0) {
+  if (renderGroups.length <= 0) {
     return (
       <div
         className={classNames(
@@ -124,17 +152,18 @@ export function HeadlessRawTrace({
         shouldStickToBottomRef.current = node.scrollTop + node.clientHeight >= node.scrollHeight - 24;
       }}
       className={classNames(
-        "h-full min-h-[420px] overflow-y-auto rounded-[28px] border px-4 py-4 sm:px-5",
+        "h-full min-h-[420px] overflow-y-auto scrollbar-hide rounded-[28px] border px-4 py-4 sm:px-5",
         isDark ? "border-white/10 bg-slate-950/55" : "border-slate-200 bg-white",
         className
       )}
     >
       <div className="flex flex-col gap-3">
-        {entries.map((entry) => {
-          if (entry.kind === "message") {
+        {renderGroups.map((group) => {
+          if (group.kind === "message") {
+            const entry = group.entry;
             return (
               <section
-                key={entry.id}
+                key={group.id}
                 className={classNames(
                   "rounded-[24px] border px-4 py-3 shadow-[0_14px_34px_-30px_rgba(15,23,42,0.35)] transition-all",
                   messageCardClassName(entry.live, isDark)
@@ -180,34 +209,118 @@ export function HeadlessRawTrace({
             );
           }
 
-          const isExpanded = expandedIds.has(entry.id);
+          if (group.kind === "event-band") {
+            const bandBadge = getEventBandBadge(group.entries);
+            const bandTitle = getEventBandTitle(group.entries);
+            const latestEntry = group.entries[group.entries.length - 1];
+            return (
+              <section
+                key={group.id}
+                className={classNames(
+                  "overflow-hidden rounded-[22px] border transition-all",
+                  isDark ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-white"
+                )}
+              >
+                <div className="flex w-full items-start gap-3 px-4 py-3 text-left">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className={classNames(
+                            "text-[13px] font-medium leading-6",
+                            isDark ? "text-slate-100" : "text-slate-900"
+                          )}>
+                            {bandTitle}
+                          </div>
+                          <span className={classNames(
+                            "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.08em]",
+                            isDark ? "border-white/10 bg-white/[0.04] text-slate-300" : "border-slate-200 bg-slate-50 text-slate-600"
+                          )}>
+                            {group.entries.length} events
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2 text-[11px] text-[var(--color-text-tertiary)]">
+                        <span className={classNames(
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-medium tracking-[0.08em]",
+                          badgeClassName("info", isDark)
+                        )}>
+                          <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+                          {group.live ? "live" : bandBadge}
+                        </span>
+                        {group.ts ? <span>{formatTime(group.ts)}</span> : null}
+                      </div>
+                    </div>
+                    <div className="mt-3 overflow-hidden rounded-[18px] border border-black/5 dark:border-white/8">
+                      {group.entries.map((entry, index) => {
+                        const detailLines = compactDetailLines(entry.detailLines);
+                        return (
+                          <div
+                            key={entry.id}
+                            className={classNames(
+                              "px-3 py-2.5",
+                              index > 0 ? (isDark ? "border-t border-white/8" : "border-t border-slate-200") : "",
+                              isDark ? "bg-black/20" : "bg-slate-50/70"
+                            )}
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className={classNames(
+                                  "font-mono text-[11px] font-semibold",
+                                  isDark ? "text-sky-200" : "text-sky-700"
+                                )}>
+                                  {getEventStepLabel(entry)}
+                                </span>
+                                <span className={classNames(
+                                  "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em]",
+                                  badgeClassName(entry.tone, isDark)
+                                )}>
+                                  {entry.badge.toLowerCase()}
+                                </span>
+                                {index === group.entries.length - 1 && latestEntry.live ? (
+                                  <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-sky-500">
+                                    latest
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className={classNames(
+                                "mt-1 break-words font-mono text-[12px] leading-5",
+                                isDark ? "text-slate-100" : "text-slate-900"
+                              )}>
+                                $ {entry.title}
+                              </div>
+                              {detailLines.length > 0 ? (
+                                <div className={classNames(
+                                  "mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-5",
+                                  isDark ? "text-slate-400" : "text-slate-600"
+                                )}>
+                                  {detailLines.map((line) => `  ${line}`).join("\n")}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            );
+          }
+
+          const entry = group.entry;
           const hasDetails = entry.detailLines.length > 0;
-          const collapsedPreview = entry.detailLines[0] || "";
+          const detailLines = compactDetailLines(entry.detailLines);
 
           return (
             <section
-              key={entry.id}
+              key={group.id}
               className={classNames(
                 "overflow-hidden rounded-[22px] border transition-all",
                 eventCardClassName(entry.tone, entry.live, isDark)
               )}
             >
-              <button
-                type="button"
-                onClick={() => {
-                  if (!hasDetails) return;
-                  setExpandedIds((current) => {
-                    const next = new Set(current);
-                    if (next.has(entry.id)) next.delete(entry.id);
-                    else next.add(entry.id);
-                    return next;
-                  });
-                }}
-                className={classNames(
-                  "flex w-full items-start gap-3 px-4 py-3 text-left",
-                  hasDetails ? "cursor-pointer" : "cursor-default"
-                )}
-              >
+              <div className="flex w-full items-start gap-3 px-4 py-3 text-left">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
@@ -219,16 +332,6 @@ export function HeadlessRawTrace({
                       )}>
                         {entry.title}
                       </div>
-                      {!isExpanded && collapsedPreview ? (
-                        <div className={classNames(
-                          "mt-0.5 truncate text-[12px] leading-5",
-                          entry.tone === "error"
-                            ? (isDark ? "text-rose-200/80" : "text-rose-700")
-                            : isDark ? "text-slate-400" : "text-slate-500"
-                        )}>
-                          {collapsedPreview}
-                        </div>
-                      ) : null}
                     </div>
                     <div className="flex shrink-0 items-center gap-2 text-[11px] text-[var(--color-text-tertiary)]">
                       <span className={classNames(
@@ -259,25 +362,20 @@ export function HeadlessRawTrace({
                       ) : null}
                       {entry.tone === "error" ? <AlertIcon className="h-4 w-4" /> : null}
                       {entry.ts ? <span>{formatTime(entry.ts)}</span> : null}
-                      {hasDetails ? (
-                        <ChevronDownIcon
-                          className={classNames("h-4 w-4 transition-transform", isExpanded ? "rotate-180" : "")}
-                        />
-                      ) : null}
                     </div>
                   </div>
-                  {isExpanded && hasDetails ? (
+                  {hasDetails ? (
                     <div className={classNames(
-                      "mt-2 whitespace-pre-wrap break-words rounded-2xl border px-3 py-2 text-[12px] leading-6",
+                      "mt-2 whitespace-pre-wrap break-words rounded-2xl border px-3 py-2 font-mono text-[11px] leading-6",
                       entry.tone === "error"
                         ? (isDark ? "border-rose-400/20 bg-rose-400/[0.05] text-rose-200/90" : "border-rose-200 bg-white/70 text-rose-700")
                         : isDark ? "border-white/8 bg-black/20 text-slate-300" : "border-slate-200 bg-slate-50/80 text-slate-600"
                     )}>
-                      {entry.detailLines.join("\n")}
+                      {detailLines.map((line) => `  ${line}`).join("\n")}
                     </div>
                   ) : null}
                 </div>
-              </button>
+              </div>
             </section>
           );
         })}

@@ -503,7 +503,6 @@ export function AppModals({
     const linkedProfileId = String(editingActor?.profile_id || "").trim();
     if (!linkedProfileId) return;
     void loadActorProfiles();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modals.addActor, editingActor?.profile_id, loadActorProfiles]);
 
   // Handlers

@@ -30,6 +30,81 @@ const RUNTIME_RING_GEOMETRY_CLASS = "absolute -inset-[0.5px] rounded-full";
 const RUNTIME_RING_STROKE_PX = 4;
 const RUNTIME_STATIC_RING_STROKE_CLASS = "border-[4px]";
 
+function buildFlowRingStyle(args: {
+  tone: "active" | "attention";
+  isDark: boolean;
+}): CSSProperties {
+  const palette = args.tone === "attention"
+    ? args.isDark
+      ? {
+          base: "rgba(251, 113, 133, 0.24)",
+          glow: "rgba(239, 68, 68, 0.42)",
+          streamA: "rgba(253, 164, 175, 0.9)",
+          streamB: "rgba(251, 113, 133, 0.82)",
+          streamC: "rgba(254, 226, 226, 0.52)",
+        }
+      : {
+          base: "rgba(251, 113, 133, 0.18)",
+          glow: "rgba(239, 68, 68, 0.28)",
+          streamA: "rgba(244, 63, 94, 0.82)",
+          streamB: "rgba(251, 113, 133, 0.74)",
+          streamC: "rgba(255, 228, 230, 0.52)",
+        }
+    : args.isDark
+      ? {
+          base: "rgba(160, 124, 254, 0.22)",
+          glow: "rgba(254, 143, 181, 0.34)",
+          streamA: "rgba(160, 124, 254, 0.92)",
+          streamB: "rgba(254, 143, 181, 0.82)",
+          streamC: "rgba(255, 190, 123, 0.56)",
+        }
+      : {
+          base: "rgba(160, 124, 254, 0.14)",
+          glow: "rgba(254, 143, 181, 0.22)",
+          streamA: "rgba(160, 124, 254, 0.82)",
+          streamB: "rgba(254, 143, 181, 0.72)",
+          streamC: "rgba(255, 190, 123, 0.46)",
+        };
+
+  return {
+    ["--runtime-flow-base" as keyof CSSProperties]: palette.base,
+    ["--runtime-flow-glow" as keyof CSSProperties]: palette.glow,
+    ["--runtime-flow-a" as keyof CSSProperties]: palette.streamA,
+    ["--runtime-flow-b" as keyof CSSProperties]: palette.streamB,
+    ["--runtime-flow-c" as keyof CSSProperties]: palette.streamC,
+  };
+}
+
+function renderFlowRing(args: {
+  tone: "active" | "attention";
+  isDark: boolean;
+  shineColors: [string, string, string];
+  duration: number;
+}): ReactNode {
+  return (
+    <span
+      className={classNames(
+        "runtime-flow-ring",
+        args.tone === "attention" ? "runtime-flow-ring--attention" : "runtime-flow-ring--active",
+        RUNTIME_RING_GEOMETRY_CLASS,
+      )}
+      style={buildFlowRingStyle({ tone: args.tone, isDark: args.isDark })}
+    >
+      <span className="runtime-flow-ring__base" />
+      <span className="runtime-flow-ring__stream runtime-flow-ring__stream--primary" />
+      <span className="runtime-flow-ring__stream runtime-flow-ring__stream--secondary" />
+      <span className="runtime-flow-ring__glow" />
+      <ShineBorder
+        className={classNames(RUNTIME_RING_GEOMETRY_CLASS, "runtime-flow-ring__shine")}
+        borderWidth={RUNTIME_RING_STROKE_PX}
+        duration={args.duration}
+        shineColor={args.shineColors}
+        topGlow={true}
+      />
+    </span>
+  );
+}
+
 function getRuntimeStatusLabel(
   isRunning: boolean,
   workingState: string,
@@ -64,30 +139,24 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
       return {
         ringClassName: "hidden",
         ringStyle: {},
-        customRing: (
-          <ShineBorder
-            className={RUNTIME_RING_GEOMETRY_CLASS}
-            borderWidth={RUNTIME_RING_STROKE_PX}
-            duration={6.2}
-            shineColor={["#A07CFE", "#FE8FB5", "#FFBE7B"]}
-            topGlow={true}
-          />
-        ),
+        customRing: renderFlowRing({
+          tone: "active",
+          isDark,
+          duration: 6.2,
+          shineColors: ["#A07CFE", "#FE8FB5", "#FFBE7B"],
+        }),
         unreadBadgeClassName: isDark ? "bg-emerald-300/[0.18] text-emerald-50" : "bg-emerald-500/[0.14] text-emerald-700",
       };
     case "attention":
       return {
         ringClassName: "hidden",
         ringStyle: {},
-        customRing: (
-          <ShineBorder
-            className={RUNTIME_RING_GEOMETRY_CLASS}
-            borderWidth={RUNTIME_RING_STROKE_PX}
-            duration={5.4}
-            shineColor={["#fb7185", "#ef4444", "#fda4af"]}
-            topGlow={true}
-          />
-        ),
+        customRing: renderFlowRing({
+          tone: "attention",
+          isDark,
+          duration: 5.4,
+          shineColors: ["#fb7185", "#ef4444", "#fda4af"],
+        }),
         unreadBadgeClassName: isDark ? "bg-rose-300/[0.18] text-rose-50" : "bg-rose-500/[0.14] text-rose-700",
       };
     case "idle":

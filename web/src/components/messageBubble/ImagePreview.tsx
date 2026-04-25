@@ -50,6 +50,7 @@ export function ImagePreview({
   const { t } = useTranslation("chat");
   const isGridLayout = layout === "grid";
   const rasterCanvasStyle = isDark ? DARK_IMAGE_CANVAS_STYLE : LIGHT_IMAGE_CANVAS_STYLE;
+  const useDarkFailureTone = isDark;
 
   useEffect(() => {
     let cancelled = false;
@@ -188,7 +189,9 @@ export function ImagePreview({
         className={classNames(
           "group flex w-full flex-col overflow-hidden rounded-xl border p-2 text-left transition-colors",
           isUserMessage
-            ? "border-[rgb(35,36,37)]/24 bg-white/10 text-white hover:bg-white/14"
+            ? isDark
+              ? "border-[rgb(35,36,37)]/24 bg-white/10 text-white hover:bg-white/14"
+              : "border-[rgba(15,23,42,0.18)] bg-white text-[rgb(35,36,37)] shadow-[0_8px_22px_-18px_rgba(15,23,42,0.34)] hover:bg-[rgb(248,250,252)]"
             : isDark
               ? "border-white/10 bg-slate-900/50 text-slate-300 hover:bg-slate-900/65"
               : "border-[rgba(15,23,42,0.12)] bg-[rgb(238,241,245)] text-[var(--color-text-secondary)] hover:bg-[rgb(232,236,241)]",
@@ -200,22 +203,30 @@ export function ImagePreview({
           className={classNames(
             "flex aspect-[4/3] w-full flex-col items-center justify-center rounded-lg border border-dashed px-4 text-center",
             isUserMessage
-              ? "border-white/20 bg-black/10"
+              ? isDark
+                ? "border-white/20 bg-black/10"
+                : "border-[rgba(15,23,42,0.24)] bg-[rgb(241,245,249)]"
               : isDark
                 ? "border-white/12 bg-slate-950/70"
                 : "border-[rgba(15,23,42,0.14)] bg-white/85",
           )}
         >
-          <ImageIcon size={24} className="mb-3 flex-shrink-0 opacity-65" />
-          <div className={classNames("text-xs font-semibold", isUserMessage ? "text-white" : "text-[var(--color-text-primary)]")}>
+          <ImageIcon
+            size={24}
+            className={classNames(
+              "mb-3 flex-shrink-0 opacity-75",
+              useDarkFailureTone ? "text-white" : "text-[rgb(71,85,105)]",
+            )}
+          />
+          <div className={classNames("text-xs font-semibold", useDarkFailureTone ? "text-white" : "text-[rgb(30,41,59)]")}>
             {t("imagePreviewUnavailable", { defaultValue: "图片预览失败" })}
           </div>
-          <div className="mt-1 text-[11px] opacity-75">
+          <div className={classNames("mt-1 text-[11px]", useDarkFailureTone ? "text-white/72" : "text-[rgb(100,116,139)]")}>
             {t("downloadOriginalImage", { defaultValue: "点击下载原图" })}
           </div>
         </div>
         <div className="min-w-0 px-1 pt-2">
-          <div className={classNames("truncate text-[11px] font-medium", isUserMessage ? "text-white/88" : "text-[var(--color-text-secondary)]")}>
+          <div className={classNames("truncate text-[11px] font-medium", useDarkFailureTone ? "text-white/88" : "text-[rgb(51,65,85)]")}>
             {alt}
           </div>
         </div>

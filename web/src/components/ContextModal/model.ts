@@ -9,6 +9,7 @@ import type {
   TaskWaitingOn,
 } from "../../types";
 import { formatTime } from "../../utils/time";
+import { getDefaultPetPersonaSeed } from "../../utils/rolePresets";
 import { getTaskDisplaySummary, resolveTaskType, type TaskTypeId } from "../../utils/taskWorkflow";
 
 export interface BriefDraft {
@@ -74,6 +75,25 @@ export function isVisibleContextAgent(agent: AgentState | null | undefined): boo
   const id = String(agent?.id || "").trim();
   if (!id) return false;
   return id !== "pet-peer";
+}
+
+export function resolvePetPersonaDraft(savedPetPersona: string): string {
+  const saved = String(savedPetPersona || "").trim();
+  return saved || getDefaultPetPersonaSeed();
+}
+
+export function petPersonaDraftMatches(savedPetPersona: string, draft: string): boolean {
+  return String(draft || "") === resolvePetPersonaDraft(savedPetPersona);
+}
+
+export function petPersonaDraftDirty(
+  savedPetPersona: string,
+  draft: string,
+  state: { loaded: boolean },
+): boolean {
+  const draftText = String(draft || "");
+  if (!state.loaded && !draftText.trim()) return false;
+  return !petPersonaDraftMatches(savedPetPersona, draftText);
 }
 
 export function taskTitle(task: Task | null | undefined): string {

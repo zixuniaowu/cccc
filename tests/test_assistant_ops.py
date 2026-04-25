@@ -1585,6 +1585,54 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_output_completion_auto_fills_missing_composer_draft(self) -> None:
+        from cccc.daemon.assistants.voice_secretary_output_completion import complete_missing_composer_drafts
+
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            enqueue, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "prompt_refine",
+                    "request_id": "voice-prompt-auto",
+                    "composer_text": "这个如何优化？",
+                    "voice_transcript": "",
+                    "operation": "replace_with_refined_prompt",
+                    "composer_snapshot_hash": "hash-auto",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(enqueue.ok, getattr(enqueue, "error", None))
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+
+            repaired = complete_missing_composer_drafts(
+                group_id=group_id,
+                diagnostics={"missing": ["composer_draft:voice-prompt-auto"]},
+            )
+
+            self.assertEqual(repaired.get("completed_request_ids"), ["voice-prompt-auto"])
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            pending = (state.result or {}).get("prompt_draft") if isinstance(state.result, dict) else {}
+            self.assertEqual(pending.get("request_id"), "voice-prompt-auto")
+            self.assertEqual(pending.get("draft_text"), "这个如何优化？")
+            self.assertEqual(pending.get("operation"), "replace_with_refined_prompt")
+            self.assertEqual(pending.get("composer_snapshot_hash"), "hash-auto")
+        finally:
+            cleanup()
+
     def test_voice_secretary_prompt_refine_replacement_requests_complete_draft(self) -> None:
         home, cleanup = self._with_home()
         try:
@@ -1763,6 +1811,62 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("Request id: voice-prompt-merge", merged_text)
             self.assertIn("先强调风险", merged_text)
             self.assertIn("再补充验证步骤", merged_text)
+        finally:
+            cleanup()
+
+    def test_voice_document_input_read_stales_expired_pending_prompt_draft(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            state_dir = Path(home) / "groups" / group_id / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            assistants_path = state_dir / "assistants.json"
+            assistants_path.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": group_id,
+                        "assistants": {},
+                        "voice_sessions": {},
+                        "voice_ask_requests": {},
+                        "voice_prompt_requests": {},
+                        "voice_prompt_drafts": {
+                            "voice-prompt-stale": {
+                                "request_id": "voice-prompt-stale",
+                                "created_at": "2026-04-20T09:00:00Z",
+                                "updated_at": "2026-04-20T09:00:00Z",
+                                "draft_text": "old pending draft",
+                                "status": "pending",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            voice_state_dir = Path(home) / "voice-secretary" / group_id
+            voice_state_dir.mkdir(parents=True, exist_ok=True)
+            (voice_state_dir / "input_state.json").write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "group_id": group_id,
+                        "latest_seq": 0,
+                        "secretary_read_cursor": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+
+            saved_state = json.loads(assistants_path.read_text(encoding="utf-8"))
+            draft = ((saved_state.get("voice_prompt_drafts") or {}).get("voice-prompt-stale") or {})
+            self.assertEqual(draft.get("status"), "stale")
+            self.assertNotEqual(draft.get("updated_at"), "2026-04-20T09:00:00Z")
         finally:
             cleanup()
 

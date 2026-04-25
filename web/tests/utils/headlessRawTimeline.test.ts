@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildHeadlessRawTraceEntries } from "../../src/utils/headlessRawTimeline";
+import { buildHeadlessRawTraceEntries, buildHeadlessRawTraceRenderGroups } from "../../src/utils/headlessRawTimeline";
 
 describe("buildHeadlessRawTraceEntries", () => {
   it("moves a streaming message forward when later deltas arrive", () => {
@@ -85,5 +85,63 @@ describe("buildHeadlessRawTraceEntries", () => {
       title: "error",
     });
     expect(entries[0]?.kind === "event" ? entries[0].detailLines : []).toContain("tool crashed | exit code 1");
+  });
+
+  it("groups consecutive non-error trace events into one reasoning band", () => {
+    const entries = buildHeadlessRawTraceEntries([
+      {
+        actor_id: "coder",
+        type: "headless.activity.updated",
+        ts: "2026-04-23T10:00:00Z",
+        data: { activity_id: "cmd-1", summary: "rg -n foo", kind: "tool", raw_item_type: "commandExecution", status: "updated" },
+      },
+      {
+        actor_id: "coder",
+        type: "headless.control.queued",
+        ts: "2026-04-23T10:00:01Z",
+        data: { control_kind: "system_notify", status: "queued" },
+      },
+      {
+        actor_id: "coder",
+        type: "headless.message.delta",
+        ts: "2026-04-23T10:00:02Z",
+        data: { stream_id: "stream-1", phase: "commentary", delta: "Still working" },
+      },
+    ]);
+
+    const groups = buildHeadlessRawTraceRenderGroups(entries);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({
+      kind: "event-band",
+      live: true,
+    });
+    expect(groups[0]?.kind === "event-band" ? groups[0].entries.map((entry) => entry.badge) : []).toEqual(["RUN", "CONTROL"]);
+    expect(groups[1]).toMatchObject({
+      kind: "message",
+      live: true,
+    });
+  });
+
+  it("keeps error events outside the reasoning band", () => {
+    const entries = buildHeadlessRawTraceEntries([
+      {
+        actor_id: "coder",
+        type: "headless.activity.updated",
+        ts: "2026-04-23T10:00:00Z",
+        data: { activity_id: "cmd-1", summary: "rg -n foo", kind: "tool", raw_item_type: "commandExecution", status: "updated" },
+      },
+      {
+        actor_id: "coder",
+        type: "headless.turn.failed",
+        ts: "2026-04-23T10:00:01Z",
+        data: { turn_id: "turn-1", status: "error", error: { message: "boom" } },
+      },
+    ]);
+
+    const groups = buildHeadlessRawTraceRenderGroups(entries);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({ kind: "event" });
+    expect(groups[1]).toMatchObject({ kind: "event" });
+    expect(groups[1]?.kind === "event" ? groups[1].entry.tone : "").toBe("error");
   });
 });

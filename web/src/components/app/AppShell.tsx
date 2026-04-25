@@ -1,9 +1,10 @@
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { AppHeader } from "../layout/AppHeader";
 import { GroupSidebar } from "../layout/GroupSidebar";
 import { ModalFrame } from "../modals/ModalFrame";
+import { useModalA11y } from "../../hooks/useModalA11y";
 import { ActorTab } from "../../pages/ActorTab";
 import { ChatTab } from "../../pages/chat";
 import type { Actor, GroupContext, GroupDoc, GroupMeta, GroupRuntimeStatus, TextScale } from "../../types";
@@ -80,6 +81,39 @@ type AppShellProps = {
   onTouchStart: (event: React.TouchEvent) => void;
   onTouchEnd: (event: React.TouchEvent) => void;
 };
+
+function RuntimeInspectorModal({
+  isOpen,
+  isDark,
+  onClose,
+  titleId,
+  closeAriaLabel,
+  children,
+}: {
+  isOpen: boolean;
+  isDark: boolean;
+  onClose: () => void;
+  titleId: string;
+  closeAriaLabel: string;
+  children: ReactNode;
+}) {
+  const { modalRef } = useModalA11y(isOpen, onClose);
+
+  return (
+    <ModalFrame
+      isOpen={isOpen}
+      isDark={isDark}
+      onClose={onClose}
+      titleId={titleId}
+      title=""
+      closeAriaLabel={closeAriaLabel}
+      panelClassName="h-full w-full max-w-none overflow-hidden sm:h-[92vh] sm:w-[min(1480px,98vw)] sm:max-w-[98vw]"
+      modalRef={modalRef}
+    >
+      {children}
+    </ModalFrame>
+  );
+}
 
 export function AppShell({
   orderedGroups,
@@ -300,15 +334,13 @@ export function AppShell({
               (groupContext?.agent_states || []).find((item) => item.id === (actor?.id || "")) || null;
 
             return (
-              <ModalFrame
+              <RuntimeInspectorModal
                 key={actorId}
                 isOpen={isVisible}
                 isDark={isDark}
                 onClose={() => onTabChange("chat")}
                 titleId={`runtime-inspector-${actorId}`}
-                title=""
                 closeAriaLabel={t("runtimeInspectorClose", { defaultValue: "Close runtime inspector" })}
-                panelClassName="h-full w-full max-w-none overflow-hidden sm:h-[92vh] sm:w-[min(1480px,98vw)] sm:max-w-[98vw]"
               >
                 <div className="min-h-0 flex-1 overflow-hidden">
                   <ErrorBoundary>
@@ -331,7 +363,7 @@ export function AppShell({
                     />
                   </ErrorBoundary>
                 </div>
-              </ModalFrame>
+              </RuntimeInspectorModal>
             );
           })}
         </div>
