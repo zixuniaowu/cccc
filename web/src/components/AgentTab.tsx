@@ -11,8 +11,7 @@ import { classNames } from "../utils/classNames";
 import { formatFullTime, formatTime } from "../utils/time";
 import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { withAuthToken, fetchTerminalTail } from "../services/api";
-import { HeadlessLiveTrace } from "./headless/HeadlessLiveTrace";
-import { HeadlessRawTrace } from "./headless/HeadlessRawTrace";
+import { HeadlessRuntimePanel } from "./headless/HeadlessRuntimePanel";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, TerminalIcon } from "./Icons";
 import { ScrollFade } from "./ScrollFade";
 import { getTerminalSignalFromChunk } from "../utils/terminalWorkingState";
@@ -213,9 +212,6 @@ export function AgentTab({
     if (workingState === "working") return t("working");
     return t("running");
   })();
-  const latestHeadlessPreview = headlessPreviewSessions.length > 0
-    ? headlessPreviewSessions[headlessPreviewSessions.length - 1]
-    : null;
   const primaryActionButtonClass =
     "inline-flex items-center gap-1.5 rounded-xl border border-[rgb(35,36,37)] bg-[rgb(35,36,37)] px-3.5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white/92";
   const secondaryActionButtonClass =
@@ -842,33 +838,15 @@ export function AgentTab({
           <div className="flex h-full min-h-0 flex-col px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3">
             <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 min-h-0 flex-1">
               <div className="min-h-0 flex-1">
-                {rawHeadlessEvents.length > 0 ? (
-                  <HeadlessRawTrace
-                    events={rawHeadlessEvents}
-                    emptyLabel={t('noStreamingOutputYet', { defaultValue: 'No streaming output to display yet.' })}
-                    isDark={isDark}
-                    className={classNames(
-                      "h-full min-h-[420px] text-left text-[var(--color-text-secondary)]"
-                    )}
-                  />
-                ) : (
-                  <HeadlessLiveTrace
-                    previewSessions={headlessPreviewSessions}
-                    fallbackText={latestHeadlessText}
-                    fallbackActivities={latestHeadlessActivities}
-                    fallbackUpdatedAt={String(latestHeadlessPreview?.updatedAt || "").trim()}
-                    fallbackPendingEventId={String(latestHeadlessPreview?.pendingEventId || `preview:${actor.id}`).trim()}
-                    fallbackStreamId={String(latestHeadlessPreview?.currentStreamId || "").trim()}
-                    fallbackStreamPhase={String(latestHeadlessPreview?.streamPhase || "").trim().toLowerCase()}
-                    fallbackPhase={String(latestHeadlessPreview?.phase || "").trim().toLowerCase()}
-                    emptyLabel={t('noStreamingOutputYet', { defaultValue: 'No streaming output to display yet.' })}
-                    isDark={isDark}
-                    density="expanded"
-                    className={classNames(
-                      "h-full min-h-[420px] overflow-y-auto text-left text-[var(--color-text-secondary)]"
-                    )}
-                  />
-                )}
+                <HeadlessRuntimePanel
+                  actorId={actor.id}
+                  previewSessions={headlessPreviewSessions}
+                  fallbackText={latestHeadlessText}
+                  fallbackActivities={latestHeadlessActivities}
+                  rawEvents={rawHeadlessEvents}
+                  emptyLabel={t('noStreamingOutputYet', { defaultValue: '当前还没有可显示的流式输出。' })}
+                  isDark={isDark}
+                />
               </div>
             </div>
           </div>

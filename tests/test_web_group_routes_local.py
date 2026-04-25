@@ -72,3 +72,49 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
                 self.assertEqual(str((snapshot_body.get("result") or {}).get("group_id") or ""), group_id)
         finally:
             cleanup()
+
+    def test_headless_snapshot_replays_recent_completed_turn(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.headless_events import append_headless_event
+
+            group_id = self._create_group()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            append_headless_event(group.path, group_id=group_id, actor_id="coder", event_type="headless.turn.started", data={"turn_id": "turn-1"})
+            append_headless_event(
+                group.path,
+                group_id=group_id,
+                actor_id="coder",
+                event_type="headless.activity.started",
+                data={"activity_id": "tool-1", "summary": "Run tests", "kind": "tool"},
+            )
+            append_headless_event(
+                group.path,
+                group_id=group_id,
+                actor_id="coder",
+                event_type="headless.message.completed",
+                data={"stream_id": "stream-1", "text": "Done", "phase": "final_answer"},
+            )
+            append_headless_event(group.path, group_id=group_id, actor_id="coder", event_type="headless.turn.completed", data={"turn_id": "turn-1"})
+
+            with self._client() as client:
+                resp = client.get(f"/api/v1/groups/{group_id}/headless/snapshot")
+                self.assertEqual(resp.status_code, 200)
+                body = resp.json()
+                self.assertTrue(bool(body.get("ok")), body)
+                events = ((body.get("result") or {}).get("events") or [])
+                event_types = [str(event.get("type") or "") for event in events]
+                self.assertEqual(
+                    event_types,
+                    [
+                        "headless.turn.started",
+                        "headless.activity.started",
+                        "headless.message.completed",
+                        "headless.turn.completed",
+                    ],
+                )
+        finally:
+            cleanup()

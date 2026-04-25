@@ -103,6 +103,7 @@ function buildActivityNarrative(
   primaryLabel: string;
   primaryTitle: string;
   metaLines: string[];
+  detailRows: Array<{ label: string; value: string }>;
   title: string;
 } {
   const summary = normalizeInlineText(activity.summary);
@@ -114,6 +115,10 @@ function buildActivityNarrative(
   const filePaths = Array.isArray(activity.file_paths)
     ? activity.file_paths.map((path) => normalizeInlineText(path)).filter(Boolean)
     : [];
+  const toolName = normalizeInlineText(activity.tool_name);
+  const serverName = normalizeInlineText(activity.server_name);
+  const rawItemType = normalizeInlineText(activity.raw_item_type);
+  const status = normalizeInlineText(activity.status);
   const primaryTitle = command
     || (filePaths.length > 0 ? filePaths.join(", ") : "")
     || structuredLabel
@@ -130,6 +135,22 @@ function buildActivityNarrative(
     query && query !== primaryTitle ? query : undefined,
     cwd ? `cwd ${cwd}` : undefined,
   ]).map((line) => truncateText(line, density === "expanded" ? 96 : 72));
+  const detailRows = normalizeMetaLines([
+    detail && detail !== primaryLabel ? `detail\t${detail}` : undefined,
+    toolName ? `tool\t${serverName ? `${serverName}:${toolName}` : toolName}` : undefined,
+    command ? `cmd\t${command}` : undefined,
+    query ? `query\t${query}` : undefined,
+    cwd ? `cwd\t${cwd}` : undefined,
+    filePaths.length > 0 ? `files\t${filePaths.map((path) => getPathTail(path, 3)).join(", ")}` : undefined,
+    rawItemType ? `raw\t${rawItemType}` : undefined,
+    status ? `state\t${status}` : undefined,
+  ]).map((line) => {
+    const [label, ...rest] = line.split("\t");
+    return {
+      label,
+      value: truncateText(rest.join("\t"), density === "expanded" ? 140 : 96),
+    };
+  }).filter((row) => row.label && row.value);
   const title = normalizeMetaLines([
     primaryTitle,
     summary && summary !== primaryTitle ? summary : undefined,
@@ -142,6 +163,7 @@ function buildActivityNarrative(
     primaryLabel: primaryLabel || summary || formatStreamingActivityKind(activity.kind),
     primaryTitle,
     metaLines,
+    detailRows,
     title,
   };
 }
@@ -172,7 +194,7 @@ function getActivityBandClassName(density: HeadlessLiveTraceDensity): string {
 
 function getActivityRowClassName(density: HeadlessLiveTraceDensity, isDark: boolean, live: boolean): string {
   return classNames(
-    "flex min-w-0 items-center gap-2.5 border backdrop-blur-sm transition-colors",
+    "min-w-0 border backdrop-blur-sm transition-colors",
     density === "expanded"
       ? "min-h-[32px] rounded-2xl px-3 py-2"
       : "min-h-[26px] rounded-xl px-2.5 py-1.5",
@@ -229,31 +251,49 @@ function ActivityRow({
 }) {
   const narrative = buildActivityNarrative(entry.activity, density);
   const trailingMeta = density === "expanded" ? narrative.metaLines[0] || "" : "";
+  const showDetails = density === "expanded" && narrative.detailRows.length > 0;
 
   return (
     <div className={getActivityRowClassName(density, isDark, entry.live)} title={narrative.title || narrative.primaryTitle}>
-      <span className={getActivityKindBadgeClassName(density, isDark, entry.live)}>
-        {narrative.kindLabel}
-      </span>
-      <div
-        className={classNames(
-          "min-w-0 flex-1 truncate whitespace-nowrap font-medium",
-          density === "expanded" ? "text-[12.5px] leading-5" : "text-[11.5px] leading-4",
-          isDark ? "text-slate-100" : "text-slate-900"
-        )}
-        title={narrative.primaryTitle}
-      >
-        {narrative.primaryLabel}
-      </div>
-      {trailingMeta ? (
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className={getActivityKindBadgeClassName(density, isDark, entry.live)}>
+          {narrative.kindLabel}
+        </span>
         <div
           className={classNames(
-            "min-w-0 max-w-[34%] shrink truncate whitespace-nowrap text-[10px] leading-4",
-            isDark ? "text-slate-400" : "text-slate-600"
+            "min-w-0 flex-1 truncate whitespace-nowrap font-medium",
+            density === "expanded" ? "text-[12.5px] leading-5" : "text-[11.5px] leading-4",
+            isDark ? "text-slate-100" : "text-slate-900"
           )}
-          title={trailingMeta}
+          title={narrative.primaryTitle}
         >
-          {trailingMeta}
+          {narrative.primaryLabel}
+        </div>
+        {trailingMeta ? (
+          <div
+            className={classNames(
+              "min-w-0 max-w-[34%] shrink truncate whitespace-nowrap text-[10px] leading-4",
+              isDark ? "text-slate-400" : "text-slate-600"
+            )}
+            title={trailingMeta}
+          >
+            {trailingMeta}
+          </div>
+        ) : null}
+      </div>
+      {showDetails ? (
+        <div className={classNames(
+          "mt-2 grid gap-x-3 gap-y-1 border-t pt-2 font-mono text-[10.5px] leading-4 sm:grid-cols-[repeat(2,minmax(0,1fr))]",
+          isDark ? "border-white/8 text-slate-400" : "border-slate-200/80 text-slate-600"
+        )}>
+          {narrative.detailRows.map((row) => (
+            <div key={`${row.label}:${row.value}`} className="min-w-0">
+              <span className={classNames("mr-1 uppercase tracking-[0.12em]", isDark ? "text-slate-500" : "text-slate-500")}>
+                {row.label}
+              </span>
+              <span className="break-words">{row.value}</span>
+            </div>
+          ))}
         </div>
       ) : null}
     </div>
