@@ -930,10 +930,6 @@ class ClaudeAppSession:
 
         with self._lock:
             turn_id = str(self._active_turn_id or "").strip()
-            control_kind = str(self._active_control_kind or "").strip().lower()
-
-        if control_kind:
-            return
 
         if subtype == "hook_started":
             hook_id = str(event.get("hook_id") or "").strip()
@@ -1053,19 +1049,6 @@ class ClaudeAppSession:
         with self._lock:
             active_event_id = str(self._active_event_id or "").strip()
             turn_id = str(self._active_turn_id or "").strip()
-            control_kind = str(self._active_control_kind or "").strip().lower()
-
-        if control_kind:
-            if inner_type == "message_delta":
-                delta_obj = inner.get("delta") if isinstance(inner.get("delta"), dict) else {}
-                if str(delta_obj.get("stop_reason") or "").strip() == "end_turn":
-                    self._stream_end_turn_pending = True
-                return
-            if inner_type == "message_stop":
-                if self._stream_end_turn_pending:
-                    self._complete_turn_from_stream()
-                return
-            return
 
         if inner_type == "message_start":
             # Extract message id for stream tracking
@@ -1177,8 +1160,8 @@ class ClaudeAppSession:
         self._active_tool_activities.clear()
         self._tool_activity_context.clear()
 
-        # Emit message completed if we have text.
-        if text and stream_id and not control_kind:
+        # Emit preview completion for both chat and control turns; this does not write a chat ledger event.
+        if text and stream_id:
             self._emit(
                 "headless.message.completed",
                 {
@@ -1278,10 +1261,6 @@ class ClaudeAppSession:
         with self._lock:
             active_event_id = str(self._active_event_id or "").strip()
             turn_id = str(self._active_turn_id or "").strip()
-            control_kind = str(self._active_control_kind or "").strip().lower()
-
-        if control_kind:
-            return
 
         # Track new message — use message_id if present, else generate a fallback per turn.
         # Don't reset streaming state if we already have an active stream (from stream_events).
@@ -1370,11 +1349,6 @@ class ClaudeAppSession:
         tool_use_id = str(event.get("tool_use_id") or "").strip()
         with self._lock:
             turn_id = str(self._active_turn_id or "").strip()
-            control_kind = str(self._active_control_kind or "").strip().lower()
-        if control_kind:
-            self._active_tool_activities.pop(tool_use_id, "")
-            self._tool_activity_context.pop(tool_use_id, None)
-            return
         if tool_use_id:
             tool_name = str((self._tool_activity_context.get(tool_use_id) or {}).get("tool_name") or event.get("tool_name") or "")
             self._emit_tool_activity(
@@ -1391,8 +1365,7 @@ class ClaudeAppSession:
         tool_name = str(event.get("tool_name") or "").strip()
         with self._lock:
             turn_id = str(self._active_turn_id or "").strip()
-            control_kind = str(self._active_control_kind or "").strip().lower()
-        if control_kind or not tool_use_id or not tool_name:
+        if not tool_use_id or not tool_name:
             return
         elapsed_seconds = event.get("elapsed_time_seconds")
         detail = ""
@@ -1411,8 +1384,7 @@ class ClaudeAppSession:
         summary = self._trim(event.get("summary") or "", limit=140)
         with self._lock:
             turn_id = str(self._active_turn_id or "").strip()
-            control_kind = str(self._active_control_kind or "").strip().lower()
-        if control_kind or not summary:
+        if not summary:
             return
         preceding = event.get("preceding_tool_use_ids") if isinstance(event.get("preceding_tool_use_ids"), list) else []
         detail = ""

@@ -966,9 +966,6 @@ class CodexAppSession:
             self._turn_done.set()
             return
 
-        if control_kind:
-            return
-
         if method == "turn/plan/updated":
             turn_id = str(params.get("turnId") or "").strip()
             steps = params.get("plan") if isinstance(params.get("plan"), list) else []

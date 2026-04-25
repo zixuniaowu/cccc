@@ -1048,7 +1048,7 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_codex_control_turn_completion_ignores_visible_stream_output(self) -> None:
+    def test_codex_control_turn_completion_emits_headless_preview_output(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession
 
         home, cleanup = self._with_home()
@@ -1087,8 +1087,9 @@ class TestCodexAppFlow(unittest.TestCase):
             done_set.assert_called_once()
             event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
             self.assertIn("headless.control.completed", event_types)
-            self.assertNotIn("headless.message.started", event_types)
-            self.assertNotIn("headless.message.completed", event_types)
+            self.assertIn("headless.message.started", event_types)
+            self.assertIn("headless.message.delta", event_types)
+            self.assertIn("headless.message.completed", event_types)
         finally:
             cleanup()
 
@@ -2303,6 +2304,42 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertNotIn("headless.message.completed", event_types)
             requeued_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.control.requeued")
             self.assertEqual(requeued_payload.get("status"), "requeued")
+        finally:
+            cleanup()
+
+    def test_claude_stream_control_turn_emits_headless_preview_output(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-claude"
+            session._active_event_id = "evt-claude"
+            session._active_control_kind = "system_notify"
+
+            with (
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_stream_event({"event": {"type": "message_start", "message": {"id": "msg-claude"}}})
+                session._handle_stream_event(
+                    {"event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello"}}}
+                )
+                session._handle_stream_event({"event": {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}})
+                session._handle_stream_event({"event": {"type": "message_stop"}})
+
+            done_set.assert_called_once()
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.message.started", event_types)
+            self.assertIn("headless.message.delta", event_types)
+            self.assertIn("headless.message.completed", event_types)
+            self.assertIn("headless.control.completed", event_types)
         finally:
             cleanup()
 

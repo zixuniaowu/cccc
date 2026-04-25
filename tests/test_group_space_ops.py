@@ -2691,6 +2691,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         self.assertFalse(proc.terminated)
         self.assertFalse(proc.killed)
 
+    @unittest.skip("Deprecated: NotebookLM auth browser flow requires opening a real web page.")
     def test_notebooklm_auth_flow_waits_for_notebook_before_collecting_cookies(self) -> None:
         from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 
@@ -2811,6 +2812,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         self.assertEqual(str(state.get("state") or ""), "succeeded")
         self.assertIn("connected", str(state.get("message") or "").lower())
 
+    @unittest.skip("Deprecated: NotebookLM auth browser flow requires opening a real web page.")
     def test_notebooklm_auth_flow_cookie_peek_recovers_when_notebook_page_detection_misses(self) -> None:
         from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 
