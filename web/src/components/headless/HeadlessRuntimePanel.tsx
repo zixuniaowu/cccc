@@ -1,6 +1,7 @@
 import type { HeadlessPreviewSession, HeadlessStreamEvent, StreamingActivity } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { HeadlessLiveTrace } from "./HeadlessLiveTrace";
+import { HeadlessRawTrace } from "./HeadlessRawTrace";
 
 type HeadlessRuntimePanelProps = {
   actorId: string;
@@ -17,10 +18,28 @@ export function HeadlessRuntimePanel({
   previewSessions,
   fallbackText,
   fallbackActivities,
+  rawEvents,
   emptyLabel,
   isDark,
 }: HeadlessRuntimePanelProps) {
   const latestPreview = previewSessions.length > 0 ? previewSessions[previewSessions.length - 1] : null;
+  const hasLiveTrace =
+    previewSessions.length > 0
+    || String(fallbackText || "").trim().length > 0
+    || fallbackActivities.length > 0;
+
+  if (!hasLiveTrace && rawEvents.length > 0) {
+    return (
+      <div className="flex h-full min-h-[420px] flex-col">
+        <HeadlessRawTrace
+          events={rawEvents}
+          emptyLabel={emptyLabel}
+          isDark={isDark}
+          className="h-full min-h-[420px] text-left text-[var(--color-text-secondary)]"
+        />
+      </div>
+    );
+  }
 
   const liveTrace = (
     <HeadlessLiveTrace
@@ -33,7 +52,6 @@ export function HeadlessRuntimePanel({
       fallbackStreamPhase={String(latestPreview?.streamPhase || "").trim().toLowerCase()}
       fallbackPhase={String(latestPreview?.phase || "").trim().toLowerCase()}
       emptyLabel={emptyLabel}
-      recentLabel="Recent"
       isDark={isDark}
       density="expanded"
       className={classNames(

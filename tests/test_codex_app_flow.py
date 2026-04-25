@@ -2828,5 +2828,34 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_codex_session_manager_falls_back_before_mcp_install_when_cli_is_absent(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSessionManager
+        from cccc.daemon.runner_state_ops import headless_state_path
+
+        home, cleanup = self._with_home()
+        try:
+            manager = CodexAppSessionManager()
+
+            with patch("cccc.daemon.codex_app_sessions.shutil.which", return_value=None), patch(
+                "cccc.daemon.codex_app_sessions.ensure_mcp_installed",
+                side_effect=AssertionError("MCP install should not run without codex CLI"),
+            ):
+                session = manager.start_actor(
+                    group_id="g_test",
+                    actor_id="peer1",
+                    cwd=Path(home),
+                    env={},
+                )
+
+            self.assertTrue(session.is_running())
+            state_path = headless_state_path("g_test", "peer1")
+            self.assertTrue(state_path.exists())
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertTrue(bool(payload.get("fallback")))
+            self.assertIn("codex", str(payload.get("reason") or "").lower())
+        finally:
+            manager.stop_actor(group_id="g_test", actor_id="peer1")
+            cleanup()
+
 if __name__ == "__main__":
     unittest.main()

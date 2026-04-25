@@ -844,7 +844,7 @@ export function AgentTab({
                   fallbackText={latestHeadlessText}
                   fallbackActivities={latestHeadlessActivities}
                   rawEvents={rawHeadlessEvents}
-                  emptyLabel={t('noStreamingOutputYet', { defaultValue: '当前还没有可显示的流式输出。' })}
+                  emptyLabel={t('noStreamingOutputYet', { defaultValue: 'There is no streaming output to show yet.' })}
                   isDark={isDark}
                 />
               </div>

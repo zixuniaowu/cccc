@@ -118,3 +118,45 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
                 )
         finally:
             cleanup()
+
+    def test_headless_snapshot_replays_recent_completed_control_turn(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.headless_events import append_headless_event
+
+            group_id = self._create_group()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            append_headless_event(
+                group.path,
+                group_id=group_id,
+                actor_id="voice-secretary",
+                event_type="headless.control.started",
+                data={"turn_id": "control-1", "control_kind": "bootstrap"},
+            )
+            append_headless_event(
+                group.path,
+                group_id=group_id,
+                actor_id="voice-secretary",
+                event_type="headless.control.completed",
+                data={"turn_id": "control-1", "control_kind": "bootstrap"},
+            )
+
+            with self._client() as client:
+                resp = client.get(f"/api/v1/groups/{group_id}/headless/snapshot")
+                self.assertEqual(resp.status_code, 200)
+                body = resp.json()
+                self.assertTrue(bool(body.get("ok")), body)
+                events = ((body.get("result") or {}).get("events") or [])
+                event_types = [str(event.get("type") or "") for event in events]
+                self.assertEqual(
+                    event_types,
+                    [
+                        "headless.control.started",
+                        "headless.control.completed",
+                    ],
+                )
+        finally:
+            cleanup()

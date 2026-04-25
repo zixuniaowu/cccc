@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -45,6 +46,10 @@ def _is_missing_codex_cli_error(exc: BaseException) -> bool:
             return True
     message = str(exc or "").strip().lower()
     return "no such file or directory" in message and "codex" in message
+
+
+def _codex_cli_available(env: Dict[str, str]) -> bool:
+    return bool(shutil.which("codex", path=str((env or {}).get("PATH") or os.environ.get("PATH") or "")))
 
 
 def _is_closed_stream_logging_error(exc: BaseException) -> bool:
@@ -408,6 +413,8 @@ class CodexAppSession:
             env.setdefault("CCCC_HOME", str(ensure_home()))
             env.setdefault("CCCC_GROUP_ID", self.group_id)
             env.setdefault("CCCC_ACTOR_ID", self.actor_id)
+            if not _codex_cli_available(env):
+                raise FileNotFoundError("codex")
             if not ensure_mcp_installed("codex", self.cwd, auto_mcp_runtimes=("codex",), env=env):
                 raise RuntimeError("failed to install MCP for runtime: codex")
             self._proc = subprocess.Popen(
