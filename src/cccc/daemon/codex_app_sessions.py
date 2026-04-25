@@ -413,8 +413,6 @@ class CodexAppSession:
             env.setdefault("CCCC_HOME", str(ensure_home()))
             env.setdefault("CCCC_GROUP_ID", self.group_id)
             env.setdefault("CCCC_ACTOR_ID", self.actor_id)
-            if not _codex_cli_available(env):
-                raise FileNotFoundError("codex")
             if not ensure_mcp_installed("codex", self.cwd, auto_mcp_runtimes=("codex",), env=env):
                 raise RuntimeError("failed to install MCP for runtime: codex")
             self._proc = subprocess.Popen(
@@ -1371,7 +1369,17 @@ class CodexAppSessionManager:
             session = self._sessions.get(key)
             if session is not None and session.is_running():
                 return session
-            session = CodexAppSession(group_id=key[0], actor_id=key[1], cwd=cwd, env=env, model=model)
+            if _codex_cli_available(env):
+                session = CodexAppSession(group_id=key[0], actor_id=key[1], cwd=cwd, env=env, model=model)
+            else:
+                session = _FallbackCodexAppSession(
+                    group_id=key[0],
+                    actor_id=key[1],
+                    cwd=cwd,
+                    env=env,
+                    model=model,
+                    reason="codex CLI not found",
+                )
             self._sessions[key] = session
         try:
             session.start()
