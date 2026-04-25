@@ -553,7 +553,7 @@ class ClaudeAppSession:
         with self._lock:
             self._session_state.status = "idle"
             self._session_state.updated_at = utc_now_iso()
-            self._persist_state()
+        self._persist_state()
         self._queue_bootstrap_control_turn()
         self._turn_thread.start()
         logger.info("claude headless started: group=%s actor=%s pid=%s", self.group_id, self.actor_id, self._proc.pid if self._proc else "?")

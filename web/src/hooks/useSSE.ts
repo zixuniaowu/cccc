@@ -37,6 +37,7 @@ import { getPresentationMessageRefs, getPresentationRefStatus } from "../utils/p
 import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
 import { isHeadlessActorRunner } from "../utils/headlessRuntimeSupport";
+import i18n from "../i18n";
 
 // Re-export for backward compatibility
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
@@ -44,6 +45,10 @@ export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
 const MAX_RECONCILED_EVENTS = 800;
 const RECONNECT_LEDGER_TAIL_LIMIT = 60;
 export const GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS = 90_000;
+
+function translateActorLabel(key: string, defaultValue: string): string {
+  return String(i18n.t(`actors:${key}`, { defaultValue }));
+}
 
 export function shouldStartGroupStreams(documentHidden: boolean): boolean {
   return !documentHidden;
@@ -621,17 +626,17 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         const controlStatusLabel = (() => {
           switch (eventType) {
             case "headless.control.queued":
-              return "控制任务已排队";
+              return translateActorLabel("headlessControlQueued", "Control task queued");
             case "headless.control.started":
-              return "正在处理控制任务";
+              return translateActorLabel("headlessControlStarted", "Processing control task");
             case "headless.control.requeued":
-              return "控制任务正在重试";
+              return translateActorLabel("headlessControlRequeued", "Retrying control task");
             case "headless.control.completed":
-              return "控制任务处理完成";
+              return translateActorLabel("headlessControlCompleted", "Control task completed");
             case "headless.control.failed":
-              return "控制任务处理失败";
+              return translateActorLabel("headlessControlFailed", "Control task failed");
             default:
-              return "控制任务更新";
+              return translateActorLabel("headlessControlUpdated", "Control task updated");
           }
         })();
         const activity: StreamingActivity = {

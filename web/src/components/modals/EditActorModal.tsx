@@ -726,7 +726,7 @@ export function EditActorModal({
                     {supportsStandardWebHeadlessRuntime(runtime) ? (
                       <div>
                         <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                          {t("runnerMode", { defaultValue: "运行模式" })}
+                          {t("runnerMode", { defaultValue: "Runner mode" })}
                         </label>
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           <Button
@@ -749,8 +749,8 @@ export function EditActorModal({
                         </div>
                         <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
                           {customRunnerLockedToPty
-                            ? t("runnerModeHeadlessNote", { defaultValue: "仅部分运行时（如 codex、claude）支持 Headless 模式，其他运行时固定为 PTY。" })
-                            : t("runnerModeHint", { defaultValue: "PTY 走终端交互；Headless 走结构化事件流。" })}
+                            ? t("runnerModeHeadlessNote", { defaultValue: "Only some runtimes, such as codex and claude, support Headless mode. Other runtimes are fixed to PTY." })
+                            : t("runnerModeHint", { defaultValue: "PTY uses terminal interaction; Headless uses structured event flow." })}
                         </div>
                       </div>
                     ) : null}

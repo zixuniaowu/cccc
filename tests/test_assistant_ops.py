@@ -249,12 +249,14 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("Voice Secretary Runtime Actor", prompt)
             self.assertIn("not the foreman", prompt)
             self.assertIn("secretary-scope", prompt)
-            self.assertIn("your first action must be cccc_voice_secretary_document(action=\"read_new_input\")", prompt)
-            self.assertIn("do not call bootstrap/help/context/project-info", prompt)
+            self.assertIn("call cccc_bootstrap first, then cccc_help", prompt)
+            self.assertIn("daemon-delivered input_envelope", prompt)
+            self.assertIn("Work order", prompt)
+            self.assertIn("Context (not task)", prompt)
+            self.assertIn("Do not call read_new_input first when an input_envelope is present", prompt)
             self.assertIn("reply_text", prompt)
             self.assertIn("Console text alone is not delivered", prompt)
             self.assertIn("Latency matters", prompt)
-            self.assertNotIn("daemon-provided", prompt)
             self.assertNotIn("first instruction after cold start or resume", prompt)
             self.assertNotIn("wait until the first runtime instruction", prompt)
             self.assertIn("Do not edit project code", prompt)
@@ -857,7 +859,7 @@ class TestAssistantOps(unittest.TestCase):
             input_read_result = input_read.result or {}
             self.assertEqual(input_read_result.get("item_count"), 1)
             self.assertNotIn("items", input_read_result)
-            self.assertIn("Secretary input:", str(input_read_result.get("input_text") or ""))
+            self.assertIn("Voice Secretary input:", str(input_read_result.get("input_text") or ""))
             self.assertNotIn("combined_text", input_read_result)
             self.assertIn("summarize the billing API migration plan", str(input_read_result.get("input_text") or ""))
             self.assertNotIn("documents_by_path", input_read_result)
@@ -1233,7 +1235,9 @@ class TestAssistantOps(unittest.TestCase):
 
             state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
             self.assertTrue(state.ok, getattr(state, "error", None))
-            self.assertTrue(bool((state.result or {}).get("new_input_available")), state.result)
+            self.assertFalse(bool((state.result or {}).get("new_input_available")), state.result)
+            input_timing = (state.result or {}).get("input_timing") if isinstance(state.result, dict) else {}
+            self.assertEqual(input_timing.get("secretary_delivery_cursor"), 1)
 
             read, _ = self._call(
                 "assistant_voice_document_input_read",
@@ -1295,10 +1299,15 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(input_notifies)
             notify_data = input_notifies[-1].get("data") or {}
             notify_text = f"{notify_data.get('title') or ''}\n{notify_data.get('message') or ''}"
-            self.assertIn("read_new_input", notify_text)
+            self.assertIn("input_envelope", notify_text)
             self.assertNotIn("Tell foreman", notify_text)
             context = (notify_data.get("context") or {})
             self.assertEqual(context.get("reason"), "new_input")
+            envelope = context.get("input_envelope") if isinstance(context.get("input_envelope"), dict) else {}
+            self.assertEqual(envelope.get("delivery_mode"), "daemon_input_envelope")
+            self.assertEqual(envelope.get("seq_start"), 1)
+            self.assertEqual(envelope.get("seq_end"), 1)
+            self.assertIn("Tell foreman", str(envelope.get("input_text") or ""))
 
             read, _ = self._call(
                 "assistant_voice_document_input_read",
@@ -1311,8 +1320,10 @@ class TestAssistantOps(unittest.TestCase):
             input_timing = read_result.get("input_timing") if isinstance(read_result, dict) else {}
             self.assertEqual(input_timing.get("latest_seq"), 1)
             self.assertEqual(input_timing.get("secretary_read_cursor"), 1)
+            self.assertEqual(input_timing.get("secretary_delivery_cursor"), 1)
             self.assertTrue(str(input_timing.get("last_input_appended_at") or ""))
             self.assertTrue(str(input_timing.get("last_notify_emitted_at") or ""))
+            self.assertTrue(str(input_timing.get("last_input_envelope_at") or ""))
             self.assertTrue(str(input_timing.get("last_read_new_input_at") or ""))
             group_item = batches[0] if isinstance(batches[0], dict) else {}
             self.assertIn("en-US", group_item.get("languages") or [])
@@ -1478,7 +1489,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertNotIn("segment_id", batches[0] or {})
             self.assertNotIn("source_segment_range", str(batches[0] or {}))
             input_text = str((read.result or {}).get("input_text") or "")
-            self.assertIn("Secretary input:", input_text)
+            self.assertIn("Voice Secretary input:", input_text)
             self.assertNotIn("--- Item", input_text)
             self.assertNotIn("source_segment_range", input_text)
 
@@ -1544,8 +1555,10 @@ class TestAssistantOps(unittest.TestCase):
             self.assertIn("Request id: voice-prompt-test", input_text)
             self.assertIn("请帮我检查这个方案", input_text)
             self.assertIn("重点看看风险和副作用", input_text)
-            self.assertIn("Recent conversation", input_text)
+            self.assertIn("Recent context", input_text)
             self.assertIn("需要补验收标准", input_text)
+            self.assertNotIn("Execution rules:", input_text)
+            self.assertNotIn("Do not write meta lead-ins", input_text)
 
             submit, _ = self._call(
                 "assistant_voice_prompt_draft_submit",
@@ -1665,9 +1678,9 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(read.ok, getattr(read, "error", None))
             input_text = str((read.result or {}).get("input_text") or "")
             self.assertIn("Operation: replace_with_refined_prompt", input_text)
-            self.assertIn("complete ready-to-send replacement prompt", input_text)
-            self.assertIn("Do not return only an incremental addition", input_text)
-            self.assertNotIn("return only an append-ready addition", input_text)
+            self.assertIn("Return a complete replacement prompt", input_text)
+            self.assertNotIn("Do not return only an incremental addition", input_text)
+            self.assertNotIn("Append mode", input_text)
 
             submit, _ = self._call(
                 "assistant_voice_prompt_draft_submit",
@@ -1717,8 +1730,8 @@ class TestAssistantOps(unittest.TestCase):
             input_text = str((read.result or {}).get("input_text") or "")
             self.assertIn("Operation: replace_with_refined_prompt", input_text)
             self.assertIn("帮我让大家汇报进展", input_text)
-            self.assertIn("optimize the current composer draft directly", input_text)
-            self.assertIn("complete ready-to-send replacement prompt", input_text)
+            self.assertIn("optimize current composer draft directly", input_text)
+            self.assertIn("Return a complete replacement prompt", input_text)
         finally:
             cleanup()
 
@@ -1912,6 +1925,700 @@ class TestAssistantOps(unittest.TestCase):
             self.assertEqual(len(started), 1)
             self.assertEqual(started[0]["group_id"], group_id)
             self.assertEqual(started[0]["actor_id"], "voice-secretary")
+            self.assertTrue(bool((resp.result or {}).get("actor_woken")), resp.result)
+            self.assertEqual((resp.result or {}).get("actor_wake_error"), "")
+        finally:
+            cleanup()
+
+    def test_voice_secretary_input_append_delivers_headless_notify_after_auto_wake(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
+            from cccc.kernel.group import load_group
+
+            running = {"value": False}
+            submitted: list[dict] = []
+
+            def fake_start_actor_process(group, actor_id, **kwargs):
+                running["value"] = True
+                return {"success": True}
+
+            def fake_actor_running(group_id_arg, actor_id_arg):
+                self.assertEqual(group_id_arg, group_id)
+                self.assertEqual(actor_id_arg, "voice-secretary")
+                return bool(running["value"])
+
+            def fake_submit_control_message(**kwargs):
+                submitted.append(dict(kwargs))
+                return True
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            with (
+                patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False),
+                patch("cccc.daemon.codex_app_sessions.SUPERVISOR.actor_running", side_effect=fake_actor_running),
+                patch(
+                    "cccc.daemon.codex_app_sessions.SUPERVISOR.submit_control_message",
+                    side_effect=fake_submit_control_message,
+                ),
+            ):
+                resp = handle_assistant_voice_input_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "prompt_refine",
+                        "request_id": "voice-prompt-wake-deliver",
+                        "composer_text": "Keep the prompt concise.",
+                        "voice_transcript": "post-wake delivery must include the request payload",
+                        "language": "en-US",
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=fake_start_actor_process,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result or {}
+            self.assertTrue(bool(result.get("actor_woken")), result)
+            self.assertTrue(bool(result.get("actor_notify_delivered")), result)
+            self.assertEqual(result.get("actor_notify_delivery_error"), "")
+            self.assertEqual(len(submitted), 1)
+            submitted_kwargs = submitted[0]
+            self.assertEqual(submitted_kwargs.get("control_kind"), "system_notify")
+            self.assertEqual(submitted_kwargs.get("actor_id"), "voice-secretary")
+            control_text = str(submitted_kwargs.get("text") or "")
+            self.assertIn("Voice Secretary input:", control_text)
+            self.assertNotIn("Input envelope:", control_text)
+            self.assertNotIn("seq_range=", control_text)
+            self.assertIn("voice-prompt-wake-deliver", control_text)
+            self.assertIn("post-wake delivery must include the request payload", control_text)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_input_append_emits_current_notify_when_actor_disabled(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
+            from cccc.kernel.actors import update_actor
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            update_actor(group, "voice-secretary", {"enabled": False})
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            running = {"value": False}
+            submitted: list[dict] = []
+
+            def fake_start_actor_process(group, actor_id, **kwargs):
+                running["value"] = True
+                return {"success": True}
+
+            def fake_actor_running(group_id_arg, actor_id_arg):
+                self.assertEqual(group_id_arg, group_id)
+                self.assertEqual(actor_id_arg, "voice-secretary")
+                return bool(running["value"])
+
+            def fake_submit_control_message(**kwargs):
+                submitted.append(dict(kwargs))
+                return True
+
+            with (
+                patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False),
+                patch("cccc.daemon.codex_app_sessions.SUPERVISOR.actor_running", side_effect=fake_actor_running),
+                patch(
+                    "cccc.daemon.codex_app_sessions.SUPERVISOR.submit_control_message",
+                    side_effect=fake_submit_control_message,
+                ),
+            ):
+                resp = handle_assistant_voice_input_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "prompt_refine",
+                        "request_id": "voice-prompt-current-after-stop",
+                        "composer_text": "Polish this prompt.",
+                        "voice_transcript": "Use the current request id, not a stale one.",
+                        "language": "en-US",
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=fake_start_actor_process,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result or {}
+            self.assertTrue(bool(result.get("input_notify_emitted")), result)
+            self.assertTrue(bool(result.get("actor_woken")), result)
+            self.assertTrue(bool(result.get("actor_notify_delivered")), result)
+            self.assertEqual(len(submitted), 1)
+            control_text = str(submitted[0].get("text") or "")
+            self.assertIn("voice-prompt-current-after-stop", control_text)
+            self.assertIn("Use the current request id, not a stale one.", control_text)
+        finally:
+            cleanup()
+
+    def test_voice_secretary_input_append_does_not_deliver_stale_notify_after_wake(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            with patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=True):
+                old_resp = handle_assistant_voice_input_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "prompt_refine",
+                        "request_id": "voice-prompt-old-notify",
+                        "composer_text": "Old prompt.",
+                        "voice_transcript": "Old request.",
+                        "language": "en-US",
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=lambda *args, **kwargs: {"success": True},
+                )
+            self.assertTrue(old_resp.ok, getattr(old_resp, "error", None))
+            self.assertTrue(bool((old_resp.result or {}).get("input_notify_emitted")), old_resp.result)
+
+            running = {"value": False}
+
+            def fake_start_actor_process(group, actor_id, **kwargs):
+                running["value"] = True
+                return {"success": True}
+
+            def fake_actor_running(group_id_arg, actor_id_arg):
+                return bool(running["value"])
+
+            with (
+                patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False),
+                patch(
+                    "cccc.daemon.assistants.assistant_ops._try_emit_voice_input_notify_after_input",
+                    return_value=(False, "emit_failed", {}),
+                ),
+                patch("cccc.daemon.codex_app_sessions.SUPERVISOR.actor_running", side_effect=fake_actor_running),
+                patch("cccc.daemon.codex_app_sessions.SUPERVISOR.submit_control_message") as submit_control,
+            ):
+                resp = handle_assistant_voice_input_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "prompt_refine",
+                        "request_id": "voice-prompt-current-without-notify",
+                        "composer_text": "Current prompt.",
+                        "voice_transcript": "A missing current notify must not dispatch the old request.",
+                        "language": "en-US",
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=fake_start_actor_process,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result or {}
+            self.assertTrue(bool(result.get("actor_woken")), result)
+            self.assertFalse(bool(result.get("actor_notify_delivered")), result)
+            self.assertEqual(result.get("actor_notify_delivery_error"), "missing_voice_input_notify_event")
+            submit_control.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_voice_secretary_input_append_queues_pty_notify_after_auto_wake(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
+            from cccc.kernel.actors import update_actor
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            update_actor(group, "voice-secretary", {"runner": "pty", "runtime": "codex", "enabled": True})
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            running = {"value": False}
+
+            def fake_start_actor_process(group, actor_id, **kwargs):
+                running["value"] = True
+                return {"success": True}
+
+            def fake_actor_running(group_id_arg, actor_id_arg):
+                self.assertEqual(group_id_arg, group_id)
+                self.assertEqual(actor_id_arg, "voice-secretary")
+                return bool(running["value"])
+
+            with (
+                patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False),
+                patch("cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.actor_running", side_effect=fake_actor_running),
+                patch("cccc.daemon.messaging.delivery.queue_system_notify") as queue_system_notify,
+                patch("cccc.daemon.messaging.delivery.request_flush_pending_messages", return_value=True) as request_flush,
+            ):
+                resp = handle_assistant_voice_input_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "voice_instruction",
+                        "request_id": "voice-ask-wake-pty",
+                        "instruction": "Check whether the stopped PTY runtime receives this request.",
+                        "language": "en-US",
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=fake_start_actor_process,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result or {}
+            self.assertTrue(bool(result.get("actor_woken")), result)
+            self.assertTrue(bool(result.get("actor_notify_delivered")), result)
+            self.assertEqual(result.get("actor_notify_delivery_error"), "")
+            queue_system_notify.assert_called_once()
+            queue_kwargs = queue_system_notify.call_args.kwargs
+            self.assertEqual(queue_kwargs.get("actor_id"), "voice-secretary")
+            self.assertEqual(queue_kwargs.get("notify_kind"), "info")
+            self.assertIn("voice-ask-wake-pty", str(queue_kwargs.get("message") or ""))
+            self.assertIn("stopped PTY runtime receives this request", str(queue_kwargs.get("message") or ""))
+            request_flush.assert_called_once()
+            self.assertEqual(request_flush.call_args.kwargs.get("actor_id"), "voice-secretary")
+        finally:
+            cleanup()
+
+    def test_voice_secretary_input_append_persists_input_when_actor_wake_fails(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_input_append
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            with patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False):
+                resp = handle_assistant_voice_input_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "kind": "prompt_refine",
+                        "request_id": "voice-prompt-wake-fail",
+                        "composer_text": "Polish this prompt.",
+                        "voice_transcript": "Make the acceptance criteria explicit.",
+                        "language": "en-US",
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=lambda *_args, **_kwargs: {"success": False, "error": "spawn failed"},
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertFalse(bool((resp.result or {}).get("actor_woken")), resp.result)
+            self.assertIn("spawn failed", str((resp.result or {}).get("actor_wake_error") or ""))
+            self.assertTrue(bool((resp.result or {}).get("input_event_created")), resp.result)
+            self.assertTrue(bool((resp.result or {}).get("input_notify_emitted")), resp.result)
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            self.assertEqual((read.result or {}).get("item_count"), 1, read.result)
+            self.assertIn("Make the acceptance criteria explicit", str((read.result or {}).get("input_text") or ""))
+        finally:
+            cleanup()
+
+    def test_voice_secretary_transcript_append_auto_wakes_actor_when_input_created(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_transcript_append
+            from cccc.kernel.group import load_group
+
+            started: list[dict] = []
+
+            def fake_start_actor_process(group, actor_id, **kwargs):
+                started.append({"group_id": group.group_id, "actor_id": actor_id, **kwargs})
+                return {"success": True}
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            append = handle_assistant_voice_transcript_append(
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "session_id": "doc-wake-session",
+                    "segment_id": "seg-doc-wake-1",
+                    "text": "summarize the launch checklist and keep unresolved delivery risks visible",
+                    "language": "en-US",
+                    "is_final": True,
+                    "flush": False,
+                    "trigger": {
+                        "mode": "meeting",
+                        "trigger_kind": "meeting_window",
+                        "capture_mode": "browser",
+                        "recognition_backend": "browser_asr",
+                        "client_session_id": "doc-wake-session",
+                        "language": "en-US",
+                    },
+                }
+            )
+            self.assertTrue(append.ok, getattr(append, "error", None))
+            self.assertFalse(bool((append.result or {}).get("input_event_created")), append.result)
+
+            with patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False):
+                flush = handle_assistant_voice_transcript_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "doc-wake-session",
+                        "text": "",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "doc-wake-session",
+                            "language": "en-US",
+                        },
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=fake_start_actor_process,
+                )
+
+            self.assertTrue(flush.ok, getattr(flush, "error", None))
+            self.assertTrue(bool((flush.result or {}).get("input_event_created")), flush.result)
+            self.assertEqual(len(started), 1)
+            self.assertEqual(started[0]["group_id"], group_id)
+            self.assertEqual(started[0]["actor_id"], "voice-secretary")
+            self.assertTrue(bool((flush.result or {}).get("actor_woken")), flush.result)
+            self.assertEqual((flush.result or {}).get("actor_wake_error"), "")
+        finally:
+            cleanup()
+
+    def test_voice_secretary_transcript_append_delivers_latest_notify_after_auto_wake(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_transcript_append
+            from cccc.kernel.group import load_group
+
+            dispatched: list[dict] = []
+
+            def fake_start_actor_process(group, actor_id, **kwargs):
+                return {"success": True}
+
+            def fake_dispatch(group, *, event, actor_id, async_flush=False):
+                dispatched.append(
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": actor_id,
+                        "async_flush": async_flush,
+                        "event": event,
+                    }
+                )
+                return True
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            with (
+                patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False),
+                patch(
+                    "cccc.daemon.assistants.assistant_ops.dispatch_system_notify_event_to_actor",
+                    side_effect=fake_dispatch,
+                ),
+            ):
+                resp = handle_assistant_voice_transcript_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "doc-wake-dispatch-session",
+                        "segment_id": "seg-doc-wake-dispatch-1",
+                        "text": "record this stopped ASR wake request into the working notes",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "doc-wake-dispatch-session",
+                            "language": "en-US",
+                        },
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=fake_start_actor_process,
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result or {}
+            self.assertTrue(bool(result.get("input_event_created")), result)
+            self.assertTrue(bool(result.get("actor_woken")), result)
+            self.assertTrue(bool(result.get("actor_notify_delivered")), result)
+            self.assertEqual(len(dispatched), 1)
+            self.assertEqual(dispatched[0].get("actor_id"), "voice-secretary")
+            self.assertTrue(bool(dispatched[0].get("async_flush")))
+            event = dispatched[0].get("event") if isinstance(dispatched[0].get("event"), dict) else {}
+            self.assertEqual(event.get("kind"), "system.notify")
+            context = ((event.get("data") or {}).get("context") or {}) if isinstance(event.get("data"), dict) else {}
+            self.assertEqual(context.get("kind"), "voice_secretary_input")
+            envelope = context.get("input_envelope") if isinstance(context.get("input_envelope"), dict) else {}
+            self.assertIn("stopped ASR wake request", str(envelope.get("input_text") or ""))
+        finally:
+            cleanup()
+
+    def test_voice_secretary_transcript_append_persists_input_when_actor_wake_fails(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_transcript_append
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            with patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False):
+                resp = handle_assistant_voice_transcript_append(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "session_id": "doc-wake-fail-session",
+                        "segment_id": "seg-doc-wake-fail-1",
+                        "text": "capture the launch decision, owner, and unresolved rollout risks",
+                        "language": "en-US",
+                        "is_final": True,
+                        "flush": True,
+                        "trigger": {
+                            "mode": "meeting",
+                            "trigger_kind": "meeting_window",
+                            "capture_mode": "browser",
+                            "recognition_backend": "browser_asr",
+                            "client_session_id": "doc-wake-fail-session",
+                            "language": "en-US",
+                        },
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=lambda *_args, **_kwargs: {"success": False, "error": "spawn failed"},
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertTrue(bool((resp.result or {}).get("input_event_created")), resp.result)
+            self.assertFalse(bool((resp.result or {}).get("actor_woken")), resp.result)
+            self.assertIn("spawn failed", str((resp.result or {}).get("actor_wake_error") or ""))
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            self.assertEqual((read.result or {}).get("item_count"), 1, read.result)
+            self.assertIn("unresolved rollout risks", str((read.result or {}).get("input_text") or ""))
+        finally:
+            cleanup()
+
+    def test_voice_secretary_document_instruction_auto_wakes_actor_when_input_created(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_document_instruction
+            from cccc.kernel.group import load_group
+
+            created, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "title": "Launch Notes",
+                    "content": "# Launch Notes\n\n## Working Notes\nExisting summary.\n",
+                    "create_new": True,
+                },
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            document = (created.result or {}).get("document") if isinstance(created.result, dict) else {}
+            document_path = str((document or {}).get("document_path") or "")
+            self.assertTrue(document_path)
+
+            started: list[dict] = []
+
+            def fake_start_actor_process(group, actor_id, **kwargs):
+                started.append({"group_id": group.group_id, "actor_id": actor_id, **kwargs})
+                return {"success": True}
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            with patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False):
+                instruction = handle_assistant_voice_document_instruction(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "document_path": document_path,
+                        "instruction": "Rewrite this into a concise launch-risk summary.",
+                        "trigger": {
+                            "trigger_kind": "user_instruction",
+                            "mode": "meeting",
+                            "recognition_backend": "browser_asr",
+                            "language": "en-US",
+                        },
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=fake_start_actor_process,
+                )
+
+            self.assertTrue(instruction.ok, getattr(instruction, "error", None))
+            self.assertTrue(bool((instruction.result or {}).get("input_event_created")), instruction.result)
+            self.assertEqual(len(started), 1)
+            self.assertEqual(started[0]["group_id"], group_id)
+            self.assertEqual(started[0]["actor_id"], "voice-secretary")
+            self.assertTrue(bool((instruction.result or {}).get("actor_woken")), instruction.result)
+            self.assertEqual((instruction.result or {}).get("actor_wake_error"), "")
+        finally:
+            cleanup()
+
+    def test_voice_secretary_document_instruction_persists_input_when_actor_wake_fails(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            from cccc.daemon.assistants.assistant_ops import handle_assistant_voice_document_instruction
+            from cccc.kernel.group import load_group
+
+            created, _ = self._call(
+                "assistant_voice_document_save",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "title": "Launch Notes",
+                    "content": "# Launch Notes\n\n## Working Notes\nExisting summary.\n",
+                    "create_new": True,
+                },
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            document = (created.result or {}).get("document") if isinstance(created.result, dict) else {}
+            document_path = str((document or {}).get("document_path") or "")
+            self.assertTrue(document_path)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            with patch("cccc.daemon.assistants.assistant_ops.is_voice_secretary_actor_running", return_value=False):
+                resp = handle_assistant_voice_document_instruction(
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "document_path": document_path,
+                        "instruction": "Turn this into a concise launch-risk summary.",
+                        "trigger": {
+                            "trigger_kind": "user_instruction",
+                            "mode": "meeting",
+                            "recognition_backend": "browser_asr",
+                            "language": "en-US",
+                        },
+                    },
+                    effective_runner_kind=lambda runner: str(runner or "pty"),
+                    start_actor_process=lambda *_args, **_kwargs: {"success": False, "error": "spawn failed"},
+                )
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertTrue(bool((resp.result or {}).get("input_event_created")), resp.result)
+            self.assertFalse(bool((resp.result or {}).get("actor_woken")), resp.result)
+            self.assertIn("spawn failed", str((resp.result or {}).get("actor_wake_error") or ""))
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            self.assertEqual((read.result or {}).get("item_count"), 1, read.result)
+            self.assertIn("launch-risk summary", str((read.result or {}).get("input_text") or ""))
         finally:
             cleanup()
 
@@ -2126,10 +2833,12 @@ class TestAssistantOps(unittest.TestCase):
             )
             self.assertTrue(read.ok, getattr(read, "error", None))
             input_text = str((read.result or {}).get("input_text") or "")
+            self.assertIn("Mode: ask", input_text)
             self.assertIn("Target: secretary", input_text)
             self.assertIn(f"Request id: {request_id}", input_text)
-            self.assertIn("Required: report this Ask", input_text)
+            self.assertIn("Required output:", input_text)
             self.assertIn("cccc_voice_secretary_request(action=\"report\"", input_text)
+            self.assertIn("Task:", input_text)
             self.assertIn("刚才的总结有没有遗漏", input_text)
             self.assertEqual((read.result or {}).get("documents"), [])
             batches = (read.result or {}).get("input_batches") if isinstance(read.result, dict) else []
@@ -2461,7 +3170,7 @@ class TestAssistantOps(unittest.TestCase):
 
             state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
             self.assertTrue(state.ok, getattr(state, "error", None))
-            self.assertTrue(bool((state.result or {}).get("new_input_available")))
+            self.assertFalse(bool((state.result or {}).get("new_input_available")))
 
             read, _ = self._call(
                 "assistant_voice_document_input_read",
@@ -2475,7 +3184,7 @@ class TestAssistantOps(unittest.TestCase):
             for text in texts:
                 self.assertIn(text, combined_text)
             input_text = str(read_result.get("input_text") or "")
-            self.assertIn("Secretary input:", input_text)
+            self.assertIn("Voice Secretary input:", input_text)
             self.assertNotIn("--- Item", input_text)
             self.assertEqual(input_text.count("Document:"), 1)
             batches = read_result.get("input_batches") if isinstance(read_result, dict) else []
@@ -2878,6 +3587,8 @@ class TestAssistantOps(unittest.TestCase):
             )
             self.assertTrue(instruction.ok, getattr(instruction, "error", None))
             result = instruction.result or {}
+            request_id = str(result.get("request_id") or "")
+            self.assertTrue(request_id.startswith("voice-ask-"))
             input_event = result.get("input_event") if isinstance(result, dict) else {}
             self.assertEqual(input_event.get("kind"), "user_instruction")
             self.assertEqual(input_event.get("document_path"), document_path)
@@ -2890,14 +3601,18 @@ class TestAssistantOps(unittest.TestCase):
                 {"group_id": group_id, "by": "assistant:voice_secretary"},
             )
             self.assertTrue(read.ok, getattr(read, "error", None))
-            self.assertIn("Request kind: document_request", str((read.result or {}).get("input_text") or ""))
-            self.assertIn("Required: edit the repository markdown directly, then report brief completion", str((read.result or {}).get("input_text") or ""))
-            self.assertIn("User instruction:", str((read.result or {}).get("input_text") or ""))
-            self.assertIn("concise launch-risk summary", str((read.result or {}).get("input_text") or ""))
+            document_input_text = str((read.result or {}).get("input_text") or "")
+            self.assertIn("Mode: document", document_input_text)
+            self.assertIn("Required output:", document_input_text)
+            self.assertIn("Edit the repository markdown directly, then cccc_voice_secretary_request", document_input_text)
+            self.assertIn("Task:", document_input_text)
+            self.assertIn("concise launch-risk summary", document_input_text)
             batches = (read.result or {}).get("input_batches") if isinstance(read.result, dict) else []
             self.assertTrue(batches)
+            self.assertEqual(batches[0].get("mode"), "document")
             self.assertEqual(batches[0].get("request_kind"), "document_request")
             self.assertTrue(batches[0].get("requires_report"))
+            self.assertTrue(batches[0].get("required_outputs"))
 
             group = load_group(group_id)
             self.assertIsNotNone(group)
@@ -2910,7 +3625,11 @@ class TestAssistantOps(unittest.TestCase):
                 and ((event.get("data") or {}).get("context") or {}).get("kind") == "voice_secretary_input"
             ]
             self.assertTrue(input_notifies)
-            self.assertEqual(((input_notifies[-1].get("data") or {}).get("context") or {}).get("reason"), "new_input")
+            notify_context = ((input_notifies[-1].get("data") or {}).get("context") or {})
+            self.assertEqual(notify_context.get("reason"), "new_input")
+            envelope = notify_context.get("input_envelope") if isinstance(notify_context.get("input_envelope"), dict) else {}
+            self.assertIn(request_id, envelope.get("report_request_ids") or [])
+            self.assertIn(request_id, envelope.get("secretary_request_ids") or [])
         finally:
             cleanup()
 

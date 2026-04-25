@@ -1504,10 +1504,16 @@ by default appends a semantic input event for the current Voice Secretary
 markdown working document. The working document is a user-facing repo artifact;
 raw transcript/source/revision sidecars remain in CCCC_HOME. When new input is
 available, the daemon emits a targeted `system.notify` to `voice-secretary` with
-`context.kind="voice_secretary_input"`. The notify is only a lightweight pointer;
-the runtime actor pulls unread text through
+`context.kind="voice_secretary_input"` and a daemon-owned `input_envelope`. The
+envelope is the canonical work item delivered to both PTY and headless runtimes;
 `assistant_voice_document_input_read` /
-`cccc_voice_secretary_document(action="read_new_input")`.
+`cccc_voice_secretary_document(action="read_new_input")` remains a legacy,
+recovery, and debugging entrypoint. Input append is durable before runtime actor
+wake-up; if wake-up fails, the input remains readable and the API reports the
+best-effort wake error separately. If wake-up succeeds after the notify was
+created while the actor was stopped, the daemon re-dispatches that same notify:
+headless runtimes receive it as a control turn, and PTY runtimes receive it
+through the pending delivery queue so lazy preamble delivery is triggered.
 
 The public document identity for Voice Secretary APIs is `document_path`, a
 repository-relative markdown path. `document_id` may exist in daemon sidecar
@@ -1551,6 +1557,11 @@ Result:
   input_event?: Record<string, unknown>
   input_event_created: boolean
   input_notify_emitted: boolean
+  input_notify_error?: string
+  actor_woken?: boolean
+  actor_wake_error?: string
+  actor_notify_delivered?: boolean
+  actor_notify_delivery_error?: string
 }
 ```
 
@@ -1643,7 +1654,7 @@ Result:
 
 Append a user instruction into the same Voice Secretary input stream used for
 ASR transcript. The daemon emits a targeted `voice_secretary_input` notify; the
-runtime actor pulls it with `read_new_input` and saves the full revised markdown.
+runtime actor works from the inline `input_envelope` and saves the full revised markdown.
 The daemon does not directly append the instruction to the document. Cross-peer
 handoff is intentionally handled only by `assistant_voice_request`, and only when
 the Voice Secretary decides the work belongs to foreman or one concrete peer.
@@ -1669,6 +1680,11 @@ Result:
   input_event?: Record<string, unknown>
   input_event_created?: boolean
   input_notify_emitted?: boolean
+  input_notify_error?: string
+  actor_woken?: boolean
+  actor_wake_error?: string
+  actor_notify_delivered?: boolean
+  actor_notify_delivery_error?: string
   event?: CCCSEventV1
 }
 ```

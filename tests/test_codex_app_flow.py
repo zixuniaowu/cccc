@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
@@ -43,6 +44,57 @@ class TestCodexAppFlow(unittest.TestCase):
                 if isinstance(obj, dict):
                     events.append(obj)
         return events
+
+    def test_claude_app_session_persists_start_state_outside_lock(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession
+
+        _, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_lock_regression",
+                actor_id="claude-peer",
+                cwd=Path(os.environ["CCCC_HOME"]),
+                env={},
+            )
+
+            class FakeProc:
+                pid = 12345
+                stdin = io.StringIO()
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+
+                def poll(self):
+                    return None
+
+            class FakeThread:
+                def __init__(self, *args, **kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+
+                def start(self):
+                    return None
+
+            persist_lock_was_free: list[bool] = []
+
+            def fake_persist_state() -> None:
+                acquired = session._lock.acquire(blocking=False)
+                persist_lock_was_free.append(bool(acquired))
+                if acquired:
+                    session._lock.release()
+
+            with (
+                patch("cccc.daemon.claude_app_sessions.ensure_mcp_installed", return_value=True),
+                patch("cccc.daemon.claude_app_sessions.subprocess.Popen", return_value=FakeProc()),
+                patch("cccc.daemon.claude_app_sessions.threading.Thread", side_effect=FakeThread),
+                patch("cccc.daemon.claude_app_sessions.time.sleep", return_value=None),
+                patch.object(session, "_persist_state", side_effect=fake_persist_state),
+                patch.object(session, "_queue_bootstrap_control_turn", return_value=None),
+            ):
+                session.start()
+
+            self.assertEqual(persist_lock_was_free, [True])
+        finally:
+            cleanup()
 
     def test_actor_list_uses_codex_supervisor_state_for_headless_working(self) -> None:
         from cccc.daemon.actors.actor_ops import handle_actor_list
@@ -1384,6 +1436,48 @@ class TestCodexAppFlow(unittest.TestCase):
             )
             self.assertNotIn("read_new_input", diagnostics.get("missing") or [])
 
+            envelope_consumed = _voice_secretary_control_consumed_input(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 5,
+                    "input_envelope_delivered": True,
+                    "delivery_id": f"voice-input:{group_id}:6-8",
+                    "composer_request_ids": ["voice-prompt-1"],
+                    "input_target_kinds": ["composer"],
+                    "before_prompt_drafts": {
+                        "voice-prompt-1": {
+                            "updated_at": "",
+                            "draft_text": "",
+                            "status": "",
+                        }
+                    },
+                },
+            )
+            self.assertTrue(envelope_consumed)
+            envelope_diagnostics = _voice_secretary_control_consumption_diagnostics(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 5,
+                    "input_envelope_delivered": True,
+                    "delivery_id": f"voice-input:{group_id}:6-8",
+                    "composer_request_ids": ["voice-prompt-1"],
+                    "input_target_kinds": ["composer"],
+                    "before_prompt_drafts": {
+                        "voice-prompt-1": {
+                            "updated_at": "",
+                            "draft_text": "",
+                            "status": "",
+                        }
+                    },
+                },
+            )
+            self.assertTrue(envelope_diagnostics.get("input_envelope_delivered"))
+            self.assertNotIn("read_new_input", envelope_diagnostics.get("missing") or [])
+
             (voice_state_dir / "input_state.json").write_text(
                 json.dumps(
                     {
@@ -1503,6 +1597,12 @@ class TestCodexAppFlow(unittest.TestCase):
                                 "reply_text": "",
                                 "status": "done",
                             },
+                            "voice-doc-1": {
+                                "request_id": "voice-doc-1",
+                                "updated_at": "2026-04-20T10:00:05Z",
+                                "reply_text": "已更新目标文档。",
+                                "status": "done",
+                            },
                         },
                     }
                 ),
@@ -1539,6 +1639,25 @@ class TestCodexAppFlow(unittest.TestCase):
                 },
             )
             self.assertFalse(ask_report_without_reply_consumed)
+
+            document_report_consumed = _voice_secretary_control_consumed_input(
+                group_id=group_id,
+                snapshot={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 9,
+                    "before_secretary_read_cursor": 5,
+                    "report_request_ids": ["voice-doc-1"],
+                    "input_target_kinds": ["document"],
+                    "before_ask_requests": {
+                        "voice-doc-1": {
+                            "updated_at": "2026-04-20T10:00:01Z",
+                            "reply_text": "",
+                            "status": "working",
+                        }
+                    },
+                },
+            )
+            self.assertTrue(document_report_consumed)
         finally:
             cleanup()
 
@@ -1580,6 +1699,39 @@ class TestCodexAppFlow(unittest.TestCase):
         self.assertIn("FETCHED INPUT", payload_text)
         self.assertIn("Target: secretary", payload_text)
         self.assertTrue(snapshot.get("prefetched_read_new_input"))
+
+    def test_codex_voice_secretary_prepare_control_turn_uses_inline_envelope_without_prefetch(self) -> None:
+        from cccc.daemon.codex_app_sessions import _voice_secretary_prepare_control_turn
+
+        with (
+            patch(
+                "cccc.daemon.codex_app_sessions._voice_secretary_control_snapshot",
+                return_value={
+                    "kind": "voice_secretary_input",
+                    "before_latest_seq": 8,
+                    "before_secretary_read_cursor": 8,
+                    "input_envelope_delivered": True,
+                    "delivery_id": "voice-input:g_test:6-8",
+                    "composer_request_ids": ["req-1"],
+                    "input_target_kinds": ["composer"],
+                    "before_prompt_drafts": {},
+                },
+            ),
+            patch("cccc.daemon.assistants.assistant_ops.handle_assistant_voice_document_input_read") as read_input,
+        ):
+            payload_text, snapshot = _voice_secretary_prepare_control_turn(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                text="Voice Secretary input: 1 item.\n\nTarget: composer\nRequest id: req-1",
+                event_id="evt-1",
+                control_kind="system_notify",
+            )
+
+        read_input.assert_not_called()
+        self.assertIn("Target: composer", payload_text)
+        self.assertNotIn("Input envelope", payload_text)
+        self.assertNotIn("SYSTEM PREFETCH", payload_text)
+        self.assertTrue(snapshot.get("input_envelope_delivered"))
 
     def test_claude_voice_secretary_prepare_control_turn_prefetches_input(self) -> None:
         from cccc.contracts.v1 import DaemonResponse

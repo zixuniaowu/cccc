@@ -18,9 +18,11 @@ def _input_state(group_id: str) -> Dict[str, int]:
     payload = read_json(path)
     if not isinstance(payload, dict):
         return {"latest_seq": 0, "secretary_read_cursor": 0}
+    read_cursor = max(0, int(payload.get("secretary_read_cursor") or 0))
+    delivery_cursor = max(0, int(payload.get("secretary_delivery_cursor") or read_cursor))
     return {
         "latest_seq": max(0, int(payload.get("latest_seq") or 0)),
-        "secretary_read_cursor": max(0, int(payload.get("secretary_read_cursor") or 0)),
+        "secretary_read_cursor": max(read_cursor, delivery_cursor),
     }
 
 
@@ -72,9 +74,9 @@ def _ask_request_state(group_id: str, *, request_ids: list[str]) -> Dict[str, Di
     return out
 
 
-def _request_ids_from_prefetch_batches(input_batches: list[Any]) -> tuple[list[str], list[str], list[str]]:
+def _request_ids_from_input_batches(input_batches: list[Any]) -> tuple[list[str], list[str], list[str]]:
     composer_request_ids: list[str] = []
-    secretary_request_ids: list[str] = []
+    report_request_ids: list[str] = []
     input_target_kinds: list[str] = []
     for batch in input_batches:
         if not isinstance(batch, dict):
@@ -92,10 +94,56 @@ def _request_ids_from_prefetch_batches(input_batches: list[Any]) -> tuple[list[s
                 if request_id not in composer_request_ids:
                     composer_request_ids.append(request_id)
             continue
+        if not bool(batch.get("requires_report")) and target_kind not in {"secretary", "document"}:
+            continue
         for request_id in request_ids:
-            if request_id not in secretary_request_ids:
-                secretary_request_ids.append(request_id)
-    return composer_request_ids, secretary_request_ids, input_target_kinds
+            if request_id not in report_request_ids:
+                report_request_ids.append(request_id)
+    return composer_request_ids, report_request_ids, input_target_kinds
+
+
+def _voice_input_snapshot_from_envelope(*, group_id: str, event_id: str, envelope: Dict[str, Any]) -> Dict[str, Any]:
+    input_batches = envelope.get("input_batches") if isinstance(envelope.get("input_batches"), list) else []
+    composer_request_ids = [
+        str(item).strip()
+        for item in (envelope.get("composer_request_ids") if isinstance(envelope.get("composer_request_ids"), list) else [])
+        if str(item).strip()
+    ]
+    report_request_ids = [
+        str(item).strip()
+        for item in (envelope.get("report_request_ids") if isinstance(envelope.get("report_request_ids"), list) else [])
+        if str(item).strip()
+    ]
+    legacy_report_request_ids = [
+        str(item).strip()
+        for item in (envelope.get("secretary_request_ids") if isinstance(envelope.get("secretary_request_ids"), list) else [])
+        if str(item).strip()
+    ]
+    if not report_request_ids:
+        report_request_ids = legacy_report_request_ids
+    input_target_kinds = [
+        str(item).strip().lower()
+        for item in (envelope.get("input_target_kinds") if isinstance(envelope.get("input_target_kinds"), list) else [])
+        if str(item).strip()
+    ]
+    if not composer_request_ids and not report_request_ids:
+        composer_request_ids, report_request_ids, input_target_kinds = _request_ids_from_input_batches(input_batches)
+    seq_end = max(0, int(envelope.get("seq_end") or envelope.get("latest_seq") or 0))
+    latest_seq = max(seq_end, int(envelope.get("latest_seq") or 0))
+    return {
+        "kind": "voice_secretary_input",
+        "event_id": str(event_id or "").strip(),
+        "before_latest_seq": latest_seq,
+        "before_secretary_read_cursor": seq_end,
+        "input_envelope_delivered": True,
+        "delivery_id": str(envelope.get("delivery_id") or "").strip(),
+        "composer_request_ids": composer_request_ids,
+        "secretary_request_ids": report_request_ids,
+        "report_request_ids": report_request_ids,
+        "input_target_kinds": input_target_kinds,
+        "before_prompt_drafts": _prompt_draft_state(group_id, request_ids=composer_request_ids),
+        "before_ask_requests": _ask_request_state(group_id, request_ids=report_request_ids),
+    }
 
 
 def control_snapshot(*, group_id: str, actor_id: str, event_id: str, control_kind: str) -> Dict[str, Any]:
@@ -115,6 +163,9 @@ def control_snapshot(*, group_id: str, actor_id: str, event_id: str, control_kin
     context = data.get("context") if isinstance(data.get("context"), dict) else {}
     if str(context.get("kind") or "").strip() != "voice_secretary_input":
         return {}
+    envelope = context.get("input_envelope") if isinstance(context.get("input_envelope"), dict) else {}
+    if envelope:
+        return _voice_input_snapshot_from_envelope(group_id=group.group_id, event_id=event_id, envelope=envelope)
 
     state = _input_state(group.group_id)
     try:
@@ -127,11 +178,17 @@ def control_snapshot(*, group_id: str, actor_id: str, event_id: str, control_kin
             for item in ((preview or {}).get("composer_request_ids") if isinstance((preview or {}).get("composer_request_ids"), list) else [])
             if str(item).strip()
         ]
-        secretary_request_ids = [
+        report_request_ids = [
             str(item).strip()
-            for item in ((preview or {}).get("secretary_request_ids") if isinstance((preview or {}).get("secretary_request_ids"), list) else [])
+            for item in ((preview or {}).get("report_request_ids") if isinstance((preview or {}).get("report_request_ids"), list) else [])
             if str(item).strip()
         ]
+        if not report_request_ids:
+            report_request_ids = [
+                str(item).strip()
+                for item in ((preview or {}).get("secretary_request_ids") if isinstance((preview or {}).get("secretary_request_ids"), list) else [])
+                if str(item).strip()
+            ]
         input_target_kinds = [
             str(item.get("target_kind") or "").strip().lower()
             for item in input_batches
@@ -139,7 +196,7 @@ def control_snapshot(*, group_id: str, actor_id: str, event_id: str, control_kin
         ]
     except Exception:
         composer_request_ids = []
-        secretary_request_ids = []
+        report_request_ids = []
         input_target_kinds = []
 
     return {
@@ -148,17 +205,18 @@ def control_snapshot(*, group_id: str, actor_id: str, event_id: str, control_kin
         "before_latest_seq": int(state.get("latest_seq") or 0),
         "before_secretary_read_cursor": int(state.get("secretary_read_cursor") or 0),
         "composer_request_ids": composer_request_ids,
-        "secretary_request_ids": secretary_request_ids,
+        "secretary_request_ids": report_request_ids,
+        "report_request_ids": report_request_ids,
         "input_target_kinds": input_target_kinds,
         "before_prompt_drafts": _prompt_draft_state(group.group_id, request_ids=composer_request_ids),
-        "before_ask_requests": _ask_request_state(group.group_id, request_ids=secretary_request_ids),
+        "before_ask_requests": _ask_request_state(group.group_id, request_ids=report_request_ids),
     }
 
 
 def prefetched_control_snapshot(*, group_id: str, event_id: str, prefetched_input: Dict[str, Any]) -> Dict[str, Any]:
     input_batches = prefetched_input.get("input_batches") if isinstance(prefetched_input.get("input_batches"), list) else []
     input_timing = prefetched_input.get("input_timing") if isinstance(prefetched_input.get("input_timing"), dict) else {}
-    composer_request_ids, secretary_request_ids, input_target_kinds = _request_ids_from_prefetch_batches(input_batches)
+    composer_request_ids, report_request_ids, input_target_kinds = _request_ids_from_input_batches(input_batches)
     latest_seq = max(0, int(input_timing.get("latest_seq") or 0))
     current_cursor = max(0, int(input_timing.get("secretary_read_cursor") or latest_seq))
     return {
@@ -168,10 +226,11 @@ def prefetched_control_snapshot(*, group_id: str, event_id: str, prefetched_inpu
         "before_secretary_read_cursor": current_cursor,
         "prefetched_read_new_input": True,
         "composer_request_ids": composer_request_ids,
-        "secretary_request_ids": secretary_request_ids,
+        "secretary_request_ids": report_request_ids,
+        "report_request_ids": report_request_ids,
         "input_target_kinds": input_target_kinds,
         "before_prompt_drafts": _prompt_draft_state(group_id, request_ids=composer_request_ids),
-        "before_ask_requests": _ask_request_state(group_id, request_ids=secretary_request_ids),
+        "before_ask_requests": _ask_request_state(group_id, request_ids=report_request_ids),
     }
 
 
@@ -193,6 +252,8 @@ def prepare_control_turn(
         control_kind=control_kind,
     )
     if str((snapshot or {}).get("kind") or "").strip() != "voice_secretary_input":
+        return base_text, snapshot
+    if bool((snapshot or {}).get("input_envelope_delivered")):
         return base_text, snapshot
     try:
         from .assistants.assistant_ops import handle_assistant_voice_document_input_read
@@ -238,6 +299,7 @@ def control_consumption_diagnostics(*, group_id: str, snapshot: Dict[str, Any]) 
     before_latest = int((snapshot or {}).get("before_latest_seq") or 0)
     before_cursor = int((snapshot or {}).get("before_secretary_read_cursor") or 0)
     prefetched = bool((snapshot or {}).get("prefetched_read_new_input"))
+    envelope_delivered = bool((snapshot or {}).get("input_envelope_delivered"))
     state = _input_state(group_id)
     current_cursor = int(state.get("secretary_read_cursor") or 0)
     cursor_advanced = current_cursor > before_cursor
@@ -246,17 +308,23 @@ def control_consumption_diagnostics(*, group_id: str, snapshot: Dict[str, Any]) 
         for item in ((snapshot or {}).get("composer_request_ids") if isinstance((snapshot or {}).get("composer_request_ids"), list) else [])
         if str(item).strip()
     ]
-    secretary_request_ids = [
+    report_request_ids = [
         str(item).strip()
-        for item in ((snapshot or {}).get("secretary_request_ids") if isinstance((snapshot or {}).get("secretary_request_ids"), list) else [])
+        for item in ((snapshot or {}).get("report_request_ids") if isinstance((snapshot or {}).get("report_request_ids"), list) else [])
         if str(item).strip()
     ]
+    if not report_request_ids:
+        report_request_ids = [
+            str(item).strip()
+            for item in ((snapshot or {}).get("secretary_request_ids") if isinstance((snapshot or {}).get("secretary_request_ids"), list) else [])
+            if str(item).strip()
+        ]
     input_target_kinds = [
         str(item).strip().lower()
         for item in ((snapshot or {}).get("input_target_kinds") if isinstance((snapshot or {}).get("input_target_kinds"), list) else [])
         if str(item).strip()
     ]
-    if before_latest <= before_cursor and not composer_request_ids and not secretary_request_ids:
+    if before_latest <= before_cursor and not composer_request_ids and not report_request_ids:
         return {
             "before_latest_seq": before_latest,
             "before_secretary_read_cursor": before_cursor,
@@ -266,12 +334,12 @@ def control_consumption_diagnostics(*, group_id: str, snapshot: Dict[str, Any]) 
         }
 
     missing: list[str] = []
-    if not prefetched and not cursor_advanced:
+    if not prefetched and not envelope_delivered and not cursor_advanced:
         missing.append("read_new_input")
-    if secretary_request_ids:
+    if report_request_ids:
         before_ask_requests = (snapshot or {}).get("before_ask_requests") if isinstance((snapshot or {}).get("before_ask_requests"), dict) else {}
-        current_ask_requests = _ask_request_state(group_id, request_ids=secretary_request_ids)
-        for request_id in secretary_request_ids:
+        current_ask_requests = _ask_request_state(group_id, request_ids=report_request_ids)
+        for request_id in report_request_ids:
             current = current_ask_requests.get(request_id) if isinstance(current_ask_requests.get(request_id), dict) else {}
             before = before_ask_requests.get(request_id) if isinstance(before_ask_requests.get(request_id), dict) else {}
             if str(current.get("status") or "").strip() not in {"done", "needs_user", "failed", "handed_off"}:
@@ -299,9 +367,12 @@ def control_consumption_diagnostics(*, group_id: str, snapshot: Dict[str, Any]) 
         "current_secretary_read_cursor": current_cursor,
         "cursor_advanced": cursor_advanced,
         "prefetched_read_new_input": prefetched,
+        "input_envelope_delivered": envelope_delivered,
+        "delivery_id": str((snapshot or {}).get("delivery_id") or "").strip(),
         "input_target_kinds": input_target_kinds,
         "composer_request_ids": composer_request_ids,
-        "secretary_request_ids": secretary_request_ids,
+        "secretary_request_ids": report_request_ids,
+        "report_request_ids": report_request_ids,
         "missing": sorted(set(missing)),
     }
 
@@ -340,13 +411,23 @@ def repair_control_text(*, text: str, diagnostics: Dict[str, Any]) -> str:
     ]
     if not missing:
         return str(text or "")
-    lines = [
-        str(text or "").strip(),
-        "",
-        "[CCCC] REPAIR HINT: previous control turn did not consume the secretary input.",
-        "Do not continue from the notify text alone. First call cccc_voice_secretary_document(action=\"read_new_input\").",
-        "Then complete every missing action below before ending the turn:",
-    ]
+    legacy_input_missing = "read_new_input" in missing
+    lines = [str(text or "").strip(), ""]
+    if legacy_input_missing:
+        lines.extend(
+            [
+                "[CCCC] REPAIR HINT: previous legacy pointer turn did not fetch the secretary input.",
+                "Call cccc_voice_secretary_document(action=\"read_new_input\") before doing other work, then complete every missing action below:",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "[CCCC] REPAIR HINT: previous Voice Secretary turn did not complete the required output.",
+                "Use the daemon-delivered input_envelope already included in this control turn; call read_new_input only for a legacy pointer with no envelope.",
+                "Complete every missing action below before ending the turn:",
+            ]
+        )
     for item in missing:
         lines.append(f"- {item}")
     return "\n".join(lines).strip()

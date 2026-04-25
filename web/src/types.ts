@@ -760,6 +760,11 @@ export type AssistantVoiceTranscriptSegmentResult = {
   input_event?: Record<string, unknown>;
   input_event_created?: boolean;
   input_notify_emitted?: boolean;
+  input_notify_error?: string;
+  actor_woken?: boolean;
+  actor_wake_error?: string;
+  actor_notify_delivered?: boolean;
+  actor_notify_delivery_error?: string;
 };
 
 export type AssistantVoiceDocumentMutationResult = {
@@ -769,6 +774,11 @@ export type AssistantVoiceDocumentMutationResult = {
   input_event?: Record<string, unknown>;
   input_event_created?: boolean;
   input_notify_emitted?: boolean;
+  input_notify_error?: string;
+  actor_woken?: boolean;
+  actor_wake_error?: string;
+  actor_notify_delivered?: boolean;
+  actor_notify_delivery_error?: string;
   event?: unknown;
   request_id?: string;
 };
@@ -814,6 +824,11 @@ export type AssistantVoiceInputResult = {
   input_event?: Record<string, unknown>;
   input_event_created?: boolean;
   input_notify_emitted?: boolean;
+  input_notify_error?: string;
+  actor_woken?: boolean;
+  actor_wake_error?: string;
+  actor_notify_delivered?: boolean;
+  actor_notify_delivery_error?: string;
   event?: unknown;
   request_id?: string;
 };

@@ -3132,7 +3132,7 @@ export function VoiceSecretaryComposerControl({
                           onChange={(nextValue) => void updateRecognitionLanguage(nextValue)}
                           placeholder={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
                           searchPlaceholder={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
-                          emptyText={t("common:noResults", { defaultValue: "没有匹配结果" })}
+                          emptyText={t("common:noResults", { defaultValue: "No matching results" })}
                           ariaLabel={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
                           triggerClassName={classNames(
                             "min-h-[38px] min-w-[7.5rem] rounded-full border px-3 py-2 text-xs font-semibold transition-colors",

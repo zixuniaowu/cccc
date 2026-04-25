@@ -201,7 +201,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_voice_secretary_document",
-        "description": "Voice Secretary-only input/document surface. Use read_new_input for input notifications; use list/create/archive for document lifecycle. Edit repo markdown directly; this tool has no save action.",
+        "description": "Voice Secretary-only input/document surface. voice_secretary_input notifications normally include a daemon-delivered input_envelope rendered as Work orders; use read_new_input only for legacy pointer notifications, recovery, or manual debugging. Use list/create/archive for document lifecycle. Edit repo markdown directly; this tool has no save action.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,

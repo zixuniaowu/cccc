@@ -842,34 +842,33 @@ export function AgentTab({
           <div className="flex h-full min-h-0 flex-col px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3">
             <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 min-h-0 flex-1">
               <div className="min-h-0 flex-1">
-              {rawHeadlessEvents.length > 0 ? (
-                <HeadlessRawTrace
-                  events={rawHeadlessEvents}
-                  emptyLabel={t('noStreamingOutputYet', { defaultValue: '当前还没有可显示的流式输出。' })}
-                  isDark={isDark}
-                  className={classNames(
-                    "h-full min-h-[420px] text-left text-[var(--color-text-secondary)]"
-                  )}
-                />
-              ) : (
-                <HeadlessLiveTrace
-                  previewSessions={headlessPreviewSessions}
-                  fallbackText={latestHeadlessText}
-                  fallbackActivities={latestHeadlessActivities}
-                  fallbackUpdatedAt={String(latestHeadlessPreview?.updatedAt || "").trim()}
-                  fallbackPendingEventId={String(latestHeadlessPreview?.pendingEventId || `preview:${actor.id}`).trim()}
-                  fallbackStreamId={String(latestHeadlessPreview?.currentStreamId || "").trim()}
-                  fallbackStreamPhase={String(latestHeadlessPreview?.streamPhase || "").trim().toLowerCase()}
-                  fallbackPhase={String(latestHeadlessPreview?.phase || "").trim().toLowerCase()}
-                  emptyLabel={t('noStreamingOutputYet', { defaultValue: '当前还没有可显示的流式输出。' })}
-                  recentLabel="Recent"
-                  isDark={isDark}
-                  density="expanded"
-                  className={classNames(
-                    "h-full min-h-[420px] overflow-y-auto text-left text-[var(--color-text-secondary)]"
-                  )}
-                />
-              )}
+                {rawHeadlessEvents.length > 0 ? (
+                  <HeadlessRawTrace
+                    events={rawHeadlessEvents}
+                    emptyLabel={t('noStreamingOutputYet', { defaultValue: 'No streaming output to display yet.' })}
+                    isDark={isDark}
+                    className={classNames(
+                      "h-full min-h-[420px] text-left text-[var(--color-text-secondary)]"
+                    )}
+                  />
+                ) : (
+                  <HeadlessLiveTrace
+                    previewSessions={headlessPreviewSessions}
+                    fallbackText={latestHeadlessText}
+                    fallbackActivities={latestHeadlessActivities}
+                    fallbackUpdatedAt={String(latestHeadlessPreview?.updatedAt || "").trim()}
+                    fallbackPendingEventId={String(latestHeadlessPreview?.pendingEventId || `preview:${actor.id}`).trim()}
+                    fallbackStreamId={String(latestHeadlessPreview?.currentStreamId || "").trim()}
+                    fallbackStreamPhase={String(latestHeadlessPreview?.streamPhase || "").trim().toLowerCase()}
+                    fallbackPhase={String(latestHeadlessPreview?.phase || "").trim().toLowerCase()}
+                    emptyLabel={t('noStreamingOutputYet', { defaultValue: 'No streaming output to display yet.' })}
+                    isDark={isDark}
+                    density="expanded"
+                    className={classNames(
+                      "h-full min-h-[420px] overflow-y-auto text-left text-[var(--color-text-secondary)]"
+                    )}
+                  />
+                )}
               </div>
             </div>
           </div>

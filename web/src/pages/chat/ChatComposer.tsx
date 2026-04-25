@@ -718,8 +718,8 @@ export function ChatComposer({
                   value={destGroupId || selectedGroupId || ""}
                   onChange={setDestGroupId}
                   placeholder={t('destinationGroup')}
-                  searchPlaceholder={t('searchDestinationGroup', { defaultValue: '搜索 group...' })}
-                  emptyText={t('noMatchingGroups', { defaultValue: '没有匹配的 group' })}
+                  searchPlaceholder={t('searchDestinationGroup', { defaultValue: 'Search groups...' })}
+                  emptyText={t('noMatchingGroups', { defaultValue: 'No matching groups' })}
                   ariaLabel={t('destinationGroup')}
                   triggerClassName={classNames(
                     "inline-flex w-auto min-w-[68px] max-w-[148px] sm:max-w-[196px]",

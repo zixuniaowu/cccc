@@ -219,10 +219,10 @@ export function ImagePreview({
             )}
           />
           <div className={classNames("text-xs font-semibold", useDarkFailureTone ? "text-white" : "text-[rgb(30,41,59)]")}>
-            {t("imagePreviewUnavailable", { defaultValue: "图片预览失败" })}
+            {t("imagePreviewUnavailable", { defaultValue: "Image preview unavailable" })}
           </div>
           <div className={classNames("mt-1 text-[11px]", useDarkFailureTone ? "text-white/72" : "text-[rgb(100,116,139)]")}>
-            {t("downloadOriginalImage", { defaultValue: "点击下载原图" })}
+            {t("downloadOriginalImage", { defaultValue: "Open the original image" })}
           </div>
         </div>
         <div className="min-w-0 px-1 pt-2">

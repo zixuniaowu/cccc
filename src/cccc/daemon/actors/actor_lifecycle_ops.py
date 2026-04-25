@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.actors import list_actors, update_actor
+from ...kernel.actors import find_actor, is_internal_actor, list_actors, update_actor
 from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
@@ -113,7 +113,11 @@ def handle_actor_stop(
     before_foreman = foreman_id(group)
     try:
         require_actor_permission(group, by=by, action="actor.stop", target_actor_id=actor_id)
-        actor = update_actor(group, actor_id, {"enabled": False})
+        current_actor = find_actor(group, actor_id)
+        if isinstance(current_actor, dict) and is_internal_actor(current_actor):
+            actor = dict(current_actor)
+        else:
+            actor = update_actor(group, actor_id, {"enabled": False})
         runner_kind = str(actor.get("runner") or "pty").strip()
         runner_effective = effective_runner_kind(runner_kind)
         runtime = str(actor.get("runtime") or "codex").strip() or "codex"

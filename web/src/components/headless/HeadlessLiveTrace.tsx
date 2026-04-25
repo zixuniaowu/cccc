@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   buildHeadlessPreviewRenderGroups,
@@ -32,6 +33,21 @@ type HeadlessLiveTraceProps = {
   isDark: boolean;
   density?: HeadlessLiveTraceDensity;
   className?: string;
+};
+
+type HeadlessLiveTraceLabels = {
+  liveTrace: string;
+  waitingForOutput: string;
+  update: string;
+  reply: string;
+  reasoning: string;
+  toolActivity: string;
+  recentActivity: string;
+  toolCall: string;
+  toolCalls: (count: number) => string;
+  live: string;
+  streaming: string;
+  recent: string;
 };
 
 function shouldRenderPreviewMarkdown(streamPhase: string | null | undefined): boolean {
@@ -143,10 +159,10 @@ function getMessageTextClassName(density: HeadlessLiveTraceDensity, isDark: bool
   );
 }
 
-function getTracePhaseLabel(streamPhase: string): string {
+function getTracePhaseLabel(streamPhase: string, labels: HeadlessLiveTraceLabels): string {
   const normalized = String(streamPhase || "").trim().toLowerCase();
-  if (normalized === "final_answer") return "Reply";
-  if (normalized === "commentary") return "Reasoning";
+  if (normalized === "final_answer") return labels.reply;
+  if (normalized === "commentary") return labels.reasoning;
   return "";
 }
 
@@ -178,21 +194,27 @@ function getActivityKindBadgeClassName(density: HeadlessLiveTraceDensity, isDark
 
 function summarizeHeadline(
   group: HeadlessPreviewRenderGroup | undefined,
-  density: HeadlessLiveTraceDensity
+  density: HeadlessLiveTraceDensity,
+  labels: HeadlessLiveTraceLabels
 ): { eyebrow: string; title: string } {
   if (!group) {
-    return { eyebrow: "Live trace", title: "" };
+    return { eyebrow: labels.liveTrace, title: "" };
   }
   if (group.kind === "message") {
-    const label = getTracePhaseLabel(group.entry.streamPhase) || "Update";
+    const label = getTracePhaseLabel(group.entry.streamPhase, labels) || labels.update;
     return {
       eyebrow: label,
       title: truncateText(group.entry.text, density === "expanded" ? 120 : 84),
     };
   }
+  const firstNarrative = group.entries.length === 1 && group.entries[0]
+    ? buildActivityNarrative(group.entries[0].activity, density)
+    : null;
   return {
-    eyebrow: group.live ? "Tool activity" : "Recent activity",
-    title: group.entries.length > 1 ? `${group.entries.length} 个工具调用` : "最近工具调用",
+    eyebrow: group.live ? labels.toolActivity : labels.recentActivity,
+    title: group.entries.length > 1
+      ? labels.toolCalls(group.entries.length)
+      : (firstNarrative?.primaryLabel || labels.toolCall),
   };
 }
 
@@ -248,13 +270,29 @@ export function HeadlessLiveTrace({
   fallbackStreamPhase,
   fallbackPhase,
   emptyLabel,
-  recentLabel = "Recent",
+  recentLabel,
   isDark,
   density = "compact",
   className,
 }: HeadlessLiveTraceProps) {
+  const { t } = useTranslation("actors");
   const outputRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
+  const labels = useMemo<HeadlessLiveTraceLabels>(() => ({
+    liveTrace: t("headlessTraceLiveTrace", { defaultValue: "Live trace" }),
+    waitingForOutput: t("headlessTraceWaitingForOutput", { defaultValue: "Waiting for output" }),
+    update: t("headlessTraceUpdate", { defaultValue: "Update" }),
+    reply: t("headlessTraceReply", { defaultValue: "Reply" }),
+    reasoning: t("headlessTraceReasoning", { defaultValue: "Reasoning" }),
+    toolActivity: t("headlessTraceToolActivity", { defaultValue: "Tool activity" }),
+    recentActivity: t("headlessTraceRecentActivity", { defaultValue: "Recent activity" }),
+    toolCall: t("headlessTraceToolCall", { defaultValue: "Tool call" }),
+    toolCalls: (count: number) => t("headlessTraceToolCalls", { count, defaultValue: "{{count}} tool calls" }),
+    live: t("headlessTraceLive", { defaultValue: "Live" }),
+    streaming: t("headlessTraceStreaming", { defaultValue: "streaming" }),
+    recent: t("headlessTraceRecent", { defaultValue: "Recent" }),
+  }), [t]);
+  const recentDisplayLabel = recentLabel || labels.recent;
   const timelineEntries = useMemo(
     () => buildHeadlessPreviewTimelineEntries({
       previewSessions,
@@ -282,7 +320,7 @@ export function HeadlessLiveTrace({
     ? previewSessions.length
     : (timelineEntries.length > 0 ? 1 : 0);
   const latestTimelineGroup = timelineGroups[timelineGroups.length - 1];
-  const latestSummary = summarizeHeadline(latestTimelineGroup, density);
+  const latestSummary = summarizeHeadline(latestTimelineGroup, density, labels);
   const latestTimelineSignal = latestTimelineGroup
     ? `${latestTimelineGroup.id}:${latestTimelineGroup.ts}:${latestTimelineGroup.live ? "live" : "static"}`
     : "";
@@ -329,9 +367,9 @@ export function HeadlessLiveTrace({
             <SparklesIcon size={18} />
           </div>
           <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-            Live trace
+            {labels.liveTrace}
           </div>
-          <div className="mt-2 text-lg font-semibold text-[var(--color-text-primary)]">等待下一段输出</div>
+          <div className="mt-2 text-lg font-semibold text-[var(--color-text-primary)]">{labels.waitingForOutput}</div>
           <div className={classNames("mx-auto mt-3 max-w-sm text-sm leading-6", isDark ? "text-slate-400" : "text-slate-500")}>
             {emptyLabel}
           </div>
@@ -374,7 +412,7 @@ export function HeadlessLiveTrace({
             {latestTimelineGroup?.live ? (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-300">
                 <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse motion-reduce:animate-none" />
-                Live
+                {labels.live}
               </span>
             ) : null}
             <span className={classNames(
@@ -382,7 +420,7 @@ export function HeadlessLiveTrace({
               isDark ? "border-white/10 bg-white/[0.04] text-slate-300" : "border-black/8 bg-black/[0.03] text-slate-600"
             )}>
               <ClockIcon size={12} />
-              {latestTimelineGroup?.ts ? formatTime(latestTimelineGroup.ts) : recentLabel}
+              {latestTimelineGroup?.ts ? formatTime(latestTimelineGroup.ts) : recentDisplayLabel}
             </span>
           </div>
         </div>
@@ -398,7 +436,7 @@ export function HeadlessLiveTrace({
                 <div className="flex items-center gap-3 py-1">
                   <span className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")} />
                   <span className={classNames("shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em]", isDark ? "border-white/10 bg-white/[0.04] text-slate-400" : "border-black/8 bg-black/[0.03] text-slate-500")}>
-                    {group.ts ? formatTime(group.ts) : recentLabel}
+                    {group.ts ? formatTime(group.ts) : recentDisplayLabel}
                   </span>
                   <span className={classNames("h-px flex-1", isDark ? "bg-white/8" : "bg-slate-200")} />
                 </div>
@@ -423,18 +461,18 @@ export function HeadlessLiveTrace({
                       ? (isDark ? "border-white/12 bg-white/[0.05]" : "border-black/10 bg-white shadow-[0_10px_26px_rgba(15,23,42,0.06)]")
                       : (isDark ? "border-white/10 bg-white/[0.03]" : "border-slate-200/90 bg-slate-50/88")
                   )}>
-                    {getTracePhaseLabel(group.entry.streamPhase) ? (
+                    {getTracePhaseLabel(group.entry.streamPhase, labels) ? (
                       <div className="mb-2 flex items-center gap-2">
                         <span className={classNames(
                           "inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]",
                           isDark ? "border-white/10 bg-white/[0.05] text-white/85" : "border-black/8 bg-black/[0.03] text-[rgb(35,36,37)]/80"
                         )}>
-                        {getTracePhaseLabel(group.entry.streamPhase)}
+                        {getTracePhaseLabel(group.entry.streamPhase, labels)}
                         </span>
                         {group.live ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-300">
                             <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse motion-reduce:animate-none" />
-                            streaming
+                            {labels.streaming}
                           </span>
                         ) : null}
                       </div>

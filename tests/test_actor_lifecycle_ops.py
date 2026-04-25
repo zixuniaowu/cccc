@@ -112,6 +112,61 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_stop_keeps_internal_voice_secretary_enabled(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "voice-secretary-stop", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            lead, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "lead",
+                    "title": "Lead",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(lead.ok, getattr(lead, "error", None))
+
+            enable, _ = self._call(
+                "assistant_settings_update",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "assistant_id": "voice_secretary",
+                    "patch": {"enabled": True},
+                },
+            )
+            self.assertTrue(enable.ok, getattr(enable, "error", None))
+
+            stop, _ = self._call("actor_stop", {"group_id": group_id, "actor_id": "voice-secretary", "by": "user"})
+            self.assertTrue(stop.ok, getattr(stop, "error", None))
+            actor_after_stop = (stop.result or {}).get("actor") if isinstance(stop.result, dict) else {}
+            self.assertIsInstance(actor_after_stop, dict)
+            assert isinstance(actor_after_stop, dict)
+            self.assertTrue(bool(actor_after_stop.get("enabled", False)))
+
+            from cccc.kernel.actors import find_actor
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            stored_actor = find_actor(group, "voice-secretary")
+            self.assertIsInstance(stored_actor, dict)
+            assert isinstance(stored_actor, dict)
+            self.assertTrue(bool(stored_actor.get("enabled", False)))
+        finally:
+            cleanup()
+
     def test_actor_restart_keeps_actor_enabled(self) -> None:
         _, cleanup = self._with_home()
         try:

@@ -273,6 +273,11 @@ function normalizeAssistantVoiceTranscriptSegmentResult(groupId: string, result:
     input_event: asRecord(record.input_event) ?? undefined,
     input_event_created: Boolean(record.input_event_created),
     input_notify_emitted: Boolean(record.input_notify_emitted),
+    input_notify_error: asOptionalString(record.input_notify_error) || undefined,
+    actor_woken: Boolean(record.actor_woken),
+    actor_wake_error: asOptionalString(record.actor_wake_error) || undefined,
+    actor_notify_delivered: Boolean(record.actor_notify_delivered),
+    actor_notify_delivery_error: asOptionalString(record.actor_notify_delivery_error) || undefined,
   };
 }
 
@@ -294,6 +299,11 @@ function normalizeAssistantVoiceDocumentMutationResult(groupId: string, result: 
     input_event: asRecord(record.input_event) ?? undefined,
     input_event_created: Boolean(record.input_event_created),
     input_notify_emitted: Boolean(record.input_notify_emitted),
+    input_notify_error: asOptionalString(record.input_notify_error) || undefined,
+    actor_woken: Boolean(record.actor_woken),
+    actor_wake_error: asOptionalString(record.actor_wake_error) || undefined,
+    actor_notify_delivered: Boolean(record.actor_notify_delivered),
+    actor_notify_delivery_error: asOptionalString(record.actor_notify_delivery_error) || undefined,
     event: record.event,
     request_id: asOptionalString(record.request_id) || undefined,
   };
@@ -308,6 +318,11 @@ function normalizeAssistantVoiceInputResult(groupId: string, result: unknown): A
     input_event: asRecord(record.input_event) ?? undefined,
     input_event_created: Boolean(record.input_event_created),
     input_notify_emitted: Boolean(record.input_notify_emitted),
+    input_notify_error: asOptionalString(record.input_notify_error) || undefined,
+    actor_woken: Boolean(record.actor_woken),
+    actor_wake_error: asOptionalString(record.actor_wake_error) || undefined,
+    actor_notify_delivered: Boolean(record.actor_notify_delivered),
+    actor_notify_delivery_error: asOptionalString(record.actor_notify_delivery_error) || undefined,
     event: record.event,
     request_id: asOptionalString(record.request_id) || undefined,
   };
