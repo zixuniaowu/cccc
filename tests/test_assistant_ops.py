@@ -1646,6 +1646,63 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_output_completion_refreshes_existing_composer_draft_timestamp(self) -> None:
+        from cccc.daemon.assistants.voice_secretary_output_completion import complete_missing_composer_drafts
+
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            enqueue, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "prompt_refine",
+                    "request_id": "voice-prompt-stale",
+                    "composer_text": "这个如何优化？",
+                    "voice_transcript": "",
+                    "operation": "replace_with_refined_prompt",
+                    "composer_snapshot_hash": "hash-stale",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(enqueue.ok, getattr(enqueue, "error", None))
+
+            submit, _ = self._call(
+                "assistant_voice_prompt_draft_submit",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "request_id": "voice-prompt-stale",
+                    "composer_snapshot_hash": "hash-stale",
+                    "draft_text": "这个如何优化？",
+                },
+            )
+            self.assertTrue(submit.ok, getattr(submit, "error", None))
+            before = (submit.result or {}).get("prompt_draft") if isinstance(submit.result, dict) else {}
+            before_updated_at = str(before.get("updated_at") or "")
+            self.assertTrue(before_updated_at)
+
+            repaired = complete_missing_composer_drafts(
+                group_id=group_id,
+                diagnostics={"missing": ["composer_draft_updated_at:voice-prompt-stale"]},
+            )
+
+            self.assertEqual(repaired.get("completed_request_ids"), ["voice-prompt-stale"])
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            pending = (state.result or {}).get("prompt_draft") if isinstance(state.result, dict) else {}
+            self.assertEqual(pending.get("request_id"), "voice-prompt-stale")
+            self.assertEqual(pending.get("draft_text"), "这个如何优化？")
+            self.assertNotEqual(str(pending.get("updated_at") or ""), before_updated_at)
+        finally:
+            cleanup()
+
     def test_voice_secretary_prompt_refine_replacement_requests_complete_draft(self) -> None:
         home, cleanup = self._with_home()
         try:

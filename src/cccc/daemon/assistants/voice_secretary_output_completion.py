@@ -21,12 +21,16 @@ from .assistant_ops import (
 )
 
 
-def _missing_composer_request_ids(diagnostics: Dict[str, Any]) -> List[str]:
+def _missing_composer_request_ids(
+    diagnostics: Dict[str, Any],
+    *,
+    prefixes: tuple[str, ...] = ("composer_draft:",),
+) -> List[str]:
     missing = diagnostics.get("missing") if isinstance(diagnostics.get("missing"), list) else []
     out: List[str] = []
     for item in missing:
         text = str(item or "").strip()
-        if not text.startswith("composer_draft:"):
+        if not text.startswith(prefixes):
             continue
         request_id = text.split(":", 1)[1].strip()
         if request_id and request_id not in out:
@@ -48,7 +52,13 @@ def _fallback_draft_text(request_record: Dict[str, Any]) -> str:
 
 
 def complete_missing_composer_drafts(*, group_id: str, diagnostics: Dict[str, Any]) -> Dict[str, Any]:
-    request_ids = _missing_composer_request_ids(diagnostics if isinstance(diagnostics, dict) else {})
+    normalized_diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    missing_draft_request_ids = _missing_composer_request_ids(normalized_diagnostics)
+    missing_updated_at_request_ids = _missing_composer_request_ids(
+        normalized_diagnostics,
+        prefixes=("composer_draft_updated_at:",),
+    )
+    request_ids = list(dict.fromkeys(missing_draft_request_ids + missing_updated_at_request_ids))
     if not request_ids:
         return {"completed_request_ids": []}
     group = load_group(group_id)
@@ -66,6 +76,30 @@ def complete_missing_composer_drafts(*, group_id: str, diagnostics: Dict[str, An
     events: List[Dict[str, Any]] = []
     for request_id in request_ids:
         existing = drafts.get(request_id) if isinstance(drafts.get(request_id), dict) else {}
+        if request_id in missing_updated_at_request_ids and str(existing.get("draft_text") or "").strip():
+            updated = dict(existing)
+            updated["updated_at"] = now
+            if not str(updated.get("by") or "").strip():
+                updated["by"] = _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY)
+            drafts[request_id] = updated
+            completed.append(request_id)
+            events.append(
+                append_event(
+                    group.ledger_path,
+                    kind="assistant.voice.prompt_draft",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by=_assistant_principal(ASSISTANT_ID_VOICE_SECRETARY),
+                    data={
+                        "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+                        "request_id": request_id,
+                        "action": "auto_refresh",
+                        "status": str(updated.get("status") or "pending"),
+                        "draft_preview": str(updated.get("draft_preview") or ""),
+                    },
+                )
+            )
+            continue
         if str(existing.get("draft_text") or "").strip():
             completed.append(request_id)
             continue
