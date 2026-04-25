@@ -81,7 +81,12 @@ class TestPromptDefaults(unittest.TestCase):
         from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
 
         self.assertIn("use MCP", MCP_REMINDER_LINE)
-        self.assertIn("Terminal output isn't delivered.", MCP_REMINDER_LINE)
+        self.assertIn("terminal output isn't delivered.", MCP_REMINDER_LINE)
+        self.assertIn("Verify reply_to/to", MCP_REMINDER_LINE)
+        self.assertIn("avoid routine @all", MCP_REMINDER_LINE)
+        self.assertIn("communication obligation, not the whole job", MCP_REMINDER_LINE)
+        self.assertIn("resume active work unless priority changed", MCP_REMINDER_LINE)
+        self.assertIn("run cccc_help", MCP_REMINDER_LINE)
         self.assertNotIn("Help: cccc_help", MCP_REMINDER_LINE)
 
     def test_default_standup_stays_short_ritual(self) -> None:
