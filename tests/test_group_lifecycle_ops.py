@@ -42,7 +42,7 @@ class TestGroupLifecycleOps(unittest.TestCase):
 
     @contextmanager
     def _fake_codex_headless_start(self):
-        def _fake_start_actor(*, group_id: str, actor_id: str, cwd: Path, env: dict[str, str], model: str = "gpt-5.4"):
+        def _fake_start_actor(*, group_id: str, actor_id: str, cwd: Path, env: dict[str, str], model: str = ""):
             class _Session:
                 def __init__(self) -> None:
                     self.group_id = group_id

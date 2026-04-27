@@ -22,7 +22,7 @@ defaults:
     clawhub_remote: indexed
     openclaw_skills_remote: indexed
     clawskills_remote: indexed
-    mcp_registry_official: mounted
+    mcp_registry_official: indexed
 
   # Matches current CCCC implementation boundary.
   install_mode_allowlist:
@@ -72,26 +72,26 @@ sources:
     rationale: "On-demand clawskills.co skills index search."
   - source_id: mcp_registry_official
     enabled: true
-    rationale: "Primary MCP discovery source (local snapshot + on-demand fallback)."
+    rationale: "Primary MCP discovery source (local snapshot + on-demand fallback); indexed by default, with only lightweight verified exceptions promoted."
 
 mcp_overrides:
   # --------------------------------------------------------------------------
-  # Tier A: default mounted (high utility, reasonable trust, practical today)
+  # Tier A: lightweight default-mounted MCP exceptions
   # --------------------------------------------------------------------------
   - capability_id: mcp:io.github.github/github-mcp-server
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: remote_only
     notes: "Official GitHub MCP; broad repo/issue/PR workflows."
 
   - capability_id: mcp:io.github.ChromeDevTools/chrome-devtools-mcp
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: package:npm
     notes: "High-ROI browser debugging/inspection for engineering tasks."
 
   - capability_id: mcp:io.github.brave/brave-search-mcp-server
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: package:npm
     required_secrets:
@@ -99,19 +99,19 @@ mcp_overrides:
     notes: "High-quality web retrieval."
 
   - capability_id: mcp:com.atlassian/atlassian-mcp-server
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: remote_only
     notes: "Official Atlassian MCP (Jira/Confluence ecosystem)."
 
   - capability_id: mcp:com.gitlab/mcp
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: remote_only
     notes: "Official GitLab MCP."
 
   - capability_id: mcp:com.supabase/mcp
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: package:npm
     required_secrets:
@@ -119,7 +119,7 @@ mcp_overrides:
     notes: "Common backend/data workflows for dev teams."
 
   - capability_id: mcp:io.github.getsentry/sentry-mcp
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: package:npm
     required_secrets:
@@ -127,25 +127,25 @@ mcp_overrides:
     notes: "Production debugging and issue triage."
 
   - capability_id: mcp:com.cloudflare.mcp/mcp
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: remote_only
     notes: "Infra/network/platform operations; remote auth expected."
 
   - capability_id: mcp:app.linear/linear
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: remote_only
     notes: "Project/issue management."
 
   - capability_id: mcp:com.notion/mcp
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: remote_only
     notes: "Knowledge/doc workflows."
 
   - capability_id: mcp:io.github.browserbase/mcp-server-browserbase
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: package:npm
     required_secrets:
@@ -155,43 +155,90 @@ mcp_overrides:
     notes: "Powerful browser automation; key-heavy setup."
 
   - capability_id: mcp:com.make/mcp-server
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: remote_only
     notes: "Workflow automation orchestrator."
 
   - capability_id: mcp:ai.com.mcp/registry
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: remote_only
     notes: "MCP ecosystem self-discovery."
 
   - capability_id: mcp:ai.com.mcp/skills-search
-    level: mounted
+    level: indexed
     trust: medium
     install_mode_preference: remote_only
     notes: "AgentSkills discovery bridge."
 
   - capability_id: mcp:io.github.upstash/context7
     level: mounted
+    name: Context7
+    description_short: "Retrieve current library documentation and code examples through a narrow MCP surface."
+    source_uri: https://github.com/upstash/context7
     trust: high
-    install_mode_preference: package:npm
+    install_mode: package
+    install_spec:
+      registry_type: npm
+      runtime_hint: npx
+      identifier: "@upstash/context7-mcp"
     notes: "High-ROI code/docs context retrieval."
 
-  - capability_id: mcp:ai.parallel/search-mcp
+  - capability_id: mcp:io.github.yamadashy/repomix
     level: mounted
+    name: Repomix
+    description_short: "Pack a scoped local or public repository into an AI-friendly artifact for analysis."
+    source_uri: https://github.com/yamadashy/repomix
+    trust: high
+    install_mode: package
+    install_spec:
+      registry_type: npm
+      runtime_hint: npx
+      identifier: repomix
+      package_arguments:
+        - "--mcp"
+    risk_tags:
+      - filesystem_read
+    tags:
+      - repository
+      - codebase
+      - context
+    notes: "High-ROI repository analysis MCP; agents should scope use to the current workspace or an explicit public repository."
+
+  - capability_id: mcp:io.github.idosal/git-mcp
+    level: mounted
+    name: GitMCP
+    description_short: "Access public GitHub repository documentation and code context through a remote MCP endpoint."
+    source_uri: https://github.com/idosal/git-mcp
+    trust: high
+    install_mode: command
+    install_spec:
+      command:
+        - npx
+        - -y
+        - mcp-remote
+        - https://gitmcp.io/docs
+    tags:
+      - github
+      - documentation
+      - public-code
+    notes: "Public GitHub docs/code context only; do not use as a private repository or credentialed GitHub integration."
+
+  - capability_id: mcp:ai.parallel/search-mcp
+    level: indexed
     trust: medium
     install_mode_preference: remote_only
     notes: "Remote search MCP fallback with broad web coverage."
 
   - capability_id: mcp:com.figma.mcp/mcp
-    level: mounted
+    level: indexed
     trust: high
     install_mode_preference: remote_only
     notes: "Design-file execution surface for product/design workflows."
 
   # --------------------------------------------------------------------------
-  # Tier B: mounted (high risk/high privilege; visible, use runtime blocklist as needed)
+  # Tier B: indexed high-risk/high-privilege MCPs
   # --------------------------------------------------------------------------
   - capability_id: mcp:io.github.domdomegg/computer-use-mcp
     level: indexed
@@ -404,6 +451,209 @@ skills:
         Skill: Humanizer
         Use for final-pass wording polish only.
         Preserve facts, constraints, and actionability; do not alter technical intent.
+
+    - capability_id: skill:github:addyosmani:code-review-quality
+      level: mounted
+      source_id: github_skills_curated
+      source_uri: https://github.com/addyosmani/agent-skills
+      trust: high
+      qualification_status: qualified
+      tags:
+        - engineering
+        - code-review
+        - quality
+      description_short: "Review code for correctness, maintainability, regressions, tests, and practical risk."
+      use_when:
+        - "The user asks for code review, PR review, regression risk, bug finding, or quality assessment."
+        - "A change needs a senior engineering review before merge or handoff."
+      avoid_when:
+        - "The task is implementation-only and no review was requested."
+        - "The review would require live production data or credentials that are not available."
+      gotchas:
+        - "Findings should lead; summaries are secondary."
+        - "Prefer concrete file/line evidence over generic style advice."
+      capsule_text: |
+        Skill: code-review-quality
+        Use when reviewing code changes, PRs, diffs, or implementation quality.
+        Procedure:
+        1. Identify the changed behavior and user-visible contract first.
+        2. Look for correctness bugs, regressions, missing edge cases, security/privacy issues, and missing tests.
+        3. Lead with findings ordered by severity and grounded in file/line evidence.
+        4. Keep summaries short and secondary; do not praise unchanged code.
+        5. If no issues are found, state that clearly and name residual test gaps.
+        Pitfalls:
+        - Do not turn review into broad refactoring advice.
+        - Do not report style-only nits unless they create real risk.
+        - Do not assume tests passed unless verified.
+        Verification:
+        - Every finding has a concrete impact and a traceable location.
+
+    - capability_id: skill:github:addyosmani:debugging-error-recovery
+      level: mounted
+      source_id: github_skills_curated
+      source_uri: https://github.com/addyosmani/agent-skills
+      trust: high
+      qualification_status: qualified
+      tags:
+        - engineering
+        - debugging
+        - tests
+      description_short: "Diagnose failures with evidence-first reproduction, one hypothesis at a time, and targeted verification."
+      use_when:
+        - "The user reports a bug, failing test, runtime error, flaky behavior, or broken flow."
+        - "A previous fix failed and the cause needs to be isolated."
+      avoid_when:
+        - "The task is greenfield implementation without a known symptom."
+      gotchas:
+        - "Do not patch before reproducing or collecting evidence."
+        - "If two hypotheses fail, stop and summarize evidence rather than stacking guards."
+      capsule_text: |
+        Skill: debugging-error-recovery
+        Use when diagnosing bugs, failing tests, runtime errors, or broken workflows.
+        Procedure:
+        1. Restate the exact symptom and expected behavior.
+        2. Reproduce or capture concrete evidence before editing.
+        3. Form one hypothesis and make the smallest reversible change.
+        4. Re-run the same repro path.
+        5. If the hypothesis fails, update the evidence model before another patch.
+        Pitfalls:
+        - Do not add defensive branches without proving the failed condition.
+        - Do not treat a different passing path as proof the original bug is fixed.
+        Verification:
+        - The same trigger path that failed now passes, with observed output or test evidence.
+
+    - capability_id: skill:github:nextlevelbuilder:ui-ux-pro-max
+      level: mounted
+      source_id: github_skills_curated
+      source_uri: https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
+      trust: high
+      qualification_status: qualified
+      tags:
+        - frontend
+        - ui
+        - ux
+        - design
+      description_short: "Improve product UI/UX quality, hierarchy, layout, interaction affordance, and visual polish."
+      use_when:
+        - "The task involves building or reviewing a UI, frontend screen, dashboard, web app, or product surface."
+        - "The user asks for better design, visual polish, UX, layout, or product feel."
+      avoid_when:
+        - "The task is backend-only or purely mechanical."
+      gotchas:
+        - "Classify product/workspace surfaces separately from landing/showcase surfaces."
+        - "Prefer usable product composition over decorative card mosaics."
+      capsule_text: |
+        Skill: ui-ux-pro-max
+        Use when building or reviewing product UI/UX.
+        Procedure:
+        1. Classify the surface: product/workspace, dashboard, landing, showcase, or game.
+        2. Define visual thesis, content plan, and interaction thesis before changing components.
+        3. Prioritize hierarchy, density, state clarity, and workflow ergonomics.
+        4. Use existing design tokens and component conventions when present.
+        5. Verify desktop and mobile layout for overflow, overlap, and incoherent spacing.
+        Pitfalls:
+        - Do not apply landing-page art direction to routine product surfaces.
+        - Do not use decoration as a substitute for information architecture.
+        Verification:
+        - The first viewport communicates scope, state, and primary action without visual clutter.
+
+    - capability_id: skill:github:leonxlnx:taste-review
+      level: mounted
+      source_id: github_skills_curated
+      source_uri: https://github.com/Leonxlnx/taste-skill
+      trust: high
+      qualification_status: qualified
+      tags:
+        - frontend
+        - design
+        - taste
+        - review
+      description_short: "Review frontend work for taste, anti-slop issues, visual coherence, and product polish."
+      use_when:
+        - "The user asks whether a UI looks good, feels polished, or needs design/taste improvements."
+        - "A generated frontend needs a quality pass before delivery."
+      avoid_when:
+        - "The task is non-visual or no UI artifact exists."
+      gotchas:
+        - "Be specific about what to change; vague taste criticism is not useful."
+      capsule_text: |
+        Skill: taste-review
+        Use for frontend/UI taste review and anti-slop passes.
+        Procedure:
+        1. Inspect hierarchy, spacing, typography, contrast, alignment, visual rhythm, and copy density.
+        2. Identify the highest-impact polish issues first.
+        3. Recommend concrete changes with expected visual effect.
+        4. Preserve the existing design system unless the user asks for redesign.
+        Pitfalls:
+        - Do not replace the user's product with a generic trendy layout.
+        - Do not over-index on color or gradients when structure is the real problem.
+        Verification:
+        - Recommendations are actionable and tied to visible issues.
+
+    - capability_id: skill:github:nicobailon:visual-explainer
+      level: mounted
+      source_id: github_skills_curated
+      source_uri: https://github.com/nicobailon/visual-explainer
+      trust: medium
+      qualification_status: qualified
+      tags:
+        - diagram
+        - explanation
+        - visual
+        - documentation
+      description_short: "Turn complex systems, workflows, data, or plans into diagrams and visual explanations."
+      use_when:
+        - "The user asks for a diagram, visual explanation, architecture map, flow, or illustrated comparison."
+        - "A complex plan or system would be easier to understand visually."
+      avoid_when:
+        - "A short textual answer is clearer than a diagram."
+      gotchas:
+        - "Choose the simplest visual form: flow, table, sequence, state map, or architecture diagram."
+      capsule_text: |
+        Skill: visual-explainer
+        Use when a visual explanation would reduce complexity.
+        Procedure:
+        1. Identify the concept, audience, and decision the visual should support.
+        2. Choose the smallest useful visual form.
+        3. Label actors, inputs, outputs, states, and failure points explicitly.
+        4. Keep the diagram readable in plain Markdown when possible.
+        Pitfalls:
+        - Do not create decorative diagrams that hide uncertainty.
+        - Do not use a visual if a concise table is clearer.
+        Verification:
+        - The visual makes the relationship, sequence, or tradeoff easier to inspect.
+
+    - capability_id: skill:github:nidhinjs:prompt-master
+      level: mounted
+      source_id: github_skills_curated
+      source_uri: https://github.com/nidhinjs/prompt-master
+      trust: medium
+      qualification_status: qualified
+      tags:
+        - prompt
+        - writing
+        - instruction
+      description_short: "Rewrite rough requests into clear, complete, ready-to-send prompts without changing intent."
+      use_when:
+        - "The user asks to refine, polish, structure, or improve a prompt."
+        - "A rough instruction needs to become actionable for another agent or model."
+      avoid_when:
+        - "The user wants the underlying task executed instead of prompt refinement."
+      gotchas:
+        - "Preserve intent, constraints, tone, and explicit asks."
+      capsule_text: |
+        Skill: prompt-master
+        Use when refining or structuring prompts and task instructions.
+        Procedure:
+        1. Preserve the user's intent, constraints, tone, and explicit asks.
+        2. Remove ambiguity and add structure only when it improves actionability.
+        3. Do not answer or execute the underlying task unless asked.
+        4. Return the improved prompt text directly when that is the requested artifact.
+        Pitfalls:
+        - Do not add new requirements.
+        - Do not include meta commentary in composer-ready prompt text.
+        Verification:
+        - The refined prompt is complete, specific, and still faithful to the original request.
 
 role_defaults:
   foreman:

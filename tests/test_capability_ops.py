@@ -1505,6 +1505,141 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_default_search_surfaces_cccc_glue_skills_and_enable_activates_capsule(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            cases = [
+                ("meeting notes action items", "skill:cccc:meeting-notes"),
+                ("decision log rationale owner", "skill:cccc:decision-log"),
+                ("standup blockers today plan", "skill:cccc:standup-summary"),
+                ("briefing synthesis facts gaps next actions", "skill:cccc:briefing-synthesis"),
+                ("vet mcp skill before install", "skill:cccc:capability-vet"),
+                ("release notes changelog breaking changes", "skill:cccc:release-notes"),
+                ("readme i18n translate markdown links", "skill:cccc:readme-i18n"),
+                ("app i18n localization hardcoded strings", "skill:cccc:app-i18n-localization"),
+                ("csv table analysis missing values", "skill:cccc:csv-table-analysis"),
+                ("api interface contract daemon mcp event", "skill:cccc:api-interface-design"),
+                ("artifact qa verify generated report file", "skill:cccc:artifact-qa"),
+                ("browser qa frontend responsive console", "skill:cccc:browser-qa"),
+                ("code simplification remove fallback states", "skill:cccc:code-simplification"),
+                ("copy editing polish product wording", "skill:cccc:copy-editing"),
+                ("documentation adr architecture decision", "skill:cccc:documentation-adr"),
+                ("report writing audit findings evidence", "skill:cccc:report-writing"),
+                ("slide deck outline ppt presentation", "skill:cccc:slide-deck-outline"),
+                ("test driven development regression coverage", "skill:cccc:test-driven-development"),
+                ("frontend ui engineering product workflow responsive", "skill:cccc:frontend-ui-engineering"),
+                ("git workflow versioning commit merge diff", "skill:cccc:git-workflow-versioning"),
+                ("performance optimization latency baseline bottleneck", "skill:cccc:performance-optimization"),
+                ("product requirements mvp success criteria", "skill:cccc:product-requirements"),
+                ("security privacy review secrets permissions risk", "skill:cccc:security-privacy-review"),
+                ("spec driven development acceptance criteria", "skill:cccc:spec-driven-development"),
+            ]
+            with patch.dict(os.environ, {"CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK": "0"}, clear=False):
+                for query, capability_id in cases:
+                    with self.subTest(capability_id=capability_id):
+                        search_resp, _ = self._call(
+                            "capability_search",
+                            {
+                                "group_id": gid,
+                                "actor_id": "peer-1",
+                                "by": "peer-1",
+                                "query": query,
+                                "kind": "skill",
+                                "limit": 20,
+                            },
+                        )
+                        self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+                        result = search_resp.result if isinstance(search_resp.result, dict) else {}
+                        items = result.get("items") if isinstance(result.get("items"), list) else []
+                        ids_list = [str(item.get("capability_id") or "") for item in items if isinstance(item, dict)]
+                        self.assertEqual(len(ids_list), len(set(ids_list)))
+                        ids = set(ids_list)
+                        self.assertIn(capability_id, ids)
+
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "scope": "session",
+                    "capability_id": "skill:cccc:meeting-notes",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+            enable_result = enable_resp.result if isinstance(enable_resp.result, dict) else {}
+            self.assertEqual(str(enable_result.get("state") or ""), "runnable")
+
+            state_resp, _ = self._call("capability_state", {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"})
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            active_capsule_skills = (
+                state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            )
+            active = next(
+                (
+                    item
+                    for item in active_capsule_skills
+                    if isinstance(item, dict)
+                    and str(item.get("capability_id") or "") == "skill:cccc:meeting-notes"
+                ),
+                None,
+            )
+            self.assertIsNotNone(active)
+            self.assertIn("Action items", str((active or {}).get("capsule_text") or ""))
+        finally:
+            cleanup()
+
+    def test_default_search_surfaces_high_roi_curated_skill_records(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            cases = [
+                ("code review regressions tests", "skill:github:addyosmani:code-review-quality"),
+                ("debug failing test reproduce error", "skill:github:addyosmani:debugging-error-recovery"),
+                ("ui ux polish product dashboard", "skill:github:nextlevelbuilder:ui-ux-pro-max"),
+                ("taste review frontend visual slop", "skill:github:leonxlnx:taste-review"),
+                ("visual explainer architecture diagram", "skill:github:nicobailon:visual-explainer"),
+                ("refine prompt composer instruction", "skill:github:nidhinjs:prompt-master"),
+            ]
+            with patch.dict(os.environ, {"CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK": "0"}, clear=False):
+                for query, capability_id in cases:
+                    with self.subTest(capability_id=capability_id):
+                        search_resp, _ = self._call(
+                            "capability_search",
+                            {
+                                "group_id": gid,
+                                "actor_id": "peer-1",
+                                "by": "peer-1",
+                                "query": query,
+                                "kind": "skill",
+                                "limit": 20,
+                            },
+                        )
+                        self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+                        result = search_resp.result if isinstance(search_resp.result, dict) else {}
+                        items = result.get("items") if isinstance(result.get("items"), list) else []
+                        row = next(
+                            (
+                                item
+                                for item in items
+                                if isinstance(item, dict)
+                                and str(item.get("capability_id") or "") == capability_id
+                            ),
+                            None,
+                        )
+                        self.assertIsNotNone(row, f"{capability_id} missing from search results for {query!r}")
+                        self.assertEqual(str((row or {}).get("source_id") or ""), "github_skills_curated")
+                        self.assertEqual(str((row or {}).get("enable_hint") or ""), "enable_now")
+        finally:
+            cleanup()
+
     def test_default_policy_surfaces_risky_third_party_mcp_not_hidden(self) -> None:
         """Risky third-party MCPs (desktop-commander) are indexed by default policy,
         so they are hidden from normal search results (policy_hidden_count > 0)."""
@@ -1513,18 +1648,19 @@ class TestCapabilityOps(unittest.TestCase):
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
 
-            search_resp, _ = self._call(
-                "capability_search",
-                {
-                    "group_id": gid,
-                    "actor_id": "peer-1",
-                    "by": "peer-1",
-                    "query": "desktop-commander",
-                    "kind": "mcp_toolpack",
-                    "include_external": True,
-                    "limit": 20,
-                },
-            )
+            with patch.dict(os.environ, {"CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK": "0"}, clear=False):
+                search_resp, _ = self._call(
+                    "capability_search",
+                    {
+                        "group_id": gid,
+                        "actor_id": "peer-1",
+                        "by": "peer-1",
+                        "query": "desktop-commander",
+                        "kind": "mcp_toolpack",
+                        "include_external": True,
+                        "limit": 20,
+                    },
+                )
             self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
             result = search_resp.result if isinstance(search_resp.result, dict) else {}
             items = result.get("items") if isinstance(result.get("items"), list) else []
@@ -1541,6 +1677,81 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertIsNone(row)
             diag = result.get("search_diagnostics") if isinstance(result.get("search_diagnostics"), dict) else {}
             self.assertGreater(int(diag.get("policy_hidden_count") or 0), 0)
+        finally:
+            cleanup()
+
+    def test_default_policy_mounts_only_lightweight_mcp_exceptions(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            visible_cases = [
+                ("context7", "mcp:io.github.upstash/context7"),
+                ("repomix", "mcp:io.github.yamadashy/repomix"),
+                ("gitmcp", "mcp:io.github.idosal/git-mcp"),
+            ]
+            with patch.dict(os.environ, {"CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK": "0"}):
+                for query, capability_id in visible_cases:
+                    with self.subTest(capability_id=capability_id):
+                        search_resp, _ = self._call(
+                            "capability_search",
+                            {
+                                "group_id": gid,
+                                "actor_id": "peer-1",
+                                "by": "peer-1",
+                                "query": query,
+                                "kind": "mcp_toolpack",
+                                "include_external": True,
+                                "limit": 5,
+                            },
+                        )
+                        self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+                        result = search_resp.result if isinstance(search_resp.result, dict) else {}
+                        items = result.get("items") if isinstance(result.get("items"), list) else []
+                        row = next(
+                            (
+                                item
+                                for item in items
+                                if isinstance(item, dict)
+                                and str(item.get("capability_id") or "") == capability_id
+                            ),
+                            None,
+                        )
+                        self.assertIsNotNone(row, f"{capability_id} missing from search results")
+                        self.assertEqual(str((row or {}).get("policy_level") or ""), "mounted")
+                        self.assertEqual(str((row or {}).get("enable_hint") or ""), "enable_now")
+
+                hidden_cases = [
+                    ("github-mcp-server", "mcp:io.github.github/github-mcp-server"),
+                    ("chrome-devtools-mcp", "mcp:io.github.ChromeDevTools/chrome-devtools-mcp"),
+                    ("brave-search-mcp-server", "mcp:io.github.brave/brave-search-mcp-server"),
+                ]
+                for query, capability_id in hidden_cases:
+                    with self.subTest(capability_id=capability_id):
+                        search_resp, _ = self._call(
+                            "capability_search",
+                            {
+                                "group_id": gid,
+                                "actor_id": "peer-1",
+                                "by": "peer-1",
+                                "query": query,
+                                "kind": "mcp_toolpack",
+                                "include_external": True,
+                                "limit": 5,
+                            },
+                        )
+                        self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
+                        result = search_resp.result if isinstance(search_resp.result, dict) else {}
+                        items = result.get("items") if isinstance(result.get("items"), list) else []
+                        ids = {
+                            str(item.get("capability_id") or "")
+                            for item in items
+                            if isinstance(item, dict)
+                        }
+                        self.assertNotIn(capability_id, ids)
+                        diag = result.get("search_diagnostics") if isinstance(result.get("search_diagnostics"), dict) else {}
+                        self.assertGreater(int(diag.get("policy_hidden_count") or 0), 0)
         finally:
             cleanup()
 
@@ -2265,6 +2476,68 @@ class TestCapabilityOps(unittest.TestCase):
             recent = target.get("recent_success") if isinstance(target.get("recent_success"), dict) else {}
             self.assertEqual(int(recent.get("success_count") or 0), 1)
             self.assertEqual(str(recent.get("last_action") or ""), "enable")
+        finally:
+            cleanup()
+
+    def test_capability_overview_does_not_resurrect_deleted_self_proposed_from_recent_success(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        _, cleanup = self._with_home()
+        try:
+            runtime_path, runtime_doc = ops._load_runtime_doc()
+            ops._record_runtime_recent_success(
+                runtime_doc,
+                capability_id="skill:agent_self_proposed:deleted-ghost",
+                group_id="g_missing",
+                actor_id="peer-1",
+                action="enable",
+            )
+            ops._record_runtime_recent_success(
+                runtime_doc,
+                capability_id="skill:agent:legacy-deleted-ghost",
+                group_id="g_missing",
+                actor_id="peer-1",
+                action="enable",
+            )
+            ops._record_runtime_recent_success(
+                runtime_doc,
+                capability_id="mcp:runtime-only-server",
+                group_id="g_missing",
+                actor_id="peer-1",
+                action="enable",
+            )
+            ops._save_runtime_doc(runtime_path, runtime_doc)
+
+            state_path, state_doc = ops._load_state_doc()
+            ops._set_blocked_capability(
+                state_doc,
+                scope="global",
+                group_id="",
+                capability_id="skill:agent_self_proposed:deleted-ghost",
+                by="user",
+                reason="stale generated skill",
+                ttl_seconds=0,
+            )
+            ops._save_state_doc(state_path, state_doc)
+
+            resp, _ = self._call(
+                "capability_overview",
+                {
+                    "limit": 200,
+                    "include_indexed": True,
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            ids = {str(item.get("capability_id") or "") for item in items if isinstance(item, dict)}
+            self.assertNotIn("skill:agent_self_proposed:deleted-ghost", ids)
+            self.assertNotIn("skill:agent:legacy-deleted-ghost", ids)
+            self.assertIn("mcp:runtime-only-server", ids)
+
+            blocked = result.get("blocked_capabilities") if isinstance(result.get("blocked_capabilities"), list) else []
+            blocked_ids = {str(item.get("capability_id") or "") for item in blocked if isinstance(item, dict)}
+            self.assertNotIn("skill:agent_self_proposed:deleted-ghost", blocked_ids)
         finally:
             cleanup()
 
@@ -3425,6 +3698,7 @@ class TestCapabilityOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
+            self._write_allowlist_override(mcp_registry_level="mounted")
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
 
@@ -4014,7 +4288,7 @@ class TestCapabilityOps(unittest.TestCase):
                     "by": "peer-1",
                     "query": capability_id,
                     "include_external": True,
-                    "limit": 20,
+                    "limit": 80,
                 },
             )
             self.assertTrue(search_resp.ok, getattr(search_resp, "error", None))
@@ -4487,7 +4761,7 @@ class TestCapabilityOps(unittest.TestCase):
                 "capability_overview",
                 {
                     "query": capability_id,
-                    "limit": 10,
+                    "limit": 80,
                     "include_indexed": True,
                 },
             )
@@ -4698,6 +4972,22 @@ class TestCapabilityOps(unittest.TestCase):
             profile_id = str(profile.get("id") or "").strip() if isinstance(profile, dict) else ""
             self.assertTrue(profile_id)
 
+            state_path, state_doc = ops._load_state_doc()
+            ops._set_blocked_capability(
+                state_doc,
+                scope="global",
+                group_id=gid,
+                capability_id=capability_id,
+                by="user",
+                reason="stale generated skill",
+                ttl_seconds=0,
+            )
+            ops._save_state_doc(state_path, state_doc)
+
+            _, runtime_before = ops._load_runtime_doc()
+            recent_before = runtime_before.get("recent_success") if isinstance(runtime_before.get("recent_success"), dict) else {}
+            self.assertIn(capability_id, recent_before)
+
             uninstall_resp, _ = self._call(
                 "capability_uninstall",
                 {
@@ -4712,12 +5002,31 @@ class TestCapabilityOps(unittest.TestCase):
             uninstall_result = uninstall_resp.result if isinstance(uninstall_resp.result, dict) else {}
             self.assertTrue(bool(uninstall_result.get("removed_record")))
             self.assertGreaterEqual(int(uninstall_result.get("removed_bindings") or 0), 1)
+            self.assertGreaterEqual(int(uninstall_result.get("removed_blocked") or 0), 1)
             self.assertGreaterEqual(int(uninstall_result.get("removed_actor_autoload") or 0), 1)
             self.assertGreaterEqual(int(uninstall_result.get("removed_profile_autoload") or 0), 1)
 
             _, catalog_doc = ops._load_catalog_doc()
             rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
             self.assertNotIn(capability_id, rows)
+
+            _, runtime_after = ops._load_runtime_doc()
+            recent_after = runtime_after.get("recent_success") if isinstance(runtime_after.get("recent_success"), dict) else {}
+            self.assertNotIn(capability_id, recent_after)
+
+            _, state_doc_after = ops._load_state_doc()
+            global_blocked = state_doc_after.get("global_blocked") if isinstance(state_doc_after.get("global_blocked"), dict) else {}
+            self.assertNotIn(capability_id, global_blocked)
+
+            overview_resp, _ = self._call("capability_overview", {"limit": 200, "include_indexed": True})
+            self.assertTrue(overview_resp.ok, getattr(overview_resp, "error", None))
+            overview = overview_resp.result if isinstance(overview_resp.result, dict) else {}
+            overview_items = overview.get("items") if isinstance(overview.get("items"), list) else []
+            overview_ids = {str(item.get("capability_id") or "") for item in overview_items if isinstance(item, dict)}
+            self.assertNotIn(capability_id, overview_ids)
+            blocked_overview = overview.get("blocked_capabilities") if isinstance(overview.get("blocked_capabilities"), list) else []
+            blocked_overview_ids = {str(item.get("capability_id") or "") for item in blocked_overview if isinstance(item, dict)}
+            self.assertNotIn(capability_id, blocked_overview_ids)
 
             actor_list, _ = self._call("actor_list", {"group_id": gid, "by": "user"})
             self.assertTrue(actor_list.ok, getattr(actor_list, "error", None))
@@ -5183,6 +5492,7 @@ class TestCapabilityOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
+            self._write_allowlist_override(mcp_registry_level="mounted")
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
             capability_id = "mcp:example/echo-server"

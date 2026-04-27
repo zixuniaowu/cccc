@@ -71,7 +71,7 @@ def _policy_default_compiled() -> Dict[str, Any]:
             "clawhub_remote": _LEVEL_MOUNTED,
             "openclaw_skills_remote": _LEVEL_MOUNTED,
             "clawskills_remote": _LEVEL_MOUNTED,
-            "mcp_registry_official": _LEVEL_MOUNTED,
+            "mcp_registry_official": _LEVEL_INDEXED,
         },
         "capability_levels": {},
         "skill_source_levels": {
@@ -225,12 +225,27 @@ def _compile_allowlist_policy(raw: Any) -> Dict[str, Any]:
             {
                 "capability_id": cid,
                 "level": level,
+                "name": str(item.get("name") or "").strip(),
+                "description_short": str(item.get("description_short") or "").strip(),
                 "trust": str(item.get("trust") or "").strip().lower(),
                 "notes": str(item.get("notes") or "").strip(),
+                "source_uri": str(item.get("source_uri") or "").strip(),
+                "source_record_id": str(item.get("source_record_id") or "").strip(),
+                "source_record_version": str(item.get("source_record_version") or "").strip(),
                 "install_mode_preference": str(item.get("install_mode_preference") or "").strip(),
+                "install_mode": str(item.get("install_mode") or "").strip(),
+                "install_spec": dict(item.get("install_spec") or {}) if isinstance(item.get("install_spec"), dict) else {},
                 "risk_tags": list(item.get("risk_tags") or []) if isinstance(item.get("risk_tags"), list) else [],
+                "tags": list(item.get("tags") or []) if isinstance(item.get("tags"), list) else [],
                 "required_secrets": (
                     list(item.get("required_secrets") or []) if isinstance(item.get("required_secrets"), list) else []
+                ),
+                "license": str(item.get("license") or "").strip(),
+                "qualification_status": str(item.get("qualification_status") or "").strip().lower(),
+                "qualification_reasons": (
+                    [str(x).strip() for x in item.get("qualification_reasons") if str(x).strip()]
+                    if isinstance(item.get("qualification_reasons"), list)
+                    else []
                 ),
             }
         )

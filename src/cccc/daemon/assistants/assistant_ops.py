@@ -621,6 +621,52 @@ def _voice_ask_requests_public(state: Dict[str, Any], *, keep: int = 10, include
     return [_voice_ask_request_public(item) for item in items[:keep]]
 
 
+def _voice_ask_request_order_marker(record: Dict[str, Any]) -> str:
+    return str(record.get("input_appended_at") or record.get("created_at") or record.get("updated_at") or "")
+
+
+def _newer_active_voice_ask_request(state: Dict[str, Any], *, request_id: str) -> Dict[str, Any]:
+    clean_request_id = _clean_voice_ask_request_id(request_id)
+    requests = state.get("voice_ask_requests") if isinstance(state.get("voice_ask_requests"), dict) else {}
+    current = requests.get(clean_request_id) if isinstance(requests.get(clean_request_id), dict) else {}
+    current_marker = _voice_ask_request_order_marker(current)
+    candidates: list[Dict[str, Any]] = []
+    for candidate_id, raw_candidate in requests.items():
+        if str(candidate_id) == clean_request_id or not isinstance(raw_candidate, dict):
+            continue
+        if str(raw_candidate.get("cleared_at") or "").strip():
+            continue
+        if str(raw_candidate.get("status") or "").strip().lower() not in {"pending", "working"}:
+            continue
+        marker = _voice_ask_request_order_marker(raw_candidate)
+        if current_marker and marker <= current_marker:
+            continue
+        candidates.append(dict(raw_candidate))
+    candidates.sort(key=_voice_ask_request_order_marker)
+    return candidates[-1] if candidates else {}
+
+
+def _voice_active_ask_health(record: Dict[str, Any]) -> Dict[str, Any]:
+    request_id = _clean_voice_ask_request_id(record.get("request_id"))
+    status = str(record.get("status") or "pending").strip().lower()
+    if status not in {"pending", "working"}:
+        status = "pending"
+    target_kind = str(record.get("target_kind") or "secretary").strip().lower() or "secretary"
+    health_status = "document_refine_requested" if target_kind == "document" and status == "pending" else f"ask_{status}"
+    health = {
+        "status": health_status,
+        "last_ask_request_id": request_id,
+        "active_request_id": request_id,
+        "active_request_kind": "document" if target_kind == "document" else "ask",
+        "active_request_status": status,
+        "active_request_updated_at": str(record.get("updated_at") or record.get("created_at") or ""),
+    }
+    document_path = str(record.get("document_path") or "").strip()
+    if document_path:
+        health["last_document_path"] = document_path
+    return health
+
+
 def _upsert_voice_ask_request(
     state: Dict[str, Any],
     *,
@@ -4299,6 +4345,13 @@ def handle_assistant_voice_input_append(
                 "last_input_kind": event_kind,
                 "last_prompt_request_id": request_id if input_kind == "prompt_refine" else "",
                 "last_ask_request_id": request_id if input_kind == "voice_instruction" else "",
+                "active_request_id": request_id,
+                "active_request_kind": (
+                    "prompt"
+                    if input_kind == "prompt_refine"
+                    else "document" if str(metadata.get("target_kind") or "").strip().lower() == "document" else "ask"
+                ),
+                "active_request_status": "pending",
                 "last_document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
                 "last_input_at": utc_now_iso(),
             },
@@ -4462,6 +4515,9 @@ def handle_assistant_voice_document_instruction(
                 "status": "document_refine_requested",
                 "last_document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
                 "last_ask_request_id": request_id,
+                "active_request_id": request_id,
+                "active_request_kind": "document",
+                "active_request_status": "pending",
                 "last_document_instruction_at": utc_now_iso(),
             },
         )
@@ -4764,14 +4820,24 @@ def handle_assistant_voice_instruction_feedback(args: Dict[str, Any]) -> DaemonR
                 "reply_text": str(record.get("reply_text") or ""),
             },
         )
+        lifecycle = "working" if status == "working" else "waiting" if status == "needs_user" else "idle"
+        health = {
+            "status": f"ask_{status}",
+            "last_ask_request_id": request_id,
+            "last_ask_feedback_at": now,
+        }
+        newer_active_request = (
+            _newer_active_voice_ask_request(state, request_id=request_id)
+            if status != "working"
+            else {}
+        )
+        if newer_active_request:
+            lifecycle = "working"
+            health.update(_voice_active_ask_health(newer_active_request))
         assistant_after = _set_voice_assistant_runtime(
             group,
-            lifecycle="working" if status == "working" else "waiting" if status == "needs_user" else "idle",
-            health={
-                "status": f"ask_{status}",
-                "last_ask_request_id": request_id,
-                "last_ask_feedback_at": now,
-            },
+            lifecycle=lifecycle,
+            health=health,
         )
         return DaemonResponse(
             ok=True,
@@ -4899,6 +4965,7 @@ def handle_assistant_voice_request(args: Dict[str, Any]) -> DaemonResponse:
     )
     notify_event_id = str(notify_event.get("id") or "").strip()
     ask_request: Dict[str, Any] = {}
+    newer_active_request: Dict[str, Any] = {}
     if clean_source_request_id:
         state = _load_runtime_state(group)
         ask_request = _upsert_voice_ask_request(
@@ -4913,6 +4980,7 @@ def handle_assistant_voice_request(args: Dict[str, Any]) -> DaemonResponse:
             target_actor_id=target_actor_id,
             now=utc_now_iso(),
         )
+        newer_active_request = _newer_active_voice_ask_request(state, request_id=clean_source_request_id)
         _save_runtime_state(group, state)
     event = append_event(
         group.ledger_path,
@@ -4934,15 +5002,20 @@ def handle_assistant_voice_request(args: Dict[str, Any]) -> DaemonResponse:
                 "notify_event_id": notify_event_id,
             },
     )
+    lifecycle = "waiting" if requires_ack else "idle"
+    health = {
+        "status": "request_sent",
+        "last_request_id": request_id,
+        "last_request_target_actor_id": target_actor_id,
+        "last_request_notify_event_id": notify_event_id,
+    }
+    if newer_active_request:
+        lifecycle = "working"
+        health.update(_voice_active_ask_health(newer_active_request))
     assistant_after = _set_voice_assistant_runtime(
         group,
-        lifecycle="waiting" if requires_ack else "idle",
-        health={
-            "status": "request_sent",
-            "last_request_id": request_id,
-            "last_request_target_actor_id": target_actor_id,
-            "last_request_notify_event_id": notify_event_id,
-        },
+        lifecycle=lifecycle,
+        health=health,
     )
     return DaemonResponse(
         ok=True,

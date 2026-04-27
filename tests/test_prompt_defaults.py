@@ -45,6 +45,8 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("## Control Plane", body)
         self.assertIn("## Memory and Recall", body)
         self.assertIn("## Capability", body)
+        self.assertIn("search capability before inventing a new workflow", body)
+        self.assertIn('`enable_hint="enable_now"`', body)
         self.assertIn("### Skill Evolution Proposals", body)
         self.assertIn("## Role Notes", body)
         self.assertIn("## Appendix", body)

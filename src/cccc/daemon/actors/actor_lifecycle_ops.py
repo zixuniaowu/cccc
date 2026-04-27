@@ -16,7 +16,7 @@ from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
-from .actor_runtime_ops import resolve_actor_launch_spec
+from .actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
 from .actor_profile_runtime import ActorProfileAccessDeniedError, resolve_linked_actor_before_start
 from ..pet.review_scheduler import request_pet_review
 
@@ -353,6 +353,7 @@ def handle_actor_restart(
                 actor_id=actor_id,
                 cwd=cwd,
                 env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+                model=model_from_runtime_command(launch_spec["effective_command"]),
             )
         elif runtime == "claude" and runner_effective == "headless":
             claude_app_supervisor.start_actor(
@@ -360,6 +361,7 @@ def handle_actor_restart(
                 actor_id=actor_id,
                 cwd=cwd,
                 env=dict(inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
+                model=model_from_runtime_command(launch_spec["effective_command"]),
             )
         elif runner_effective == "headless":
             headless_runner.SUPERVISOR.start_actor(

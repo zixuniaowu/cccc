@@ -45,6 +45,7 @@ from ._runtime import (
     _runtime_capability_artifacts,
     _runtime_actor_bindings,
     _record_runtime_recent_success,
+    _remove_runtime_recent_success,
     _set_runtime_actor_binding,
     _remove_runtime_group_capability_bindings,
     _remove_runtime_capability_bindings_all_groups,
@@ -69,6 +70,7 @@ from ._state import (
     _collect_blocked_capabilities,
     _remove_capability_bindings,
     _remove_capability_bindings_all_groups,
+    _remove_blocked_capability_all_scopes,
     _has_any_binding_for_capability,
     handle_capability_enable,
 )
@@ -197,15 +199,26 @@ def _build_curated_records_from_policy(policy: Dict[str, Any]) -> Dict[str, Dict
         level = _normalize_policy_level(raw.get("level"), default=_LEVEL_MOUNTED)
         trust = str(raw.get("trust") or "").strip().lower()
         notes = str(raw.get("notes") or "").strip()
+        name = str(raw.get("name") or "").strip()
+        description_short = str(raw.get("description_short") or "").strip()
+        source_uri = str(raw.get("source_uri") or "").strip()
+        source_record_id = str(raw.get("source_record_id") or "").strip()
+        source_record_version = str(raw.get("source_record_version") or "").strip()
+        license_text = str(raw.get("license") or "").strip()
         risk_tags_raw = raw.get("risk_tags")
         risk_tags = [str(x).strip() for x in risk_tags_raw if str(x).strip()] if isinstance(risk_tags_raw, list) else []
+        tags_raw = raw.get("tags")
+        tags = [str(x).strip() for x in tags_raw if str(x).strip()] if isinstance(tags_raw, list) else []
         required_secrets_raw = raw.get("required_secrets")
         required_secrets = (
             [str(x).strip() for x in required_secrets_raw if str(x).strip()]
             if isinstance(required_secrets_raw, list)
             else []
         )
-        install_mode, install_spec = _curated_install_metadata(str(raw.get("install_mode_preference") or ""))
+        install_mode = str(raw.get("install_mode") or "").strip().lower()
+        install_spec = dict(raw.get("install_spec") or {}) if isinstance(raw.get("install_spec"), dict) else {}
+        if not install_mode:
+            install_mode, install_spec = _curated_install_metadata(str(raw.get("install_mode_preference") or ""))
         supported, unsupported_reason = _supported_external_install_record(
             {"install_mode": install_mode, "install_spec": install_spec}
         )
@@ -221,24 +234,31 @@ def _build_curated_records_from_policy(policy: Dict[str, Any]) -> Dict[str, Dict
             reasons.append("risk_tags_present")
         if unsupported_reason:
             reasons.append(unsupported_reason)
+        for reason in raw.get("qualification_reasons") if isinstance(raw.get("qualification_reasons"), list) else []:
+            reason_text = str(reason or "").strip()
+            if reason_text and reason_text not in reasons:
+                reasons.append(reason_text)
+        qualification = str(raw.get("qualification_status") or "").strip().lower()
+        if qualification not in _QUAL_STATES:
+            qualification = _QUAL_QUALIFIED if (supported or hydration_needed) else _QUAL_UNAVAILABLE
         out[cap_id] = {
             "capability_id": cap_id,
             "kind": "mcp_toolpack",
-            "name": _display_name_from_capability_id(cap_id),
-            "description_short": notes or f"Curated MCP capability {cap_id}",
-            "tags": ["mcp", "external", "curated", *risk_tags],
+            "name": name or _display_name_from_capability_id(cap_id),
+            "description_short": description_short or notes or f"Curated MCP capability {cap_id}",
+            "tags": ["mcp", "external", "curated", *tags, *risk_tags],
             "source_id": "mcp_registry_official",
             "source_tier": "tier1",
-            "source_uri": "",
-            "source_record_id": cap_id.split(":", 1)[1],
-            "source_record_version": "",
+            "source_uri": source_uri,
+            "source_record_id": source_record_id or cap_id.split(":", 1)[1],
+            "source_record_version": source_record_version,
             "updated_at_source": now_iso,
             "last_synced_at": now_iso,
             "sync_state": "curated",
             "install_mode": install_mode,
             "install_spec": install_spec,
             "requirements": {"required_secrets": required_secrets} if required_secrets else {},
-            "license": "",
+            "license": license_text,
             "trust_tier": trust or "tier1",
             "qualification_status": qualification,
             "qualification_reasons": reasons,
@@ -1539,11 +1559,16 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
                 removed_record = True
 
         removed_bindings = 0
+        removed_blocked = 0
         has_remaining_binding = False
         with _STATE_LOCK:
             state_path, state_doc = _load_state_doc()
             if remove_generated_record:
                 removed_bindings = _remove_capability_bindings_all_groups(
+                    state_doc,
+                    capability_id=capability_id,
+                )
+                removed_blocked = _remove_blocked_capability_all_scopes(
                     state_doc,
                     capability_id=capability_id,
                 )
@@ -1554,7 +1579,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
                     capability_id=capability_id,
                 )
             has_remaining_binding = _has_any_binding_for_capability(state_doc, capability_id=capability_id)
-            if removed_bindings > 0:
+            if removed_bindings > 0 or removed_blocked > 0:
                 _save_state_doc(state_path, state_doc)
 
         removed_installation = False
@@ -1587,6 +1612,11 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
                         artifact_id=removed_artifact_id,
                     )
                     runtime_changed = True
+                if remove_generated_record and _remove_runtime_recent_success(
+                    runtime_doc,
+                    capability_id=capability_id,
+                ):
+                    runtime_changed = True
             if runtime_changed:
                 _save_runtime_doc(runtime_path, runtime_doc)
 
@@ -1604,6 +1634,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
         refresh_required = bool(
             removed_record
             or removed_bindings > 0
+            or removed_blocked > 0
             or removed_installation
             or removed_runtime_bindings > 0
             or removed_actor_autoload > 0
@@ -1615,6 +1646,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             details={
                 "removed_record": bool(removed_record),
                 "removed_bindings": int(removed_bindings),
+                "removed_blocked": int(removed_blocked),
                 "removed_installation": bool(removed_installation),
                 "removed_runtime_bindings": int(removed_runtime_bindings),
                 "removed_actor_autoload": int(removed_actor_autoload),
@@ -1630,6 +1662,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             "state": "ready",
             "removed_record": bool(removed_record),
             "removed_bindings": int(removed_bindings),
+            "removed_blocked": int(removed_blocked),
             "removed_installation": bool(removed_installation),
             "removed_runtime_bindings": int(removed_runtime_bindings),
             "removed_actor_autoload": int(removed_actor_autoload),

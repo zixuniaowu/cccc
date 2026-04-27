@@ -38,6 +38,9 @@ from .voice_secretary_control_turns import (
 
 logger = logging.getLogger(__name__)
 
+_TURN_STALL_SECONDS = 45.0
+_TURN_WAIT_POLL_SECONDS = 5.0
+
 
 def _is_missing_codex_cli_error(exc: BaseException) -> bool:
     if isinstance(exc, FileNotFoundError):
@@ -139,12 +142,12 @@ class CodexSessionState:
 
 
 class CodexAppSession:
-    def __init__(self, *, group_id: str, actor_id: str, cwd: Path, env: Dict[str, str], model: str = "gpt-5.4") -> None:
+    def __init__(self, *, group_id: str, actor_id: str, cwd: Path, env: Dict[str, str], model: str = "") -> None:
         self.group_id = str(group_id or "").strip()
         self.actor_id = str(actor_id or "").strip()
         self.cwd = cwd
         self.env = dict(env or {})
-        self.model = str(model or "gpt-5.4").strip() or "gpt-5.4"
+        self.model = str(model or "").strip()
         self._proc: Optional[subprocess.Popen[str]] = None
         self._lock = threading.Lock()
         self._pending: Dict[int, "queue.Queue[Dict[str, Any]]"] = {}
@@ -164,6 +167,8 @@ class CodexAppSession:
         self._item_snapshots_by_id: Dict[str, Dict[str, Any]] = {}
         self._active_control_kind = ""
         self._active_payload: Optional[_PendingTurn] = None
+        self._last_turn_event_monotonic = 0.0
+        self._active_stalled_emitted = False
 
     def _agent_message_phase(self, item_id: str, item: Optional[Dict[str, Any]] = None) -> str:
         stream_id = str(item_id or "").strip()
@@ -441,15 +446,17 @@ class CodexAppSession:
                 },
                 timeout=10.0,
             )
+            thread_params: Dict[str, Any] = {
+                "cwd": str(self.cwd),
+                "approvalPolicy": "never",
+                "sandbox": "danger-full-access",
+                "personality": "pragmatic",
+            }
+            if self.model:
+                thread_params["model"] = self.model
             thread_resp = self._request(
                 "thread/start",
-                {
-                    "cwd": str(self.cwd),
-                    "approvalPolicy": "never",
-                    "sandbox": "danger-full-access",
-                    "model": self.model,
-                    "personality": "pragmatic",
-                },
+                thread_params,
                 timeout=20.0,
             )
             thread = thread_resp.get("thread") if isinstance(thread_resp, dict) else {}
@@ -711,6 +718,31 @@ class CodexAppSession:
             items.append({"type": "text", "text": text})
         return items
 
+    def _maybe_emit_turn_stalled(self, *, payload: _PendingTurn, turn_id: str) -> None:
+        with self._lock:
+            if self._active_stalled_emitted:
+                return
+            last_event = float(self._last_turn_event_monotonic or 0.0)
+            elapsed = time.monotonic() - last_event if last_event > 0 else 0.0
+            if elapsed < _TURN_STALL_SECONDS:
+                return
+            self._active_stalled_emitted = True
+            self._session_state.status = "waiting"
+            self._session_state.updated_at = utc_now_iso()
+        self._persist_state()
+        event_type = "headless.control.stalled" if payload.control_kind else "headless.turn.stalled"
+        self._emit(
+            event_type,
+            {
+                "turn_id": turn_id,
+                "event_id": payload.event_id,
+                "control_kind": payload.control_kind or None,
+                "seconds_since_last_event": round(elapsed, 3),
+                "threshold_seconds": _TURN_STALL_SECONDS,
+                "reason": "runtime_no_events_after_turn_started",
+            },
+        )
+
     def _turn_loop(self) -> None:
         while self.is_running():
             try:
@@ -787,10 +819,11 @@ class CodexAppSession:
                 with self._lock:
                     self._active_turn_id = turn_id
                     self._active_event_id = payload.event_id
-                    if not payload.control_kind:
-                        self._session_state.status = "working"
+                    self._session_state.status = "working"
                     self._session_state.current_task_id = turn_id or payload.event_id or None
                     self._session_state.updated_at = utc_now_iso()
+                    self._last_turn_event_monotonic = time.monotonic()
+                    self._active_stalled_emitted = False
                 self._persist_state()
                 if payload.control_kind:
                     self._emit(
@@ -836,13 +869,21 @@ class CodexAppSession:
                     },
                 )
                 continue
-            self._turn_done.wait()
+            while self.is_running():
+                if self._turn_done.wait(timeout=_TURN_WAIT_POLL_SECONDS):
+                    break
+                self._maybe_emit_turn_stalled(payload=payload, turn_id=turn_id)
 
     def _handle_notification(self, method: str, params: Dict[str, Any]) -> None:
         now = utc_now_iso()
         with self._lock:
             active_event_id = str(self._active_event_id or "").strip()
             control_kind = str(self._active_control_kind or "").strip().lower()
+            if self._active_turn_id or active_event_id:
+                self._last_turn_event_monotonic = time.monotonic()
+                if self._active_stalled_emitted and self._session_state.status == "waiting":
+                    self._session_state.status = "working"
+                    self._session_state.updated_at = now
         if method == "turn/started":
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
             turn_id = str(turn.get("id") or "").strip()
@@ -1240,12 +1281,12 @@ class CodexAppSession:
 
 
 class _FallbackCodexAppSession:
-    def __init__(self, *, group_id: str, actor_id: str, cwd: Path, env: Dict[str, str], model: str = "gpt-5.4", reason: str = "") -> None:
+    def __init__(self, *, group_id: str, actor_id: str, cwd: Path, env: Dict[str, str], model: str = "", reason: str = "") -> None:
         self.group_id = str(group_id or "").strip()
         self.actor_id = str(actor_id or "").strip()
         self.cwd = cwd
         self.env = dict(env or {})
-        self.model = str(model or "gpt-5.4").strip() or "gpt-5.4"
+        self.model = str(model or "").strip()
         self._reason = str(reason or "").strip() or "codex CLI is unavailable"
         self._running = False
         self._session_state = CodexSessionState(status="idle")
@@ -1358,7 +1399,7 @@ class CodexAppSessionManager:
         self._lock = threading.Lock()
         self._sessions: Dict[tuple[str, str], CodexAppSession] = {}
 
-    def start_actor(self, *, group_id: str, actor_id: str, cwd: Path, env: Dict[str, str], model: str = "gpt-5.4") -> CodexAppSession:
+    def start_actor(self, *, group_id: str, actor_id: str, cwd: Path, env: Dict[str, str], model: str = "") -> CodexAppSession:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         if not key[0] or not key[1]:
             raise ValueError("missing group_id/actor_id")

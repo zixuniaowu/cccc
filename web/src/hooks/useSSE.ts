@@ -585,6 +585,19 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         return;
       }
 
+      if (eventType === "headless.turn.stalled") {
+        updateHeadlessActorRuntime({
+          id: actorId,
+          running: true,
+          idle_seconds: null,
+          effective_working_state: "waiting",
+          effective_working_reason: "headless_turn_stalled",
+          effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
+          effective_active_task_id: typeof data.turn_id === "string" ? data.turn_id : null,
+        });
+        return;
+      }
+
       if (eventType === "headless.turn.completed" || eventType === "headless.turn.failed") {
         flushPendingHeadlessActivities(groupId, actorId);
         flushPendingHeadlessMessages(groupId, actorId);
@@ -612,6 +625,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         eventType === "headless.control.queued"
         || eventType === "headless.control.started"
         || eventType === "headless.control.requeued"
+        || eventType === "headless.control.stalled"
         || eventType === "headless.control.completed"
         || eventType === "headless.control.failed"
       ) {
@@ -631,6 +645,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
               return translateActorLabel("headlessControlStarted", "Processing control task");
             case "headless.control.requeued":
               return translateActorLabel("headlessControlRequeued", "Retrying control task");
+            case "headless.control.stalled":
+              return translateActorLabel("headlessControlStalled", "Control task is waiting");
             case "headless.control.completed":
               return translateActorLabel("headlessControlCompleted", "Control task completed");
             case "headless.control.failed":
@@ -668,6 +684,16 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
             effective_active_task_id: null,
           });
           clearEmptyStreamingEventsForActor(actorId, groupId);
+        } else if (eventType === "headless.control.stalled") {
+          updateHeadlessActorRuntime({
+            id: actorId,
+            running: true,
+            idle_seconds: null,
+            effective_working_state: "waiting",
+            effective_working_reason: "headless_control_stalled",
+            effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
+            effective_active_task_id: turnId || controlEventId || null,
+          });
         } else {
           updateHeadlessActorRuntime({
             id: actorId,

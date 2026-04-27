@@ -15,7 +15,7 @@ from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...util.conv import coerce_bool
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
-from ..actors.actor_runtime_ops import resolve_actor_launch_spec
+from ..actors.actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
 from ..assistants.voice_secretary_runtime_ops import (
     capture_voice_secretary_actor_state,
     restore_voice_secretary_actor_state,
@@ -199,6 +199,7 @@ def autostart_running_groups(
                         actor_id=actor_id,
                         cwd=cwd,
                         env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                        model=model_from_runtime_command(launch_spec["effective_command"]),
                     )
                 elif runtime == "claude" and effective_runner == "headless":
                     claude_app_supervisor.start_actor(
@@ -206,6 +207,7 @@ def autostart_running_groups(
                         actor_id=actor_id,
                         cwd=cwd,
                         env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                        model=model_from_runtime_command(launch_spec["effective_command"]),
                     )
                 elif effective_runner == "headless":
                     headless_runner.SUPERVISOR.start_actor(

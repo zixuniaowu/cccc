@@ -1193,6 +1193,7 @@ Result:
   state: "ready"
   removed_record: boolean
   removed_bindings: number
+  removed_blocked?: number
   removed_installation: boolean
   removed_runtime_bindings?: number
   removed_actor_autoload: number

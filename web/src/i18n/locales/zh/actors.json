@@ -249,6 +249,7 @@
   "headlessControlQueued": "控制任务已排队",
   "headlessControlStarted": "正在处理控制任务",
   "headlessControlRequeued": "控制任务正在重试",
+  "headlessControlStalled": "控制任务等待中",
   "headlessControlCompleted": "控制任务处理完成",
   "headlessControlFailed": "控制任务处理失败",
   "headlessControlUpdated": "控制任务更新"

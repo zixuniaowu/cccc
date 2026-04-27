@@ -3077,6 +3077,68 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_late_feedback_preserves_newer_active_request_state(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            first, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "voice_instruction",
+                    "request_id": "voice-ask-old",
+                    "instruction": "先查一下今天的日程。",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+
+            second, _ = self._call(
+                "assistant_voice_input_append",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "kind": "voice_instruction",
+                    "request_id": "voice-ask-new",
+                    "instruction": "再提醒小抠处理图片任务。",
+                    "language": "zh-CN",
+                },
+            )
+            self.assertTrue(second.ok, getattr(second, "error", None))
+
+            done_old, _ = self._call(
+                "assistant_voice_instruction_feedback",
+                {
+                    "group_id": group_id,
+                    "by": "voice-secretary",
+                    "request_id": "voice-ask-old",
+                    "status": "done",
+                    "reply_text": "今天日程已整理。",
+                },
+            )
+            self.assertTrue(done_old.ok, getattr(done_old, "error", None))
+            assistant = (done_old.result or {}).get("assistant") if isinstance(done_old.result, dict) else {}
+            health = assistant.get("health") if isinstance(assistant, dict) and isinstance(assistant.get("health"), dict) else {}
+            self.assertEqual(assistant.get("lifecycle"), "working")
+            self.assertEqual(health.get("last_ask_request_id"), "voice-ask-new")
+            self.assertEqual(health.get("active_request_id"), "voice-ask-new")
+            self.assertEqual(health.get("active_request_status"), "pending")
+
+            state, _ = self._call("assistant_state", {"group_id": group_id, "assistant_id": "voice_secretary"})
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            requests = (state.result or {}).get("ask_requests") if isinstance(state.result, dict) else []
+            by_id = {str(item.get("request_id") or ""): item for item in requests if isinstance(item, dict)}
+            self.assertEqual(by_id["voice-ask-old"].get("status"), "done")
+            self.assertEqual(by_id["voice-ask-new"].get("status"), "pending")
+        finally:
+            cleanup()
+
     def test_voice_secretary_request_uses_targeted_system_notify(self) -> None:
         _, cleanup = self._with_home()
         try:

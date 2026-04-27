@@ -403,6 +403,10 @@ def _search_matches(query: str, item: Dict[str, Any]) -> bool:
     tokens = _tokenize_search_text(q)
     if not tokens:
         return False
+    generic_tokens = {"mcp", "skill", "skills", "tool", "tools", "server", "capability", "capabilities"}
+    specific_tokens = [tok for tok in tokens if tok not in generic_tokens]
+    if specific_tokens:
+        return any(tok in haystack for tok in specific_tokens)
     return any(tok in haystack for tok in tokens)
 
 
@@ -523,6 +527,11 @@ def _render_source_states(catalog_doc: Dict[str, Any]) -> Dict[str, Dict[str, An
     return out
 
 
+def _is_generated_skill_capability_id(capability_id: str) -> bool:
+    cap_id = str(capability_id or "").strip()
+    return cap_id.startswith("skill:agent_self_proposed:") or cap_id.startswith("skill:agent:")
+
+
 def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
     query = str(args.get("query") or "").strip()
     limit = max(1, min(int(args.get("limit") or 400), 2000))
@@ -591,6 +600,8 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
             if not cid:
                 continue
             if cid in entries:
+                continue
+            if _is_generated_skill_capability_id(cid):
                 continue
             kind = "skill" if cid.startswith("skill:") else ("mcp_toolpack" if cid.startswith("mcp:") else "")
             _upsert_entry(
@@ -716,7 +727,7 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
 
         if kind_filter == "pack":
             rows = [row for row in rows if str(row.get("kind") or "").strip().lower() == "pack"]
-        elif kind_filter == "mcp":
+        elif kind_filter in {"mcp", "mcp_toolpack"}:
             rows = [row for row in rows if str(row.get("kind") or "").strip().lower() == "mcp_toolpack"]
         elif kind_filter == "skill":
             rows = [row for row in rows if str(row.get("kind") or "").strip().lower() == "skill"]
@@ -787,6 +798,8 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
 
         blocked_list: List[Dict[str, Any]] = []
         for cap_id, row in sorted(blocked_global.items(), key=lambda x: str(x[0])):
+            if _is_generated_skill_capability_id(str(cap_id)) and str(cap_id) not in entries:
+                continue
             blocked_list.append(
                 {
                     "capability_id": str(cap_id),
@@ -878,9 +891,21 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
         records: List[Dict[str, Any]] = _build_builtin_search_records()
         if include_external:
             records.extend(external_records)
+        deduped_records: Dict[str, Dict[str, Any]] = {}
+        for rec in records:
+            cap_id = str(rec.get("capability_id") or "").strip()
+            if not cap_id:
+                continue
+            existing = deduped_records.get(cap_id) if isinstance(deduped_records.get(cap_id), dict) else {}
+            merged = dict(existing)
+            merged.update({k: v for k, v in rec.items() if v not in (None, "", [], {}) or k not in merged})
+            merged["capability_id"] = cap_id
+            deduped_records[cap_id] = merged
+        records = list(deduped_records.values())
 
         if kind_filter:
-            records = [r for r in records if str(r.get("kind") or "").strip().lower() == kind_filter]
+            desired_kind = "mcp_toolpack" if kind_filter in {"mcp", "mcp_toolpack"} else kind_filter
+            records = [r for r in records if str(r.get("kind") or "").strip().lower() == desired_kind]
         if source_filter:
             records = [r for r in records if str(r.get("source_id") or "").strip() == source_filter]
         if trust_filter:
@@ -921,6 +946,12 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
                 continue
             visible_records.append(next_rec)
         records = visible_records
+        if kind_filter == "pack":
+            records = [r for r in records if str(r.get("kind") or "").strip().lower() == "pack"]
+        elif kind_filter in {"mcp", "mcp_toolpack"}:
+            records = [r for r in records if str(r.get("kind") or "").strip().lower() == "mcp_toolpack"]
+        elif kind_filter == "skill":
+            records = [r for r in records if str(r.get("kind") or "").strip().lower() == "skill"]
         records = [r for r in records if _search_matches(query, r)]
 
         remote_limit = max(1, min(_env_int("CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK_LIMIT", 40), 100))

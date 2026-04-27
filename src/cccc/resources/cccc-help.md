@@ -134,6 +134,8 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 
 - Fast path: `cccc_capability_use(...)`.
 - Discovery path: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)`; treat search as a hint layer, not proof of absence.
+- For specialized work such as review, debugging, UI, docs, reports, tests, artifacts, security, or product planning, search capability before inventing a new workflow.
+- If search returns a relevant lightweight skill with `enable_hint="enable_now"`, enable/use it for the current scope and then continue the task.
 - Enable or expose only what you need now.
 - If the state is `activation_pending` or `refresh_required=true`, relist or reconnect and retry.
 

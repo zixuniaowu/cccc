@@ -249,6 +249,7 @@
   "headlessControlQueued": "制御タスクをキューに追加しました",
   "headlessControlStarted": "制御タスクを処理中",
   "headlessControlRequeued": "制御タスクを再試行中",
+  "headlessControlStalled": "制御タスクは待機中です",
   "headlessControlCompleted": "制御タスクが完了しました",
   "headlessControlFailed": "制御タスクが失敗しました",
   "headlessControlUpdated": "制御タスクを更新しました"

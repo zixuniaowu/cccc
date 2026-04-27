@@ -249,6 +249,7 @@
   "headlessControlQueued": "Control task queued",
   "headlessControlStarted": "Processing control task",
   "headlessControlRequeued": "Retrying control task",
+  "headlessControlStalled": "Control task is waiting",
   "headlessControlCompleted": "Control task completed",
   "headlessControlFailed": "Control task failed",
   "headlessControlUpdated": "Control task updated"

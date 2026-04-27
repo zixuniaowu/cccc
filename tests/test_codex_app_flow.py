@@ -809,7 +809,7 @@ class TestCodexAppFlow(unittest.TestCase):
             session._turn_queue.put_nowait(None)
 
             with (
-                patch.object(session, "is_running", side_effect=[True, True]),
+                patch.object(session, "is_running", side_effect=[True, True, True]),
                 patch.object(session, "_request", return_value={"turn": {"id": "turn-1"}}),
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit"),
@@ -891,7 +891,7 @@ class TestCodexAppFlow(unittest.TestCase):
             session._turn_queue.put_nowait(None)
 
             with (
-                patch.object(session, "is_running", side_effect=[True, True]),
+                patch.object(session, "is_running", side_effect=[True, True, True]),
                 patch.object(session, "_write_stdin", return_value=True),
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit"),
@@ -1032,7 +1032,7 @@ class TestCodexAppFlow(unittest.TestCase):
             session._turn_queue.put_nowait(None)
 
             with (
-                patch.object(session, "is_running", side_effect=[True, True]),
+                patch.object(session, "is_running", side_effect=[True, True, True]),
                 patch.object(session, "_request", return_value={"turn": {"id": "turn-bootstrap"}}),
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit") as emit,
@@ -1045,6 +1045,50 @@ class TestCodexAppFlow(unittest.TestCase):
             event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
             self.assertEqual(event_types.count("headless.control.started"), 1)
             self.assertNotIn("headless.turn.started", event_types)
+        finally:
+            cleanup()
+
+    def test_codex_control_turn_emits_stalled_when_runtime_goes_quiet(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="voice-secretary",
+                cwd=Path(home),
+                env={},
+            )
+
+            class _Proc:
+                @staticmethod
+                def poll():
+                    return None
+
+            session._running = True
+            session._proc = _Proc()
+            session._session_state.thread_id = "thread-1"
+            session._turn_queue.put_nowait(_PendingTurn(text="notify", event_id="evt-1", control_kind="system_notify"))
+            session._turn_queue.put_nowait(None)
+
+            with (
+                patch.object(session, "_request", return_value={"turn": {"id": "turn-1"}}),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "wait", side_effect=[False, True]),
+                patch("cccc.daemon.codex_app_sessions._TURN_STALL_SECONDS", 0.0),
+                patch("cccc.daemon.codex_app_sessions._TURN_WAIT_POLL_SECONDS", 0.0),
+                patch("cccc.daemon.codex_app_sessions.auto_mark_headless_delivery_started") as auto_mark,
+            ):
+                session._turn_loop()
+
+            auto_mark.assert_not_called()
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertIn("headless.control.started", event_types)
+            self.assertIn("headless.control.stalled", event_types)
+            stalled_payload = next(call.args[1] for call in emit.call_args_list if call.args and call.args[0] == "headless.control.stalled")
+            self.assertEqual(stalled_payload.get("reason"), "runtime_no_events_after_turn_started")
+            self.assertEqual(str(session._session_state.status or ""), "waiting")
         finally:
             cleanup()
 

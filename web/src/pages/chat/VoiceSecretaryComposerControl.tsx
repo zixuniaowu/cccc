@@ -158,6 +158,7 @@ const BROWSER_SPEECH_MAX_TRANSIENT_ERRORS = 8;
 const BROWSER_SPEECH_RECOVERABLE_ERRORS = new Set(["no-speech", "aborted", "network", "audio-capture"]);
 const BROWSER_SPEECH_FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed"]);
 const VOICE_ASK_ACTIVE_TIMEOUT_MS = 90_000;
+const VOICE_PROMPT_REQUEST_STALE_MS = 90_000;
 const VOICE_LIVE_TRANSCRIPT_VISIBLE_MS = 15_000;
 const VOICE_DOCUMENT_ACTIVITY_VISIBLE_MS = 15_000;
 const VOICE_ACTIVITY_FEED_LIMIT = 10;
@@ -172,6 +173,10 @@ function promptDraftApplyMode(draft: AssistantVoicePromptDraft): "append" | "rep
   const operation = String(draft.operation || "").trim().toLowerCase();
   if (operation === "replace_with_refined_prompt" || operation === "replace") return "replace";
   return "append";
+}
+
+function isVoicePromptRequestFresh(startedAt: number, nowMs = Date.now()): boolean {
+  return startedAt > 0 && nowMs - startedAt < VOICE_PROMPT_REQUEST_STALE_MS;
 }
 const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
   "嗯",
@@ -631,6 +636,7 @@ export function VoiceSecretaryComposerControl({
   const browserSpeechMediaCleanupRef = useRef<(() => void) | null>(null);
   const browserSpeechTransientErrorCountRef = useRef(0);
   const pendingPromptRequestIdRef = useRef("");
+  const pendingPromptRequestStartedAtRef = useRef(0);
   const pendingAskRequestIdRef = useRef("");
   const pendingPromptComposerHashRef = useRef("");
   const lastVoiceLedgerSignalRef = useRef("");
@@ -1039,7 +1045,12 @@ export function VoiceSecretaryComposerControl({
       }
       setAssistant(resp.result.assistant || null);
       const promptDraft = resp.result.prompt_draft || null;
-      if (promptDraft && pendingPromptRequestIdRef.current && promptDraft.request_id === pendingPromptRequestIdRef.current) {
+      if (
+        promptDraft
+        && pendingPromptRequestIdRef.current
+        && promptDraft.request_id === pendingPromptRequestIdRef.current
+        && isVoicePromptRequestFresh(pendingPromptRequestStartedAtRef.current)
+      ) {
         setPendingPromptDraft(promptDraft);
       }
       const nextAskFeedbackItems = resp.result.ask_requests || [];
@@ -1215,6 +1226,7 @@ export function VoiceSecretaryComposerControl({
     const text = String(draft.draft_text || "").trim();
     if (!text) return;
     pendingPromptRequestIdRef.current = "";
+    pendingPromptRequestStartedAtRef.current = 0;
     pendingPromptComposerHashRef.current = "";
     setPendingPromptRequestId("");
     setPendingPromptDraft(null);
@@ -1242,6 +1254,15 @@ export function VoiceSecretaryComposerControl({
     if (!requested || pendingPromptDraft.request_id !== requested) return;
     void applyPromptDraft(pendingPromptDraft);
   }, [applyPromptDraft, pendingPromptDraft, pendingPromptRequestId]);
+
+  useEffect(() => {
+    if (!pendingPromptRequestId || pendingPromptDraft) return;
+    if (isVoicePromptRequestFresh(pendingPromptRequestStartedAtRef.current, activityClockMs)) return;
+    pendingPromptRequestIdRef.current = "";
+    pendingPromptRequestStartedAtRef.current = 0;
+    pendingPromptComposerHashRef.current = "";
+    setPendingPromptRequestId("");
+  }, [activityClockMs, pendingPromptDraft, pendingPromptRequestId]);
 
   useEffect(() => {
     if (!open || !serviceAsrReady) return;
@@ -1286,6 +1307,7 @@ export function VoiceSecretaryComposerControl({
     setAudioDevices([]);
     setSelectedAudioDeviceId("");
     pendingPromptRequestIdRef.current = "";
+    pendingPromptRequestStartedAtRef.current = 0;
     pendingAskRequestIdRef.current = "";
     pendingPromptComposerHashRef.current = "";
     dismissedVoiceReplyKeysRef.current.clear();
@@ -1550,9 +1572,20 @@ export function VoiceSecretaryComposerControl({
     if (!gid || !assistantEnabled || (!voiceTranscript && !snapshot.trim())) return;
     const operation = opts?.operation || "append_to_composer_end";
     const snapshotHash = hashComposerSnapshot(snapshot);
+    const nowMs = Date.now();
     const existingRequestId = String(pendingPromptRequestIdRef.current || pendingPromptRequestId || "").trim();
-    const requestId = existingRequestId || `voice-prompt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const reuseExistingRequest = Boolean(
+      existingRequestId
+        && operation === "append_to_composer_end"
+        && isVoicePromptRequestFresh(pendingPromptRequestStartedAtRef.current, nowMs),
+    );
+    const requestId = reuseExistingRequest
+      ? existingRequestId
+      : `voice-prompt-${nowMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     pendingPromptRequestIdRef.current = requestId;
+    pendingPromptRequestStartedAtRef.current = reuseExistingRequest
+      ? pendingPromptRequestStartedAtRef.current
+      : nowMs;
     pendingPromptComposerHashRef.current = snapshotHash;
     setPendingPromptRequestId(requestId);
     try {
@@ -1575,6 +1608,7 @@ export function VoiceSecretaryComposerControl({
       });
       if (!resp.ok) {
         pendingPromptRequestIdRef.current = "";
+        pendingPromptRequestStartedAtRef.current = 0;
         pendingPromptComposerHashRef.current = "";
         setPendingPromptRequestId("");
         showError(resp.error.message);
@@ -1595,6 +1629,7 @@ export function VoiceSecretaryComposerControl({
       void refreshAssistant({ quiet: true });
     } catch {
       pendingPromptRequestIdRef.current = "";
+      pendingPromptRequestStartedAtRef.current = 0;
       pendingPromptComposerHashRef.current = "";
       setPendingPromptRequestId("");
       showError(t("voiceSecretaryPromptRefineFailed", { defaultValue: "Failed to send prompt refinement to Voice Secretary." }));

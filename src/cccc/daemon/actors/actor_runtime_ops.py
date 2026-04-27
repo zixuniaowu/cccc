@@ -36,6 +36,21 @@ class ActorLaunchSpec(ActorLaunchConfig):
     effective_command: List[str]
 
 
+def model_from_runtime_command(command: List[str]) -> str:
+    """Return an explicitly configured model from a runtime command."""
+    items = [str(item or "").strip() for item in list(command or [])]
+    for idx, item in enumerate(items):
+        if not item:
+            continue
+        if item in {"-m", "--model"}:
+            if idx + 1 < len(items):
+                return str(items[idx + 1] or "").strip()
+            return ""
+        if item.startswith("--model="):
+            return item.split("=", 1)[1].strip()
+    return ""
+
+
 def _coerce_string_env(raw: Any) -> Dict[str, str]:
     if not isinstance(raw, dict):
         return {}
@@ -253,6 +268,7 @@ def start_actor_process(
                 actor_id=actor_id,
                 cwd=cwd,
                 env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                model=model_from_runtime_command(effective_cmd),
             )
         elif runtime == "claude" and effective_runner == "headless":
             claude_app_supervisor.start_actor(
@@ -260,6 +276,7 @@ def start_actor_process(
                 actor_id=actor_id,
                 cwd=cwd,
                 env=dict(inject_actor_context_env(effective_env, group.group_id, actor_id)),
+                model=model_from_runtime_command(effective_cmd),
             )
         elif effective_runner == "headless":
             headless_runner.SUPERVISOR.start_actor(

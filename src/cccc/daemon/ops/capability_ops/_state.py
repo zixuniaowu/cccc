@@ -369,6 +369,35 @@ def _unset_blocked_capability(
     return removed
 
 
+def _remove_blocked_capability_all_scopes(
+    state_doc: Dict[str, Any],
+    *,
+    capability_id: str,
+) -> int:
+    cap_id = str(capability_id or "").strip()
+    if not cap_id:
+        return 0
+    removed = 0
+    global_blocked = state_doc.get("global_blocked") if isinstance(state_doc.get("global_blocked"), dict) else {}
+    if cap_id in global_blocked:
+        global_blocked.pop(cap_id, None)
+        removed += 1
+    state_doc["global_blocked"] = global_blocked
+
+    group_blocked = state_doc.get("group_blocked") if isinstance(state_doc.get("group_blocked"), dict) else {}
+    for gid in list(group_blocked.keys()):
+        per_group = group_blocked.get(gid) if isinstance(group_blocked.get(gid), dict) else {}
+        if cap_id in per_group:
+            per_group.pop(cap_id, None)
+            removed += 1
+        if per_group:
+            group_blocked[gid] = per_group
+        else:
+            group_blocked.pop(gid, None)
+    state_doc["group_blocked"] = group_blocked
+    return removed
+
+
 def _collect_blocked_capabilities(
     state_doc: Dict[str, Any],
     *,
